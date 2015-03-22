@@ -1,0 +1,54 @@
+[package]
+
+name = "mydht"
+version = "0.0.1"
+authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
+
+[[bin]]
+name = 'dhtmain'
+doc = false
+
+[[example]]
+name='fileshare'
+path = "examples/fs.rs"
+
+[dependencies]
+
+log = "~0.2.5"
+env_logger = "~0.2.2"
+uuid = "~0.1.11"
+num = "~0.1.16"
+rand = "~0.2.0"
+openssl = "~0.5.1"
+#rust-crypto = "~0.2.18"
+bencode = "~0.1.9"
+bincode = "~0.0.11"
+rustc-serialize = "0.3.6"
+time = "~0.1.20"
+
+#[dependencies.semver]
+#git = "https://github.com/...."
+
+#[dependencies.protobuf]
+#git = "https://github.com/stepancheg/rust-protobuf.git"
+
+#[dependencies.capnp]
+#git = "https://github.com/dwrensha/capnproto-rust.git"
+
+[dependencies.dht]
+#path = "../mydht-dep/rust-dht/"
+git = "https://github.com/cheme/rust-dht.git"
+
+#[dependencies.time]
+#git = "https://github.com/rust-lang/time.git"
+
+#[dependencies.rustc-serialize]
+#git = "https://github.com/rust-lang/rustc-serialize.git"
+
+#[dependencies.bencode]
+#git = "https://github.com/arjantop/rust-bencode.git"
+#path = "../mydht-dep/rust-bencode/"
+
+#[dependencies.bincode]
+#git = "https://github.com/TyOverby/bincode.git"
+#path = "../mydht-dep/bincode/"
