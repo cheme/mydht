@@ -11,12 +11,13 @@ use query::cache::CachePolicy;
 use std::sync::Arc;
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 use rustc_serialize::json;
-use std::old_io::{File,FileMode,FileAccess,SeekStyle};
+use std::fs::{File};
 use std::fs::{copy,PathExt};
 use std::path::{Path,PathBuf};
-use std::old_path::Path as OPath;
 use utils::ArcKV;
 use std::marker::NoCopy;
+use std::io::{SeekFrom,Write,Read,Seek};
+use std::fs::OpenOptions;
 
 //TODO rewrite with parameterization ok!! (generic simplecache)
 
@@ -100,11 +101,11 @@ impl<T : KeyVal> KVStore<T> for SimpleCache<T> {
       Some(ref mut confFile) => {
         debug!("Commit call on Simple cache kvstore");
         // first bu copy TODO use rename instead.
-        let bupath = confFile.path().with_extension("_bu");
-        if copy(confFile.path(), &bupath).is_ok(){
-          confFile.seek(0,SeekStyle::SeekSet);
+        let bupath = confFile.path().unwrap().with_extension("_bu");
+        if copy(confFile.path().unwrap(), &bupath).is_ok(){
+          confFile.seek(SeekFrom::Start(0));
           // remove content
-          confFile.truncate(0);
+          confFile.set_len(0);
           // write new content
           // some issue to json serialize hash map due to key type so serialize vec of pair instead
           let vser : Vec<&T> = self.cache.values().collect();
@@ -153,7 +154,7 @@ impl<V : KeyVal> SimpleCache<V> {
       r
     }).unwrap_or(true);
     debug!("Simple cache is new : {:?}", new);
-    let mut persi : Option<File> = op.and_then(|p|File::open_mode(&(OPath::new(p.to_str().unwrap())), FileMode::Open, FileAccess::ReadWrite).ok()); // TODO warning when path not open -> here not loaded and not save afterward
+    let mut persi = op.map(|p|OpenOptions::new().read(true).write(true).open(&p).unwrap());
     let map = match &mut persi {
       &mut Some(ref mut p) => {
         if !new {
@@ -162,8 +163,9 @@ impl<V : KeyVal> SimpleCache<V> {
         } else {
           debug!("reading simplecache");
           // TODO reput reading!!!!!!!!!!
-          let jsonCont = p.read_to_string().unwrap(); 
-          let vser : Vec<V> = json::decode(jsonCont.as_slice()).unwrap();
+          let mut jcont = String::new();
+          p.read_to_string(&mut jcont).unwrap();
+          let vser : Vec<V> = json::decode(jcont.as_slice()).unwrap_or_else(|e|panic!("Invalid config {:?}\n quiting",e));
           let map : HashMap<V::Key, V> = vser.into_iter().map(|v| (v.get_key(),v)).collect();
           map
         }

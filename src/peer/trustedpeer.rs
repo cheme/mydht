@@ -671,9 +671,7 @@ impl RSAPeer {
         date : &now,
       };
       debug!("in update info : {:?}", tosign);
-      let tosignenc = bincode::encode(tosign, bincode::SizeLimit::Infinite).unwrap();
-      println!("chec content {:?}", tosignenc);
-      RSAPeer::sign_cont(pkey, tosignenc.as_slice())
+      <RSAPeer as TrustedVal<ArcKV<RSAPeer>>>::init_sign_val(&pkey, tosign)
     };
 
     debug!("with key {:?}", &self.publickey.0);

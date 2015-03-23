@@ -48,7 +48,7 @@ impl<V : FileKeyVal> FileStore<V> {
     //    if (!rep.exists() | !rep.is_dir())
     if !rep.is_dir() {
       return Err(IoError::new (
-        IoErrorKind::MismatchedFileTypeForOperation,
+        IoErrorKind::Other,
         "Filestore is not a directory",
         None,
       ))

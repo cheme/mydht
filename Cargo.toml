@@ -22,9 +22,10 @@ rand = "~0.2.0"
 openssl = "~0.5.1"
 #rust-crypto = "~0.2.18"
 bencode = "~0.1.9"
-bincode = "~0.0.11"
+#bincode = "~0.0.11"
 rustc-serialize = "0.3.6"
 time = "~0.1.20"
+byteorder = "~0.3.1"
 
 #[dependencies.semver]
 #git = "https://github.com/...."
@@ -49,6 +50,6 @@ git = "https://github.com/cheme/rust-dht.git"
 #git = "https://github.com/arjantop/rust-bencode.git"
 #path = "../mydht-dep/rust-bencode/"
 
-#[dependencies.bincode]
-#git = "https://github.com/TyOverby/bincode.git"
+[dependencies.bincode]
+git = "https://github.com/TyOverby/bincode.git"
 #path = "../mydht-dep/bincode/"

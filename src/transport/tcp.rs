@@ -2,7 +2,8 @@
 //! Some overhead to send size of frame.
 //! For new IO temporarilly use bincode to encode byte inf TODO when api stabilize use the right
 //! serialization. + strengthen (non expected size receive and max size then split).
-extern crate bincode;
+extern crate byteorder;
+use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::net::{TcpListener};
 use std::net::{TcpStream};
 use std::io::Result as IoResult;
@@ -25,7 +26,6 @@ use super::{Transport,TransportStream};
 use std::iter;
 use utils;
 use std::path::{Path,PathBuf};
-
 
 static BUFF_SIZE : usize = 10000; // use for attachment send/receive -- 21888 seems to be maxsize
 static MAX_BUFF_SIZE : usize = 21888; // 21888 seems to be maxsize
@@ -81,27 +81,22 @@ impl TransportStream for TcpStream {
 //    try!(self.write_u8(if a.is_some(){1}else{0}));
     try!(self.write_all(&[if a.is_some(){1}else{0}]));
 
-    //try!(self.write_le_uint(l));
-    let es = bincode::encode(&l, bincode::SizeLimit::Infinite).unwrap();
-    try!(self.write_all(es.as_slice()));
+    try!(self.write_u32::<LittleEndian>(l.to_u32().unwrap()));
     try!(self.write_all(bytes));
     let ar : Option<IoResult<()>> = a.map(|path|  {
       let mut f = try!(File::open(&path));
       debug!("trynig nwriting att");
       // send over buff size
       let fsize = f.metadata().unwrap().len();
-      let nbframe = (fsize / (BUFF_SIZE).to_u64().unwrap()).to_uint().unwrap();
-      let lfrsize = (fsize - (BUFF_SIZE.to_u64().unwrap() * nbframe.to_u64().unwrap())).to_uint().unwrap();
+      let nbframe = (fsize / (BUFF_SIZE).to_u64().unwrap()).to_usize().unwrap();
+      let lfrsize = (fsize - (BUFF_SIZE.to_u64().unwrap() * nbframe.to_u64().unwrap())).to_usize().unwrap();
       debug!("fsize{:?}",fsize);
       debug!("nwbfr{:?}",nbframe);
       debug!("frsiz{:?}",lfrsize);
       debug!("busize{:?}",BUFF_SIZE);
-    //  try!(self.write_le_uint(nbframe));
-    try!(self.write_all(bincode::encode(&nbframe, bincode::SizeLimit::Infinite).unwrap().as_slice()));
-    //  try!(self.write_le_uint(BUFF_SIZE));
-    try!(self.write_all(bincode::encode(&BUFF_SIZE, bincode::SizeLimit::Infinite).unwrap().as_slice()));
-    //  try!(self.write_le_uint(lfrsize));
-    try!(self.write_all(bincode::encode(&lfrsize, bincode::SizeLimit::Infinite).unwrap().as_slice()));
+      try!(self.write_u32::<LittleEndian>(nbframe.to_u32().unwrap()));
+      try!(self.write_u32::<LittleEndian>(BUFF_SIZE.to_u32().unwrap()));
+      try!(self.write_u32::<LittleEndian>(lfrsize.to_u32().unwrap()));
       f.seek(SeekFrom::Start(0));
       let mut tmpvec : Vec<u8> = iter::repeat(0u8).take(BUFF_SIZE).collect();
       let buf = tmpvec.as_mut_slice();
@@ -137,12 +132,8 @@ impl TransportStream for TcpStream {
     let mut buf = [0];
     try!(self.read(&mut buf));
     let a = buf[0];
-    // TODO when io ok remplace to right serialize of uint
-    let mut buff = [0;8];
-//    let mut buff = [0;4];
-    try!(self.read(&mut buff));
-    let l : usize = bincode::decode(&buff).unwrap();
-    //self.read_le_uint().and_then(|l|{
+    let l = try!(self.read_u32::<LittleEndian>()).to_usize().unwrap();
+    //self.read_le_u32().and_then(|l|{
       debug!("rec len {:?}", l);
       // TODO find better and right way to allocate null length vec
      let mut r : Vec<u8> = iter::repeat(0u8).take(l).collect();
@@ -167,16 +158,10 @@ impl TransportStream for TcpStream {
 }
 
 fn read_to_tmp(s : &mut TcpStream)-> IoResult<File> {
-//  let nbframe = try!(s.read_le_uint());
-//  let bsize   = try!(s.read_le_uint());
-//  let lfrsize = try!(s.read_le_uint());
-    let mut buff = [0;8];
-    s.read(&mut buff);
-    let nbframe : usize = bincode::decode(&buff).unwrap();
-    s.read(&mut buff);
-    let bsize : usize = bincode::decode(&buff).unwrap();
-    s.read(&mut buff);
-    let lfrsize : usize = bincode::decode(&buff).unwrap();
+
+  let nbframe = try!(s.read_u32::<LittleEndian>()).to_usize().unwrap();
+  let bsize   = try!(s.read_u32::<LittleEndian>()).to_usize().unwrap();
+  let lfrsize = try!(s.read_u32::<LittleEndian>()).to_usize().unwrap();
  
   debug!("bs{:?}",bsize);
   debug!("nwbfr{:?}",nbframe);

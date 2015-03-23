@@ -485,7 +485,7 @@ impl<TP : TrustedPeer> WotTrust<TP> for ClassicWotTrust<TP> {
         // recalculate
         let mut cur_level     = 0;
         for count in self.calcmap.iter() {
-          println!("count is {:?}, {:?}",count,cur_level);
+          debug!("count is {:?}, {:?}",count,cur_level);
           if new_trust.is_none() {
             let mut cum = 0;
             let mut slevel : u8 = 0;
@@ -494,7 +494,7 @@ impl<TP : TrustedPeer> WotTrust<TP> for ClassicWotTrust<TP> {
                 let level_ix = slevel - cur_level;
                 let icount = count.get(level_ix.to_uint().unwrap()).unwrap();
                 // cumulative trust
-              println!("deb2 {:?}, {:?}, {:?}",inbtrust, icount, cum);
+                debug!("deb2 {:?}, {:?}, {:?}",inbtrust, icount, cum);
                 *inbtrust = *inbtrust + *icount;
                 cum += *inbtrust;
                 let treshold = rules.get(cur_level.to_uint().unwrap()).unwrap();
@@ -1064,43 +1064,31 @@ fn test_wot(){
   let peer3 = addpeer_test(&mut wotstore,"peer3".to_string());
   let peer4 = addpeer_test(&mut wotstore,"peer4".to_string());
   // try update of trust
-  println!("1");
   addpeer_trust(&me, &peer1, &mut wotstore, 2, 2, None);
   // max peer trust
-  println!("2");
   addpeer_trust(&me, &peer1, &mut wotstore, 1, 1, Some(1));
   // try update of trust do not update with lower tag
-  println!("3");
   addpeer_trust(&me, &peer1, &mut wotstore, 2, 1, Some(0));
 
   // moderate peer trust (need two ok, or one for lower trust)
-  println!("4");
   addpeer_trust(&me, &peer2, &mut wotstore, 2, 2, None);
-  println!("5");
   addpeer_trust(&me, &peer3, &mut wotstore, 2, 2, None);
   // low peer trust (need three ok, or one for lower trust)
-  println!("5");
   addpeer_trust(&me, &peer4, &mut wotstore, 3, 3, None);
 
   // add trust from peer to peers
   // one is not enough to promote
-  println!("6");
   addpeer_trust(&peer2, &peer4, &mut wotstore, 2, 3, None);
   // two is ok 
-  println!("7");
   // remove 0 trust to 3 (using out of range trust) // TODO change by remove
   addpeer_trust(&me, &peer4, &mut wotstore, 5, 3, None);
   addpeer_trust(&peer3, &peer4, &mut wotstore, 2, 2, None);
   // yet cap promote at those trust
-  println!("8");
   addpeer_trust(&peer2, &peer4, &mut wotstore, 1, 2, None);
-  println!("9");
   addpeer_trust(&peer3, &peer4, &mut wotstore, 1, 2, None);
   // but if peer2 promoted
-  println!("A");
   addpeer_trust(&me, &peer2, &mut wotstore, 1, 1, None);
   // its previous trust sign apply
-  println!("B");
   let p4prom = wotstore.get_peer_trust(&peer4.get_key());
   assert_eq!(1, p4prom);
 

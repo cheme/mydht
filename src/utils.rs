@@ -358,7 +358,6 @@ pub fn hash_openssl(f : &mut File) -> Vec<u8> {
   let ressize = 256;
 //  let outbytes = ((ressize+7)/8);
   let outbytes = 32;
-          error!("{:?}:{:?}", bsize,ressize);
   let mut tmpvec : Vec<u8> = iter::repeat(0u8).take(bbytes).collect();
   let buf = tmpvec.as_mut_slice();
   f.seek(SeekFrom::Start(0));

@@ -12,6 +12,7 @@ use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 
 use std::old_io::{Timer};
 use std::fs::{File};
+use std::path::Path;
 use std::io::Read;
 use std::time::Duration;
 use std::os;
@@ -146,7 +147,7 @@ fn asynchPeerDiscovery () {peerConnectScenario((QueryMode::Asynch, QueryChunk::N
 
 fn peerConnectScenario (queryconf : QueryConf, startPort: u16, nbpeer : u16, knownratio : u16){
 
-    let mut r : Vec<u16> = range(startPort,startPort+nbpeer).collect();
+    let mut r : Vec<u16> = (startPort .. startPort+nbpeer).collect();
     let nodes : Vec<Node> = r.iter().map(
       |i| Node {nodeid: "dummyID".to_string() + (i.to_string().as_slice()), address : SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), *i))}
     ).collect();
@@ -425,7 +426,7 @@ fn finddistantpeer<R : PeerMgmtRules<Node, DummyKeyVal> + Clone>  (startport : u
 fn initpeers<R : PeerMgmtRules<Node, DummyKeyVal> + Clone> (startPort : u16, nbpeer : usize, map : &[&[usize]], rules : R) -> Vec<(Node, DHT<Node,DummyKeyVal,R,DummyQueryRules,Json,Tcp>)>{
 
 
-    let mut r : Vec<usize> = range(0,nbpeer).collect();
+    let mut r : Vec<usize> = (0..nbpeer).collect();
     let nodes : Vec<Node> = r.iter().map(
       |j| {
           Node {nodeid: "NodeID".to_string() + ((*j + 1).to_string().as_slice()), address : SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), startPort + (*j).to_u16().unwrap()))}
@@ -468,7 +469,7 @@ fn initpeers_udp<R : PeerMgmtRules<Node,DummyKeyVal> + Clone> (startPort : u16, 
 //fn initpeers<R : PeerMgmtRules<Node> + Clone> (startPort : u16, nbpeer : usize, map : &[&[usize]], rules : R) -> Vec<(Node, DHT<Node,DummyKeyVal,R,DummyQueryRules,Json,Tcp>)>{
 
 
-    let mut r : Vec<usize> = range(0,nbpeer).collect();
+    let mut r : Vec<usize> = (0..nbpeer).collect();
     let nodes : Vec<Node> = r.iter().map(
       |j| {
           Node {nodeid: "NodeID".to_string() + ((*j + 1).to_string().as_slice()), address : SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), startPort + (*j).to_u16().unwrap()))}
