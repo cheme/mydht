@@ -11,6 +11,8 @@ DHT is a bit of language misuse, since it could be route over hashing but in mos
 
 DHT should allow using Web of trust with signing of peers but also of values.
 
+[Doc](http://www.rust-ci.org/cheme/mydht/doc/mydht/)
+
 Build
 -----
 
