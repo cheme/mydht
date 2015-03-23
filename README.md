@@ -1,6 +1,8 @@
 mydht
 =====
 
+[![Build Status](https://travis-ci.org/cheme/mydht.svg?branch=master)](https://travis-ci.org/cheme/mydht)
+
 A generic library for implementing DHT (Distributed Hash Table).
 
 Written in rust, it is designed to be as flexible as possible to implement and experiment with various DHT usecases.
