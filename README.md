@@ -7,7 +7,7 @@ A generic library for implementing DHT (Distributed Hash Table).
 
 Written in rust, it is designed to be as flexible as possible to implement and experiment with various DHT usecases.
 
-DHT is a bit of language misuse, since it could be routed over hashing but in most of my use case it will be routed other trust or in very small peer groups. We should name it Distributed Trust Table for many use cases.
+DHT is a bit of language misuse, since it could be route over hashing but in most of my use case it will be route other trust or in very small peer groups. We should name it Distributed Trust Table for many use cases.
 
 DHT should allow using Web of trust with signing of peers but also of values.
 
