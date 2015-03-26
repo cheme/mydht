@@ -76,7 +76,7 @@ pub trait KVStore2<V : KeyVal> : KVCache<V::Key, Arc<V>> {
 
 #[cfg(test)]
 mod test {
-  extern crate "dht" as odht;
+  extern crate dht as odht;
   extern crate num;
   extern crate rand;
   use rustc_serialize as serialize;
@@ -290,7 +290,7 @@ impl FileKV {
       let name : Result<String, D::Error>= d.read_struct_field("name", 1, |d|{
         d.read_str()
       });
-      name.and_then(move |n| hash.map (move |h| FileKV{hash : h, name : n, file : PathBuf::new("DummyPath")}))
+      name.and_then(move |n| hash.map (move |h| FileKV{hash : h, name : n, file : PathBuf::new()}))
     })
   }
 

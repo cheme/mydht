@@ -1,4 +1,4 @@
-extern crate "dht" as odht;
+extern crate dht as odht;
 extern crate num;
 
 use std::num::ToPrimitive;
@@ -160,7 +160,7 @@ impl<P:Peer + DhtPeer,V: KeyVal> BTKad<P,V> {
 
 #[cfg(test)]
 mod test {
-  extern crate "dht" as odht;
+  extern crate dht as odht;
   extern crate num;
   extern crate rand;
   use rustc_serialize as serialize;

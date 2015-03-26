@@ -181,7 +181,7 @@ mod test {
     // + hash those plus get file after init by hash on ca then get file and cmp path.
     // + hash those plus get file after init by hash on ca then get file and cmp path.
     let mut cab = Box::new(ca) ;
-    let fs : FileStore<FileKV> = FileStore::new(PathBuf::new("fstore/files"), PathBuf::new("fstore/reverse.db"),cab, true, &mut |_|()).unwrap();
+    let fs : FileStore<FileKV> = FileStore::new(PathBuf::from("fstore/files"), PathBuf::from("fstore/reverse.db"),cab, true, &mut |_|()).unwrap();
     assert!(ok, "Dummy test only initialized a filestore" );
   }
 }

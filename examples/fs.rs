@@ -1,11 +1,26 @@
+#![feature(int_uint)]
+#![feature(core)]
+#![feature(io)]
+#![feature(collections)]
+#![feature(std_misc)]
+#![feature(file_path)]
+#![feature(fs_walk)]
+#![feature(path_ext)]
+#![feature(net)]
+#![feature(os)]
+#![feature(tcp)]
+#![feature(convert)]
+#![feature(alloc)]
+#![feature(thread_sleep)]
 
 //! Toy implementation of a filestore using mydht.
 #[macro_use] extern crate log;
 extern crate env_logger;
 #[macro_use] extern crate mydht;
-extern crate "rustc-serialize" as rustc_serialize;
+extern crate rustc_serialize;
 extern crate uuid;
 extern crate time;
+extern crate rand;
 use std::os;
 use std::io;
 use std::io::Write;
@@ -147,7 +162,7 @@ fn main() {
 
 
     // no mgmt of io error (panic cf unwrap) when reading conf
-    let confPath = &PathBuf::new(&sconfPath.clone());
+    let confPath = &PathBuf::from(&sconfPath.clone());
     let mut jsonCont = String::new();
     File::open(confPath).unwrap().read_to_string(&mut jsonCont).unwrap(); 
     let fsconf : FsConf = json::decode(jsonCont.as_slice()).unwrap();
@@ -192,7 +207,7 @@ fn main() {
 
     let route = Inefficientmap::new();
     let querycache = SimpleCacheQuery::new();
-    let pconf = PathBuf::new(fsconf.storepath.as_slice());
+    let pconf = PathBuf::from(fsconf.storepath.as_slice());
     let pdbfile = pconf.join("./files.db");
     let pfiles = pconf.join("./files");
     let prdb = pconf.join("./reverse.db");
@@ -726,7 +741,8 @@ mod fskeyval {
 
 mod dhtrules {
 extern crate time;
-extern crate "rustc-serialize" as rustc_serialize;
+extern crate rand;
+extern crate rustc_serialize;
 use mydht::{StoragePriority};
 use std::time::Duration;
 use mydht::{CachePolicy};
@@ -734,7 +750,7 @@ use mydht::{QueryPriority};
 use mydht::queryif;
 use mydht::{PeerPriority};
 use std::sync::Mutex;
-use std::rand::{thread_rng,Rng};
+use self::rand::{thread_rng,Rng};
 use mydht::dhtimpl::{Node};
 use std::num::{ToPrimitive};
 

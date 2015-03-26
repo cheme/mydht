@@ -145,7 +145,7 @@ impl TransportStream for TcpStream {
         let att = if b {
           debug!("Reding an attached file");
           println!("Reding an attached file");
-          read_to_tmp(self).ok().map(|f|PathBuf::new(f.path().unwrap()))
+          read_to_tmp(self).ok().map(|f|PathBuf::from(f.path().unwrap()))
         }  else  {
           None
         };

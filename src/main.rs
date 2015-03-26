@@ -1,11 +1,26 @@
+#![feature(int_uint)]
+#![feature(core)]
+#![feature(io)]
+#![feature(collections)]
+#![feature(std_misc)]
+#![feature(file_path)]
+#![feature(fs_walk)]
+#![feature(path_ext)]
+#![feature(net)]
+#![feature(os)]
+#![feature(tcp)]
+#![feature(convert)]
+#![feature(alloc)]
+#![feature(thread_sleep)]
 
 
 // :nn <F2> :w<cr>:!cargo run --verbose -- -C node2.conf
-extern crate "rustc-serialize" as rustc_serialize;
+extern crate rustc_serialize;
 #[macro_use] extern crate mydht;
 extern crate time;
 #[macro_use] extern crate log;
 extern crate env_logger;
+extern crate rand;
 
 use rustc_serialize::json;
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
@@ -19,7 +34,7 @@ use std::net::{Ipv4Addr};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc::channel;
-use std::rand::{thread_rng, Rng};
+use self::rand::{thread_rng, Rng};
 use std::num::{ToPrimitive,Int};
 use mydht::{StoragePriority};
 use mydht::kvstoreif::KeyVal;
