@@ -20,7 +20,7 @@ uuid = "~0.1.11"
 num = "~0.1.16"
 rand = "~0.2.0"
 openssl = "~0.5.1"
-#rust-crypto = "~0.2.18"
+#rust-crypto = "~0.2.26"
 bencode = "~0.1.9"
 #bincode = "~0.0.11"
 rustc-serialize = "0.3.6"
@@ -35,6 +35,11 @@ byteorder = "~0.3.1"
 
 #[dependencies.capnp]
 #git = "https://github.com/dwrensha/capnproto-rust.git"
+
+#[dependencies.rust-crypto]
+#git = "https://github.com/DaGenix/rust-crypto"
+
+
 
 [dependencies.dht]
 #path = "../mydht-dep/rust-dht/"

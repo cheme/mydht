@@ -11,8 +11,8 @@ use query::cache::{cache_clean,QueryCache};
 use std::sync::{Semaphore,Arc};
 use std::sync::mpsc::{Sender,Receiver};
 use std::time::Duration;
-use std::old_io::timer::Timer;
 use std::thread::Thread;
+use std::thread;
 use peer::Peer;
 use kvstore::{KeyVal,StoragePriority};
 use utils::Either;
@@ -38,9 +38,8 @@ pub fn start
       let delaysp = delay.clone();
       let sp = s.clone();
       Thread::spawn(move || {
-        let mut timer = Timer::new().unwrap();
         loop {
-          timer.sleep(delaysp);
+          thread::sleep(delaysp);
           info!("running scheduled clean");
           sp.send(QueryMgmtMessage::PerformClean);
         }

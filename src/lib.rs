@@ -3,7 +3,6 @@
 #[macro_use] extern crate log;
 extern crate "rustc-serialize" as rustc_serialize;
 extern crate time;
-use std::old_io::File;
 
 #[macro_export]
 /// Automatic define for KeyVal without attachment

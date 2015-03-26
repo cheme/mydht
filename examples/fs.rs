@@ -18,7 +18,6 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::fs::File;
 use std::io::stdin;
-use std::old_io::Timer;
 use std::time::Duration;
 use mydht::Bincode;
 use mydht::Bencode;

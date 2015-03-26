@@ -14,7 +14,6 @@ use kvstore::{Attachment};
 use std::sync::Arc;
 //use mydht::queryif::CachePolicy;
 use query::cache::CachePolicy;
-use std::old_path::GenericPath;
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 //use super::trustedpeers::{TrustedPeer,PromSigns,PeerSign};
 use peer::trustedpeer::{RSAPeer,TrustedPeer,PromSigns,PeerSign};

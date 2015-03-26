@@ -3,7 +3,6 @@ use peer::{Peer, PeerPriority};
 use kvstore::KeyVal;
 use std::sync::Arc;
 use std::rc::Rc;
-use std::old_io::net::ip::{ToSocketAddr};
 use std::collections::VecDeque;
 pub mod inefficientmap;
 pub mod btkad;

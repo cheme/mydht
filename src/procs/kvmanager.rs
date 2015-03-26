@@ -3,7 +3,6 @@
 //! It uses a `KVStore` object and reply to instruction given through a dedicated channel.
 use rustc_serialize::json;
 use procs::mesgs::{self,PeerMgmtMessage,ClientMessage,KVStoreMgmtMessage};
-use std::old_io::{TcpListener,Listener,Acceptor,TcpStream};
 use peer::{PeerMgmtRules, PeerPriority};
 use procs::{RunningContext, RunningProcesses};
 use std::sync::mpsc::{Sender,Receiver};

@@ -10,7 +10,6 @@ extern crate env_logger;
 use rustc_serialize::json;
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 
-use std::old_io::{Timer};
 use std::fs::{File};
 use std::path::Path;
 use std::io::Read;
@@ -167,8 +166,7 @@ let tcp_transport : Tcp = Tcp {
         DHT::boot_server(Arc:: new((nsp,DummyRules, DummyQueryRules{idcnt:Mutex::new(0)},Json,tcp_transport,None)), Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), Vec::new(), bpeers)
     }).collect();
 
-    let mut timer = Timer::new().unwrap();
-    timer.sleep(Duration::seconds(2));
+    std::thread::sleep(Duration::seconds(2));
     // find all node from the first node first node
     let ref fprocs = procs[0];
 
@@ -449,10 +447,9 @@ let tcp_transport : Tcp = Tcp {
         (n.clone(), DHT::boot_server(Arc:: new((nsp,rules.clone(), DummyQueryRules{idcnt:Mutex::new(0)},Json,tcp_transport,None)), Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), bpeers, Vec::new()))
  }).collect();
 
-    let mut timer = Timer::new().unwrap();
     // all has started
     for n in result.iter(){
-      timer.sleep(Duration::milliseconds(100)); // local get easily stuck
+      std::thread::sleep(Duration::milliseconds(100)); // local get easily stuck
       n.1.refresh_closest_peers(1000); // Warn hard coded value.
     };
     // ping established
@@ -498,10 +495,9 @@ let tcp_transport : Tcp = Tcp {
         (n.clone(), DHT::boot_server(Arc:: new((nsp,rules.clone(), DummyQueryRules{idcnt:Mutex::new(0)},Bincode,tran,None)), Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), bpeers, Vec::new()))
  }).collect();
 
-    let mut timer = Timer::new().unwrap();
     // all has started
     for n in result.iter(){
-      timer.sleep(Duration::milliseconds(100)); // local get easily stuck
+      std::thread::sleep(Duration::milliseconds(100)); // local get easily stuck
       n.1.refresh_closest_peers(1000); // Warn hard coded value.
     };
     // ping established

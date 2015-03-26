@@ -3,7 +3,6 @@ use rustc_serialize::{Encodable,Decodable};
 use super::MsgEnc;
 use kvstore::{KeyVal};
 use peer::{Peer};
-use std::old_io::{IoResult,IoError};
 use super::ProtoMessage;
 use std::collections::BTreeMap;
 
