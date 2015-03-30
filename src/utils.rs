@@ -1,4 +1,4 @@
-//extern crate crypto;
+extern crate crypto;
 extern crate num;
 extern crate rand;
 extern crate time;
@@ -17,8 +17,7 @@ use peer::{Peer};
 use self::openssl::crypto::hash::{Hasher,Type};
 use std::io::Write;
 use std::io::Read;
-//use self::crypto::sha2::Sha256;
-//use self::crypto::digest::Digest;
+use self::crypto::digest::Digest;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::fs::File;
@@ -316,9 +315,8 @@ pub fn sendUnconnectMsg<P : Per, V : KeyVal, T : TransportStream, E : MsgEnc>( p
       Some (mut s) => sendMsg(&s, e),
     }
 }*/
-/*
-pub fn hash_crypto(f : &mut File) -> Vec<u8> {
-  let mut digest = Sha256::new(); // TODO in filestore parameter with a supported hash enum
+
+pub fn hash_crypto(f : &mut File, digest : &mut Digest) -> Vec<u8> {
   let bsize = digest.block_size();
   let bbytes = ((bsize+7)/8);
   let ressize = digest.output_bits();
@@ -326,7 +324,7 @@ pub fn hash_crypto(f : &mut File) -> Vec<u8> {
           error!("{:?}:{:?}", bsize,ressize);
   let mut tmpvec : Vec<u8> = iter::repeat(0u8).take(bbytes).collect();
   let buf = tmpvec.as_mut_slice();
-  f.seek(0,SeekStyle::SeekSet);
+  f.seek(SeekFrom::Start(0));
   loop{
   match f.read(buf) {
     Ok(nb) => {
@@ -345,15 +343,15 @@ pub fn hash_crypto(f : &mut File) -> Vec<u8> {
     },
   };
   }
-  // reset file writer to start of file
-  f.seek(0,SeekStyle::SeekSet);
+  // reset file reader to start of file
+  f.seek(SeekFrom::Start(0));
   let mut rvec : Vec<u8> = iter::repeat(0u8).take(outbytes).collect();
   let rbuf = rvec.as_mut_slice();
   digest.result(rbuf);
   //rbuf.to_vec()
   rbuf.to_owned()
 }
-*/
+
 pub fn hash_openssl(f : &mut File) -> Vec<u8> {
   let mut digest = Hasher::new(Type::SHA256); // TODO in filestore parameter with a supported hash enum
   let bsize = 64;

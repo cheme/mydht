@@ -94,8 +94,6 @@ pub struct RSAPeer {
 impl TrustedPeer for RSAPeer {}
 
 
-
-
 // firt is public key (to avoid multiple call to ffi just to get it) second is c openssl key
 #[derive(Clone)]
 /// Additional funtionalites over openssl lib PKey
