@@ -266,6 +266,7 @@ mod transport;
 mod kvstore;
 mod msgenc;
 pub mod utils;
+pub mod wot;
 
 // reexport
 pub use peer::{Peer, PeerPriority};
@@ -281,17 +282,19 @@ pub use msgenc::bincode::{Bincode};
 //pub use msgenc::bencode::{Bencode_bt_dht};
 pub use transport::tcp::{Tcp};
 pub use transport::udp::{Udp};
-pub use peer::trustedpeer::{TrustedVal,Truster,TrustedPeer};
+pub use wot::{TrustedVal,Truster,TrustedPeer};
 //pub use kvstore::nospecificencoding;
 pub mod dhtimpl{
   pub use peer::node::{Node};
-  pub use peer::trustedpeer::{RSAPeer,PeerSign};
+  pub use wot::rsa_openssl::RSAPeer;
+  pub use wot::trustedpeer::PeerSign;
   pub use query::simplecache::{SimpleCache,SimpleCacheQuery};
   pub use route::inefficientmap::{Inefficientmap};
   pub use route::btkad::{BTKad};
   pub use kvstore::{FileKV};
   pub use kvstore::filestore::{FileStore};
-  pub use kvstore::wotstore::{WotStore,WotKV,WotK,TrustRules,ClassicWotTrust};
+  pub use wot::truststore::{WotKV,WotK,WotStore};
+  pub use wot::classictrust::{TrustRules,ClassicWotTrust};
 }
 // TODO rename peerif to peerrulesif
 pub mod peerif{

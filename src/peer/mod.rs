@@ -13,7 +13,6 @@ use transport::{Transport};
 use kvstore::KeyVal;
 
 pub mod node;
-pub mod trustedpeer;
 
 /// A peer is a special keyval with an attached address over the network
 pub trait Peer : KeyVal {

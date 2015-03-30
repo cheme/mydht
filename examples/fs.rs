@@ -175,11 +175,11 @@ fn main() {
     let mynodewot = mynode.clone();
     let test = ArcKV::new(RSAPeer::new ("some name".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 9000)));
 
-    if test.key_check() && test.check_val(&test) {
+/*    if test.key_check() && test.check_val(&test,&PeerInfoRel) {
       debug!("ok local");
     } else {
       debug!("bad local");
-    }
+    }*/
 /*    let me2 = trustedpeers::RSAPeer::new (mynode.nodeid.clone(), None, mynode.address.clone(), mynode.port.clone());
     println!("MEEE2 : {:?}", me2);
 

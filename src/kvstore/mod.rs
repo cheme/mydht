@@ -20,7 +20,6 @@ use msgenc;
 use utils::ArcKV;
 
 pub mod filestore;
-pub mod wotstore;
 
 // TODO evolve to allow a transient cache before kvstore (more in kvstore impl but involve using
 // arc<V>?? 

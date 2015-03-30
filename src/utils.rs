@@ -39,6 +39,10 @@ use rustc_serialize::hex::{ToHex,FromHex};
 use std::ops::Deref;
 
 
+pub static NULL_TIMESPEC : Timespec = Timespec{ sec : 0, nsec : 0};
+
+
+
 pub fn sa4(a: Ipv4Addr, p: u16) -> SocketAddr {
  SocketAddr::V4(SocketAddrV4::new(a, p))
 }
