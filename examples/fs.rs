@@ -33,7 +33,8 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::fs::File;
 use std::io::stdin;
-use std::time::Duration;
+use std::time::Duration as OldDuration;
+use time::Duration;
 use mydht::Bincode;
 use mydht::Bencode;
 use mydht::Json;
@@ -744,7 +745,8 @@ extern crate time;
 extern crate rand;
 extern crate rustc_serialize;
 use mydht::{StoragePriority};
-use std::time::Duration;
+use time::Duration;
+use std::time::Duration as OldDuration;
 use mydht::{CachePolicy};
 use mydht::{QueryPriority};
 use mydht::queryif;
@@ -810,8 +812,8 @@ impl queryif::QueryRules for DhtRulesImpl {
     1 + (self.1.nbqueryfact * prio.to_f32().unwrap()).to_u8().unwrap()
   }
 
-  fn asynch_clean(&self) -> Option<Duration> {
-    self.1.cleaninterval.map(|s|Duration::seconds(s))
+  fn asynch_clean(&self) -> Option<OldDuration> {
+    self.1.cleaninterval.map(|s|OldDuration::seconds(s))
   }
   
   fn do_store (&self, islocal : bool, qprio : QueryPriority, sprio : StoragePriority, hopnb : Option<usize>) -> (bool,Option<CachePolicy>) {

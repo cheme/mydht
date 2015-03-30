@@ -1,5 +1,5 @@
 use std::io::Result as IoResult;
-use std::time::Duration;
+use time::Duration;
 use peer::{Peer};
 use kvstore::{Attachment};
 use std::net::{SocketAddr};

@@ -12,7 +12,7 @@ use std::io::Result as IoResult;
 use peer::{PeerMgmtRules, PeerPriority};
 use std::str::from_utf8;
 use procs::{peermanager,RunningContext,RunningProcesses};
-use std::time::Duration;
+use time::Duration;
 use std::sync::{Arc,Semaphore,Condvar,Mutex};
 use transport::TransportStream;
 use transport::Transport;
@@ -400,7 +400,7 @@ pub fn recv_match
       },
     },
     ClientMessage::StoreNode(queryconf, r) => {
-      let mess  : ProtoMessage<P,V> = ProtoMessage::STORE_NODE(queryconf.0.get_qid(), r.cloned().map(|v|DistantEnc(v)));
+      let mess  : ProtoMessage<P,V> = ProtoMessage::STORE_NODE(queryconf.0.get_qid(), r.map(|v|DistantEnc((*v).clone())));
       sendorconnect!(&mess,None);
     },
     ClientMessage::StoreKV(queryconf, r) => {

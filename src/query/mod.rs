@@ -1,7 +1,8 @@
 use std::sync::{Arc,Mutex,Semaphore,Condvar};
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 use peer::{PeerPriority};
-use std::time::Duration;
+use time::Duration;
+use std::time::Duration as OldDuration;
 use time::{self,Timespec};
 use peer::Peer;
 use std::sync::mpsc::{Sender};
@@ -509,7 +510,7 @@ pub trait QueryRules : Sync + Send + 'static {
   /// Number of peers to transmit to at each hop, the method is currently called in main peermgmt process, therefore it must be fast (a mapping not a db access).
   fn nbquery (&self, QueryPriority) -> u8;
   /// delay between to cleaning of cache query
-  fn asynch_clean(&self) -> Option<Duration>; 
+  fn asynch_clean(&self) -> Option<OldDuration>; 
   /// get the lifetime of a query (before clean and possibly no results).
   fn lifetime (&self, prio : QueryPriority) -> Duration;
   /// get the storage rules (a pair with persistent storage as bool plus cache storage as possible

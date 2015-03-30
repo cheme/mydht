@@ -503,9 +503,9 @@ fn commit_store(& mut self) -> bool{
 }
 
 #[cfg(test)]
-fn addpeer_test<T : WotTrust<RSAPeer>> (wotstore : &mut WotStore<RSAPeer, T>, name : String)-> ArcKV<RSAPeer>{
+fn addpeer_test<TP : TrustedPeer, T : WotTrust<TP>, F : Fn(String) -> ArcKV<TP>> (wotstore : &mut WotStore<TP, T>, name : String, init : &F)-> ArcKV<TP> {
   let stconf = (true,None);
-  let pe = ArcKV::new(RSAPeer::new (name, None, utils::sa4(Ipv4Addr::new(127,0,0,1), 8080) ));
+  let pe = init(name);
   wotstore.add_val(WotKV::Peer(pe.clone()) ,stconf);
 
   let qme = wotstore.get_val(&WotK::Peer(pe.get_key())).unwrap();
@@ -514,11 +514,11 @@ fn addpeer_test<T : WotTrust<RSAPeer>> (wotstore : &mut WotStore<RSAPeer, T>, na
 }
 
 #[cfg(test)]
-fn addpeer_trust<T : WotTrust<RSAPeer>> (by : &ArcKV<RSAPeer>, about : &ArcKV<RSAPeer>, wotstore : &mut WotStore<RSAPeer, T>, trust : u8, testtrust : u8, tag : Option<usize>){
+fn addpeer_trust<TP : TrustedPeer, T : WotTrust<TP>> (by : &ArcKV<TP>, about : &ArcKV<TP>, wotstore : &mut WotStore<TP, T>, trust : u8, testtrust : u8, tag : Option<usize>) {
   let tagv = tag.unwrap_or(0);
 
   let stconf = (true,None);
-  let psignme : PeerSign<RSAPeer> = PeerSign::new(&(*by), &(*about), trust, tagv).unwrap();
+  let psignme : PeerSign<TP> = PeerSign::new(&(*by), &(*about), trust, tagv).unwrap();
   wotstore.add_val(WotKV::Sign(psignme.clone()) ,stconf);
 
   let qmesign = wotstore.get_val(&WotK::Sign(psignme.get_key())).unwrap();
@@ -530,15 +530,21 @@ fn addpeer_trust<T : WotTrust<RSAPeer>> (by : &ArcKV<RSAPeer>, about : &ArcKV<RS
 }
 
 #[test]
-fn test_wot(){
+fn test_wot_rsa() {
+  let initRSAPeer = |name| ArcKV::new(RSAPeer::new (name, None, utils::sa4(Ipv4Addr::new(127,0,0,1), 8080)));
+  test_wot_gen(&initRSAPeer)
+}
+#[cfg(test)]
+fn test_wot_gen<T : TrustedPeer, F : Fn(String) -> ArcKV<T>>(init : &F) {
   // initiate with simple cache map
   let mut wotpeers = SimpleCache::new(None);
   let mut wotrels  = SimpleCache::new(None);
   let mut wotsigns = SimpleCache::new(None);
-  let mut wotrusts : SimpleCache<ClassicWotTrust<RSAPeer>> = SimpleCache::new(None);
+  let mut wotrusts : SimpleCache<ClassicWotTrust<T>> = SimpleCache::new(None);
   let mut trustRul : TrustRules = vec![1,1,2,2,2];
+  let me = init("myname".to_string());
 
-  let me = ArcKV::new(RSAPeer::new ("myname".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 8080) ));
+//  let me = ArcKV::new(RSAPeer::new ("myname".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 8080) ));
   let mut wotstore = WotStore::new(
       wotpeers,
       wotrels,
@@ -556,10 +562,10 @@ fn test_wot(){
   assert_eq!(0, metrus);
 
   // add other peer and their trust
-  let peer1 = addpeer_test(&mut wotstore,"peer1".to_string());
-  let peer2 = addpeer_test(&mut wotstore,"peer2".to_string());
-  let peer3 = addpeer_test(&mut wotstore,"peer3".to_string());
-  let peer4 = addpeer_test(&mut wotstore,"peer4".to_string());
+  let peer1 = addpeer_test(&mut wotstore,"peer1".to_string(), init);
+  let peer2 = addpeer_test(&mut wotstore,"peer2".to_string(), init);
+  let peer3 = addpeer_test(&mut wotstore,"peer3".to_string(), init);
+  let peer4 = addpeer_test(&mut wotstore,"peer4".to_string(), init);
   // try update of trust
   addpeer_trust(&me, &peer1, &mut wotstore, 2, 2, None);
   // max peer trust
@@ -615,7 +621,7 @@ fn test_wot(){
   // test add invalid trust fail (no get) - invalid due to wrong signature
 
   // sign me as revoked
-  let revokeme : PeerSign<RSAPeer> = PeerSign::new(&(me), &(me), <u8 as Int>::max_value(), 1).unwrap();
+  let revokeme : PeerSign<T> = PeerSign::new(&(me), &(me), <u8 as Int>::max_value(), 1).unwrap();
   wotstore.add_val(WotKV::Sign(revokeme.clone()) ,stconf);
 
   // test trust

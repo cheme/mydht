@@ -12,7 +12,7 @@ use std::io::Result as IoResult;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
 use std::net::SocketAddr;
-use std::time::Duration;
+use time::Duration;
 use peer::Peer;
 use std::iter;
 use std::sync::{Mutex,Condvar,Arc};

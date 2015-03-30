@@ -17,6 +17,7 @@ use route::Route;
 use peer::Peer;
 use transport::{TransportStream,Transport};
 use time;
+use std::time::Duration as OldDuration;
 use utils::{self,OneResult};
 use msgenc::MsgEnc;
 

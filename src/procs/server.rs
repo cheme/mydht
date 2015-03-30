@@ -19,7 +19,7 @@ use std::sync::mpsc::{Sender,Receiver};
 use std::thread::Thread;
 use query::{QueryConfMsg, QueryRules, QueryMode, QueryPriority, QueryChunk, QueryModeMsg};
 use std::num::{ToPrimitive};
-use std::time::Duration;
+use time::Duration;
 use query;
 use query::{QueryID};
 use utils;
@@ -185,7 +185,7 @@ fn request_handler
         // block until result (proxy mode)
         let result = query.wait_query_result();
         debug!("!! {:?} replying to find with {:?}",rc.0,result);
-        let mess : ProtoMessage<P,V> = ProtoMessage::STORE_NODE(None, result.left().unwrap().cloned().map(|v|DistantEnc(v)));
+        let mess : ProtoMessage<P,V> = ProtoMessage::STORE_NODE(None, result.left().unwrap().map(|v|DistantEnc((*v).clone())));
         send_msg(&mess, None, s,&rc.3);
       },
       // general case as asynch waiting for reply

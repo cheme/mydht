@@ -28,7 +28,8 @@ use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 use std::fs::{File};
 use std::path::Path;
 use std::io::Read;
-use std::time::Duration;
+use time::Duration;
+use std::time::Duration as OldDuration;
 use std::os;
 use std::net::{Ipv4Addr};
 use std::sync::Arc;
@@ -181,7 +182,7 @@ let tcp_transport : Tcp = Tcp {
         DHT::boot_server(Arc:: new((nsp,DummyRules, DummyQueryRules{idcnt:Mutex::new(0)},Json,tcp_transport,None)), Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), Vec::new(), bpeers)
     }).collect();
 
-    std::thread::sleep(Duration::seconds(2));
+    std::thread::sleep(OldDuration::seconds(2));
     // find all node from the first node first node
     let ref fprocs = procs[0];
 
@@ -304,8 +305,8 @@ impl queryif::QueryRules for DummyQueryRules{
       }
  
   }
-  fn asynch_clean(&self) -> Option<Duration>{
-      Some(Duration::seconds(5)) // fast one for testing purpose
+  fn asynch_clean(&self) -> Option<OldDuration>{
+      Some(OldDuration::seconds(5)) // fast one for testing purpose
   }
 
   // TODO add info to get propagation or not of stored value (or new function)
@@ -464,7 +465,7 @@ let tcp_transport : Tcp = Tcp {
 
     // all has started
     for n in result.iter(){
-      std::thread::sleep(Duration::milliseconds(100)); // local get easily stuck
+      std::thread::sleep(OldDuration::milliseconds(100)); // local get easily stuck
       n.1.refresh_closest_peers(1000); // Warn hard coded value.
     };
     // ping established
@@ -512,7 +513,7 @@ let tcp_transport : Tcp = Tcp {
 
     // all has started
     for n in result.iter(){
-      std::thread::sleep(Duration::milliseconds(100)); // local get easily stuck
+      std::thread::sleep(OldDuration::milliseconds(100)); // local get easily stuck
       n.1.refresh_closest_peers(1000); // Warn hard coded value.
     };
     // ping established

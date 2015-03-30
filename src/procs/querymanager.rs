@@ -10,7 +10,8 @@ use query::{self,QueryID, Query};
 use query::cache::{cache_clean,QueryCache};
 use std::sync::{Semaphore,Arc};
 use std::sync::mpsc::{Sender,Receiver};
-use std::time::Duration;
+use time::Duration;
+use std::time::Duration as OldDuration;
 use std::thread::Thread;
 use std::thread;
 use peer::Peer;
@@ -31,7 +32,7 @@ pub fn start
   p : &Sender<PeerMgmtMessage<P,V>>, 
   k : &Sender<KVStoreMgmtMessage<P,V>>,
   mut cn : CN, 
-  cleanjobdelay : Option<Duration>) {
+  cleanjobdelay : Option<OldDuration>) {
   // start clean job if needed
   match cleanjobdelay{
     Some(delay) => {

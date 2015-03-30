@@ -6,6 +6,7 @@ script:
   - rustc --version
   - cargo --version
   - cargo build --verbose
+  - cargo test
   - cargo doc --no-deps
 after_script:
   - mv target/doc doc

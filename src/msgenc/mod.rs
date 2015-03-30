@@ -50,9 +50,13 @@ pub enum ProtoMessage<P : Peer, V : KeyVal> {
 
 #[derive(Debug)]
 /// Choice of an encoding without attachment
+/// TODO evolve to DistantEnc( & V) : use case allow it (serialize run imediatly after), here a
+/// useless clone involved
 pub struct DistantEnc<V : KeyVal> (pub V);
 #[derive(Debug)]
 /// Choice of an encoding with attachment
+/// TODO evolve to DistantEnc( & V) : use case allow it (serialize run imediatly after), here a
+/// useless clone involved
 pub struct DistantEncAtt<V : KeyVal> (pub V);
 
 impl<V : KeyVal>  Encodable for DistantEnc<V>{

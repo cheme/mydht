@@ -16,7 +16,7 @@ use std::io::Read;
 use std::io::SeekFrom;
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::time::Duration;
+use time::Duration;
 use std::thread::Thread;
 use std::num::{ToPrimitive,FromPrimitive};
 use std::num::Int;
