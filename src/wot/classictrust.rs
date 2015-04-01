@@ -1,6 +1,5 @@
 use kvstore::{KeyVal,Key,Attachment};
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
-use super::{TrustedPeer};
 use std::num::Int;
 use std::num::{ToPrimitive};
 use std::iter;
@@ -23,7 +22,7 @@ use super::rsa_openssl::RSAPeer;
 /// classic trust : upper trust are prioritary and you need a number of trust (see rules
 /// treshold) to get promote and trust are capped to their originator trust.
 #[derive(Debug, PartialEq, Eq, Clone,RustcEncodable,RustcDecodable)]
-pub struct ClassicWotTrust<TP : TrustedPeer> {
+pub struct ClassicWotTrust<TP : KeyVal<Key=Vec<u8>>> {
   peerid : <TP as KeyVal>::Key,
   trust  : u8,
   /// associate an origniator trust (`from`) with all its signature level.
@@ -32,7 +31,7 @@ pub struct ClassicWotTrust<TP : TrustedPeer> {
   lastdiscovery : TimeSpecExt,
 }
 
-impl<TP : TrustedPeer> KeyVal for ClassicWotTrust<TP> {
+impl<TP : KeyVal<Key=Vec<u8>>> KeyVal for ClassicWotTrust<TP> {
   // not that good (pkey can contain private and lot a clone... TODO (for now easier this way)
   type Key = <TP as KeyVal>::Key;
   fn get_key(&self) -> <TP as KeyVal>::Key {
@@ -167,7 +166,7 @@ assert_eq!(4, trust.trust);
 
 }
 
-impl<TP : TrustedPeer> WotTrust<TP> for ClassicWotTrust<TP> {
+impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ClassicWotTrust<TP> {
   type Rule = TrustRules;
   #[inline]
   fn trust (&self) -> u8 {
@@ -188,7 +187,7 @@ impl<TP : TrustedPeer> WotTrust<TP> for ClassicWotTrust<TP> {
       // for now just stick to simple imp until stable. (with counter taking acount of bigger so
       calcmap: {
         let s = rules.len();
-        (0..(s)).map(|ix|iter::repeat(0us).take(s - ix).collect()).collect()
+        (0..(s)).map(|ix|vec![0us; s - ix]).collect()
       },
       lastdiscovery: TimeSpecExt(NULL_TIMESPEC),
     }
@@ -206,7 +205,7 @@ impl<TP : TrustedPeer> WotTrust<TP> for ClassicWotTrust<TP> {
       let mut decreasetrust = false;
       let mut changedcache  = false;
       let nblevel = rules.len().to_u8().unwrap();
-      let mut nbtrust : Vec<usize> = iter::repeat(0us).take(rules.len()).collect();
+      let mut nbtrust : Vec<usize> = vec![0us; rules.len()];
       // first updates
       if from_old_trust < nblevel
           && from_old_trust >= 0

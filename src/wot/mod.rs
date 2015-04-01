@@ -10,12 +10,13 @@ use utils::ArcKV;
 use utils::TimeSpecExt;
 
 pub mod rsa_openssl;
+pub mod ecdsapeer;
 pub mod truststore;
 pub mod trustedpeer;
 pub mod classictrust;
 pub mod exptrust;
 
-pub trait WotTrust<P : TrustedPeer> : KeyVal<Key = Vec<u8>> {
+pub trait WotTrust<P : KeyVal<Key = Vec<u8>>> : KeyVal<Key = Vec<u8>> {
   type Rule : Send + 'static;
   fn new(p : &P, rules : &Self::Rule) -> Self;
 

@@ -12,6 +12,7 @@
 #![feature(convert)]
 #![feature(alloc)]
 #![feature(thread_sleep)]
+#![feature(rsawot)]
 
 //! Toy implementation of a filestore using mydht.
 #[macro_use] extern crate log;

@@ -233,6 +233,14 @@ fn random_uuid(hash_size : usize) -> num::BigUint {
    rng.gen_biguint(hash_size)
 }
 
+pub fn random_bytes(size : usize) -> Vec<u8> {
+   let mut rng = thread_rng();
+   let mut bytes = vec![0; size];
+   rng.fill_bytes(&mut bytes[..]);
+   bytes
+}
+
+
 
 // TODO serializable option type for transient fields in struct : like option but serialize to none
 // allways!! aka transiant option
@@ -316,13 +324,34 @@ pub fn sendUnconnectMsg<P : Per, V : KeyVal, T : TransportStream, E : MsgEnc>( p
     }
 }*/
 
-pub fn hash_crypto(f : &mut File, digest : &mut Digest) -> Vec<u8> {
+pub fn hash_buf_crypto(buff : &[u8], digest : &mut Digest) -> Vec<u8> {
   let bsize = digest.block_size();
   let bbytes = ((bsize+7)/8);
   let ressize = digest.output_bits();
   let outbytes = ((ressize+7)/8);
-          error!("{:?}:{:?}", bsize,ressize);
-  let mut tmpvec : Vec<u8> = iter::repeat(0u8).take(bbytes).collect();
+  debug!("{:?}:{:?}", bsize,ressize);
+  let mut tmpvec : Vec<u8> = vec![0; bbytes];
+  let buf = tmpvec.as_mut_slice();
+  let nbiter = buff.len() / bbytes;
+  for i in (0 .. nbiter) {
+    // slice overflow ok??
+    digest.input(&buff[i * bbytes .. (i+1) * bbytes]);
+  };
+//  digest.input(&buf[(nbiter -1)*bbytes .. ]);
+  let mut rvec : Vec<u8> = vec![0; outbytes];
+  let rbuf = rvec.as_mut_slice();
+  digest.result(rbuf);
+  rbuf.to_vec()
+}
+
+
+pub fn hash_file_crypto(f : &mut File, digest : &mut Digest) -> Vec<u8> {
+  let bsize = digest.block_size();
+  let bbytes = ((bsize+7)/8);
+  let ressize = digest.output_bits();
+  let outbytes = ((ressize+7)/8);
+  debug!("{:?}:{:?}", bsize,ressize);
+  let mut tmpvec : Vec<u8> = vec![0; bbytes];
   let buf = tmpvec.as_mut_slice();
   f.seek(SeekFrom::Start(0));
   loop{
@@ -345,11 +374,11 @@ pub fn hash_crypto(f : &mut File, digest : &mut Digest) -> Vec<u8> {
   }
   // reset file reader to start of file
   f.seek(SeekFrom::Start(0));
-  let mut rvec : Vec<u8> = iter::repeat(0u8).take(outbytes).collect();
+  let mut rvec : Vec<u8> = vec![0; outbytes];
   let rbuf = rvec.as_mut_slice();
   digest.result(rbuf);
   //rbuf.to_vec()
-  rbuf.to_owned()
+  rbuf.to_vec()
 }
 
 pub fn hash_openssl(f : &mut File) -> Vec<u8> {
@@ -360,10 +389,10 @@ pub fn hash_openssl(f : &mut File) -> Vec<u8> {
   let ressize = 256;
 //  let outbytes = ((ressize+7)/8);
   let outbytes = 32;
-  let mut tmpvec : Vec<u8> = iter::repeat(0u8).take(bbytes).collect();
+  let mut tmpvec : Vec<u8> = vec![0; bbytes];
   let buf = tmpvec.as_mut_slice();
   f.seek(SeekFrom::Start(0));
-  loop{
+  loop {
   match f.read(buf) {
     Ok(nb) => {
       if nb == bbytes {

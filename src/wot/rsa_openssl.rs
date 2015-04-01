@@ -161,24 +161,20 @@ impl Eq for PKeyExt {}
 
 
 /// This trait allows any keyval having a rsa pkey to implement RSA trust 
-pub trait RSATruster : KeyVal<Key = Vec<u8>> {
+pub trait RSATruster : KeyVal<Key=Vec<u8>> {
   fn get_pkey<'a>(&'a self) -> &'a PKeyExt;
-}
-
-impl<R : RSATruster> Truster for R {
-  type Internal = PKey;
   #[inline]
-  fn content_sign (&self, to_sign : &[u8]) -> Vec<u8> {
+  fn rsa_content_sign (&self, to_sign : &[u8]) -> Vec<u8> {
     debug!("sign content {:?}", to_sign);
     debug!("with key {:?}", self.get_pkey().0);
     let sig = RSAPeer::sign_cont(&(*self.get_pkey().1), to_sign);
     debug!("out sign {:?}", sig);
     sig
   }
-  fn init_content_sign (pk : &PKey, to_sign : &[u8]) -> Vec<u8> {
+  fn rsa_init_content_sign (pk : &PKey, to_sign : &[u8]) -> Vec<u8> {
     RSAPeer::sign_cont(pk, to_sign)
   }
-  fn content_check (&self, tocheckenc : &[u8], sign : &[u8]) -> bool {
+  fn rsa_content_check (&self, tocheckenc : &[u8], sign : &[u8]) -> bool {
     // some issue when signing big content so sign hash512 instead TODO recheck on later version
     debug!("chec content {:?}", tocheckenc);
     debug!("with sign {:?}", sign);
@@ -187,10 +183,32 @@ impl<R : RSATruster> Truster for R {
     digest.write_all(tocheckenc);
     self.get_pkey().1.verify_with_hash(digest.finish().as_slice(), sign, HASH_SIGN)
   }
-  fn key_check (&self) -> bool {
+  fn rsa_key_check (&self) -> bool {
     let mut digest = Hasher::new(HASH_SIGN);
     digest.write_all(self.get_pkey().0.as_slice());
     self.get_key() == digest.finish()
+  }
+
+
+}
+
+
+//impl<R : RSATruster> Truster for TraitRSATruster<R> {
+/// boilerplate implement, to avoid conflict implementation over traits
+impl Truster for RSAPeer {
+  type Internal = PKey;
+  #[inline]
+  fn content_sign (&self, to_sign : &[u8]) -> Vec<u8> {
+    self.rsa_content_sign(to_sign)
+  }
+  fn init_content_sign (pk : &PKey, to_sign : &[u8]) -> Vec<u8> {
+    <Self as RSATruster>::rsa_init_content_sign(pk, to_sign)
+  }
+  fn content_check (&self, tocheckenc : &[u8], sign : &[u8]) -> bool {
+    self.rsa_content_check(tocheckenc, sign)
+  }
+  fn key_check (&self) -> bool {
+    self.rsa_key_check()
   }
 
 }

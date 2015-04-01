@@ -23,7 +23,7 @@ use super::classictrust::TrustRules;
 
 /// Experimental wot trust
 #[derive(Debug, PartialEq, Eq, Clone,RustcEncodable,RustcDecodable)]
-pub struct ExpWotTrust<TP : TrustedPeer> {
+pub struct ExpWotTrust<TP : KeyVal<Key = Vec<u8>>> {
   peerid : <TP as KeyVal>::Key,
   trust  : u8,
   /// associate a trust level with the current number of trust added for it indexed by their
@@ -36,7 +36,7 @@ pub struct ExpWotTrust<TP : TrustedPeer> {
 }
 
 
-impl<TP : TrustedPeer> KeyVal for ExpWotTrust<TP> {
+impl<TP : KeyVal<Key=Vec<u8>>> KeyVal for ExpWotTrust<TP> {
   // not that good (pkey can contain private and lot a clone... TODO (for now easier this way)
   type Key = <TP as KeyVal>::Key;
   fn get_key(&self) -> <TP as KeyVal>::Key {
@@ -142,7 +142,7 @@ assert_eq!(4, trust.trust);
 }
 
 
-impl<TP : TrustedPeer> WotTrust<TP> for ExpWotTrust<TP> {
+impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ExpWotTrust<TP> {
   type Rule = TrustRules;
   #[inline]
   fn trust (&self) -> u8 {
@@ -165,7 +165,7 @@ impl<TP : TrustedPeer> WotTrust<TP> for ExpWotTrust<TP> {
       trust  : <u8 as Int>::max_value(),
       // TODO transfor internal vec to Int/Bigint being counter to every states
       // for now just stick to simple imp until stable. (with counter taking acount of bigger so
-      calcmap: (0..(rules.len())).map(|ix|iter::repeat(0us).take(ix+1).collect()).collect(),
+      calcmap: (0..(rules.len())).map(|ix|vec![0us; ix+1]).collect(),
       lastdiscovery: TimeSpecExt(NULL_TIMESPEC),
     }
   }
@@ -180,7 +180,7 @@ impl<TP : TrustedPeer> WotTrust<TP> for ExpWotTrust<TP> {
       let mut new_trust     = <u8 as Int>::max_value();
       let mut decreasetrust = false;
       let mut changedcache  = false;
-      let mut nbtrust : Vec<usize> = iter::repeat(0us).take(rules.len()).collect();
+      let mut nbtrust : Vec<usize> = vec![0us; rules.len()];
       let mut cur_level     = 0;
       for count in self.calcmap.iter_mut() {
         if cur_level == cap_from_old_trust {

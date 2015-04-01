@@ -59,7 +59,7 @@ impl Transport for Udp {
       self.sync.notify_all();
     }
     let buffsize = self.buffsize;
-    let mut tmpvec : Vec<u8> = iter::repeat(0u8).take(buffsize).collect();
+    let mut tmpvec : Vec<u8> = vec![0; buffsize];
     let buf = tmpvec.as_mut_slice();
     loop {
       match socket.recv_from(buf) {

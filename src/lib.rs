@@ -1,4 +1,5 @@
 #![feature(int_uint)]
+#![feature(custom_derive)]
 #![feature(core)]
 #![feature(io)]
 #![feature(collections)]

@@ -98,7 +98,7 @@ impl TransportStream for TcpStream {
       try!(self.write_u32::<LittleEndian>(BUFF_SIZE.to_u32().unwrap()));
       try!(self.write_u32::<LittleEndian>(lfrsize.to_u32().unwrap()));
       f.seek(SeekFrom::Start(0));
-      let mut tmpvec : Vec<u8> = iter::repeat(0u8).take(BUFF_SIZE).collect();
+      let mut tmpvec : Vec<u8> = vec![0; BUFF_SIZE];
       let buf = tmpvec.as_mut_slice();
       for i in 0..(nbframe + 1) {
         debug!("fread : {:?}", i);
@@ -136,7 +136,7 @@ impl TransportStream for TcpStream {
     //self.read_le_u32().and_then(|l|{
       debug!("rec len {:?}", l);
       // TODO find better and right way to allocate null length vec
-     let mut r : Vec<u8> = iter::repeat(0u8).take(l).collect();
+     let mut r : Vec<u8> = vec![0;l];
      let o = {let rbuf = r.as_mut_slice();
       // TODO compare size receive in res of read (to avoid bad errors...)
       // + TODO replace timeout by size max
@@ -167,7 +167,7 @@ fn read_to_tmp(s : &mut TcpStream)-> IoResult<File> {
   debug!("nwbfr{:?}",nbframe);
   debug!("frsiz{:?}",lfrsize);
   let mut f = utils::create_tmp_file();
-  let mut tmpvec : Vec<u8> = iter::repeat(0u8).take(bsize).collect();
+  let mut tmpvec : Vec<u8> = vec![0; bsize];
   let buf = tmpvec.as_mut_slice();
   for i in 0..(nbframe + 1) {
     match s.read(buf) {
