@@ -51,7 +51,8 @@ impl Transport for Tcp {
             Err(e) => {error!("Socket acceptor error : {:?}", e);}
             Ok(mut s)  => {
               debug!("Initiating socket exchange : ");
-              debug!("  - From {:?}", s.socket_addr());
+              debug!("  - From {:?}", s.local_addr());
+              debug!("  - From {:?}", s.peer_addr());
               debug!("  - With {:?}", s.peer_addr());
               s.set_keepalive (self.streamtimeout.num_seconds().to_u32());
 //              s.set_timeout (self.streamtimeout.num_milliseconds().to_u64()); 
@@ -180,7 +181,6 @@ fn read_to_tmp(s : &mut TcpStream)-> IoResult<File> {
             return Err(IoError::new(
               IoErrorKind::Other,
               "mismatch file size receive calc for tcp transport",
-              None,
             ));
           };
         // truncate buff

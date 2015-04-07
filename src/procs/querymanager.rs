@@ -12,7 +12,6 @@ use std::sync::{Semaphore,Arc};
 use std::sync::mpsc::{Sender,Receiver};
 use time::Duration;
 use std::time::Duration as OldDuration;
-use std::thread::Thread;
 use std::thread;
 use peer::Peer;
 use kvstore::{KeyVal,StoragePriority};
@@ -38,7 +37,7 @@ pub fn start
     Some(delay) => {
       let delaysp = delay.clone();
       let sp = s.clone();
-      Thread::spawn(move || {
+      thread::spawn(move || {
         loop {
           thread::sleep(delaysp);
           info!("running scheduled clean");

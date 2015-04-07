@@ -10,7 +10,7 @@ use std::sync::{Arc,Semaphore,Condvar,Mutex};
 use query::{self,QueryRules,QueryModeMsg,LastSent,QueryConfMsg};
 use route::Route;
 use std::sync::mpsc::channel;
-use std::thread::Thread;
+use std::thread;
 use std::num::{ToPrimitive};
 use transport::{Transport,TransportStream};
 use peer::Peer;
@@ -191,7 +191,7 @@ pub fn start
                 let ssp = rp.0.clone();
                 let srp = rp.2.clone();
                 // TODO remove this spawn even if dealing with mutex (costy?? )
-                Thread::spawn(move || {
+                thread::spawn(move || {
                   println!("!!!!found not sent unlock semaphore");
                   if (r != None) {
                     if querysp.set_query_result(Either::Left(r),&srp) {
@@ -339,7 +339,7 @@ fn send_nonconnected
   let rpsp = rp.clone();
   let rcsp = rc.clone();
   let psp = p.clone();
-  Thread::spawn (move || {client::start::<P,V,R,Q,E,TT>(psp, None, None, rcsp, rpsp, false, None, Some(mess),false)});
+  thread::spawn (move || {client::start::<P,V,R,Q,E,TT>(psp, None, None, rcsp, rpsp, false, None, Some(mess),false)});
   true
   },
  }
@@ -371,7 +371,7 @@ fn send_nonconnected_ping
   let rpsp = rp.clone();
   let rcsp = rc.clone();
   let psp = p.clone();
-  Thread::spawn (move || {client::start::<P,V,R,Q,E,TT>(psp, None, None, rcsp, rpsp, true, None, None,false)});
+  thread::spawn (move || {client::start::<P,V,R,Q,E,TT>(psp, None, None, rcsp, rpsp, true, None, None,false)});
   true
   },
  }
@@ -425,7 +425,7 @@ let (upd, s) = match route.get_node(&p.get_key()) {
   let rcsp = rc.clone();
   let psp = p.clone();
   debug!("#####initiating client process from {:?} to {:?} with ping {:?}",rc.0.get_key(), p.get_key(),ping);
-  Thread::spawn (move || {client::start::<P,V,R,Q,E,TT>(psp,Some(tcl3), Some(rcl), rcsp, rpsp, ping, pingres, None, true)});
+  thread::spawn (move || {client::start::<P,V,R,Q,E,TT>(psp,Some(tcl3), Some(rcl), rcsp, rpsp, ping, pingres, None, true)});
      },
      None => {
        // we found an existing channel with seemlessly open connection

@@ -7,7 +7,6 @@
 #![feature(fs_walk)]
 #![feature(path_ext)]
 #![feature(net)]
-#![feature(os)]
 #![feature(tcp)]
 #![feature(convert)]
 #![feature(alloc)]
@@ -22,7 +21,7 @@ extern crate rustc_serialize;
 extern crate uuid;
 extern crate time;
 extern crate rand;
-use std::os;
+use std::env;
 use std::io;
 use std::io::Write;
 use std::io::Read;
@@ -37,7 +36,7 @@ use std::io::stdin;
 use std::time::Duration as OldDuration;
 use time::Duration;
 use mydht::Bincode;
-use mydht::Bencode;
+//use mydht::Bencode;
 use mydht::Json;
 use std::sync::mpsc::{Sender,Receiver};
 
@@ -99,7 +98,7 @@ pub enum TransportDef {
 /// Possible encodings 
 pub enum MsgEncDef {
   Bincode,
-  Bencode,
+  //Bencode,
   Json,
 }
 
@@ -127,10 +126,10 @@ macro_rules! expand_msgenc_def(( $t:ident, $p:ident, $ftn:expr ) => (
         let $p = Bincode;
         $ftn;
       },
-      &MsgEncDef::Bencode => {
+/*      &MsgEncDef::Bencode => {
         let $p = Bencode;
         $ftn;
-      },
+      },*/
       &MsgEncDef::Json => {
         let $p = Json;
         $ftn;
@@ -145,7 +144,7 @@ fn main() {
     let mut bootPath = "fsbootstrap.json".to_string();
     enum ParamState {Normal, Conf, Boot}
     let mut state = ParamState::Normal;
-    for arg in os::args().into_iter() {
+    for arg in env::args() {
         match arg.as_slice() {
             "-h" => showHelp(),
             "--help" => showHelp(),

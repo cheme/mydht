@@ -278,7 +278,7 @@ pub use query::cache::{CachePolicy};
 pub use kvstore::{StoragePriority, Attachment};
 // TODO move msgenc to mod dhtimpl
 pub use msgenc::json::{Json};
-pub use msgenc::bencode::{Bencode};
+//pub use msgenc::bencode::{Bencode};
 pub use msgenc::bincode::{Bincode};
 //pub use msgenc::bencode::{Bencode_bt_dht};
 pub use transport::tcp::{Tcp};

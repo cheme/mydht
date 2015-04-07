@@ -12,8 +12,8 @@ use query::{QueryID,QueryConfMsg};
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 
 pub mod json;
-pub mod bencode;
 pub mod bincode;
+//pub mod bencode;
 
 
 /// Trait for message encoding between peers.

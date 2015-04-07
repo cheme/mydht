@@ -189,7 +189,8 @@ mod test {
 
 // TODO a clean nodeK, with better serialize (use as_vec) , but here good for testing as key is not
 // same type as id
-type NodeK = (Node,BigUint);
+#[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
+pub struct NodeK(Node,BigUint);
 
 impl KeyVal for NodeK {
     type Key = NodeID;
@@ -275,7 +276,7 @@ fn initpeer() -> Arc<NodeK> {
   let sid = id.to_string();
   let rid = sid.to_peer_key();
   assert!(rid == id);
-  Arc::new((Node{nodeid:sid, address: SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), 8080))},id))
+  Arc::new(NodeK(Node{nodeid:sid, address: SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), 8080))},id))
 }
 
 

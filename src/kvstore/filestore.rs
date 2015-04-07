@@ -50,7 +50,6 @@ impl<V : FileKeyVal> FileStore<V> {
       return Err(IoError::new (
         IoErrorKind::Other,
         "Filestore is not a directory",
-        None,
       ))
     }
 

@@ -11,7 +11,8 @@ use self::mesgs::{PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage};
 use std::str::FromStr;
 use std::sync::{Arc,Semaphore,Mutex,Condvar};
 use std::sync::mpsc::channel;
-use std::thread::{Thread,JoinGuard};
+use std::thread::{JoinGuard};
+use std::thread;
 use std::num::{ToPrimitive,Int};
 use route::Route;
 use peer::Peer;
@@ -222,7 +223,7 @@ let cleantkstor = tkvstore.clone();
 
 // Query manager is allways start TODO a parameter for not starting it (if running dht in full
 // proxy mode for instance)
-Thread::spawn (move ||{
+thread::spawn (move ||{
   querymanager::start(&rquery, &cleantquery, &cleantpeer, &cleantkstor, querycache, cleandelay);
 });
 let sem = Arc::new(Semaphore::new(-1)); // wait end of two process from shutdown
@@ -233,7 +234,7 @@ let tpeer3 = tpeer.clone();
 let rcsp = rc.clone();
 let rpsp = rp.clone();
 let semsp = sem.clone();
-Thread::spawn (move ||{
+thread::spawn (move ||{
   peermanager::start::<_,_,_,_,_,_,TT> (rcsp, route, &rpeer,rpsp, semsp)
 });
 
@@ -241,7 +242,7 @@ Thread::spawn (move ||{
 let rcst = rc.clone();
 let rpst = rp.clone();
 let semsp2 = sem.clone();
-Thread::spawn (move ||{
+thread::spawn (move ||{
   kvmanager::start (rcst, kvst, &rkvstore,rpst, semsp2);
 });
 
@@ -250,7 +251,7 @@ let tpeer2 = tpeer3.clone();
 let tpeer4 = tpeer3.clone();
 let rcsp2 = rc.clone();
 let rpsp2 = rp.clone();
-Thread::spawn (move ||{
+thread::spawn (move ||{
   server::servloop::<_,_,_,_,_,TT>(rcsp2, rpsp2)
 });
 

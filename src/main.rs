@@ -7,7 +7,6 @@
 #![feature(fs_walk)]
 #![feature(path_ext)]
 #![feature(net)]
-#![feature(os)]
 #![feature(tcp)]
 #![feature(convert)]
 #![feature(alloc)]
@@ -30,7 +29,7 @@ use std::path::Path;
 use std::io::Read;
 use time::Duration;
 use std::time::Duration as OldDuration;
-use std::os;
+use std::env;
 use std::net::{Ipv4Addr};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -44,7 +43,6 @@ use mydht::{QueryConf,QueryPriority,QueryMode,QueryChunk};
 use mydht::{CachePolicy};
 use mydht::queryif;
 use mydht::Json;
-use mydht::Bencode;
 use mydht::Bincode;
 use mydht::Tcp;
 use mydht::Udp;
@@ -70,7 +68,7 @@ fn main() {
     let mut bootPath = "bootstrap.conf".to_string();
     enum ParamState {Normal, Conf, Boot}
     let mut state = ParamState::Normal;
-    for arg in os::args().into_iter() {
+    for arg in env::args() {
         match arg.as_slice() {
             "-h" => showHelp(),
             "--help" => showHelp(),

@@ -16,7 +16,7 @@ use transport::TransportStream;
 use transport::Transport;
 use std::sync::{Mutex,Semaphore,Arc,Condvar};
 use std::sync::mpsc::{Sender,Receiver};
-use std::thread::Thread;
+use std::thread;
 use query::{QueryConfMsg, QueryRules, QueryMode, QueryPriority, QueryChunk, QueryModeMsg};
 use std::num::{ToPrimitive};
 use time::Duration;
@@ -72,7 +72,7 @@ pub fn servloop
     let spserv = |s, co| {
         let pm2 = rp.clone();
         let rcsp = rc.clone();
-        Thread::spawn (move || {
+        thread::spawn (move || {
           request_handler::<_,_,_,_,_,T>(s, &rcsp, &pm2, &co)
         });
     };
@@ -281,7 +281,7 @@ fn request_handler
               // TODO switch thread spawn to continuation style(after ping we send on channel
               // only : a thread for that is to much (transform one result to allow
               // continuation style exec
-              Thread::spawn(move ||{
+              thread::spawn(move ||{
                 let sync = Arc::new((Mutex::new(false),Condvar::new()));
                 // spawn ping node first (= checking)
                 debug!("start ping on store node reception");

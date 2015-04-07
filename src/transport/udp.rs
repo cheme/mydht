@@ -107,7 +107,6 @@ impl TransportStream for UdpStream {
     Err(IoError::new(
       IoErrorKind::Other,
       "Udp transport is a non connected transport which cannot read from its stream",
-      None,
     ))
   }
 
