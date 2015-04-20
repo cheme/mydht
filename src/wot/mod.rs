@@ -39,10 +39,10 @@ pub trait TrustedPeer : Peer<Key = Vec<u8>> + TrustedVal<Self,PeerInfoRel> + Tru
 
 impl Key for Vec<u8> {}
 
-
 pub trait TrustedVal<T : Truster, R : TrustRel> : KeyVal {
-  type SignedContent : Encodable + 'static ;
-  fn get_sign_content<'a> (&'a self) -> Self::SignedContent;
+//  type SignedContent : Encodable + 'static ;
+//  fn get_sign_content<'a> (&'a self) -> Self::SignedContent;
+  fn get_sign_content (& self) -> Vec<u8>;
   fn get_sign<'a> (&'a self) -> &'a Vec<u8>;
   fn get_from<'a> (&'a self) -> &'a Vec<u8>;
   /// return identifier of the kind of trust default to empty Vec for 
@@ -58,12 +58,14 @@ pub trait TrustedVal<T : Truster, R : TrustRel> : KeyVal {
     }
   }
 
-  fn sign_val (from : &T, about : &R, cont : &Self::SignedContent) -> Vec<u8> {
+  //fn sign_val<EC : Encodable> (from : &T, about : &R, cont : &EC) -> Vec<u8> {
+  fn sign_val (from : &T, about : &R, cont : &Vec<u8>) -> Vec<u8> {
     from.content_sign(bincode::encode(&(about.get_rep(),cont), bincode::SizeLimit::Infinite).unwrap().as_slice())
   }
 
   /// same as sign_val but for technical usage when Trustor is not yet totally initiated
-  fn init_sign_val (from : &T::Internal, about : &[u8], cont : &Self::SignedContent) -> Vec<u8> {
+  fn init_sign_val (from : &T::Internal, about : &[u8], cont : &Vec<u8>) -> Vec<u8> {
+  //fn init_sign_val<EC : Encodable> (from : &T::Internal, about : &[u8], cont : &EC) -> Vec<u8> {
     <T as Truster>::init_content_sign(from, bincode::encode(&(about,cont), bincode::SizeLimit::Infinite).unwrap().as_slice())
   }
  
@@ -126,10 +128,11 @@ impl TrustRel for PeerTrustRel {
 
 
 
-impl<'a, T : Truster, R : TrustRel, KV : TrustedVal<T,R>> TrustedVal<T,R> for ArcKV<KV> {
-  type SignedContent = <KV as TrustedVal<T,R>>::SignedContent;
+impl<T : Truster, R : TrustRel, KV : TrustedVal<T,R>> TrustedVal<T,R> for ArcKV<KV> {
+  //type SignedContent = <KV as TrustedVal<T,R>>::SignedContent;
   #[inline]
-  fn get_sign_content<'b> (&'b self) -> <KV as TrustedVal<T,R>>::SignedContent {
+  //fn get_sign_content<'b> (&'b self) -> <KV as TrustedVal<T,R>>::SignedContent {
+  fn get_sign_content (& self) -> Vec<u8> {
     self.0.get_sign_content()
   }
   #[inline]

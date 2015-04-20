@@ -186,14 +186,14 @@ pub struct SocketAddrExt(pub SocketAddr);
 
 impl Encodable for SocketAddrExt {
   fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-    s.emit_str(self.0.to_string().as_slice())
+    s.emit_str(&self.0.to_string()[..])
   }
 }
 
 impl Decodable for SocketAddrExt {
   fn decode<D:Decoder> (d : &mut D) -> Result<SocketAddrExt, D::Error> {
     d.read_str().map(|ad| {
-      SocketAddrExt(FromStr::from_str(ad.as_slice()).unwrap())
+      SocketAddrExt(FromStr::from_str(&ad[..]).unwrap())
     })
   }
 }
@@ -217,7 +217,7 @@ pub fn create_tmp_file() -> File {
   let mytmpdirpath = tmpdir.join(Path::new("./mydht"));
   fs::create_dir_all(&mytmpdirpath);
   let fname = random_uuid(64).to_string();
-  let fpath = mytmpdirpath.join(Path::new(fname.as_slice()));
+  let fpath = mytmpdirpath.join(Path::new(&fname[..]));
   debug!("Creating tmp file : {:?}",fpath);
   File::create(&fpath).unwrap()
 }
@@ -298,7 +298,7 @@ pub fn send_msg<P : Peer, V : KeyVal, T : TransportStream, E : MsgEnc>(m : &Prot
   debug!("sent {:?}",omess);
   match omess {
     Some(mess) => {
-      t.streamwrite(mess.as_slice(), a).is_ok()
+      t.streamwrite(&mess[..], a).is_ok()
     }
     None => false,
   }
@@ -309,7 +309,7 @@ pub fn receive_msg<P : Peer, V : KeyVal, T : TransportStream, E : MsgEnc>(t : &m
   match rs {
     Ok((m, at)) => {
       debug!("recv {:?}",m);
-      let pm : Option<ProtoMessage<P,V>> = e.decode(m.as_slice());
+      let pm : Option<ProtoMessage<P,V>> = e.decode(&m[..]);
       pm.map(|r|(r, at))
     },
     Err(_) => None, // TODO check if an attachment

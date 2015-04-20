@@ -57,7 +57,7 @@ impl<V : FileKeyVal> FileStore<V> {
     let mut jsonCont = Vec::new();
     fpaths.read_to_end(&mut jsonCont);
     // if fail to load : just reset (currently only use to fasten init)
-    let mut bpath : BTreeSet<PathBuf> = bincode::decode(jsonCont.as_slice()).unwrap_or(BTreeSet::new()); 
+    let mut bpath : BTreeSet<PathBuf> = bincode::decode(&jsonCont[..]).unwrap_or(BTreeSet::new()); 
 
     // add ref to KVStore
     if (fillref) {
@@ -93,7 +93,7 @@ impl<V : FileKeyVal> KVStore<V> for FileStore<V> {
     if local {
       let path = v.get_file_ref().clone();
       if utils::is_in_tmp_dir(&(*path)) {
-        let newpath = self.repo.join(v.name().as_slice());
+        let newpath = self.repo.join(&v.name()[..]);
         debug!("Moving file {:?} into filestore : {:?}", &path, newpath);
         let r = hard_link(&path, &newpath);
         let r2 = match r {
@@ -151,7 +151,7 @@ impl<V : FileKeyVal> KVStore<V> for FileStore<V> {
       confFile.set_len(0);
       info!("writing paths cache for filestore : {:?}", self.paths);
       // write new content
-      confFile.write_all(bincode::encode(&self.paths, bincode::SizeLimit::Infinite).unwrap().as_slice()).is_ok()
+      confFile.write_all(&bincode::encode(&self.paths, bincode::SizeLimit::Infinite).unwrap()[..]).is_ok()
     } else {
       false
     };

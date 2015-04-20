@@ -165,7 +165,7 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ExpWotTrust<TP> {
       trust  : <u8 as Int>::max_value(),
       // TODO transfor internal vec to Int/Bigint being counter to every states
       // for now just stick to simple imp until stable. (with counter taking acount of bigger so
-      calcmap: (0..(rules.len())).map(|ix|vec![0us; ix+1]).collect(),
+      calcmap: (0..(rules.len())).map(|ix|vec![0usize; ix+1]).collect(),
       lastdiscovery: TimeSpecExt(NULL_TIMESPEC),
     }
   }
@@ -180,7 +180,7 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ExpWotTrust<TP> {
       let mut new_trust     = <u8 as Int>::max_value();
       let mut decreasetrust = false;
       let mut changedcache  = false;
-      let mut nbtrust : Vec<usize> = vec![0us; rules.len()];
+      let mut nbtrust : Vec<usize> = vec![0usize; rules.len()];
       let mut cur_level     = 0;
       for count in self.calcmap.iter_mut() {
         if cur_level == cap_from_old_trust {

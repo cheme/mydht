@@ -4,6 +4,7 @@
 
 extern crate crypto;
 extern crate time;
+extern crate bincode;
 
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 use rustc_serialize::hex::{ToHex,FromHex};
@@ -139,13 +140,15 @@ impl ECDSATruster for ECDSAPeer {
 /// self signed implementation
 /// TODO factorize with RSAPeer(a BaseTrustedPeer generic over trusted impl and key type)
 impl<'a> TrustedVal<ECDSAPeer, PeerInfoRel> for ECDSAPeer {
-  type SignedContent = TrustedPeerToSignEnc<'a>;
-  fn get_sign_content<'b> (&'b self) -> TrustedPeerToSignEnc<'b> {
-    TrustedPeerToSignEnc {
+  // type SignedContent = TrustedPeerToSignEnc<'a>;
+  fn get_sign_content (& self) -> Vec<u8> {
+    bincode::encode(
+    & TrustedPeerToSignEnc {
       version : 0,
       name : &self.name,
       date : &self.date,
     }
+, bincode::SizeLimit::Infinite).unwrap()
   }
   #[inline]
   fn get_sign<'b> (&'b self) -> &'b Vec<u8> {
@@ -225,7 +228,11 @@ impl ECDSAPeer {
         date : &now,
       };
       debug!("in create info : {:?}", tosign);
-      <ECDSAPeer as TrustedVal<ECDSAPeer,PeerInfoRel>>::init_sign_val(&private, PeerInfoRel.get_rep().as_slice(), tosign)
+      <ECDSAPeer as TrustedVal<ECDSAPeer,PeerInfoRel>>::init_sign_val(&private, PeerInfoRel.get_rep().as_slice(), 
+      & bincode::encode(
+      &tosign
+, bincode::SizeLimit::Infinite).unwrap()
+      )
     };
  
     ECDSAPeer {
@@ -252,7 +259,11 @@ impl ECDSAPeer {
         date : &now,
       };
       debug!("in update info : {:?}", tosign);
-      <ECDSAPeer as TrustedVal<ECDSAPeer,PeerInfoRel>>::init_sign_val(pk, PeerInfoRel.get_rep().as_slice(), tosign)
+      <ECDSAPeer as TrustedVal<ECDSAPeer,PeerInfoRel>>::init_sign_val(pk, PeerInfoRel.get_rep().as_slice(), 
+      & bincode::encode(
+      tosign
+, bincode::SizeLimit::Infinite).unwrap()
+      )
     });
 
     debug!("with key {:?}", &self.publickey);

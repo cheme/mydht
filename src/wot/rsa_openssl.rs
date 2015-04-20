@@ -4,6 +4,7 @@
 
 extern crate openssl;
 extern crate time;
+extern crate bincode;
 
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 use rustc_serialize::hex::{ToHex,FromHex};
@@ -139,9 +140,9 @@ impl Decodable for PKeyExt {
       });
       publickey.and_then(move |puk| privatekey.map (move |prk| {
         let mut res = PKey::new();
-        res.load_pub(puk.as_slice());
+        res.load_pub(&puk[..]);
         if prk.len() > 0 {
-          res.load_priv(prk.as_slice());
+          res.load_priv(&prk[..]);
         }
         PKeyExt(puk, Arc::new(res))
       }))
@@ -181,11 +182,11 @@ pub trait RSATruster : KeyVal<Key=Vec<u8>> {
     debug!("with key {:?}", self.get_pkey().0);
     let mut digest = Hasher::new(HASH_SIGN);
     digest.write_all(tocheckenc);
-    self.get_pkey().1.verify_with_hash(digest.finish().as_slice(), sign, HASH_SIGN)
+    self.get_pkey().1.verify_with_hash(&digest.finish()[..], sign, HASH_SIGN)
   }
   fn rsa_key_check (&self) -> bool {
     let mut digest = Hasher::new(HASH_SIGN);
-    digest.write_all(self.get_pkey().0.as_slice());
+    digest.write_all(&self.get_pkey().0[..]);
     self.get_key() == digest.finish()
   }
 
@@ -220,14 +221,18 @@ impl RSATruster for RSAPeer {
 }
 
 /// self signed implementation
-impl<'a> TrustedVal<RSAPeer, PeerInfoRel> for RSAPeer {
-  type SignedContent = TrustedPeerToSignEnc<'a>;
-  fn get_sign_content<'b> (&'b self) -> TrustedPeerToSignEnc<'b> {
-    TrustedPeerToSignEnc {
+impl<'a> TrustedVal<RSAPeer, PeerInfoRel> for RSAPeer
+{
+//  type SignedContent = TrustedPeerToSignEnc<'a>;
+  //fn get_sign_content<'b> (&'b self) -> TrustedPeerToSignEnc<'b> {
+  fn get_sign_content (& self) -> Vec<u8> {
+    bincode::encode (
+    & TrustedPeerToSignEnc {
       version : 0,
       name : &self.name,
       date : &self.date,
     }
+, bincode::SizeLimit::Infinite).unwrap()
   }
   #[inline]
   fn get_sign<'b> (&'b self) -> &'b Vec<u8> {
@@ -251,7 +256,7 @@ impl RSAPeer {
   fn sign_cont(pkey : &PKey, to_sign : &[u8]) -> Vec<u8> {
     let mut digest = Hasher::new(HASH_SIGN);
     digest.write_all(to_sign);
-    pkey.sign_with_hash(digest.finish().as_slice(), HASH_SIGN)
+    pkey.sign_with_hash(&digest.finish()[..], HASH_SIGN)
   }
 
   fn to_trustedpeer_tosign<'a>(&'a self) -> TrustedPeerToSignEnc<'a> {
@@ -278,7 +283,7 @@ impl RSAPeer {
   fn from_sendablepeer(data : SendablePeerDec) -> RSAPeer {
     let now = TimeSpecExt(time::get_time());
     let mut pkey = PKey::new();
-    pkey.load_pub(data.publickey.as_slice());
+    pkey.load_pub(&data.publickey[..]);
     RSAPeer {
       key : data.key,
       publickey : PKeyExt(data.publickey, Arc::new(pkey)),
@@ -300,7 +305,7 @@ impl RSAPeer {
     let public  = pkey.save_pub();
 
     let mut digest = Hasher::new(HASH_SIGN);
-    digest.write_all(public.as_slice());
+    digest.write_all(&public[..]);
     let key = digest.finish();
 
     let now = TimeSpecExt(time::get_time());
@@ -311,7 +316,11 @@ impl RSAPeer {
         date : &now,
       };
       debug!("in create info : {:?}", tosign);
-      <RSAPeer as TrustedVal<RSAPeer,PeerInfoRel>>::init_sign_val(&pkey, PeerInfoRel.get_rep().as_slice(), tosign)
+      <RSAPeer as TrustedVal<RSAPeer,PeerInfoRel>>::init_sign_val(&pkey, &PeerInfoRel.get_rep()[..], 
+      & bincode::encode(
+      & tosign
+, bincode::SizeLimit::Infinite).unwrap()
+      )
     };
  
     RSAPeer {
@@ -340,7 +349,11 @@ impl RSAPeer {
         date : &now,
       };
       debug!("in update info : {:?}", tosign);
-      <RSAPeer as TrustedVal<RSAPeer,PeerInfoRel>>::init_sign_val(&pkey, PeerInfoRel.get_rep().as_slice(), tosign)
+      <RSAPeer as TrustedVal<RSAPeer,PeerInfoRel>>::init_sign_val(&pkey, &PeerInfoRel.get_rep()[..], 
+      &bincode::encode(&
+      tosign
+, bincode::SizeLimit::Infinite).unwrap()
+      )
     };
 
     debug!("with key {:?}", &self.publickey.0);

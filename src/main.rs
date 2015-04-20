@@ -69,7 +69,7 @@ fn main() {
     enum ParamState {Normal, Conf, Boot}
     let mut state = ParamState::Normal;
     for arg in env::args() {
-        match arg.as_slice() {
+        match &arg[..] {
             "-h" => showHelp(),
             "--help" => showHelp(),
             "-C" => state = ParamState::Conf,
@@ -93,8 +93,8 @@ fn main() {
 
     // no mgmt of io error (panic cf unwrap) when reading conf
     let mut jsonCont = String::new();
-    File::open(&Path::new(confPath.as_slice())).unwrap().read_to_string(&mut jsonCont).unwrap(); 
-    let mynode : Node = json::decode(jsonCont.as_slice()).unwrap();
+    File::open(&Path::new(&confPath[..])).unwrap().read_to_string(&mut jsonCont).unwrap(); 
+    let mynode : Node = json::decode(&jsonCont[..]).unwrap();
 
 
 let tcp_transport : Tcp = Tcp {
@@ -110,8 +110,8 @@ let tcp_transport : Tcp = Tcp {
     };*/
     // getting bootstrap peers
     let mut jsonBCont = String::new();
-    File::open(&Path::new(bootPath.as_slice())).unwrap().read_to_string(&mut jsonBCont).unwrap(); 
-    let tmpbootNodes : Vec<Node>  = json::decode(jsonBCont.as_slice()).unwrap();
+    File::open(&Path::new(&bootPath[..])).unwrap().read_to_string(&mut jsonBCont).unwrap(); 
+    let tmpbootNodes : Vec<Node>  = json::decode(&jsonBCont[..]).unwrap();
     let bootNodes : Vec<Arc<Node>> = tmpbootNodes.into_iter().map(|p|Arc::new(p)).collect();
     let rc : RunningContext<Node, DummyKeyVal, DummyRules, DummyQueryRules, Json, Tcp> = Arc::new((Arc::new(mynode),DummyRules, DummyQueryRules{idcnt:Mutex::new(0)},Json,tcp_transport,None));
  
@@ -162,7 +162,7 @@ fn peerConnectScenario (queryconf : QueryConf, startPort: u16, nbpeer : u16, kno
 
     let mut r : Vec<u16> = (startPort .. startPort+nbpeer).collect();
     let nodes : Vec<Node> = r.iter().map(
-      |i| Node {nodeid: "dummyID".to_string() + (i.to_string().as_slice()), address : SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), *i))}
+      |i| Node {nodeid: "dummyID".to_string() + (&i.to_string()[..]), address : SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), *i))}
     ).collect();
     let mut rng = thread_rng();
     let procs : Vec<DHT<Node,DummyKeyVal,DummyRules,DummyQueryRules,Json,Tcp>> = nodes.iter().map(|n|{
@@ -273,7 +273,7 @@ impl queryif::QueryRules for DummyQueryRules{
       let s = rng.gen_range(0,65555);
       let mut i = self.idcnt.lock().unwrap();
       *i += 1;
-      let r = "query ".to_string() + s.to_string().as_slice() + "_" + (*i).to_string().as_slice();
+      let r = "query ".to_string() + &s.to_string()[..] + "_" + &(*i).to_string()[..];
       println!("############### {}" , r);
       r
   }
@@ -441,7 +441,7 @@ fn initpeers<R : PeerMgmtRules<Node, DummyKeyVal> + Clone> (startPort : u16, nbp
     let mut r : Vec<usize> = (0..nbpeer).collect();
     let nodes : Vec<Node> = r.iter().map(
       |j| {
-          Node {nodeid: "NodeID".to_string() + ((*j + 1).to_string().as_slice()), address : SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), startPort + (*j).to_u16().unwrap()))}
+          Node {nodeid: "NodeID".to_string() + &(*j + 1).to_string()[..], address : SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), startPort + (*j).to_u16().unwrap()))}
           }
     ).collect();
     let nodes2 = nodes.clone(); // not efficient but for test
@@ -483,7 +483,7 @@ fn initpeers_udp<R : PeerMgmtRules<Node,DummyKeyVal> + Clone> (startPort : u16, 
     let mut r : Vec<usize> = (0..nbpeer).collect();
     let nodes : Vec<Node> = r.iter().map(
       |j| {
-          Node {nodeid: "NodeID".to_string() + ((*j + 1).to_string().as_slice()), address : SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), startPort + (*j).to_u16().unwrap()))}
+          Node {nodeid: "NodeID".to_string() + &(*j + 1).to_string()[..], address : SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), startPort + (*j).to_u16().unwrap()))}
           }
     ).collect();
     let nodes2 = nodes.clone(); // not efficient but for test

@@ -320,6 +320,7 @@ impl<TP : TrustedPeer, T : WotTrust<TP>> KVStore<WotKV<TP>> for WotStore<TP, T> 
     // TODO !!!! calculate and update trust  + TODO wotstore primitive to change a peer trust!!!
     match kv {
       WotKV::Peer(ref skv) => {
+          println!("valcheck : {:?}", skv.check_val(skv, &PeerInfoRel));
         // do not store invalid peer Peer info
         if skv.key_check() && skv.check_val(skv, &PeerInfoRel) {
           self.peerstore.add_val(skv.clone(), stconf);
@@ -509,6 +510,7 @@ fn addpeer_test<TP : TrustedPeer, T : WotTrust<TP>, F : Fn(String) -> ArcKV<TP>>
   wotstore.add_val(WotKV::Peer(pe.clone()) ,stconf);
 
   let qme = wotstore.get_val(&WotK::Peer(pe.get_key())).unwrap();
+
   assert_eq!(qme.get_key(), WotK::Peer(pe.get_key()));
   pe
 }
@@ -555,7 +557,6 @@ fn test_wot_gen<T : TrustedPeer, F : Fn(String) -> ArcKV<T>>(init : &F) {
       trustRul,
       );
 
-  let stconf = (true,None);
 
   // check master trust
   let metrus = wotstore.get_peer_trust(&me.get_key());
@@ -621,6 +622,7 @@ fn test_wot_gen<T : TrustedPeer, F : Fn(String) -> ArcKV<T>>(init : &F) {
   // test add invalid trust fail (no get) - invalid due to wrong signature
 
   // sign me as revoked
+  let stconf = (true,None);
   let revokeme : PeerSign<T> = PeerSign::new(&(me), &(me), <u8 as Int>::max_value(), 1).unwrap();
   wotstore.add_val(WotKV::Sign(revokeme.clone()) ,stconf);
 

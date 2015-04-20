@@ -187,7 +187,7 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ClassicWotTrust<TP> {
       // for now just stick to simple imp until stable. (with counter taking acount of bigger so
       calcmap: {
         let s = rules.len();
-        (0..(s)).map(|ix|vec![0us; s - ix]).collect()
+        (0..(s)).map(|ix|vec![0usize; s - ix]).collect()
       },
       lastdiscovery: TimeSpecExt(NULL_TIMESPEC),
     }
@@ -205,7 +205,7 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ClassicWotTrust<TP> {
       let mut decreasetrust = false;
       let mut changedcache  = false;
       let nblevel = rules.len().to_u8().unwrap();
-      let mut nbtrust : Vec<usize> = vec![0us; rules.len()];
+      let mut nbtrust : Vec<usize> = vec![0usize; rules.len()];
       // first updates
       if from_old_trust < nblevel
           && from_old_trust >= 0

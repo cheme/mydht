@@ -109,7 +109,7 @@ impl<T : KeyVal> KVStore<T> for SimpleCache<T> {
           // write new content
           // some issue to json serialize hash map due to key type so serialize vec of pair instead
           let vser : Vec<&T> = self.cache.values().collect();
-          confFile.write(json::encode(&vser).unwrap().into_bytes().as_slice()).is_ok()
+          confFile.write(&json::encode(&vser).unwrap().into_bytes()[..]).is_ok()
         } else {
           false
         }
@@ -165,7 +165,7 @@ impl<V : KeyVal> SimpleCache<V> {
           // TODO reput reading!!!!!!!!!!
           let mut jcont = String::new();
           p.read_to_string(&mut jcont).unwrap();
-          let vser : Vec<V> = json::decode(jcont.as_slice()).unwrap_or_else(|e|panic!("Invalid config {:?}\n quiting",e));
+          let vser : Vec<V> = json::decode(&jcont[..]).unwrap_or_else(|e|panic!("Invalid config {:?}\n quiting",e));
           let map : HashMap<V::Key, V> = vser.into_iter().map(|v| (v.get_key(),v)).collect();
           map
         }

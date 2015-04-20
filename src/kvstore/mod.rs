@@ -276,7 +276,7 @@ impl FileKV {
         Encodable::encode(&self.hash, s)
       });
       s.emit_struct_field("name", 1, |s|{
-        s.emit_str(self.name.as_slice())
+        s.emit_str(&self.name[..])
       })
     })
   }
@@ -300,7 +300,7 @@ impl FileKV {
         Encodable::encode(&self.hash, s)
       });
       s.emit_struct_field("name", 1, |s|{
-        s.emit_str(self.name.as_slice())
+        s.emit_str(&self.name[..])
       })
     });
     match self.get_attachment(){
@@ -326,7 +326,7 @@ impl FileKV {
       let filevec : Result<Vec<u8>, D::Error>= Decodable::decode(d);
       //write file to tmp
       let mut file = utils::create_tmp_file();
-      file.write_all(filevec.ok().unwrap().as_slice());
+      file.write_all(&filevec.ok().unwrap()[..]);
       file.flush();
       let fp = file.path().unwrap().to_path_buf();
 

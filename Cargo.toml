@@ -42,8 +42,8 @@ byteorder = "0.3.3"
 
 
 [dependencies.dht]
-#path = "../mydht-dep/rust-dht/"
-git = "https://github.com/cheme/rust-dht.git"
+path = "../mydht-dep/rust-dht/"
+#git = "https://github.com/cheme/rust-dht.git"
 
 #[dependencies.time]
 #git = "https://github.com/rust-lang/time.git"
@@ -51,9 +51,9 @@ git = "https://github.com/cheme/rust-dht.git"
 #[dependencies.rustc-serialize]
 #git = "https://github.com/rust-lang/rustc-serialize.git"
 
-[dependencies.bencode]
+#[dependencies.bencode]
 #git = "https://github.com/arjantop/rust-bencode.git"
-git = "https://github.com/cheme/rust-bencode.git"
+#git = "https://github.com/cheme/rust-bencode.git"
 #path = "../mydht-dep/rust-bencode/"
 
 [dependencies.bincode]

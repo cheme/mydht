@@ -231,7 +231,7 @@ impl DhtPeer for NodeK {
 impl DhtKey<NodeK> for NodeID {
   fn to_peer_key(&self) -> BigUint{
       //BigUint::from_bytes_be(self.as_bytes())
-      FromStr::from_str(self.as_slice()).unwrap()
+      FromStr::from_str(&self[..]).unwrap()
   }
 }
 /*

@@ -145,7 +145,7 @@ fn main() {
     enum ParamState {Normal, Conf, Boot}
     let mut state = ParamState::Normal;
     for arg in env::args() {
-        match arg.as_slice() {
+        match &arg[..] {
             "-h" => showHelp(),
             "--help" => showHelp(),
             "-C" => state = ParamState::Conf,
@@ -166,7 +166,7 @@ fn main() {
     let confPath = &PathBuf::from(&sconfPath.clone());
     let mut jsonCont = String::new();
     File::open(confPath).unwrap().read_to_string(&mut jsonCont).unwrap(); 
-    let fsconf : FsConf = json::decode(jsonCont.as_slice()).unwrap();
+    let fsconf : FsConf = json::decode(&jsonCont[..]).unwrap();
 
     let tcpdef = &fsconf.transport;
     info!("my conf is : {:?}" , fsconf);
@@ -192,7 +192,7 @@ fn main() {
 
     let mencdef = &fsconf.msgenc;
     let mut confFile = File::create(&Path::new("out")).unwrap();
-    confFile.write_all(json::encode(mencdef).unwrap().into_bytes().as_slice());
+    confFile.write_all(&json::encode(mencdef).unwrap().into_bytes()[..]);
     // TODO access from conf!!
     let access = WotAccess {
       treshold  : 2,
@@ -208,7 +208,7 @@ fn main() {
 
     let route = Inefficientmap::new();
     let querycache = SimpleCacheQuery::new();
-    let pconf = PathBuf::from(fsconf.storepath.as_slice());
+    let pconf = PathBuf::from(&fsconf.storepath[..]);
     let pdbfile = pconf.join("./files.db");
     let pfiles = pconf.join("./files");
     let prdb = pconf.join("./reverse.db");
@@ -221,8 +221,8 @@ fn main() {
 
     // getting bootstrap peers
     let mut jsonBCont = String::new();
-    File::open(&Path::new(bootPath.as_slice())).unwrap().read_to_string(&mut jsonBCont).unwrap(); 
-    let tmpbootTrustedPeers : Vec<RSAPeer>  = json::decode(jsonBCont.as_slice()).unwrap();
+    File::open(&Path::new(&bootPath[..])).unwrap().read_to_string(&mut jsonBCont).unwrap(); 
+    let tmpbootTrustedPeers : Vec<RSAPeer>  = json::decode(&jsonBCont[..]).unwrap();
 
 
 
@@ -300,7 +300,7 @@ let mut multip_store = move || {
     loop{
       let mut line = String::new();
       stdin.read_line(&mut line);
-      match line.as_slice() {
+      match &line[..] {
         "quit\n" => {
          break
         },
@@ -308,7 +308,7 @@ let mut multip_store = move || {
           let mut path = String::new();
           stdin.read_line(&mut path).unwrap();
           path.pop();
-          let p = Path::new (path.as_slice());
+          let p = Path::new (&path[..]);
           println!("Path : {:?}", p);
           let f = File::open(&p); 
           let kv = <FileKV as FileKeyVal>::from_file(&mut f.unwrap());
@@ -367,14 +367,14 @@ let mut multip_store = move || {
           // jsonCont.seek(0,SeekStyle::SeekSet);
           let mut jsonCont = String::new();
           File::open(confPath).unwrap().read_to_string(&mut jsonCont).unwrap(); 
-          let mut fsconf2 : FsConf = json::decode(jsonCont.as_slice()).unwrap();
+          let mut fsconf2 : FsConf = json::decode(&jsonCont[..]).unwrap();
 
           let me2 = RSAPeer::new (newname, None, fsconf2.me.address.0.clone());
           fsconf2.me = me2;
 
           let mut tmpPath = "tmp";
           let mut tmpFile = File::create(&Path::new(tmpPath)).unwrap();
-          tmpFile.write_all(json::encode(&fsconf2).unwrap().into_bytes().as_slice());
+          tmpFile.write_all(&json::encode(&fsconf2).unwrap().into_bytes()[..]);
           println!("New fsconf written to tmp");
           break;
         },
@@ -386,14 +386,14 @@ let mut multip_store = move || {
           // jsonCont.seek(0,SeekStyle::SeekSet);
           let mut jsonCont = String::new();
           File::open(confPath).unwrap().read_to_string(&mut jsonCont).unwrap(); 
-          let mut fsconf2 : FsConf = json::decode(jsonCont.as_slice()).unwrap();
+          let mut fsconf2 : FsConf = json::decode(&jsonCont[..]).unwrap();
 
  
           if fsconf2.me.update_info(newname){
 
           let mut tmpPath = "tmp";
           let mut tmpFile = File::create(&Path::new(tmpPath)).unwrap();
-          tmpFile.write_all(json::encode(&fsconf2).unwrap().into_bytes().as_slice());
+          tmpFile.write_all(&json::encode(&fsconf2).unwrap().into_bytes()[..]);
           println!("New fsconf written to tmp");
           break;
           }else{
@@ -597,7 +597,7 @@ impl PeerMgmtRules<RSAPeer, MulKV> for WotAccess {
   fn checkmsg (&self, n : &RSAPeer, chal : &String, sign : &String) -> bool{ 
      match uuid::Uuid::parse_str(chal) {
       Err(_) => false,
-      Ok(c) =>  n.content_check(c.as_bytes(), sign.from_hex().unwrap().as_slice()), 
+      Ok(c) =>  n.content_check(c.as_bytes(), &sign.from_hex().unwrap()[..]), 
     }
   }
   #[inline]

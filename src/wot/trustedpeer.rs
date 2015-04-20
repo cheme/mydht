@@ -1,5 +1,8 @@
 //! Trusted peer implementation.
 
+
+extern crate bincode;
+
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 use kvstore::{KeyVal};
 use utils::ArcKV;
@@ -74,7 +77,12 @@ impl<TP : TrustedPeer> PeerSign<TP> {
     let from  = fromP.get_key();
     let about = aboutP.get_key();
     let vsign = {
-      let tosign = (&from, &about, trust, tag);
+      let tosign = bincode::encode(&
+       
+      (&from, &about, trust, tag)
+
+, bincode::SizeLimit::Infinite).unwrap()
+      ;
       <Self as TrustedVal<TP, PeerTrustRel>>::sign_val(fromP, &PeerTrustRel, &tosign)
     };
     debug!("sign : {:?}", vsign);
@@ -106,9 +114,12 @@ impl<TP : TrustedPeer> KeyVal for PeerSign<TP> {
 }
 
 impl<'a, TP : TrustedPeer> TrustedVal<TP, PeerTrustRel> for PeerSign<TP> {
-  type SignedContent = (&'a Vec<u8>, &'a Vec<u8>, u8, usize);
-  fn get_sign_content<'b> (&'b self) -> (&'b Vec<u8>, &'b Vec<u8>, u8, usize) {
-      (&self.from, &self.about, self.trust, self.tag)
+//  type SignedContent = (&'a Vec<u8>, &'a Vec<u8>, u8, usize);
+  //fn get_sign_content<'b> (&'b self) -> (&'b Vec<u8>, &'b Vec<u8>, u8, usize) {
+  fn get_sign_content (& self) -> Vec<u8> {
+   bincode::encode(
+     & (&self.from, &self.about, self.trust, self.tag)
+, bincode::SizeLimit::Infinite).unwrap()
   }
   #[inline]
   fn get_sign<'b> (&'b self) -> &'b Vec<u8> {
