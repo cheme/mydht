@@ -18,14 +18,13 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use time::Duration;
 use std::thread::Thread;
-use std::num::{ToPrimitive,FromPrimitive};
-use std::num::Int;
 use peer::{Peer};
 use kvstore::Attachment;
 use super::{Transport,TransportStream};
 use std::iter;
 use utils;
 use std::path::{Path,PathBuf};
+use num::traits::ToPrimitive;
 
 static BUFF_SIZE : usize = 10000; // use for attachment send/receive -- 21888 seems to be maxsize
 static MAX_BUFF_SIZE : usize = 21888; // 21888 seems to be maxsize

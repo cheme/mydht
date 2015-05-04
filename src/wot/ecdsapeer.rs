@@ -18,7 +18,6 @@ use std::str::FromStr;
 use std::cmp::PartialEq;
 use std::cmp::Eq;
 use std::sync::Arc;
-use std::num::Int;
 use std::io::Write;
 use std::ops::Deref;
 use std::path::{Path,PathBuf};

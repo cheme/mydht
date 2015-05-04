@@ -18,7 +18,6 @@ use std::sync::{Mutex,Semaphore,Arc,Condvar};
 use std::sync::mpsc::{Sender,Receiver};
 use std::thread;
 use query::{QueryConfMsg, QueryRules, QueryMode, QueryPriority, QueryChunk, QueryModeMsg};
-use std::num::{ToPrimitive};
 use time::Duration;
 use query;
 use query::{QueryID};
@@ -27,6 +26,7 @@ use kvstore::Attachment;
 use kvstore::{KeyVal};
 use msgenc::{MsgEnc,DistantEncAtt,DistantEnc};
 use utils::{send_msg,receive_msg};
+use num::traits::ToPrimitive;
 
 // all update of query prio and nbquery and else are not done every where : it is a security issue
 /// all update of query conf when receiving something, this is a filter to avoid invalid or network
@@ -180,7 +180,7 @@ fn request_handler
         let nbquer = query::get_nbquer(&qconf);
         let lifetime = rc.2.lifetime(qp); // TODO proxy no lifetime mgmt = null -> init fn without lifetime?
         // unmanaged query
-        let query = query::init_query(nbquer.to_uint().unwrap(), 1, lifetime, & rp.1, None, None, None);
+        let query = query::init_query(nbquer.to_usize().unwrap(), 1, lifetime, & rp.1, None, None, None);
         rp.0.send(PeerMgmtMessage::PeerFind(nid,Some(query.clone()), qconf.clone()));
         // block until result (proxy mode)
         let result = query.wait_query_result();
@@ -199,7 +199,7 @@ fn request_handler
         let qid = rc.2.newid();
         qconf.0 = new_query_mode (&qconf.0, &rc.0, qid.clone());
         // Warning here is old qmode stored in conf new mode is for proxied query
-        let query : query::Query<P,V> = query::init_query(nbquer.to_uint().unwrap(), 1, lifetime, & rp.1, Some(qconf.clone()), Some(qid.clone()), None);
+        let query : query::Query<P,V> = query::init_query(nbquer.to_usize().unwrap(), 1, lifetime, & rp.1, Some(qconf.clone()), Some(qid.clone()), None);
         debug!("Asynch Find peer {:?}", nid);
         // warn here is new qmode
         rp.0.send(PeerMgmtMessage::PeerFind(nid,Some(query.clone()),qconf));
@@ -221,9 +221,9 @@ fn request_handler
         let nb_req = query::get_req_nb_res(&queryconf);
         debug!("Proxying Find val {:?}", nid);
         let lifetime = rc.2.lifetime(qp); // TODO proxy no lifetime mgmt = null -> init fn without lifetime?
-        let esthop = (rc.2.nbhop(oldqp) - oldhop).to_uint().unwrap();
+        let esthop = (rc.2.nbhop(oldqp) - oldhop).to_usize().unwrap();
         let store = rc.2.do_store(false, qp, sprio, Some(esthop)); // first hop
-        let query = query::init_query(nbquer.to_uint().unwrap(), nb_req, lifetime, & rp.1, None, None, Some(store));
+        let query = query::init_query(nbquer.to_usize().unwrap(), nb_req, lifetime, & rp.1, None, None, Some(store));
         rp.2.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()), queryconf.clone()));
         // block until result (proxy mode)
         let result = query.wait_query_result();
@@ -257,10 +257,10 @@ fn request_handler
         // TODO same thing for prio that is 
         let qid = rc.2.newid();
         queryconf.0 = new_query_mode (&queryconf.0, &rc.0, qid.clone());
-        let esthop = (rc.2.nbhop(oldqp) - oldhop).to_uint().unwrap();
+        let esthop = (rc.2.nbhop(oldqp) - oldhop).to_usize().unwrap();
         let store = rc.2.do_store(false, qp, sprio, Some(esthop)); // first hop
 
-        let query : query::Query<P,V> = query::init_query(nbquer.to_uint().unwrap(), nb_req, lifetime, & rp.1, Some(queryconf.clone()), Some(qid.clone()), Some(store));
+        let query : query::Query<P,V> = query::init_query(nbquer.to_usize().unwrap(), nb_req, lifetime, & rp.1, Some(queryconf.clone()), Some(qid.clone()), Some(store));
  
         debug!("Asynch Find val {:?}", nid);
         rp.2.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()),queryconf));

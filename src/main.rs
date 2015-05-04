@@ -20,22 +20,23 @@ extern crate time;
 #[macro_use] extern crate log;
 extern crate env_logger;
 extern crate rand;
+extern crate num;
 
 use rustc_serialize::json;
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 
+use std::thread;
 use std::fs::{File};
 use std::path::Path;
 use std::io::Read;
 use time::Duration;
-use std::time::Duration as OldDuration;
 use std::env;
 use std::net::{Ipv4Addr};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc::channel;
 use self::rand::{thread_rng, Rng};
-use std::num::{ToPrimitive,Int};
+use num::traits::{ToPrimitive, Bounded};
 use mydht::{StoragePriority};
 use mydht::kvstoreif::KeyVal;
 use mydht::{DHT,RunningContext,RunningProcesses};
@@ -57,8 +58,6 @@ use mydht::msgencif::{MsgEnc};
 use mydht::utils::ArcKV;
 use mydht::utils::SocketAddrExt;
 use mydht::utils;
-
-
 
 fn main() {
     env_logger::init().unwrap();
@@ -180,7 +179,7 @@ let tcp_transport : Tcp = Tcp {
         DHT::boot_server(Arc:: new((nsp,DummyRules, DummyQueryRules{idcnt:Mutex::new(0)},Json,tcp_transport,None)), Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), Vec::new(), bpeers)
     }).collect();
 
-    std::thread::sleep(OldDuration::seconds(2));
+    thread::sleep_ms(2000);
     // find all node from the first node first node
     let ref fprocs = procs[0];
 
@@ -303,8 +302,8 @@ impl queryif::QueryRules for DummyQueryRules{
       }
  
   }
-  fn asynch_clean(&self) -> Option<OldDuration>{
-      Some(OldDuration::seconds(5)) // fast one for testing purpose
+  fn asynch_clean(&self) -> Option<Duration>{
+      Some(Duration::seconds(5)) // fast one for testing purpose
   }
 
   // TODO add info to get propagation or not of stored value (or new function)
@@ -463,7 +462,7 @@ let tcp_transport : Tcp = Tcp {
 
     // all has started
     for n in result.iter(){
-      std::thread::sleep(OldDuration::milliseconds(100)); // local get easily stuck
+      thread::sleep_ms(100); // local get easily stuck
       n.1.refresh_closest_peers(1000); // Warn hard coded value.
     };
     // ping established
@@ -511,7 +510,7 @@ let tcp_transport : Tcp = Tcp {
 
     // all has started
     for n in result.iter(){
-      std::thread::sleep(OldDuration::milliseconds(100)); // local get easily stuck
+      thread::sleep_ms(100); // local get easily stuck
       n.1.refresh_closest_peers(1000); // Warn hard coded value.
     };
     // ping established

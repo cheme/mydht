@@ -1,11 +1,10 @@
 use kvstore::{KeyVal,Key,Attachment};
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
-use std::num::Int;
-use std::num::{ToPrimitive};
 use std::iter;
 use utils::TimeSpecExt;
 use utils::NULL_TIMESPEC;
 use super::WotTrust;
+use num::traits::{Bounded,ToPrimitive};
 #[cfg(test)]
 use utils;
 #[cfg(test)]
@@ -63,11 +62,11 @@ impl ClassicWotTrust<RSAPeer> {
     let rules : TrustRules = vec![1,1,2,2,2];
     let mut trust : ClassicWotTrust<RSAPeer> = WotTrust::new(&peer, &rules);
 
-    assert_eq!(<u8 as Int>::max_value(), trust.trust);
+    assert_eq!(<u8 as Bounded>::max_value(), trust.trust);
     // start at trust 4 (by level 4 updates)
-    trust.update(0,<u8 as Int>::max_value(),4,4, &rules);
-    assert_eq!(<u8 as Int>::max_value(), trust.trust);
-    trust.update(0,<u8 as Int>::max_value(),4,4, &rules);
+    trust.update(0,<u8 as Bounded>::max_value(),4,4, &rules);
+    assert_eq!(<u8 as Bounded>::max_value(), trust.trust);
+    trust.update(0,<u8 as Bounded>::max_value(),4,4, &rules);
     assert_eq!(4, trust.trust);
     trust.update(0,5,3,3, &rules);
     assert_eq!(4, trust.trust);
@@ -95,22 +94,22 @@ impl ClassicWotTrust<RSAPeer> {
 
     let rules2 : TrustRules = vec![1,2,2,2,2];
     let mut trust2 : ClassicWotTrust<RSAPeer>  = WotTrust::new(&peer, &rules2);
-    assert_eq!(<u8 as Int>::max_value(), trust2.trust);
+    assert_eq!(<u8 as Bounded>::max_value(), trust2.trust);
     // start at trust 3 (by master update)
-    trust2.update(0,<u8 as Int>::max_value(),0,3, &rules2);
+    trust2.update(0,<u8 as Bounded>::max_value(),0,3, &rules2);
     assert_eq!(3, trust2.trust);
     // add a trust to two by tw update (not enough
-    trust2.update(0,<u8 as Int>::max_value(),2,2, &rules2);
+    trust2.update(0,<u8 as Bounded>::max_value(),2,2, &rules2);
     assert_eq!(3, trust2.trust);
     // add a trust to one by one update (not enough but consider promoting previous 22)
-    trust2.update(0,<u8 as Int>::max_value(),1,1, &rules2);
+    trust2.update(0,<u8 as Bounded>::max_value(),1,1, &rules2);
     // still 3  due to 3 give by 0
     assert_eq!(3, trust2.trust);
     // remove it as 0 and put it as 3 so only 1-1 and 2-2
     trust2.update(0,3,3,3, &rules2);
     assert_eq!(2, trust2.trust);
     // remove trust to 22 and put it to null
-    trust2.update(2,2,2,<u8 as Int>::max_value(), &rules2);
+    trust2.update(2,2,2,<u8 as Bounded>::max_value(), &rules2);
     assert_eq!(3, trust2.trust);
     // lower a 3 trust to 4 by lower originator trust  
     trust2.update(0,3,4,3, &rules2);
@@ -118,13 +117,13 @@ impl ClassicWotTrust<RSAPeer> {
     trust2.update(1,1,5,5, &rules2);
     assert_eq!(4, trust2.trust);
     // put two level 2 trust
-    trust2.update(0,<u8 as Int>::max_value(),2,2, &rules2);
-    trust2.update(0,<u8 as Int>::max_value(),2,2, &rules2);
+    trust2.update(0,<u8 as Bounded>::max_value(),2,2, &rules2);
+    trust2.update(0,<u8 as Bounded>::max_value(),2,2, &rules2);
     assert_eq!(2, trust2.trust);
 
     // two level 1 trust to lower trust than 2 level 2 is bigger than level 2 : demote to 4
-    trust2.update(0,<u8 as Int>::max_value(),1,4, &rules2);
-    trust2.update(0,<u8 as Int>::max_value(),1,4, &rules2);
+    trust2.update(0,<u8 as Bounded>::max_value(),1,4, &rules2);
+    trust2.update(0,<u8 as Bounded>::max_value(),1,4, &rules2);
     assert_eq!(4, trust2.trust);
 
 
@@ -136,11 +135,11 @@ impl ClassicWotTrust<RSAPeer> {
      let peer = RSAPeer::new ("myname".to_string(), None, Ipv4Addr(127,0,0,1), 8000);
      let mut trust = WotTrust::new(&peer);
 
-     assert_eq!(<u8 as Int>::max_value(), trust.trust);
+     assert_eq!(<u8 as Bounded>::max_value(), trust.trust);
 // start at trust 4 (by master update)
-trust.update(0,<u8 as Int>::max_value(),0,4, &rules);
-assert_eq!(<u8 as Int>::max_value(), trust.trust);
-trust.update(0,<u8 as Int>::max_value(),0,4, &rules);
+trust.update(0,<u8 as Bounded>::max_value(),0,4, &rules);
+assert_eq!(<u8 as Bounded>::max_value(), trust.trust);
+trust.update(0,<u8 as Bounded>::max_value(),0,4, &rules);
 assert_eq!(4, trust.trust);
 trust.update(0,5,0,3, &rules);
 assert_eq!(4, trust.trust);
@@ -182,7 +181,7 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ClassicWotTrust<TP> {
   fn new(p : &TP, rules : &TrustRules) -> ClassicWotTrust<TP> {
     ClassicWotTrust {
       peerid : p.get_key(),
-      trust  : <u8 as Int>::max_value(),
+      trust  : <u8 as Bounded>::max_value(),
       // TODO transfor internal vec to Int/Bigint being counter to every states
       // for now just stick to simple imp until stable. (with counter taking acount of bigger so
       calcmap: {
@@ -211,8 +210,8 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ClassicWotTrust<TP> {
           && from_old_trust >= 0
           && cap_from_old_sig >= from_old_trust 
           && cap_from_old_sig < nblevel {
-        let ix1 = from_old_trust.to_uint().unwrap();
-        let ix2 = (cap_from_old_sig - from_old_trust).to_uint().unwrap();
+        let ix1 = from_old_trust.to_usize().unwrap();
+        let ix2 = (cap_from_old_sig - from_old_trust).to_usize().unwrap();
         if self.calcmap[ix1][ix2] > 0 {
           self.calcmap[ix1][ix2] -= 1;
           changedcache = true;
@@ -222,8 +221,8 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ClassicWotTrust<TP> {
           && from_new_trust >= 0
           && cap_from_new_sig >= from_new_trust 
           && cap_from_new_sig < nblevel {
-        let ix1 = from_new_trust.to_uint().unwrap();
-        let ix2 = (cap_from_new_sig - from_new_trust).to_uint().unwrap();
+        let ix1 = from_new_trust.to_usize().unwrap();
+        let ix2 = (cap_from_new_sig - from_new_trust).to_usize().unwrap();
         self.calcmap[ix1][ix2] += 1;
         changedcache = true;
       };
@@ -239,12 +238,12 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ClassicWotTrust<TP> {
             for inbtrust in nbtrust.iter_mut() {
               if slevel >= cur_level {
                 let level_ix = slevel - cur_level;
-                let icount = count.get(level_ix.to_uint().unwrap()).unwrap();
+                let icount = count.get(level_ix.to_usize().unwrap()).unwrap();
                 // cumulative trust
                 debug!("deb2 {:?}, {:?}, {:?}",inbtrust, icount, cum);
                 *inbtrust = *inbtrust + *icount;
                 cum += *inbtrust;
-                let treshold = rules.get(cur_level.to_uint().unwrap()).unwrap();
+                let treshold = rules.get(cur_level.to_usize().unwrap()).unwrap();
                 if cum >= *treshold && new_trust.is_none() {
                   new_trust = Some(slevel);
                 }

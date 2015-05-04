@@ -11,7 +11,7 @@ use query::cache::{cache_clean,QueryCache};
 use std::sync::{Semaphore,Arc};
 use std::sync::mpsc::{Sender,Receiver};
 use time::Duration;
-use std::time::Duration as OldDuration;
+use num::traits::ToPrimitive;
 use std::thread;
 use peer::Peer;
 use kvstore::{KeyVal,StoragePriority};
@@ -31,7 +31,7 @@ pub fn start
   p : &Sender<PeerMgmtMessage<P,V>>, 
   k : &Sender<KVStoreMgmtMessage<P,V>>,
   mut cn : CN, 
-  cleanjobdelay : Option<OldDuration>) {
+  cleanjobdelay : Option<Duration>) {
   // start clean job if needed
   match cleanjobdelay{
     Some(delay) => {
@@ -39,7 +39,7 @@ pub fn start
       let sp = s.clone();
       thread::spawn(move || {
         loop {
-          thread::sleep(delaysp);
+          thread::sleep_ms(delaysp.num_milliseconds().to_u32().unwrap());
           info!("running scheduled clean");
           sp.send(QueryMgmtMessage::PerformClean);
         }

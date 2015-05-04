@@ -58,16 +58,19 @@ pub trait TrustedVal<T : Truster, R : TrustRel> : KeyVal {
     }
   }
 
-  //fn sign_val<EC : Encodable> (from : &T, about : &R, cont : &EC) -> Vec<u8> {
+  //fn sign_val<EC : Encodable> (from : &T, about : &R, cont : &EC) -> Vec<u8> 
   fn sign_val (from : &T, about : &R, cont : &Vec<u8>) -> Vec<u8> {
     from.content_sign(bincode::encode(&(about.get_rep(),cont), bincode::SizeLimit::Infinite).unwrap().as_slice())
   }
 
   /// same as sign_val but for technical usage when Trustor is not yet totally initiated
   fn init_sign_val (from : &T::Internal, about : &[u8], cont : &Vec<u8>) -> Vec<u8> {
-  //fn init_sign_val<EC : Encodable> (from : &T::Internal, about : &[u8], cont : &EC) -> Vec<u8> {
+  //fn init_sign_val<EC : Encodable> (from : &T::Internal, about : &[u8], cont : &EC) -> Vec<u8> 
     <T as Truster>::init_content_sign(from, bincode::encode(&(about,cont), bincode::SizeLimit::Infinite).unwrap().as_slice())
   }
+
+  // TODO evolution to include get_sign value in the key creation -> add a method init key (maybe
+  // in another trait).
  
 }
 

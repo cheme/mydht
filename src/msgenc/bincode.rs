@@ -1,11 +1,10 @@
-extern crate bincode;
 use rustc_serialize::{Encodable,Decodable};
 use super::MsgEnc;
 use kvstore::{KeyVal};
 use peer::{Peer};
 use super::ProtoMessage;
 use std::collections::BTreeMap;
-
+use bincode;
 
 // full bencode impl
 #[derive(Debug,Clone)]
@@ -21,7 +20,7 @@ impl MsgEnc for Bincode {
 
   fn decode<P : Peer, V : KeyVal> (&self, buff : &[u8]) -> Option<ProtoMessage<P,V>>{
     debug!("decode msg {:?}", buff);
-    bincode::decode(buff).ok()
+    bincode::decode(buff).ok().map(|a|a.0)
   }
 
 }

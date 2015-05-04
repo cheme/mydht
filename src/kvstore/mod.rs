@@ -11,7 +11,6 @@ use query::{LastSent};
 use std::io::Write;
 use std::io::Read;
 use std::fs::File;
-use std::ffi::{AsOsStr};
 use rustc_serialize::hex::ToHex;
 use super::utils;
 use std::str;

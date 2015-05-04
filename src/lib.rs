@@ -16,6 +16,8 @@
 #[macro_use] extern crate log;
 extern crate rustc_serialize;
 extern crate time;
+extern crate num;
+extern crate bincode;
 
 #[macro_export]
 /// Automatic define for KeyVal without attachment

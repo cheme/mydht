@@ -14,18 +14,18 @@ path = "examples/fs.rs"
 
 [dependencies]
 
-log = "0.3.0"
+log = "0.3.1"
 env_logger = "0.3.0"
-uuid = "0.1.13"
-num = "0.1.19"
-rand = "0.3.3"
-openssl = "0.5.2"
-rust-crypto = "0.2.26"
+uuid = "0.1.17"
+num = "0.1.24"
+rand = "0.3.8"
+openssl = "0.6.2"
+rust-crypto = "0.2.31"
 #bencode = "0.1.10"
-#bincode = "0.0.12"
-rustc-serialize = "0.3.7"
-time = "0.1.22"
-byteorder = "0.3.3"
+bincode = "0.2.2"
+rustc-serialize = "0.3.14"
+time = "0.1.25"
+byteorder = "0.3.9"
 
 #[dependencies.semver]
 #git = "https://github.com/...."
@@ -42,8 +42,8 @@ byteorder = "0.3.3"
 
 
 [dependencies.dht]
-path = "../mydht-dep/rust-dht/"
-#git = "https://github.com/cheme/rust-dht.git"
+#path = "../mydht-dep/rust-dht/"
+git = "https://github.com/cheme/rust-dht.git"
 
 #[dependencies.time]
 #git = "https://github.com/rust-lang/time.git"
@@ -56,6 +56,6 @@ path = "../mydht-dep/rust-dht/"
 #git = "https://github.com/cheme/rust-bencode.git"
 #path = "../mydht-dep/rust-bencode/"
 
-[dependencies.bincode]
-git = "https://github.com/TyOverby/bincode.git"
+#[dependencies.bincode]
+#git = "https://github.com/TyOverby/bincode.git"
 #path = "../mydht-dep/bincode/"

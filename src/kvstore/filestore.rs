@@ -1,4 +1,4 @@
-extern crate bincode;
+use bincode;
 use std::io::Read;
 use std::io::Write;
 use std::io::Seek;
@@ -57,7 +57,7 @@ impl<V : FileKeyVal> FileStore<V> {
     let mut jsonCont = Vec::new();
     fpaths.read_to_end(&mut jsonCont);
     // if fail to load : just reset (currently only use to fasten init)
-    let mut bpath : BTreeSet<PathBuf> = bincode::decode(&jsonCont[..]).unwrap_or(BTreeSet::new()); 
+    let mut bpath : BTreeSet<PathBuf> = bincode::decode(&jsonCont[..]).map(|a|a.0).unwrap_or(BTreeSet::new()); 
 
     // add ref to KVStore
     if (fillref) {

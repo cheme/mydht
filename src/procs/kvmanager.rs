@@ -14,7 +14,6 @@ use query::{self,QueryRules,QueryModeMsg};
 use route::Route;
 use std::sync::mpsc::channel;
 use std::thread::Thread;
-use std::num::{ToPrimitive};
 use transport::TransportStream;
 use transport::Transport;
 use peer::Peer;
@@ -22,6 +21,7 @@ use utils;
 use utils::Either;
 use kvstore::{KVStore,KeyVal,StoragePriority};
 use msgenc::MsgEnc;
+use num::traits::ToPrimitive;
 
 // Multiplexing kvstore can be fastly bad (only one process).
 // Best should be a dedicated dispatch process with independant code : TODO this is ok : aka
@@ -51,7 +51,7 @@ pub fn start
         let remhop = query::get_nbhop(&stconf);
         let qp = query::get_prio(&stconf);
         let qps = query::get_sprio(&stconf);
-        let esthop = (rc.2.nbhop(qp) - remhop).to_uint().unwrap();
+        let esthop = (rc.2.nbhop(qp) - remhop).to_usize().unwrap();
         let storeconf = rc.2.do_store(true, qp, qps, Some(esthop)); // first hop
 
         let hasnode = match store.get_val(&kv.get_key()) {

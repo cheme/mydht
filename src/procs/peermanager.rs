@@ -11,13 +11,12 @@ use query::{self,QueryRules,QueryModeMsg,LastSent,QueryConfMsg};
 use route::Route;
 use std::sync::mpsc::channel;
 use std::thread;
-use std::num::{ToPrimitive};
 use transport::{Transport,TransportStream};
 use peer::Peer;
 use utils::{self,OneResult,Either};
 use kvstore::{KeyVal};
 use msgenc::{MsgEnc};
-
+use num::traits::ToPrimitive;
 
 
 // peermanager manage communication with the storage : add remove update. The storage is therefore
@@ -104,7 +103,7 @@ pub fn start
           let mut newqueryconf = update_lastsent_conf ( &queryconf , &peers , nbquery);
           let rsize = peers.len();
           // update number of result to expect for each proxyied request
-          let nbqus = rsize.to_uint().unwrap();
+          let nbqus = rsize.to_usize().unwrap();
           let rnbres = query::get_req_nb_res(&newqueryconf);
           let newrnbres = if nbqus == 0 {
             rnbres
@@ -121,7 +120,7 @@ pub fn start
           match oquery {
             Some(ref query) => {
               // adjust nb request
-              query.lessen_query((nbquery.to_uint().unwrap() - rsize.to_uint().unwrap()),&rp.0);
+              query.lessen_query((nbquery.to_usize().unwrap() - rsize.to_usize().unwrap()),&rp.0);
             },
             None => {
               if rsize == 0 {
@@ -228,7 +227,7 @@ pub fn start
                 let rsize = peers.len();
                  // adjust nb request
                  // Note that it doesnot prevent unresponsive client
-                 query.lessen_query((nbquery.to_uint().unwrap() - rsize.to_uint().unwrap()),&rp.0);
+                 query.lessen_query((nbquery.to_usize().unwrap() - rsize.to_usize().unwrap()),&rp.0);
                },
                _ => (), 
              };

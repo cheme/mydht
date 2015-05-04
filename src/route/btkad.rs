@@ -1,7 +1,6 @@
 extern crate dht as odht;
 extern crate num;
 
-use std::num::ToPrimitive;
 use self::odht::KNodeTable;
 use self::odht::Peer as DhtPeer;
 use std::io::Result as IoResult;
@@ -16,6 +15,7 @@ use std::iter::Iterator;
 use std::rc::Rc;
 use kvstore::KeyVal;
 use kvstore::Attachment;
+use num::traits::ToPrimitive;
 
 #[derive(Clone,Debug)]
 struct ArcP<P : DhtPeer>(Arc<P>);
@@ -119,12 +119,12 @@ impl<P : Peer + DhtPeer, V : KeyVal> Route<P,V> for BTKad<P,V> where P::Key : Dh
 
   fn get_closest_for_node(& self, nnid : &P::Key, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {
     let id : &P::Id = &nnid.to_peer_key();
-    self.kad.find(id, nbnode.to_uint().unwrap()) // TODO filter offline!! if no remove??
+    self.kad.find(id, nbnode.to_usize().unwrap()) // TODO filter offline!! if no remove??
       .into_iter().map (|n|n.0).collect()
   }
 
   fn get_closest_for_query(& self, nnid : &V::Key, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {
-    self.kad.find(&nnid.to_peer_key(), nbnode.to_uint().unwrap()) // TODO filter offline!!
+    self.kad.find(&nnid.to_peer_key(), nbnode.to_usize().unwrap()) // TODO filter offline!!
       .into_iter().map (|n|n.0).collect()
   }
  

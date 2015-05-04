@@ -1,12 +1,11 @@
 use kvstore::{KeyVal,Key,Attachment};
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 use super::{TrustedPeer};
-use std::num::Int;
-use std::num::{ToPrimitive};
 use std::iter;
 use utils::TimeSpecExt;
 use utils::NULL_TIMESPEC;
 use super::WotTrust;
+use num::traits::{Bounded,ToPrimitive};
 #[cfg(test)]
 use utils;
 #[cfg(test)]
@@ -55,11 +54,11 @@ impl ExpWotTrust<RSAPeer> {
     let peer = RSAPeer::new ("myname".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 8080));
     let rules : TrustRules = vec![1,1,2,2,2];
     let mut trust : ExpWotTrust<RSAPeer> = WotTrust::new(&peer, &rules);
-    assert_eq!(<u8 as Int>::max_value(), trust.trust());
+    assert_eq!(<u8 as Bounded>::max_value(), trust.trust());
     // start at trust 4 (by level 4 updates)
-    trust.update(0,<u8 as Int>::max_value(),4,4, &rules);
-    assert_eq!(<u8 as Int>::max_value(), trust.trust());
-    trust.update(0,<u8 as Int>::max_value(),4,4, &rules);
+    trust.update(0,<u8 as Bounded>::max_value(),4,4, &rules);
+    assert_eq!(<u8 as Bounded>::max_value(), trust.trust());
+    trust.update(0,<u8 as Bounded>::max_value(),4,4, &rules);
     assert_eq!(4, trust.trust());
     trust.update(0,5,3,3, &rules);
     assert_eq!(4, trust.trust());
@@ -88,18 +87,18 @@ impl ExpWotTrust<RSAPeer> {
 
     let rules2 : TrustRules = vec![1,2,2,2,2];
     let mut trust2 : ExpWotTrust<RSAPeer> = WotTrust::new(&peer, &rules2);
-    assert_eq!(<u8 as Int>::max_value(), trust2.trust);
+    assert_eq!(<u8 as Bounded>::max_value(), trust2.trust);
     // start at trust 3 (by master update)
-    trust2.update(0,<u8 as Int>::max_value(),0,3, &rules2);
+    trust2.update(0,<u8 as Bounded>::max_value(),0,3, &rules2);
     assert_eq!(3, trust2.trust);
     // add a trust to two by tw update (not enough
-    trust2.update(0,<u8 as Int>::max_value(),2,2, &rules2);
+    trust2.update(0,<u8 as Bounded>::max_value(),2,2, &rules2);
     assert_eq!(3, trust2.trust);
     // add a trust to one by one update (not enough but consider promoting previous 22
-    trust2.update(0,<u8 as Int>::max_value(),1,1, &rules2);
+    trust2.update(0,<u8 as Bounded>::max_value(),1,1, &rules2);
     assert_eq!(2, trust2.trust);
     // remove trust to 22 and put it to null
-    trust2.update(2,2,2,<u8 as Int>::max_value(), &rules2);
+    trust2.update(2,2,2,<u8 as Bounded>::max_value(), &rules2);
     assert_eq!(3, trust2.trust);
     // lower a 3 trust to 4 by lower originator trust  
     trust2.update(0,3,4,3, &rules2);
@@ -113,11 +112,11 @@ impl ExpWotTrust<RSAPeer> {
      let peer = RSAPeer::new ("myname".to_string(), None, Ipv4Addr(127,0,0,1), 8000);
      let mut trust = WotTrust::new(&peer);
 
-     assert_eq!(<u8 as Int>::max_value(), trust.trust);
+     assert_eq!(<u8 as Bounded>::max_value(), trust.trust);
 // start at trust 4 (by master update)
-trust.update(0,<u8 as Int>::max_value(),0,4, &rules);
-assert_eq!(<u8 as Int>::max_value(), trust.trust);
-trust.update(0,<u8 as Int>::max_value(),0,4, &rules);
+trust.update(0,<u8 as Bounded>::max_value(),0,4, &rules);
+assert_eq!(<u8 as Bounded>::max_value(), trust.trust);
+trust.update(0,<u8 as Bounded>::max_value(),0,4, &rules);
 assert_eq!(4, trust.trust);
 trust.update(0,5,0,3, &rules);
 assert_eq!(4, trust.trust);
@@ -162,7 +161,7 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ExpWotTrust<TP> {
   fn new(p : &TP, rules : &TrustRules) -> ExpWotTrust<TP> {
     ExpWotTrust {
       peerid : p.get_key(),
-      trust  : <u8 as Int>::max_value(),
+      trust  : <u8 as Bounded>::max_value(),
       // TODO transfor internal vec to Int/Bigint being counter to every states
       // for now just stick to simple imp until stable. (with counter taking acount of bigger so
       calcmap: (0..(rules.len())).map(|ix|vec![0usize; ix+1]).collect(),
@@ -177,14 +176,14 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ExpWotTrust<TP> {
       debug!("no update {:?}, {:?}", cap_from_new_trust, cap_from_old_trust);
       (false, false)
     } else {
-      let mut new_trust     = <u8 as Int>::max_value();
+      let mut new_trust     = <u8 as Bounded>::max_value();
       let mut decreasetrust = false;
       let mut changedcache  = false;
       let mut nbtrust : Vec<usize> = vec![0usize; rules.len()];
       let mut cur_level     = 0;
       for count in self.calcmap.iter_mut() {
         if cur_level == cap_from_old_trust {
-          let mut icount = count.get_mut(from_old_trust.to_uint().unwrap()).unwrap();
+          let mut icount = count.get_mut(from_old_trust.to_usize().unwrap()).unwrap();
           if *icount > 0 {
             *icount -= 1;
             changedcache = true;
@@ -192,13 +191,13 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ExpWotTrust<TP> {
         };
 
         if cur_level == cap_from_new_trust {
-          let mut icount = count.get_mut(from_new_trust.to_uint().unwrap()).unwrap();
+          let mut icount = count.get_mut(from_new_trust.to_usize().unwrap()).unwrap();
           *icount += 1;
           changedcache = true;
         };
         debug!("count is {:?}, {:?}",count,cur_level);
 
-        if new_trust == <u8 as Int>::max_value(){
+        if new_trust == <u8 as Bounded>::max_value(){
           let mut cum = 0;
           for ((icount, inbtrust), treshold) in count.iter().zip(nbtrust.iter_mut()).zip(rules.iter()) {
             // cumulative trust
@@ -242,10 +241,10 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ExpWotTrust<TP> {
   let mut changedcache  = false;
   // remove old trust and see if decrease, if no treshold it is an unmanaged trust so nothing
   // to do
-  rules.get(&cap_from_old_trust.to_uint().unwrap()).map (|treshold|
+  rules.get(&cap_from_old_trust.to_usize().unwrap()).map (|treshold|
   // TODO test under 0 ??? (means bug)
   // if nothing we don't decrease
-  self.calcmap.get_mut(&cap_from_old_trust.to_uint().unwrap()).map(|mut oldtrustnb|{
+  self.calcmap.get_mut(&cap_from_old_trust.to_usize().unwrap()).map(|mut oldtrustnb|{
   println!("rem old");
    *oldtrustnb -= 1;
    println!("new val : {:?}",*oldtrustnb);
@@ -260,8 +259,8 @@ decreasetrust = true;
 );
 
 // add new trust and see if promoted
-rules.get(&cap_from_new_trust.to_uint().unwrap()).map (|treshold|{
-let (add, nb) = match self.calcmap.get_mut(&cap_from_new_trust.to_uint().unwrap()){
+rules.get(&cap_from_new_trust.to_usize().unwrap()).map (|treshold|{
+let (add, nb) = match self.calcmap.get_mut(&cap_from_new_trust.to_usize().unwrap()){
 Some(mut oldtrustnb) => {
 println!("add new");
    *oldtrustnb += 1;
@@ -272,7 +271,7 @@ println!("add new");
    }
    };
    if add {
-   self.calcmap.insert(cap_from_new_trust.to_uint().unwrap(), nb);
+   self.calcmap.insert(cap_from_new_trust.to_usize().unwrap(), nb);
    };
    changedcache = true;
    if !(nb < *treshold) {
@@ -290,12 +289,12 @@ println!("do decrease");
 // found in cache next lower correct treshold
 let mut stop = false;
 let mut nextrust = self.trust;
-new_trust = <u8 as Int>::max_value();
+new_trust = <u8 as Bounded>::max_value();
 while !stop {
 nextrust += 1;
 stop = true;
-rules.get(&nextrust.to_uint().unwrap()).map (|treshold|
-self.calcmap.get_mut(&nextrust.to_uint().unwrap()).map(|nb|
+rules.get(&nextrust.to_usize().unwrap()).map (|treshold|
+self.calcmap.get_mut(&nextrust.to_usize().unwrap()).map(|nb|
 if *nb < *treshold {
 stop = false;
 } else {

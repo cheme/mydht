@@ -8,7 +8,7 @@ use std::fmt::Error as FmtError;
 use std::str::FromStr;
 use std::cmp::PartialEq;
 use std::cmp::Eq;
-use std::num::Int;
+use num::traits::Bounded;
 use std::io::Write;
 use std::ops::Deref;
 use std::collections::VecDeque;
@@ -255,7 +255,7 @@ impl<TP : TrustedPeer, T : WotTrust<TP>> WotStore<TP, T> {
   }
 
   pub fn get_peer_trust(&self, key : &T::Key) -> u8 {
-    self.wotstore.get_val(key).map(|p|p.trust()).unwrap_or(<u8 as Int>::max_value())
+    self.wotstore.get_val(key).map(|p|p.trust()).unwrap_or(<u8 as Bounded>::max_value())
   }
 
   pub fn clean (){
@@ -476,7 +476,7 @@ fn remove_val(& mut self, k : &<WotKV<TP> as KeyVal>::Key) {
             // TODO in place update of kvstore to possibly avoid clone
             let mut newtrust = (trust).clone();
             let from_trust = self.get_peer_trust(&sk.0);
-            let (upd, pro) = newtrust.update(from_trust, trust.trust(), from_trust, <u8 as Int>::max_value(), &self.rules);
+            let (upd, pro) = newtrust.update(from_trust, trust.trust(), from_trust, <u8 as Bounded>::max_value(), &self.rules);
             if upd {
             self.wotstore.add_val(newtrust, (true,None));
             };
@@ -623,7 +623,7 @@ fn test_wot_gen<T : TrustedPeer, F : Fn(String) -> ArcKV<T>>(init : &F) {
 
   // sign me as revoked
   let stconf = (true,None);
-  let revokeme : PeerSign<T> = PeerSign::new(&(me), &(me), <u8 as Int>::max_value(), 1).unwrap();
+  let revokeme : PeerSign<T> = PeerSign::new(&(me), &(me), <u8 as Bounded>::max_value(), 1).unwrap();
   wotstore.add_val(WotKV::Sign(revokeme.clone()) ,stconf);
 
   // test trust

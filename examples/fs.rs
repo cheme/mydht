@@ -21,6 +21,7 @@ extern crate rustc_serialize;
 extern crate uuid;
 extern crate time;
 extern crate rand;
+extern crate num;
 use std::env;
 use std::io;
 use std::io::Write;
@@ -33,7 +34,6 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::fs::File;
 use std::io::stdin;
-use std::time::Duration as OldDuration;
 use time::Duration;
 use mydht::Bincode;
 //use mydht::Bencode;
@@ -648,7 +648,6 @@ mod fskeyval {
  
   use mydht::dhtimpl::FileKV;
   use std::fs::File;
-  use std::ffi::{AsOsStr};
   use mydht::kvstoreif::{FileKeyVal,KeyVal,KVStore};
 //  use mydht::kvstoreif::{KVCache};
   use mydht::CachePolicy;
@@ -746,7 +745,6 @@ extern crate rand;
 extern crate rustc_serialize;
 use mydht::{StoragePriority};
 use time::Duration;
-use std::time::Duration as OldDuration;
 use mydht::{CachePolicy};
 use mydht::{QueryPriority};
 use mydht::queryif;
@@ -754,7 +752,7 @@ use mydht::{PeerPriority};
 use std::sync::Mutex;
 use self::rand::{thread_rng,Rng};
 use mydht::dhtimpl::{Node};
-use std::num::{ToPrimitive};
+use num::traits::ToPrimitive;
 
 pub struct DhtRulesImpl (Mutex<usize>, DhtRules);
 
@@ -812,8 +810,8 @@ impl queryif::QueryRules for DhtRulesImpl {
     1 + (self.1.nbqueryfact * prio.to_f32().unwrap()).to_u8().unwrap()
   }
 
-  fn asynch_clean(&self) -> Option<OldDuration> {
-    self.1.cleaninterval.map(|s|OldDuration::seconds(s))
+  fn asynch_clean(&self) -> Option<Duration> {
+    self.1.cleaninterval.map(|s|Duration::seconds(s))
   }
   
   fn do_store (&self, islocal : bool, qprio : QueryPriority, sprio : StoragePriority, hopnb : Option<usize>) -> (bool,Option<CachePolicy>) {

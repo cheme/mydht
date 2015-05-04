@@ -13,14 +13,14 @@ use std::sync::{Arc,Semaphore,Mutex,Condvar};
 use std::sync::mpsc::channel;
 use std::thread::{JoinGuard};
 use std::thread;
-use std::num::{ToPrimitive,Int};
 use route::Route;
 use peer::Peer;
 use transport::{TransportStream,Transport};
 use time;
-use std::time::Duration as OldDuration;
 use utils::{self,OneResult};
 use msgenc::MsgEnc;
+use num;
+use num::traits::ToPrimitive;
 
 pub mod mesgs;
 mod server;
@@ -93,9 +93,9 @@ pub fn find_val<P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules, E
   let maxhop = rc.2.nbhop(prio);
   let nbquer = rc.2.nbquery(prio);
   let semsize = match qmode {
-    QueryMode::Asynch => Int::pow(nbquer.to_uint().unwrap(), maxhop.to_u32().unwrap()),
+    QueryMode::Asynch => num::pow(nbquer.to_usize().unwrap(), maxhop.to_usize().unwrap()),
     // general case we wait reply in each client query
-    _ => nbquer.to_uint().unwrap(),
+    _ => nbquer.to_usize().unwrap(),
   };
   let msgqmode = init_qmode(rp, rc, &qmode);
   let lifetime = rc.2.lifetime(prio);
@@ -153,9 +153,9 @@ impl<P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules, E : MsgEnc, 
     println!("!!!!!!!!!!!!!!!!!!! maxhop : {}, prio : {}", maxhop, prio);
     let nbquer = self.rc.2.nbquery(prio);
     let semsize = match qmode {
-      QueryMode::Asynch => Int::pow(nbquer.to_uint().unwrap(), maxhop.to_u32().unwrap()),
+      QueryMode::Asynch => num::pow(nbquer.to_usize().unwrap(), maxhop.to_usize().unwrap()),
       // general case we wait reply in each client query
-      _ => nbquer.to_uint().unwrap(),
+      _ => nbquer.to_usize().unwrap(),
     };
     let msgqmode = self.init_qmode(&qmode);
     let lifetime = self.rc.2.lifetime(prio);

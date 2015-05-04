@@ -3,6 +3,8 @@ extern crate num;
 extern crate rand;
 extern crate time;
 extern crate openssl;
+extern crate bincode;
+
 #[macro_use]
 use self::num::bigint::RandBigInt;
 use self::rand::Rng;
@@ -29,7 +31,6 @@ use std::env;
 use std::fs;
 use std::iter;
 use std::borrow::ToOwned;
-use std::ffi::AsOsStr;
 use std::ffi::OsStr;
 use std::path::{Path,PathBuf};
 use self::time::Timespec;
