@@ -145,7 +145,7 @@ impl TransportStream for TcpStream {
         let att = if b {
           debug!("Reding an attached file");
           println!("Reding an attached file");
-          read_to_tmp(self).ok().map(|f|PathBuf::from(f.path().unwrap()))
+          read_to_tmp(self).ok()
         }  else  {
           None
         };
@@ -157,7 +157,7 @@ impl TransportStream for TcpStream {
 
 }
 
-fn read_to_tmp(s : &mut TcpStream)-> IoResult<File> {
+fn read_to_tmp(s : &mut TcpStream)-> IoResult<PathBuf> {
 
   let nbframe = try!(s.read_u32::<LittleEndian>()).to_usize().unwrap();
   let bsize   = try!(s.read_u32::<LittleEndian>()).to_usize().unwrap();
@@ -166,7 +166,7 @@ fn read_to_tmp(s : &mut TcpStream)-> IoResult<File> {
   debug!("bs{:?}",bsize);
   debug!("nwbfr{:?}",nbframe);
   debug!("frsiz{:?}",lfrsize);
-  let mut f = utils::create_tmp_file();
+  let (fp, mut f) = utils::create_tmp_file();
   let mut tmpvec : Vec<u8> = vec![0; bsize];
   let buf = tmpvec.as_mut_slice();
   for i in 0..(nbframe + 1) {
@@ -194,7 +194,7 @@ fn read_to_tmp(s : &mut TcpStream)-> IoResult<File> {
   };
 
   f.seek(SeekFrom::Start(0));
-  Ok(f)
+  Ok(fp)
 }
 
 

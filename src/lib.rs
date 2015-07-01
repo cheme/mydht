@@ -13,6 +13,10 @@
 #![feature(convert)]
 #![feature(alloc)]
 #![feature(thread_sleep)]
+#![feature(semaphore)]
+#![feature(duration)]
+#![feature(arc_unique)]
+#![feature(deque_extras)]
 #[macro_use] extern crate log;
 extern crate rustc_serialize;
 extern crate time;

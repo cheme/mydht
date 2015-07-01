@@ -189,7 +189,7 @@ pub trait KVStoreRel2<V : KeyVal<Key=(Self::K1,Self::K2)>> : KVStore<V> {
 /// Specialization of Keyval for FileStore
 pub trait FileKeyVal : KeyVal {
   /// initiate from a file (usefull for loading)
-  fn from_file(&mut File) -> Option<Self>;
+  fn from_path(PathBuf) -> Option<Self>;
   /// name of the file
   fn name(&self) -> String;
   /// get attachment
@@ -248,25 +248,26 @@ pub struct FileKV {
 }
 
 impl FileKV {
-  /// New FileKV from path
+  /// New FileKV from path TODO del
   pub fn new(p : PathBuf) -> FileKV {
-    let tmpf = &mut File::open(&p).unwrap();// TODO change type to manage error
-    FileKV::from_file(tmpf).unwrap()
+    FileKV::from_path(p).unwrap()
   }
 
-  fn from_file(tmpf : &mut File) -> Option<FileKV> {
-    // TODO choose hash lib
-    //let hash = utils::hash_crypto(tmpf);
-    let hasho = utils::hash_openssl(tmpf);
-    //error!("{:?}", hash);
-    //error!("{:?}", hash.to_hex());
-    debug!("Hash of file : {:?}", hasho.to_hex());
-    let fp = tmpf.path().unwrap().to_path_buf();
-    Some(FileKV {
-      hash : hasho,
-      file : fp,
-      name : tmpf.path().unwrap().file_name().unwrap().to_str().unwrap().to_string(),
-    })
+  fn from_path(path : PathBuf) -> Option<FileKV> {
+    File::open(&path).map(|mut f|{
+      // TODO choose hash lib
+      //let hash = utils::hash_crypto(tmpf);
+      let hasho = utils::hash_openssl(&mut f);
+      //error!("{:?}", hash);
+      //error!("{:?}", hash.to_hex());
+      debug!("Hash of file : {:?}", hasho.to_hex());
+      let name = path.file_name().unwrap().to_str().unwrap().to_string();
+      FileKV {
+        hash : hasho,
+        file : path,
+        name : name,
+      }
+    }).ok()
   }
 
   fn encode_distant<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
@@ -324,10 +325,9 @@ impl FileKV {
       });
       let filevec : Result<Vec<u8>, D::Error>= Decodable::decode(d);
       //write file to tmp
-      let mut file = utils::create_tmp_file();
+      let(fp, mut file) = utils::create_tmp_file();
       file.write_all(&filevec.ok().unwrap()[..]);
       file.flush();
-      let fp = file.path().unwrap().to_path_buf();
 
       debug!("File added to tmp {:?}", fp);
       name.and_then(move |n| hash.map (move |h| FileKV{hash : h, name : n, file : fp}))
@@ -388,8 +388,8 @@ impl FileKeyVal for FileKV {
   }
 
   #[inline]
-  fn from_file(tmpf : &mut File) -> Option<FileKV> {
-    FileKV::from_file(tmpf)
+  fn from_path(tmpf : PathBuf) -> Option<FileKV> {
+    FileKV::from_path(tmpf)
   }
 }
 

@@ -80,51 +80,53 @@ impl<V : KeyVal> Deref for ArcKV<V> {
 }
 impl<KV : KeyVal> KeyVal for ArcKV<KV> {
   type Key = <KV as KeyVal>::Key;
-#[inline]
+  #[inline]
   fn get_key(&self) -> <KV as KeyVal>::Key {
         self.0.get_key()
   }
-#[inline]
-    fn encode_dist_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-      self.0.encode_dist_with_att(s)
-    }
-#[inline]
-    fn decode_dist_with_att<D:Decoder> (d : &mut D) -> Result<ArcKV<KV>, D::Error> {
-      <KV as KeyVal>::decode_dist_with_att(d).map(|r|ArcKV::new(r))
-    }
-#[inline]
-    fn encode_dist<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-      self.0.encode_dist(s)
-    }
-#[inline]
-    fn decode_dist<D:Decoder> (d : &mut D) -> Result<ArcKV<KV>, D::Error> {
-      <KV as KeyVal>::decode_dist(d).map(|r|ArcKV::new(r))
-    }
-#[inline]
-    fn encode_loc_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>{
-      self.0.encode_loc_with_att(s)
-    }
-#[inline]
-    fn decode_loc_with_att<D:Decoder> (d : &mut D) -> Result<ArcKV<KV>, D::Error>{
-      <KV as KeyVal>::decode_loc_with_att(d).map(|r|ArcKV::new(r))
-    }
-#[inline]
-    fn get_attachment(&self) -> Option<&Attachment>{
-      self.0.get_attachment()
-    }
-#[inline]
-    fn set_attachment(& mut self, fi:&Attachment) -> bool {
-      // TODO (need reconstruct Arc) redesign with functional style
-      // in fact this is only call when receiving a message (so arc never cloned)
-      // should be done in decode of protomessage : TODO implement KeyVal for (attachment, KVMut) 
-      // 
-      // only solution : make unique and then new Arc : functional style : costy : a copy of every
-      // keyval with an attachment not serialized in it.
-      // Othewhise need a kvmut used for protomess only
-      let kv = self.0.make_unique();
-      kv.set_attachment(fi)
-    }
+  #[inline]
+  fn encode_dist_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
+    self.0.encode_dist_with_att(s)
+  }
+  #[inline]
+  fn decode_dist_with_att<D:Decoder> (d : &mut D) -> Result<ArcKV<KV>, D::Error> {
+    <KV as KeyVal>::decode_dist_with_att(d).map(|r|ArcKV::new(r))
+  }
+  #[inline]
+  fn encode_dist<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
+    self.0.encode_dist(s)
+  }
+  #[inline]
+  fn decode_dist<D:Decoder> (d : &mut D) -> Result<ArcKV<KV>, D::Error> {
+    <KV as KeyVal>::decode_dist(d).map(|r|ArcKV::new(r))
+  }
+  #[inline]
+  fn encode_loc_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>{
+    self.0.encode_loc_with_att(s)
+  }
+  #[inline]
+  fn decode_loc_with_att<D:Decoder> (d : &mut D) -> Result<ArcKV<KV>, D::Error>{
+    <KV as KeyVal>::decode_loc_with_att(d).map(|r|ArcKV::new(r))
+  }
+  #[inline]
+  fn get_attachment(&self) -> Option<&Attachment>{
+    self.0.get_attachment()
+  }
+  #[inline]
+  fn set_attachment(& mut self, fi:&Attachment) -> bool {
+    // TODO (need reconstruct Arc) redesign with functional style
+    // in fact this is only call when receiving a message (so arc never cloned)
+    // should be done in decode of protomessage : TODO implement KeyVal for (attachment, KVMut) 
+    // 
+    // only solution : make unique and then new Arc : functional style : costy : a copy of every
+    // keyval with an attachment not serialized in it.
+    // Othewhise need a kvmut used for protomess only
+    // Unsafe use here because currently no use of weak pointer over our Arc
+    let kv = unsafe {self.0.make_unique()};
+    kv.set_attachment(fi)
+  }
 }
+
 impl<V : FileKeyVal> FileKeyVal for ArcKV<V> {
   #[inline]
   fn name(&self) -> String {
@@ -132,8 +134,8 @@ impl<V : FileKeyVal> FileKeyVal for ArcKV<V> {
   }
 
   #[inline]
-  fn from_file(tmpf : &mut File) -> Option<ArcKV<V>> {
-    <V as FileKeyVal>::from_file(tmpf).map(|v|ArcKV::new(v))
+  fn from_path(tmpf : PathBuf) -> Option<ArcKV<V>> {
+    <V as FileKeyVal>::from_path(tmpf).map(|v|ArcKV::new(v))
   }
 }
 
@@ -213,14 +215,15 @@ impl Deref for SocketAddrExt {
 }*/
 
 // TODO rewrite with full new io and new path : this is so awfull + true uuid
-pub fn create_tmp_file() -> File {
+pub fn create_tmp_file() -> (PathBuf,File) {
   let tmpdir = env::temp_dir();
   let mytmpdirpath = tmpdir.join(Path::new("./mydht"));
   fs::create_dir_all(&mytmpdirpath);
   let fname = random_uuid(64).to_string();
   let fpath = mytmpdirpath.join(Path::new(&fname[..]));
   debug!("Creating tmp file : {:?}",fpath);
-  File::create(&fpath).unwrap()
+  let f = File::create(&fpath).unwrap(); 
+  (fpath, f)
 }
 
 pub fn is_in_tmp_dir(f : &Path) -> bool {
@@ -333,12 +336,22 @@ pub fn hash_buf_crypto(buff : &[u8], digest : &mut Digest) -> Vec<u8> {
   debug!("{:?}:{:?}", bsize,ressize);
   let mut tmpvec : Vec<u8> = vec![0; bbytes];
   let buf = tmpvec.as_mut_slice();
-  let nbiter = buff.len() / bbytes;
-  for i in (0 .. nbiter) {
-    // slice overflow ok??
-    digest.input(&buff[i * bbytes .. (i+1) * bbytes]);
+
+  let nbiter = if buff.len() == 0 {
+      0
+  }else {
+    (buff.len() - 1) / bbytes
   };
-//  digest.input(&buf[(nbiter -1)*bbytes .. ]);
+  for i in (0 .. nbiter + 1) {
+    let end = (i+1) * bbytes;
+    if end < buff.len() {
+      digest.input(&buff[i * bbytes .. end]);
+    } else {
+      digest.input(&buff[i * bbytes ..]);
+    };
+  };
+
+
   let mut rvec : Vec<u8> = vec![0; outbytes];
   let rbuf = rvec.as_mut_slice();
   digest.result(rbuf);

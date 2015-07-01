@@ -12,23 +12,47 @@ doc = false
 name='fileshare'
 path = "examples/fs.rs"
 
-[dependencies]
 
+
+
+[features]
+default = ["striple-impl","openssl-impl","rust-crypto-impl","dht-route"]
+striple-impl = ["striple"]
+openssl-impl = ["openssl"]
+rust-crypto-impl = ["rust-crypto"]
+dht-route = ["dht"]
+
+[dependencies]
 log = "0.3.1"
-env_logger = "0.3.0"
+env_logger = "0.3.1"
 uuid = "0.1.17"
-num = "0.1.24"
+num = "0.1.25"
 rand = "0.3.8"
-openssl = "0.6.2"
-rust-crypto = "0.2.31"
-#bencode = "0.1.10"
-bincode = "0.2.2"
+bincode = "0.3.0"
 rustc-serialize = "0.3.14"
 time = "0.1.25"
 byteorder = "0.3.9"
 
-#[dependencies.semver]
-#git = "https://github.com/...."
+[dependencies.openssl]
+version = "0.6.2"
+optional = true
+
+[dependencies.rust-crypto]
+version = "0.2.31"
+optional = true
+
+[dependencies.striple]
+version = "0.0.1"
+path = "../rust-striple/"
+optional = true
+features = ["public_crypto","serialize","public_openssl","cryptoecdsa","opensslrsa","opensslpbkdf2"]
+
+[dependencies.dht]
+path = "../mydht-dep/rust-dht/"
+#git = "https://github.com/cheme/rust-dht.git"
+optional = true
+
+
 
 #[dependencies.protobuf]
 #git = "https://github.com/stepancheg/rust-protobuf.git"
@@ -39,23 +63,9 @@ byteorder = "0.3.9"
 #[dependencies.rust-crypto]
 #git = "https://github.com/DaGenix/rust-crypto"
 
-
-
-[dependencies.dht]
-#path = "../mydht-dep/rust-dht/"
-git = "https://github.com/cheme/rust-dht.git"
-
 #[dependencies.time]
 #git = "https://github.com/rust-lang/time.git"
 
 #[dependencies.rustc-serialize]
 #git = "https://github.com/rust-lang/rustc-serialize.git"
 
-#[dependencies.bencode]
-#git = "https://github.com/arjantop/rust-bencode.git"
-#git = "https://github.com/cheme/rust-bencode.git"
-#path = "../mydht-dep/rust-bencode/"
-
-#[dependencies.bincode]
-#git = "https://github.com/TyOverby/bincode.git"
-#path = "../mydht-dep/bincode/"

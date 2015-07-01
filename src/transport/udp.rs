@@ -15,6 +15,7 @@ use std::net::SocketAddr;
 use time::Duration;
 use peer::Peer;
 use std::iter;
+use std::slice;
 use std::sync::{Mutex,Condvar,Arc};
 use std::net::UdpSocket;
 
@@ -68,7 +69,7 @@ impl Transport for Udp {
           if size < buffsize {
             // let slice = &buff[0,size]
             let r = unsafe {
-              Vec::from_raw_buf(buf.as_ptr(), size)
+              slice::from_raw_parts(buf.as_ptr(), size).to_vec()
             };
             closure(UdpStream{with : from, sock : socket.try_clone().unwrap()}, Some((r,None)));
           }else{

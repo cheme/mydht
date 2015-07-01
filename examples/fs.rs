@@ -310,8 +310,7 @@ let mut multip_store = move || {
           path.pop();
           let p = Path::new (&path[..]);
           println!("Path : {:?}", p);
-          let f = File::open(&p); 
-          let kv = <FileKV as FileKeyVal>::from_file(&mut f.unwrap());
+          let kv = <FileKV as FileKeyVal>::from_path(p.to_path_buf());
           match kv {
             None => println!("cannot initialize file"),
             Some(kv) => {

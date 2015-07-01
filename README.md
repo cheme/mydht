@@ -40,7 +40,7 @@ Several abstraction trait are :
   - "tcp" transport based on tcp, almost native, connected service
   - "udpcusto" TODO transport based on udp, with a lot synchro multiplexing 
   - "udp" for non connected dht only (no thread are kept to synchro the connexion and proxy is not usable)
-  - "tor-i2p..." TODO
+  - "tor-i2p..." TODO SOCK5 connect to tor
 * kvstore : the keyvalue persistence to use
 
 * msgenc : type of encoding, it also covers decoding of frame, some dht property may be directly forced by being set on decode and not include in msg : encode may force some configuring as their is the common serialize interface and a prior filter on protomessage to a more efficient message

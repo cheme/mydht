@@ -36,7 +36,7 @@ pub struct FileStore<V : KeyVal> {
   // store info on files existing (redundant with data, use to avoid unnecessary init // TODO change to kvstore??
   paths : BTreeSet<PathBuf>, 
   // path for storage
-  pstore : File,
+  pstore : PathBuf,
   repo : PathBuf,
 }
 
@@ -53,11 +53,11 @@ impl<V : FileKeyVal> FileStore<V> {
       ))
     }
 
-    let mut fpaths = try!(OpenOptions::new().read(true).write(true).open(&pstore));
+    let mut fpaths = try!(File::open(&pstore));
     let mut jsonCont = Vec::new();
     fpaths.read_to_end(&mut jsonCont);
     // if fail to load : just reset (currently only use to fasten init)
-    let mut bpath : BTreeSet<PathBuf> = bincode::decode(&jsonCont[..]).map(|a|a.0).unwrap_or(BTreeSet::new()); 
+    let mut bpath : BTreeSet<PathBuf> = bincode::decode(&jsonCont[..]).unwrap_or(BTreeSet::new()); 
 
     // add ref to KVStore
     if (fillref) {
@@ -65,10 +65,9 @@ impl<V : FileKeyVal> FileStore<V> {
       for e in walk_dir(&rep).unwrap() {
         let p = e.unwrap().path();
         if (p.is_file() && !bpath.contains(&p)) {
-          let mut tmpf = File::open(&p).unwrap();
          
           info!("  initiating {:?}", p);
-          let kv = <V as FileKeyVal>::from_file(&mut tmpf);
+          let kv = <V as FileKeyVal>::from_path(p.to_path_buf());
           kv.map(|kv| {
             initfn(&kv);
             bpath.insert(p);
@@ -82,7 +81,7 @@ impl<V : FileKeyVal> FileStore<V> {
       data : st,
       repo : rep,
       paths : bpath,
-      pstore : fpaths,
+      pstore : pstore,
     })
   }
 }
@@ -101,14 +100,13 @@ impl<V : FileKeyVal> KVStore<V> for FileStore<V> {
             _ => Ok(0),
         };
         let ur = remove_file(&path);
-        let mut newfile = File::open(&newpath).unwrap();
-        let kv = <V as FileKeyVal>::from_file(&mut newfile).unwrap();
+        let kv = <V as FileKeyVal>::from_path(newpath.to_path_buf()).unwrap();
         if(kv.get_key() == v.get_key()) {
           self.data.add_val(kv,(local,cp));
           self.paths.insert(newpath);
         } else {
           error!( "invalid FileKeyVal hash receive for {:?}", kv.name());
-          remove_file(newfile.path().unwrap());
+          remove_file(&newpath);
         };
         // TODO do something on failure
       } else {
@@ -142,16 +140,20 @@ impl<V : FileKeyVal> KVStore<V> for FileStore<V> {
 
  
   #[inline]
-  fn commit_store(& mut self) -> bool{
-    let confFile = &mut self.pstore;
-    let bupath = confFile.path().unwrap().with_extension("_bu");
-    let r = if copy(confFile.path().unwrap(), &bupath).is_ok(){
-      confFile.seek(SeekFrom::Start(0));
-      // remove content
-      confFile.set_len(0);
-      info!("writing paths cache for filestore : {:?}", self.paths);
-      // write new content
-      confFile.write_all(&bincode::encode(&self.paths, bincode::SizeLimit::Infinite).unwrap()[..]).is_ok()
+  fn commit_store(& mut self) -> bool {
+    let confpath = &self.pstore;
+    let bupath = confpath.with_extension("_bu");
+    let r = if copy(confpath, &bupath).is_ok() {
+      OpenOptions::new().read(true).write(true).open(&confpath).map(|mut confFile|{
+        let mut ior = true;
+        ior && confFile.seek(SeekFrom::Start(0)).is_ok();
+        // remove content
+        ior && confFile.set_len(0).is_ok();
+        info!("writing paths cache for filestore : {:?}", self.paths);
+        // write new content
+        ior && confFile.write_all(&bincode::encode(&self.paths, bincode::SizeLimit::Infinite).unwrap()[..]).is_ok();
+        ior
+      }).unwrap_or(false)
     } else {
       false
     };

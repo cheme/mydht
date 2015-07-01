@@ -25,7 +25,7 @@ use std::fs::OpenOptions;
 /// trust hashmap).
 pub struct SimpleCache<V : KeyVal> {
   cache : HashMap<V::Key, V>,
-  persi : Option<File>,
+  persi : Option<PathBuf>,
   _nocopy : NoCopy,
 }
 
@@ -98,11 +98,12 @@ impl<T : KeyVal> KVStore<T> for SimpleCache<T> {
   #[inline]
   fn commit_store(& mut self) -> bool{
     match self.persi {
-      Some(ref mut confFile) => {
+      Some(ref confPath) => {
+        let mut confFile = OpenOptions::new().read(true).write(true).open(confPath).unwrap();
         debug!("Commit call on Simple cache kvstore");
         // first bu copy TODO use rename instead.
-        let bupath = confFile.path().unwrap().with_extension("_bu");
-        if copy(confFile.path().unwrap(), &bupath).is_ok(){
+        let bupath = confPath.with_extension("_bu");
+        if copy(confPath, &bupath).is_ok(){
           confFile.seek(SeekFrom::Start(0));
           // remove content
           confFile.set_len(0);
@@ -154,8 +155,8 @@ impl<V : KeyVal> SimpleCache<V> {
       r
     }).unwrap_or(true);
     debug!("Simple cache is new : {:?}", new);
-    let mut persi = op.map(|p|OpenOptions::new().read(true).write(true).open(&p).unwrap());
-    let map = match &mut persi {
+    let mut inifile = op.as_ref().map(|p|OpenOptions::new().read(true).write(true).open(p).unwrap());
+    let map = match &mut inifile {
       &mut Some(ref mut p) => {
         if !new {
           debug!("persi does not exist");
@@ -172,7 +173,7 @@ impl<V : KeyVal> SimpleCache<V> {
       },
       &mut None => HashMap::new(),
     };
-    SimpleCache{cache : map, persi : persi, _nocopy : NoCopy}
+    SimpleCache{cache : map, persi : op, _nocopy : NoCopy}
   }
 }
 /*

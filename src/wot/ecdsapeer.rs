@@ -211,7 +211,7 @@ impl ECDSAPeer {
   }
 
   pub fn new (name : String, pem : Option<PathBuf>, address : SocketAddr) -> ECDSAPeer {
-    let seed = utils::random_bytes(512);
+    let seed = utils::random_bytes(32);
     // pkey gen
     let (pr, pu) = ed25519::keypair(&seed[..]);
     let public = pu.to_vec();

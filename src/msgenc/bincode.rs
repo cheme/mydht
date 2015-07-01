@@ -20,7 +20,7 @@ impl MsgEnc for Bincode {
 
   fn decode<P : Peer, V : KeyVal> (&self, buff : &[u8]) -> Option<ProtoMessage<P,V>>{
     debug!("decode msg {:?}", buff);
-    bincode::decode(buff).ok().map(|a|a.0)
+    bincode::decode(buff).ok()
   }
 
 }
