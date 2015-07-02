@@ -14,7 +14,8 @@ use time::Duration;
 use num::traits::ToPrimitive;
 use std::thread;
 use peer::Peer;
-use kvstore::{KeyVal,StoragePriority};
+use keyval::{KeyVal};
+use kvstore::{StoragePriority};
 use utils::Either;
 
 use procs::mesgs::{PeerMgmtMessage, KVStoreMgmtMessage, QueryMgmtMessage};

@@ -8,8 +8,8 @@ use procs::mesgs::{PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage};
 use std::string::String;
 use std::str::FromStr;
 use peer::Peer;
-use kvstore::{KeyVal};
-use kvstore::Attachment;
+use keyval::{KeyVal};
+use keyval::Attachment;
 use utils::SocketAddrExt;
 
 #[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]

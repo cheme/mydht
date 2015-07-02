@@ -1,7 +1,7 @@
 extern crate bencode;
 use rustc_serialize::{Encodable,Decodable};
 use super::MsgEnc;
-use kvstore::{KeyVal};
+use keyval::{KeyVal};
 use peer::{Peer};
 use super::ProtoMessage;
 use std::collections::BTreeMap;

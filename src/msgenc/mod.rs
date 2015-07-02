@@ -6,23 +6,39 @@
 //! message and/or cryptiong content
 
 
-use kvstore::{KeyVal};
+use keyval::{KeyVal,Attachment};
 use peer::{Peer};
 use query::{QueryID,QueryConfMsg};
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
+use mydhtresult::Result as MDHTResult;
+use std::io::Write;
+use std::io::Read;
+use mydhtresult::{Error,ErrorKind};
+use std::fs::File;
+use std::io::{Seek,SeekFrom};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use num::traits::ToPrimitive;
+use utils;
 
 pub mod json;
 pub mod bincode;
 //pub mod bencode;
 
+const BUFF_SIZE : usize = 10000; // use for attachment send/receive -- 21888 seems to be maxsize
+
 
 /// Trait for message encoding between peers.
 /// It use bytes which will be used by transport.
 pub trait MsgEnc : Send + Sync + 'static {
+  //fn encode<P : Peer, V : KeyVal>(&self, &ProtoMessage<P,V>) -> Option<Vec<u8>>;
+  
   /// encode
-  fn encode<P : Peer, V : KeyVal>(&self, &ProtoMessage<P,V>) -> Option<Vec<u8>>;
+  fn encode_into<W : Write, P : Peer, V : KeyVal> (&self, &mut W, &ProtoMessage<P,V>) -> MDHTResult<()>;
+  fn attach_into<W : Write> (&self, &mut W, Option<&Attachment>) -> MDHTResult<()>;
   /// decode
   fn decode<P : Peer, V : KeyVal>(&self, &[u8]) -> Option<ProtoMessage<P,V>>;
+  fn decode_from<R : Read, P : Peer, V : KeyVal>(&self, &mut R) -> MDHTResult<ProtoMessage<P,V>>;
+  fn attach_from<R : Read>(&self, &mut R) -> MDHTResult<Option<Attachment>>;
 }
 
 #[derive(RustcDecodable,RustcEncodable,Debug)]
@@ -78,4 +94,78 @@ impl<V : KeyVal>  Decodable for DistantEncAtt<V> {
     <V as KeyVal>::decode_dist_with_att(d).map(|v|DistantEncAtt(v))
   }
 }
+
+
+/// common utility for encode implementation (attachment should allways be following bytes)
+fn write_attachment<W : Write> (w : &mut W, a : Option<&Attachment>) -> MDHTResult<()> {
+    a.map(|path| {
+      let mut f = try!(File::open(&path));
+      debug!("trynig nwriting att");
+      // send over buff size
+      let fsize = f.metadata().unwrap().len();
+      let nbframe = (fsize / (BUFF_SIZE).to_u64().unwrap()).to_usize().unwrap();
+      let lfrsize = (fsize - (BUFF_SIZE.to_u64().unwrap() * nbframe.to_u64().unwrap())).to_usize().unwrap();
+      debug!("fsize{:?}",fsize);
+      debug!("nwbfr{:?}",nbframe);
+      debug!("frsiz{:?}",lfrsize);
+      debug!("busize{:?}",BUFF_SIZE);
+      // TODO less headers??
+      try!(w.write_u64::<LittleEndian>(fsize));
+      //try!(w.write_u32::<LittleEndian>(nbframe.to_u32().unwrap()));
+      //try!(w.write_u32::<LittleEndian>(BUFF_SIZE.to_u32().unwrap()));
+      //try!(w.write_u32::<LittleEndian>(lfrsize.to_u32().unwrap()));
+      f.seek(SeekFrom::Start(0));
+      let buf = &mut [0; BUFF_SIZE];
+      for i in 0..(nbframe + 1) {
+        debug!("fread : {:?}", i);
+        let nb = try!(f.read(buf));
+        if (nb == BUFF_SIZE) {
+          try!(w.write_all(buf));
+        } else {
+          if (nb != lfrsize){
+            return Err(Error("mismatch file size calc for tcp transport".to_string(), ErrorKind::IOError, None));
+          };
+          // truncate buff
+          try!(w.write(&buf[..nb]));
+        }
+      };
+      Ok(())
+    }).unwrap_or(Ok(()))
+}
+
+fn read_attachment(s : &mut Read)-> MDHTResult<Attachment> {
+
+  //let nbframe = try!(s.read_u32::<LittleEndian>()).to_usize().unwrap();
+  //let bsize   = try!(s.read_u32::<LittleEndian>()).to_usize().unwrap();
+  //let lfrsize = try!(s.read_u32::<LittleEndian>()).to_usize().unwrap();
+  let fsize = try!(s.read_u64::<LittleEndian>());
+  let nbframe = (fsize / (BUFF_SIZE).to_u64().unwrap()).to_usize().unwrap();
+  let lfrsize = (fsize - (BUFF_SIZE.to_u64().unwrap() * nbframe.to_u64().unwrap())).to_usize().unwrap();
+ 
+  // TODO change : buffer size in message is useless and dangerous
+  debug!("bs{:?}",BUFF_SIZE);
+  debug!("nwbfr{:?}",nbframe);
+  debug!("frsiz{:?}",lfrsize);
+  let (fp, mut f) = utils::create_tmp_file();
+  let buf = &mut [0; BUFF_SIZE];
+  for i in 0..(nbframe + 1) {
+    let nb = try!(s.read(buf));
+    if (nb == BUFF_SIZE) {
+      f.write(buf);
+    } else {
+      if (nb != lfrsize){
+        // todo delete file
+        return Err(Error("mismatch received file size calc for tcp transport".to_string(), ErrorKind::IOError, None));
+      };
+      // truncate buff
+      f.write(&buf[..nb]);
+    }
+  };
+
+  try!(f.seek(SeekFrom::Start(0)));
+  Ok(fp)
+}
+
+
+
 

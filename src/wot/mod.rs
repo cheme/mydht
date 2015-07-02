@@ -4,7 +4,7 @@ extern crate bincode;
 
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 use std::path::{Path,PathBuf};
-use kvstore::{Key,KeyVal};
+use keyval::{Key,KeyVal};
 use peer::Peer;
 use utils::ArcKV;
 use utils::TimeSpecExt;
@@ -38,8 +38,6 @@ pub trait WotTrust<P : KeyVal<Key = Vec<u8>>> : KeyVal<Key = Vec<u8>> {
 /// This is the content stored and exchanged.
 /// This is just a `trait alias`.
 pub trait TrustedPeer : Peer<Key = Vec<u8>> + TrustedVal<Self,PeerInfoRel> + Truster {}
-
-impl Key for Vec<u8> {}
 
 pub trait TrustedVal<T : Truster, R : TrustRel> : KeyVal {
 //  type SignedContent : Encodable + 'static ;

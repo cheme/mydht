@@ -5,8 +5,8 @@ use query::cache::QueryCache;
 use std::time::Duration;
 use peer::Peer;
 use time;
-use kvstore::{KeyVal,KVStore,KVStoreRel, Key};
-use kvstore::{KVStoreCache,KVCache,KVStore2};
+use keyval::{KeyVal,Key};
+use kvstore::{KVStoreCache,KVCache,KVStore,KVStore2,KVStoreRel};
 use query::cache::CachePolicy;
 use std::sync::Arc;
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
@@ -21,16 +21,17 @@ use std::fs::OpenOptions;
 
 //TODO rewrite with parameterization ok!! (generic simplecache)
 
+//pub trait Key : fmt::Debug + Hash + Eq + Clone + Send + Sync + Ord + 'static{}
 /// A KeyVal storage/cache. Good for testing, simple implementation (a native
 /// trust hashmap).
-pub struct SimpleCache<V : KeyVal> {
+pub struct SimpleCache<V : KeyVal> where V::Key : Hash {
   cache : HashMap<V::Key, V>,
   persi : Option<PathBuf>,
   _nocopy : NoCopy,
 }
 
 /// KVStoreRel implementation, slow, only for small size or testing.
-impl<K1 : Key, K2 : Key, V : KeyVal<Key=(K1,K2)>> KVStoreRel<K1, K2, V> for SimpleCache<V> {
+impl<K1 : Key + Hash, K2 : Key + Hash, V : KeyVal<Key=(K1,K2)>> KVStoreRel<K1, K2, V> for SimpleCache<V> {
   fn get_vals_from_left(& self, k1 : &K1) -> Vec<V> {
     self.cache.iter().filter(|&(ref k,ref v)| k.0 == *k1).map(|(ref k, ref v)|(*v).clone()).collect()
   }
@@ -71,7 +72,7 @@ impl<T : KeyVal> KVCache<T::Key, Arc<T>> for SimpleCache<T> {
 
 
 /// KVStore implementation with serialization to json (best for testing experimenting) if needed.
-impl<T : KeyVal> KVStore<T> for SimpleCache<T> {
+impl<T : KeyVal> KVStore<T> for SimpleCache<T> where T::Key : Hash {
 //impl<T : KeyVal> KVCache for SimpleCache<T> {
 //impl<T : KeyVal> KVCache<T::Key, Arc<T>> for SimpleCache<T> {
  // type K = T::Key;
@@ -122,7 +123,7 @@ impl<T : KeyVal> KVStore<T> for SimpleCache<T> {
 
 
 /// KVStore implementation with serialization to json (best for testing experimenting) if needed.
-impl<T : KeyVal> KVStoreCache<T> for SimpleCache<ArcKV<T>> {
+impl<T : KeyVal> KVStoreCache<T> for SimpleCache<ArcKV<T>> where T::Key : Hash  {
   #[inline]
   fn add_val_c(& mut self,  v : ArcKV<T>, st : (bool, Option<CachePolicy>)){
     self.add_val(v,st)
@@ -145,7 +146,7 @@ impl<T : KeyVal> KVStoreCache<T> for SimpleCache<ArcKV<T>> {
 }
 
 
-impl<V : KeyVal> SimpleCache<V> {
+impl<V : KeyVal> SimpleCache<V> where V::Key : Hash {
   /// Optionaly specify a path for serialization and of course loading initial value.
   /// JSon is used, with some slow trade of due to issue when serializing hashmap with non string
   /// key.

@@ -1,4 +1,4 @@
-use kvstore::{KeyVal,Key,Attachment};
+use keyval::{KeyVal,Key,Attachment};
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 use super::{TrustedPeer};
 use std::iter;

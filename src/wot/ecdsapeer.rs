@@ -23,12 +23,12 @@ use std::ops::Deref;
 use std::path::{Path,PathBuf};
 use self::time::Timespec;
 
-use kvstore::{KeyVal};
+use keyval::{KeyVal};
 use std::net::{SocketAddr};
 use utils::SocketAddrExt;
 use utils::{TimeSpecExt};
 use utils;
-use kvstore::Attachment;
+use keyval::Attachment;
 
 use super::{TrustedPeer,Truster,TrustRel,TrustedVal,PeerInfoRel};
 use super::trustedpeer::{TrustedPeerToSignEnc, TrustedPeerToSignDec, SendablePeerEnc, SendablePeerDec};

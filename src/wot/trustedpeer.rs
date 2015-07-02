@@ -4,11 +4,11 @@
 extern crate bincode;
 
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
-use kvstore::{KeyVal};
+use keyval::{KeyVal};
 use utils::ArcKV;
 use utils::SocketAddrExt;
 use utils::{TimeSpecExt};
-use kvstore::Attachment;
+use keyval::Attachment;
 use super::{TrustedPeer,Truster,TrustedVal,PeerTrustRel};
 use peer::Peer;
 

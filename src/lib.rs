@@ -22,6 +22,7 @@ extern crate rustc_serialize;
 extern crate time;
 extern crate num;
 extern crate bincode;
+extern crate byteorder;
 
 #[macro_export]
 /// Automatic define for KeyVal without attachment
@@ -264,7 +265,7 @@ macro_rules! derive_kvstore(($kstore:ident, $kv:ident, $k:ident,
   }
 ));
 
-
+mod keyval;
 mod peer;
 mod procs;
 mod query;
@@ -281,7 +282,8 @@ pub use procs::{DHT, RunningContext, RunningProcesses};
 pub use procs::{store_val, find_val, find_local_val};
 pub use query::{QueryConf,QueryPriority,QueryMode,QueryChunk};
 pub use query::cache::{CachePolicy};
-pub use kvstore::{StoragePriority, Attachment};
+pub use kvstore::{StoragePriority};
+pub use keyval::{Attachment};
 // TODO move msgenc to mod dhtimpl
 pub use msgenc::json::{Json};
 //pub use msgenc::bencode::{Bencode};
@@ -291,7 +293,7 @@ pub use transport::tcp::{Tcp};
 pub use transport::udp::{Udp};
 pub use wot::{TrustedVal,Truster,TrustedPeer};
 //pub use kvstore::nospecificencoding;
-pub mod dhtimpl{
+pub mod dhtimpl {
   pub use peer::node::{Node};
   #[cfg(feature="openssl-impl")]
   pub use wot::rsa_openssl::RSAPeer;
@@ -305,7 +307,7 @@ pub mod dhtimpl{
 
   #[cfg(feature="dht-route")]
   pub use route::btkad::{BTKad};
-  pub use kvstore::{FileKV};
+  pub use keyval::{FileKV};
   pub use kvstore::filestore::{FileStore};
   pub use wot::truststore::{WotKV,WotK,WotStore};
   pub use wot::classictrust::{TrustRules,ClassicWotTrust};
@@ -321,8 +323,8 @@ pub mod queryif{
 pub mod kvstoreif{
   //pub use kvstore::KVCache;
   pub use kvstore::{KVCache,KVStore2};
-  pub use kvstore::{KVStore, KeyVal, FileKeyVal};
-  pub use kvstore::{KVStoreRel, Key};
+  pub use keyval::{KeyVal,FileKeyVal,Key};
+  pub use kvstore::{KVStore, KVStoreRel};
   pub use procs::mesgs::{KVStoreMgmtMessage};
 }
 pub mod routeif{
@@ -335,4 +337,100 @@ pub mod msgencif{
   pub use msgenc::{MsgEnc};
 }
 
+pub mod mydhtresult {
 
+use std::fmt::Result as FmtResult;
+use std::fmt::{Display,Debug,Formatter};
+use std::error::Error as ErrorTrait;
+use std::io::Error as IOError;
+use byteorder::Error as BOError;
+use bincode::EncodingError as BincError;
+use bincode::DecodingError as BindError;
+use std::result::Result as StdResult;
+
+#[derive(Debug)]
+pub struct Error(pub String, pub ErrorKind, pub Option<Box<ErrorTrait>>);
+
+#[inline]
+pub fn from_io_error<T>(r : StdResult<T, IOError>) -> Result<T> {
+  r.map_err(|e| From::from(e))
+}
+
+
+impl ErrorTrait for Error {
+  
+  fn description(&self) -> &str {
+    &self.0
+  }
+  fn cause(&self) -> Option<&ErrorTrait> {
+    match self.2 {
+      Some(ref berr) => Some (&(**berr)),
+      None => None,
+    }
+  }
+}
+
+impl From<IOError> for Error {
+  #[inline]
+  fn from(e : IOError) -> Error {
+    Error(e.description().to_string(), ErrorKind::IOError, Some(Box::new(e)))
+  }
+}
+
+impl From<BincError> for Error {
+  #[inline]
+  fn from(e : BincError) -> Error {
+    Error(e.description().to_string(), ErrorKind::EncodingError, Some(Box::new(e)))
+  }
+}
+impl From<BindError> for Error {
+  #[inline]
+  fn from(e : BindError) -> Error {
+    Error(e.description().to_string(), ErrorKind::DecodingError, Some(Box::new(e)))
+  }
+}
+
+impl From<BOError> for Error {
+  #[inline]
+  fn from(e : BOError) -> Error {
+    Error(e.description().to_string(), ErrorKind::ByteOrderError, Some(Box::new(e)))
+  }
+}
+
+
+
+
+
+impl Display for Error {
+
+  fn fmt(&self, ftr : &mut Formatter) -> FmtResult {
+    let kind = format!("{:?} : ",self.1);
+    try!(ftr.write_str(&kind));
+    try!(ftr.write_str(&self.0));
+    match self.2 {
+      Some(ref tr) => {
+        let trace = format!(" - trace : {}", tr);
+        try!(ftr.write_str(&trace[..]));
+      },
+      None => (),
+    };
+    Ok(())
+  }
+}
+
+#[derive(Debug)]
+pub enum ErrorKind {
+  DecodingError,
+  EncodingError,
+  MissingFile,
+  IOError,
+  ByteOrderError,
+}
+
+
+/// Result type internal to mydht
+pub type Result<R> = StdResult<R,Error>;
+
+
+
+}

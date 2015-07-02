@@ -7,7 +7,7 @@
 
 use super::TransportStream;
 use super::Transport;
-use kvstore::{Attachment};
+use super::{Attachment};
 use std::io::Result as IoResult;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
@@ -18,6 +18,8 @@ use std::iter;
 use std::slice;
 use std::sync::{Mutex,Condvar,Arc};
 use std::net::UdpSocket;
+use std::io::Write;
+use std::io::Read;
 
 // TODO retest after switch to new io
 
@@ -40,6 +42,19 @@ struct UdpStream {
   sock : UdpSocket,  // we clone old io but streamreceive is not allowed
   with : SocketAddr, // old io could be clone , with new io manage protection ourselve
   //if define we can send overwhise it is send in server : panic!
+  buf : Vec<u8>,
+}
+
+// TODO set buff in  stream for attachment, large frame... (requires ordering header...)
+impl Write for UdpStream {
+    fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+      self.buf.write(buf)
+    }
+    fn flush(&mut self) -> IoResult<()> {
+      try!(self.sock.send_to(&self.buf[..], self.with));
+      self.buf = Vec::new();
+      Ok(())
+    }
 }
 
 impl Transport for Udp {
@@ -71,7 +86,7 @@ impl Transport for Udp {
             let r = unsafe {
               slice::from_raw_parts(buf.as_ptr(), size).to_vec()
             };
-            closure(UdpStream{with : from, sock : socket.try_clone().unwrap()}, Some((r,None)));
+            closure(UdpStream{with : from, sock : socket.try_clone().unwrap(),buf : Vec::new()}, Some((r,None)));
           }else{
             error!("Datagram on udp transport with size {:?} over buff {:?}, lost datagram", size, buffsize);
           }
@@ -96,28 +111,37 @@ impl Transport for Udp {
       Some (ref so) => so.try_clone().unwrap() ,
     };
     // get socket (non connected cannot timeout)
-    Ok(UdpStream{sock : so, with : p.clone()})
+    Ok(UdpStream{sock : so, with : p.clone(), buf: Vec::new()})
   }
 
 }
 
 impl TransportStream for UdpStream {
-
+/*
   fn streamread(&mut self) -> IoResult<(Vec<u8>,Option<Attachment>)> {
     error!("Trying to read on non connected send only stream");
     Err(IoError::new(
       IoErrorKind::Other,
       "Udp transport is a non connected transport which cannot read from its stream",
     ))
-  }
-
+  }*/
+/*
   fn streamwrite(&mut self, m : &[u8], a : Option<&Attachment>) -> IoResult<()> {
     if a.is_some(){
       panic!("Udp transport current implementation does not allow attachment");
     }
     self.sock.send_to(m, self.with).map(|_| ())
   }
-
+*/
 }
-
+impl Read for UdpStream {
+  fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+    error!("Trying to read on non connected send only stream");
+    Err(IoError::new(
+      IoErrorKind::Other,
+      "Udp transport is a non connected transport which cannot read from its stream",
+    ))
+ 
+  }
+}
 

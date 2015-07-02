@@ -1,12 +1,14 @@
 use std::io::Result as IoResult;
+use std::io::Write;
+use std::io::Read;
 use time::Duration;
 use peer::{Peer};
-use kvstore::{Attachment};
 use std::net::{SocketAddr};
+use std::path::PathBuf;
 
 pub mod tcp;
 pub mod udp;
-
+pub type Attachment = PathBuf;
 /// Transport trait
 pub trait Transport : Send + Sync + 'static {
   /// Transport stream
@@ -27,12 +29,13 @@ pub trait Transport : Send + Sync + 'static {
 }
 
 /// Transport stream
-pub trait TransportStream : Send + Sync + 'static {
- 
+pub trait TransportStream : Send + Sync + 'static + Write + Read {
+/* 
 /// write to someone 
 fn streamwrite(&mut self, &[u8], Option<&Attachment>) -> IoResult<()>;
-
+*/
+/*
 /// read from someone 
 fn streamread(&mut self) -> IoResult<(Vec<u8>,Option<Attachment>)>;
-
+*/
 }

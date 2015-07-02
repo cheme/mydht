@@ -14,10 +14,10 @@ use self::rand::Rng;
 use self::rand::thread_rng;
 use std::sync::{Arc,Mutex,Condvar};
 use transport::{TransportStream};
-use kvstore::{Attachment};
+use keyval::{Attachment};
 use msgenc::{MsgEnc,ProtoMessage};
-use kvstore::{KeyVal};
-use kvstore::{FileKeyVal};
+use keyval::{KeyVal};
+use keyval::{FileKeyVal};
 use peer::{Peer};
 #[cfg(feature="openssl-impl")]
 use self::openssl::crypto::hash::{Hasher,Type};
@@ -44,7 +44,7 @@ use self::time::Timespec;
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 use rustc_serialize::hex::{ToHex,FromHex};
 use std::ops::Deref;
-
+use mydhtresult::Result as MDHTResult;
 
 pub static NULL_TIMESPEC : Timespec = Timespec{ sec : 0, nsec : 0};
 
@@ -222,6 +222,7 @@ impl Deref for SocketAddrExt {
 }*/
 
 // TODO rewrite with full new io and new path : this is so awfull + true uuid
+// Error management...
 pub fn create_tmp_file() -> (PathBuf,File) {
   let tmpdir = env::temp_dir();
   let mytmpdirpath = tmpdir.join(Path::new("./mydht"));
@@ -303,7 +304,7 @@ pub fn clone_wait_one_result<V : Clone + Send> (ores : OneResult<V>) -> Option<V
 }
 
 
-// struct associating transport and msgenc
+/*
 pub fn send_msg<P : Peer, V : KeyVal, T : TransportStream, E : MsgEnc>(m : &ProtoMessage<P,V>, a : Option<&Attachment>, t : &mut T, e : &E) -> bool {
   let omess = e.encode(m);
   debug!("sent {:?}",omess);
@@ -313,8 +314,29 @@ pub fn send_msg<P : Peer, V : KeyVal, T : TransportStream, E : MsgEnc>(m : &Prot
     }
     None => false,
   }
+}*/
+// TODO return messg in result
+pub fn send_msg<P : Peer, V : KeyVal, T : TransportStream, E : MsgEnc>(m : &ProtoMessage<P,V>, a : Option<&Attachment>, t : &mut T, e : &E) -> bool {
+  let mut r = true;
+  r = e.encode_into(t,m).is_ok();
+  r = e.attach_into(t,a).is_ok();
+  r = t.flush().is_ok();
+
+  r
 }
 
+// TODO switch receive to this iface
+pub fn receive_msg_tmp<P : Peer, V : KeyVal, T : TransportStream + Read, E : MsgEnc>(t : &mut T, e : &E) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
+    let m = try!(e.decode_from(t));
+    let oa = try!(e.attach_from(t));
+    Ok((m,oa))
+}
+
+#[inline]
+pub fn receive_msg<P : Peer, V : KeyVal, T : TransportStream + Read, E : MsgEnc>(t : &mut T, e : &E) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
+  receive_msg_tmp(t,e).ok()
+}
+/*
 pub fn receive_msg<P : Peer, V : KeyVal, T : TransportStream, E : MsgEnc>(t : &mut T, e : &E) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
   let rs = t.streamread();
   match rs {
@@ -325,7 +347,7 @@ pub fn receive_msg<P : Peer, V : KeyVal, T : TransportStream, E : MsgEnc>(t : &m
     },
     Err(_) => None, // TODO check if an attachment
   }
-}
+}*/
 /*
 pub fn sendUnconnectMsg<P : Per, V : KeyVal, T : TransportStream, E : MsgEnc>( p : Arc<P>, m : &ProtoMessage<P,V>, t : &mut T, e : &E ) -> bool {
     let mut sc : IoResult<T> = <T as TransportStream>::connectwith((*p).clone(), Duration::seconds(5));

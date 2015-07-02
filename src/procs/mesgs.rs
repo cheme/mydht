@@ -4,7 +4,7 @@ use peer::{Peer,PeerPriority};
 use query::{Query, QueryID, QueryPriority, QueryConf,QueryConfMsg,LastSent};
 use std::sync::{Arc,Mutex,Condvar,Semaphore};
 use rustc_serialize::{Encodable,Decodable};
-use kvstore::KeyVal;
+use keyval::KeyVal;
 use utils::{OneResult};
 use query::cache::CachePolicy;
 

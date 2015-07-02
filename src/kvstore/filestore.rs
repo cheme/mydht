@@ -14,8 +14,9 @@ use std::fs::remove_file;
 use std::fs::hard_link;
 use std::fs::copy;
 use std::fs::PathExt;
-use super::super::utils;
-use super::{FileKeyVal,KeyVal,KVStore};
+use utils;
+use keyval::{FileKeyVal,KeyVal};
+use kvstore::{KVStore};
 //use super::KVCache;
 use std::sync::Arc;
 use query::cache::CachePolicy;
@@ -165,7 +166,8 @@ impl<V : FileKeyVal> KVStore<V> for FileStore<V> {
 #[cfg(test)]
 mod test {
   use super::FileStore;
-  use super::super::{FileKV,KVStore,FileKeyVal,KeyVal};
+  use super::super::{KVStore};
+  use keyval::{FileKV,FileKeyVal,KeyVal};
   //use super::super::KVCache;
   use query::simplecache::SimpleCache;
   use std::sync::Arc;

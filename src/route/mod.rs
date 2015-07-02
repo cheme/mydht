@@ -1,6 +1,6 @@
 use procs::{ClientChanel};
 use peer::{Peer, PeerPriority};
-use kvstore::KeyVal;
+use keyval::KeyVal;
 use std::sync::Arc;
 use std::rc::Rc;
 use std::collections::VecDeque;
@@ -53,7 +53,7 @@ pub trait Route<P:Peer,V:KeyVal> : Send + 'static {
 #[cfg(test)]
 mod test {
   use super::Route;
-  use kvstore::KeyVal;
+  use keyval::KeyVal;
   use std::sync::{Arc};
   use std::collections::VecDeque;
 use peer::{Peer, PeerPriority};

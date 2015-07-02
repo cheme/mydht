@@ -13,9 +13,9 @@ use std::io::Write;
 use std::ops::Deref;
 use std::collections::VecDeque;
 
-use kvstore::{Key,KeyVal,KVStore,KVStoreRel};
+use keyval::{Key,KeyVal,Attachment};
+use kvstore::{KVStore,KVStoreRel};
 use query::cache::CachePolicy;
-use kvstore::Attachment;
 use utils::ArcKV;
 use utils::TimeSpecExt;
 use time::Timespec;

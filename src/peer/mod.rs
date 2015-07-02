@@ -10,7 +10,7 @@ use procs::{RunningProcesses,RunningContext};
 use query::{QueryRules};
 use msgenc::{MsgEnc};
 use transport::{Transport};
-use kvstore::KeyVal;
+use keyval::KeyVal;
 
 pub mod node;
 

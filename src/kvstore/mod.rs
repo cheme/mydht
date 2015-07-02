@@ -17,6 +17,7 @@ use std::str;
 use std::path::{Path, PathBuf};
 use msgenc;
 use utils::ArcKV;
+use keyval::{KeyVal,Key};
 
 pub mod filestore;
 
@@ -26,10 +27,6 @@ pub mod filestore;
 // Note we use hasher cause still unstable hash but need some genericity here - this is for storage
 // of keyval (serializable ...)
 
-/// Non serialize binary attached content.
-pub type Attachment = PathBuf; // TODO change to Path !!! to allow copy ....
-
-pub trait Key : Encodable + Decodable + fmt::Debug + Hash + Eq + Clone + Send + Sync + Ord + 'static{}
 
 /// Note linked anywhere. Cache for `KeyVal` TODO retry later usage (currently type inference fails) cf KVStore2
 pub trait KVCache<K, V> : Send + 'static {
@@ -77,7 +74,7 @@ mod test {
   extern crate num;
   extern crate rand;
   use rustc_serialize as serialize;
-  use kvstore::KeyVal;
+  use keyval::KeyVal;
   use kvstore::KVStore2;
   use query::simplecache::SimpleCache;
   use std::sync::{Arc};
@@ -93,7 +90,7 @@ mod test {
 
   use std::str::FromStr;
 
-  use kvstore::Attachment;
+  use keyval::Attachment;
 
   // Testing only nodeK, with key different from id
   type NodeK2 = (Node,String);
@@ -184,38 +181,6 @@ pub trait KVStoreRel2<V : KeyVal<Key=(Self::K1,Self::K2)>> : KVStore<V> {
   fn remove_val(& mut self, &V::Key);
 } */
 
-/// Specialization of Keyval for FileStore
-pub trait FileKeyVal : KeyVal {
-  /// initiate from a file (usefull for loading)
-  fn from_path(PathBuf) -> Option<Self>;
-  /// name of the file
-  fn name(&self) -> String;
-  /// get attachment
-  fn get_file_ref(&self) -> &Attachment {
-    self.get_attachment().unwrap()
-  }
-}
-
-/// KeyVal is the basis for DHT content, a value with key.
-pub trait KeyVal : Encodable + Decodable + fmt::Debug + Clone + Send + Sync + Eq + 'static {
-  /// Key type of KeyVal
-  type Key : Encodable + Decodable + fmt::Debug + Hash + Eq + Clone + Send + Sync + Ord + 'static; //aka key // Ord , Hash ... might be not mandatory but issue currently
-  /// getter for key value
-  fn get_key(&self) -> Self::Key; // TODO change it to return &Key (lot of useless clone in impls
-  /// optional attachment
-  fn get_attachment(&self) -> Option<&Attachment>;
-  /// optional attachment
-  fn set_attachment(& mut self, &Attachment) -> bool;
-  /// default serialize encode of keyval is used at least to store localy distant without attachment,
-  /// it could be specialize with the three next variant (or just call from).
-  fn encode_dist_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>;
-  fn decode_dist_with_att<D:Decoder> (d : &mut D) -> Result<Self, D::Error>;
-  fn encode_dist<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>;
-  fn decode_dist<D:Decoder> (d : &mut D) -> Result<Self, D::Error>;
-  fn encode_loc_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>;
-  fn decode_loc_with_att<D:Decoder> (d : &mut D) -> Result<Self, D::Error>;
-}
-
 #[derive(RustcDecodable,RustcEncodable,Debug,Clone,Copy)]
 /// Storage priority (closely related to rules implementation)
 pub enum StoragePriority {
@@ -232,165 +197,5 @@ pub enum StoragePriority {
   /// allways store
   All,
 }
-
-#[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Hash,Clone)]
-/// Possible implementation of a `FileKeyVal` : local info are stored with local file
-/// reference
-pub struct FileKV {
-  /// key is hash of file
-  hash : Vec<u8>,
-  /// local path to file (not sent (see serialize implementation)).
-  file : PathBuf,
-  /// name of file
-  name : String,
-}
-
-impl FileKV {
-  /// New FileKV from path TODO del
-  pub fn new(p : PathBuf) -> FileKV {
-    FileKV::from_path(p).unwrap()
-  }
-
-  fn from_path(path : PathBuf) -> Option<FileKV> {
-    File::open(&path).map(|mut f|{
-      // TODO choose hash lib
-      //let hash = utils::hash_crypto(tmpf);
-      // sha256 default impl TODO multiple hash support
-      let hasho = utils::hash_default(&mut f);
-      //error!("{:?}", hash);
-      //error!("{:?}", hash.to_hex());
-      debug!("Hash of file : {:?}", hasho.to_hex());
-      let name = path.file_name().unwrap().to_str().unwrap().to_string();
-      FileKV {
-        hash : hasho,
-        file : path,
-        name : name,
-      }
-    }).ok()
-  }
-
-  fn encode_distant<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-    s.emit_struct("FileKV",2, |s| {
-      s.emit_struct_field("hash", 0, |s|{
-        Encodable::encode(&self.hash, s)
-      });
-      s.emit_struct_field("name", 1, |s|{
-        s.emit_str(&self.name[..])
-      })
-    })
-  }
-
-  fn decode_distant<D:Decoder> (d : &mut D) -> Result<FileKV, D::Error> {
-    d.read_struct("nonlocaldesckv",2, |d| {
-      let hash : Result<Vec<u8>, D::Error>= d.read_struct_field("hash", 0, |d|{
-        Decodable::decode(d)
-      });
-      let name : Result<String, D::Error>= d.read_struct_field("name", 1, |d|{
-        d.read_str()
-      });
-      name.and_then(move |n| hash.map (move |h| FileKV{hash : h, name : n, file : PathBuf::new()}))
-    })
-  }
-
-  fn encode_with_file<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-    debug!("encode with file");
-    s.emit_struct("filekv",2, |s| {
-      s.emit_struct_field("hash", 0, |s|{
-        Encodable::encode(&self.hash, s)
-      });
-      s.emit_struct_field("name", 1, |s|{
-        s.emit_str(&self.name[..])
-      })
-    });
-    match self.get_attachment(){
-      Some(path) => {
-        let mut f = File::open(path).unwrap();
-        let mut v = Vec::new();
-        f.read_to_end(&mut v);
-        Encodable::encode(&v,s)// very unefficient : use only for small files (big memory print)
-      },
-      None => panic!("Trying to serialize filekv without file"),// raise error
-    }
-  }
-
-  fn decode_with_file<D:Decoder> (d : &mut D) -> Result<FileKV, D::Error> {
-    debug!("decode with file");
-    d.read_struct("filekv",2, |d| {
-      let hash : Result<Vec<u8>, D::Error>= d.read_struct_field("hash", 0, |d|{
-        Decodable::decode(d)
-      });
-      let name : Result<String, D::Error>= d.read_struct_field("name", 1, |d|{
-        d.read_str()
-      });
-      let filevec : Result<Vec<u8>, D::Error>= Decodable::decode(d);
-      //write file to tmp
-      let(fp, mut file) = utils::create_tmp_file();
-      file.write_all(&filevec.ok().unwrap()[..]);
-      file.flush();
-
-      debug!("File added to tmp {:?}", fp);
-      name.and_then(move |n| hash.map (move |h| FileKV{hash : h, name : n, file : fp}))
-    })
-  }
-}
-
-impl KeyVal for FileKV {
-  type Key = Vec<u8>;
-  fn get_key(&self) -> Vec<u8> {
-    self.hash.clone()
-  }
-  #[inline]
-  /// encode without path and attachment is serialize in encoded content
-  fn encode_dist_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>{
-    self.encode_with_file(s)
-  }
-  #[inline]
-  fn decode_dist_with_att<D:Decoder> (d : &mut D) -> Result<FileKV, D::Error>{
-    FileKV::decode_with_file(d)
-  }
-  #[inline]
-   /// encode without path and attachment is to be sent as attachment (not included)
-  fn encode_dist<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>{
-    self.encode_distant(s)
-  }
-  #[inline]
-  fn decode_dist<D:Decoder> (d : &mut D) -> Result<FileKV, D::Error>{
-    FileKV::decode_distant(d)
-  }
-  #[inline]
-  /// encode with attachement in encoded content to be use with non filestore storage
-  /// (default serialize include path and no attachment for use with filestore)
-  fn encode_loc_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>{
-    self.encode_with_file(s)
-  }
-  #[inline]
-  fn decode_loc_with_att<D:Decoder> (d : &mut D) -> Result<FileKV, D::Error>{
-    FileKV::decode_with_file(d)
-  }
-  #[inline]
-  /// attachment support as file (in tmp or in filestore)
-  fn get_attachment(&self) -> Option<&Attachment>{
-    Some(&self.file)
-  }
-  #[inline]
-  /// attachment support as file (in tmp or in filestore)
-  fn set_attachment(& mut self, f:&Attachment) -> bool{
-    self.file = f.clone();
-    true
-  }
-}
-
-
-impl FileKeyVal for FileKV {
-  fn name(&self) -> String {
-    self.name.clone()
-  }
-
-  #[inline]
-  fn from_path(tmpf : PathBuf) -> Option<FileKV> {
-    FileKV::from_path(tmpf)
-  }
-}
-
 
 

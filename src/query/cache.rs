@@ -4,7 +4,7 @@ use std::time::Duration;
 use std::sync::mpsc::{Sender};
 use procs::mesgs::{PeerMgmtMessage};
 use peer::Peer;
-use kvstore::KeyVal;
+use keyval::KeyVal;
 use time::Timespec;
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 

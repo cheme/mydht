@@ -13,9 +13,10 @@ use std::sync::mpsc::{Sender,Receiver};
 use route::Route;
 use std::iter::Iterator;
 use std::rc::Rc;
-use kvstore::KeyVal;
-use kvstore::Attachment;
+use keyval::KeyVal;
+use keyval::Attachment;
 use num::traits::ToPrimitive;
+use std::hash::Hash;
 
 #[derive(Clone,Debug)]
 struct ArcP<P : DhtPeer>(Arc<P>);
@@ -25,7 +26,7 @@ struct ArcP<P : DhtPeer>(Arc<P>);
 /// In fact it need DhtKey for peer and value (converting key to bigint to be able to xor
 /// keys).
 /// This route need Peer implementing DhtPeer trait for interface with underlying library fork.
-pub struct BTKad<P : Peer + DhtPeer, V : KeyVal> {
+pub struct BTKad<P : Peer + DhtPeer, V : KeyVal> where P::Key : Hash {
   kad : KNodeTable<ArcP<P>>,
   peers : HashMap<P::Key, (Arc<P>, PeerPriority, Option<ClientChanel<P,V>>)>,
 }
@@ -52,7 +53,7 @@ pub trait DhtKey<K : DhtPeer> {
 }
 
 // implementation of bt kademlia from rust-dht project
-impl<P : Peer + DhtPeer, V : KeyVal> Route<P,V> for BTKad<P,V> where P::Key : DhtKey<P>,  V::Key : DhtKey<P>  {
+impl<P : Peer + DhtPeer, V : KeyVal> Route<P,V> for BTKad<P,V> where P::Key : DhtKey<P> + Hash,  V::Key : DhtKey<P>  {
   fn query_count_inc(& mut self, pnid : &P::Key){
     // Not used
   }
@@ -148,7 +149,7 @@ impl<P : Peer + DhtPeer, V : KeyVal> Route<P,V> for BTKad<P,V> where P::Key : Dh
 
 }
 
-impl<P:Peer + DhtPeer,V: KeyVal> BTKad<P,V> {
+impl<P:Peer + DhtPeer,V: KeyVal> BTKad<P,V> where P::Key : Hash {
     // TODO spawn a cleaner of the dht for poping oldest or pop in knodetable on update over full
     // TODO use with detail for right size of key (more in knodetable)
     pub fn new(k : P::Id) -> BTKad<P,V> {
@@ -168,7 +169,7 @@ mod test {
   use super::BTKad;
   use super::DhtKey;
   use super::super::test;
-  use kvstore::KeyVal;
+  use keyval::KeyVal;
   use std::sync::{Arc};
   use std::collections::VecDeque;
   use peer::node::{Node,NodeID};
@@ -184,7 +185,7 @@ mod test {
   use std::fs::File;
 
   use std::net::{Ipv4Addr};
-  use kvstore::Attachment;
+  use keyval::Attachment;
   use std::str::FromStr;
 
 // TODO a clean nodeK, with better serialize (use as_vec) , but here good for testing as key is not

@@ -6,17 +6,18 @@ use std::sync::mpsc::{Sender,Receiver};
 use route::Route;
 use std::iter::Iterator;
 use std::rc::Rc;
-use kvstore::KeyVal;
+use keyval::KeyVal;
+use std::hash::Hash;
 
 /// Routing structure based on map plus count of query for proxy mode
 /// May also be used for testing
-pub struct Inefficientmap<P : Peer, V : KeyVal> {
+pub struct Inefficientmap<P : Peer, V : KeyVal> where P::Key : Ord + Hash {
     peersNbQuery : BTreeSet<(u8,P::Key)>, //TODO switch to collection ordered by nb query : highly ineficient when plus and minus on query
     peers : HashMap<P::Key, (Arc<P>, PeerPriority, Option<ClientChanel<P,V>>)>, //TODO maybe get node priority out of this container or do in place update
 }
 
 
-impl<P : Peer, V : KeyVal> Route<P,V> for Inefficientmap<P,V> {
+impl<P : Peer, V : KeyVal> Route<P,V> for Inefficientmap<P,V> where P::Key : Ord + Hash {
   fn query_count_inc(& mut self, pnid : &P::Key) {
     let val = match self.peersNbQuery.iter().filter(|&&(ref nb,ref nid)| (*pnid) == (*nid) ).next() {
       Some(inid) => Some(inid.clone()),
@@ -129,7 +130,7 @@ impl<P : Peer, V : KeyVal> Route<P,V> for Inefficientmap<P,V> {
 
 }
 
-impl<P:Peer,V:KeyVal> Inefficientmap<P,V> {
+impl<P:Peer,V:KeyVal> Inefficientmap<P,V> where P::Key : Ord + Hash {
 
   pub fn new() -> Inefficientmap<P,V> {
     Inefficientmap{ peersNbQuery : BTreeSet::new(), peers : HashMap::new()}
@@ -169,7 +170,7 @@ mod test {
   use super::super::Route;
   use super::Inefficientmap;
   use super::super::test;
-  use kvstore::KeyVal;
+  use keyval::KeyVal;
   use std::sync::{Arc};
   use std::collections::VecDeque;
   use peer::node::{Node};

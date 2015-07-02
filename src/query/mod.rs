@@ -9,7 +9,8 @@ use procs::mesgs::{KVStoreMgmtMessage,PeerMgmtMessage,QueryMgmtMessage};
 use query::cache::CachePolicy;
 use std::collections::VecDeque;
 use procs::RunningProcesses;
-use kvstore::{KeyVal,StoragePriority};
+use keyval::{KeyVal};
+use kvstore::{StoragePriority};
 use utils::Either;
 use num::traits::ToPrimitive;
 

@@ -14,7 +14,7 @@ use std::thread;
 use transport::{Transport,TransportStream};
 use peer::Peer;
 use utils::{self,OneResult,Either};
-use kvstore::{KeyVal};
+use keyval::{KeyVal};
 use msgenc::{MsgEnc};
 use num::traits::ToPrimitive;
 

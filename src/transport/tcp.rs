@@ -19,15 +19,15 @@ use std::fs::OpenOptions;
 use time::Duration;
 use std::thread::Thread;
 use peer::{Peer};
-use kvstore::Attachment;
+use super::Attachment;
 use super::{Transport,TransportStream};
 use std::iter;
 use utils;
 use std::path::{Path,PathBuf};
 use num::traits::ToPrimitive;
 
-static BUFF_SIZE : usize = 10000; // use for attachment send/receive -- 21888 seems to be maxsize
-static MAX_BUFF_SIZE : usize = 21888; // 21888 seems to be maxsize
+const BUFF_SIZE : usize = 10000; // use for attachment send/receive -- 21888 seems to be maxsize
+const MAX_BUFF_SIZE : usize = 21888; // 21888 seems to be maxsize
 
 /// Tcp struct : two options, timeout for connect and time out when connected.
 pub struct Tcp {
@@ -75,7 +75,7 @@ impl Transport for Tcp {
 
 impl TransportStream for TcpStream {
 
-  fn streamwrite(&mut self, bytes : &[u8], a : Option<&Attachment>) -> IoResult<()> {
+/*  fn streamwrite(&mut self, bytes : &[u8], a : Option<&Attachment>) -> IoResult<()> {
     let l : usize = bytes.len();
     debug! ("sendlengt {:?}", l);
 //    try!(self.write_u8(if a.is_some(){1}else{0}));
@@ -120,12 +120,12 @@ impl TransportStream for TcpStream {
           },
         };
       };
-
+      try!(self.flush());
       Ok(())
     });
     ar.unwrap_or(Ok(()))
-  }
-
+  }*/
+/*
   fn streamread(&mut self) -> IoResult<(Vec<u8>,Option<Attachment>)>{
 //    self.read_u8().and_then(|a|{
 
@@ -153,7 +153,7 @@ impl TransportStream for TcpStream {
     // })
    // })
    //})
-  }
+  }*/
 
 }
 

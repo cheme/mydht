@@ -19,7 +19,8 @@ use transport::Transport;
 use peer::Peer;
 use utils;
 use utils::Either;
-use kvstore::{KVStore,KeyVal,StoragePriority};
+use kvstore::{KVStore,StoragePriority};
+use keyval::{KeyVal};
 use msgenc::MsgEnc;
 use num::traits::ToPrimitive;
 
