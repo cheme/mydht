@@ -9,7 +9,7 @@
 use rustc_serialize::json;
 use procs::mesgs::{PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage};
 use msgenc::{ProtoMessage};
-use procs::{RunningContext, RunningProcesses};
+use procs::{RunningContext,ArcRunningContext,RunningProcesses};
 use peer::{Peer,PeerMgmtRules, PeerPriority};
 use std::str::from_utf8;
 use transport::TransportStream;
@@ -66,7 +66,7 @@ pub fn servloop
   E : MsgEnc,
   T : Transport,
  >
- (rc : RunningContext<P,V,R,Q,E,T>, 
+ (rc : ArcRunningContext<P,V,R,Q,E,T>, 
   rp : RunningProcesses<P,V>) {
 
     let spserv = |s, co| {
@@ -77,7 +77,7 @@ pub fn servloop
         });
     };
     // loop in transport receive function
-    rc.4.receive(&rc.0.to_address(), spserv);
+    rc.transport.receive(&rc.me.to_address(), spserv);
 }
 
 /// Spawn thread either for one message (non connected) or for one connected peer (loop on stream
@@ -90,7 +90,7 @@ fn request_handler
   E : MsgEnc,
   T : Transport> 
  (mut s1 : T::Stream, 
-  rc : &RunningContext<P,V,R,Q,E,T>, 
+  rc : &ArcRunningContext<P,V,R,Q,E,T>, 
   rp : &RunningProcesses<P, V>,
   oneonly : &Option<(Vec<u8>, Option<Attachment>)>,
  ) {
@@ -101,7 +101,7 @@ fn request_handler
     // and not when connected).
     let (r, oa) = match oneonly {
       &None => {
-        match receive_msg (s, &rc.3) {
+        match receive_msg (s, &rc.msgenc) {
           None => {
             info!("Serving connection lost");
             break;
@@ -110,7 +110,7 @@ fn request_handler
         }
       },
       // unconnected
-      &Some((ref v, ref oa)) => match rc.3.decode(v.as_slice()) {
+      &Some((ref v, ref oa)) => match rc.msgenc.decode(v.as_slice()) {
          None => {
            error!("invalid message");
            break;
@@ -118,31 +118,31 @@ fn request_handler
          Some(r) => (r, (None,oa)),
       },
     };
-    debug!("{:?} RECEIVED : {:?}", rc.0, r);
+    debug!("{:?} RECEIVED : {:?}", rc.me, r);
     match r {
       ProtoMessage::PING(from, chal, sig) => {
         // check ping authenticity
-        if rc.1.checkmsg(&from,&chal,&sig){
+        if rc.peerrules.checkmsg(&from,&chal,&sig){
           let afrom = Arc::new(from);
-          let accept = rc.1.accept(&afrom, &rp, &rc);
+          let accept = rc.peerrules.accept(&afrom, &rp, &rc);
           match accept {
             None => {
               warn!("refused node {:?}",afrom);
-              rp.0.send(PeerMgmtMessage::PeerUpdatePrio(afrom, PeerPriority::Blocked));
+              rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(afrom, PeerPriority::Blocked));
             },
             Some(pri)=> {
-              let repsig = rc.1.signmsg(&(*rc.0), &chal);
+              let repsig = rc.peerrules.signmsg(&(*rc.me), &chal);
               let mess : ProtoMessage<P,V> = if oneonly.is_some() {
                 // challenge use as query id
-                ProtoMessage::APONG((*rc.0).clone(),chal, repsig)
+                ProtoMessage::APONG((*rc.me).clone(),chal, repsig)
               } else { 
                 // connected
                 ProtoMessage::PONG(repsig)
               };
-              send_msg(&mess, None, s,&rc.3);
+              send_msg(&mess, None, s,&rc.msgenc);
               // add the peer
-              rc.1.for_accept_ping(&afrom, &rp, &rc);
-              rp.0.send(PeerMgmtMessage::PeerAdd(afrom, pri));
+              rc.peerrules.for_accept_ping(&afrom, &rp, &rc);
+              rp.peers.send(PeerMgmtMessage::PeerAdd(afrom, pri));
             }
           }
         } else {
@@ -158,73 +158,73 @@ fn request_handler
         // only)).
         // here we do not check that challenge (qid) is the righ one!!!
         let anode = Arc::new(node);
-        let accept = rc.1.accept(&anode, &rp, &rc);
+        let accept = rc.peerrules.accept(&anode, &rp, &rc);
         match accept {
            Some(pri) => {
-             rp.0.send(PeerMgmtMessage::PeerAdd(anode,pri));
+             rp.peers.send(PeerMgmtMessage::PeerAdd(anode,pri));
            },
            None => (),
         };
       },
       // asynch mode we do not need to keep trace of the query
       ProtoMessage::FIND_NODE(mut qconf@(QueryModeMsg::Asynch(_,_), _,_,_,_,_,_,_), nid) => {
-        update_query_conf (&mut qconf ,&rc.2);
+        update_query_conf (&mut qconf ,&rc.queryrules);
         debug!("Asynch Find peer {:?}", nid);
-        rp.0.send(PeerMgmtMessage::PeerFind(nid,None,qconf));
+        rp.peers.send(PeerMgmtMessage::PeerFind(nid,None,qconf));
       },
       // particular case with synchronous blocking request : proxy query directly
       ProtoMessage::FIND_NODE(mut qconf@(QueryModeMsg::Proxy,_,_,_,_,_,_,_), nid) => {
-        update_query_conf (&mut qconf ,&rc.2);
+        update_query_conf (&mut qconf ,&rc.queryrules);
         debug!("Proxying Find peer {:?}", nid);
         let qp = query::get_prio(&qconf);
         let nbquer = query::get_nbquer(&qconf);
-        let lifetime = rc.2.lifetime(qp); // TODO proxy no lifetime mgmt = null -> init fn without lifetime?
+        let lifetime = rc.queryrules.lifetime(qp); // TODO proxy no lifetime mgmt = null -> init fn without lifetime?
         // unmanaged query
-        let query = query::init_query(nbquer.to_usize().unwrap(), 1, lifetime, & rp.1, None, None, None);
-        rp.0.send(PeerMgmtMessage::PeerFind(nid,Some(query.clone()), qconf.clone()));
+        let query = query::init_query(nbquer.to_usize().unwrap(), 1, lifetime, & rp.queries, None, None, None);
+        rp.peers.send(PeerMgmtMessage::PeerFind(nid,Some(query.clone()), qconf.clone()));
         // block until result (proxy mode)
         let result = query.wait_query_result();
-        debug!("!! {:?} replying to find with {:?}",rc.0,result);
+        debug!("!! {:?} replying to find with {:?}",rc.me,result);
         let mess : ProtoMessage<P,V> = ProtoMessage::STORE_NODE(None, result.left().unwrap().map(|v|DistantEnc((*v).clone())));
-        send_msg(&mess, None, s,&rc.3);
+        send_msg(&mess, None, s,&rc.msgenc);
       },
       // general case as asynch waiting for reply
       ProtoMessage::FIND_NODE(mut qconf@(_, _,_,_,_,_,_,_), nid) => {
-        update_query_conf (&mut qconf ,&rc.2);
+        update_query_conf (&mut qconf ,&rc.queryrules);
         let nbquer = query::get_nbquer(&qconf);
         let qp = query::get_prio(&qconf);
         // TODO server query initialization is not really efficient it should be done after local
         debug!("Proxying Find peer {:?}", nid);
-        let lifetime = rc.2.lifetime(qp); // TODO special lifetime when hoping?
-        let qid = rc.2.newid();
-        qconf.0 = new_query_mode (&qconf.0, &rc.0, qid.clone());
+        let lifetime = rc.queryrules.lifetime(qp); // TODO special lifetime when hoping?
+        let qid = rc.queryrules.newid();
+        qconf.0 = new_query_mode (&qconf.0, &rc.me, qid.clone());
         // Warning here is old qmode stored in conf new mode is for proxied query
-        let query : query::Query<P,V> = query::init_query(nbquer.to_usize().unwrap(), 1, lifetime, & rp.1, Some(qconf.clone()), Some(qid.clone()), None);
+        let query : query::Query<P,V> = query::init_query(nbquer.to_usize().unwrap(), 1, lifetime, & rp.queries, Some(qconf.clone()), Some(qid.clone()), None);
         debug!("Asynch Find peer {:?}", nid);
         // warn here is new qmode
-        rp.0.send(PeerMgmtMessage::PeerFind(nid,Some(query.clone()),qconf));
+        rp.peers.send(PeerMgmtMessage::PeerFind(nid,Some(query.clone()),qconf));
       },
       // particular case for asynch where we skip node during reply process
       ProtoMessage::FIND_VALUE(mut qconf@(QueryModeMsg::Asynch(_,_), _,_,_,_,_,_,_), nid) => {
-        update_query_conf (&mut qconf ,&rc.2);
+        update_query_conf (&mut qconf ,&rc.queryrules);
         debug!("Asynch Find val {:?}", nid);
-        rp.2.send(KVStoreMgmtMessage::KVFind(nid,None,qconf));
+        rp.store.send(KVStoreMgmtMessage::KVFind(nid,None,qconf));
       },
       // particular case with synchronous blocking request
       ProtoMessage::FIND_VALUE(mut queryconf@(QueryModeMsg::Proxy, _,_,_,_,_,_,_), nid) => {
         let oldhop = query::get_nbhop(&queryconf); // Warn no set of this value
         let oldqp = query::get_prio(&queryconf);
-        update_query_conf (&mut queryconf ,&rc.2);
+        update_query_conf (&mut queryconf ,&rc.queryrules);
         let nbquer = query::get_nbquer(&queryconf);
         let qp = query::get_prio(&queryconf);
         let sprio = query::get_sprio(&queryconf);
         let nb_req = query::get_req_nb_res(&queryconf);
         debug!("Proxying Find val {:?}", nid);
-        let lifetime = rc.2.lifetime(qp); // TODO proxy no lifetime mgmt = null -> init fn without lifetime?
-        let esthop = (rc.2.nbhop(oldqp) - oldhop).to_usize().unwrap();
-        let store = rc.2.do_store(false, qp, sprio, Some(esthop)); // first hop
-        let query = query::init_query(nbquer.to_usize().unwrap(), nb_req, lifetime, & rp.1, None, None, Some(store));
-        rp.2.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()), queryconf.clone()));
+        let lifetime = rc.queryrules.lifetime(qp); // TODO proxy no lifetime mgmt = null -> init fn without lifetime?
+        let esthop = (rc.queryrules.nbhop(oldqp) - oldhop).to_usize().unwrap();
+        let store = rc.queryrules.do_store(false, qp, sprio, Some(esthop)); // first hop
+        let query = query::init_query(nbquer.to_usize().unwrap(), nb_req, lifetime, & rp.queries, None, None, Some(store));
+        rp.store.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()), queryconf.clone()));
         // block until result (proxy mode)
         let result = query.wait_query_result();
         match (queryconf.1){
@@ -232,13 +232,13 @@ fn request_handler
             for val in result.right().unwrap().into_iter(){
               let att = val.as_ref().and_then(|kv|kv.get_attachment().map(|p|p.clone()));
               let mess : ProtoMessage<P,V> = ProtoMessage::STORE_VALUE(None, val.clone().map(|v|DistantEnc(v)));
-              send_msg(&mess,att.as_ref(),s,&rc.3);
+              send_msg(&mess,att.as_ref(),s,&rc.msgenc);
             }
           },
           _ /* no attachment */  =>  {
             for val in result.right().unwrap().into_iter(){
               let mess : ProtoMessage<P,V> = ProtoMessage::STORE_VALUE_ATT(None, val.clone().map(|v|DistantEncAtt(v)));
-              send_msg(&mess,None,s,&rc.3);
+              send_msg(&mess,None,s,&rc.msgenc);
             }
           },
         };
@@ -247,23 +247,23 @@ fn request_handler
       ProtoMessage::FIND_VALUE(mut queryconf, nid) => {
         let oldhop = query::get_nbhop(&queryconf); // Warn no set of this value
         let oldqp = query::get_prio(&queryconf);
-        update_query_conf (&mut queryconf ,&rc.2);
+        update_query_conf (&mut queryconf ,&rc.queryrules);
         let nbquer = query::get_nbquer(&queryconf);
         let qp = query::get_prio(&queryconf);
         let sprio = query::get_sprio(&queryconf);
         let nb_req = query::get_req_nb_res(&queryconf);
         debug!("Proxying Find value {:?}", nid);
-        let lifetime = rc.2.lifetime(qp); // TODO special lifetime when hoping
+        let lifetime = rc.queryrules.lifetime(qp); // TODO special lifetime when hoping
         // TODO same thing for prio that is 
-        let qid = rc.2.newid();
-        queryconf.0 = new_query_mode (&queryconf.0, &rc.0, qid.clone());
-        let esthop = (rc.2.nbhop(oldqp) - oldhop).to_usize().unwrap();
-        let store = rc.2.do_store(false, qp, sprio, Some(esthop)); // first hop
+        let qid = rc.queryrules.newid();
+        queryconf.0 = new_query_mode (&queryconf.0, &rc.me, qid.clone());
+        let esthop = (rc.queryrules.nbhop(oldqp) - oldhop).to_usize().unwrap();
+        let store = rc.queryrules.do_store(false, qp, sprio, Some(esthop)); // first hop
 
-        let query : query::Query<P,V> = query::init_query(nbquer.to_usize().unwrap(), nb_req, lifetime, & rp.1, Some(queryconf.clone()), Some(qid.clone()), Some(store));
+        let query : query::Query<P,V> = query::init_query(nbquer.to_usize().unwrap(), nb_req, lifetime, & rp.queries, Some(queryconf.clone()), Some(qid.clone()), Some(store));
  
         debug!("Asynch Find val {:?}", nid);
-        rp.2.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()),queryconf));
+        rp.store.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()),queryconf));
 
       },
       // store node receive by server is asynch reply
@@ -274,7 +274,7 @@ fn request_handler
           match res {
             None  => {
               // release on sem of query
-              rp.1.send(QueryMgmtMessage::NewReply(qid, (res,None)));
+              rp.queries.send(QueryMgmtMessage::NewReply(qid, (res,None)));
             },
             Some(node) => {
               let rpsp = rp.clone();
@@ -285,7 +285,7 @@ fn request_handler
                 let sync = Arc::new((Mutex::new(false),Condvar::new()));
                 // spawn ping node first (= checking)
                 debug!("start ping on store node reception");
-                rpsp.0.send(PeerMgmtMessage::PeerPing(node.clone(), Some(sync.clone())) ); // peer ping will run all needed control (accept, up, get prio) and update peer table
+                rpsp.peers.send(PeerMgmtMessage::PeerPing(node.clone(), Some(sync.clone())) ); // peer ping will run all needed control (accept, up, get prio) and update peer table
                 let pingok =  match utils::clone_wait_one_result(sync){
                   None => {
                     error!("Condvar issue for ping of {:?} ", node); 
@@ -295,11 +295,11 @@ fn request_handler
                 };
                 if(pingok){
                   // then send reply
-                  rpsp.1.send(QueryMgmtMessage::NewReply(qid, (Some(node),None))); 
+                  rpsp.queries.send(QueryMgmtMessage::NewReply(qid, (Some(node),None))); 
                 } else {
                   // bad response consider not found -> this is discutable (bad node may kill
                   // query with this)
-                  rpsp.1.send(QueryMgmtMessage::NewReply(qid, (None,None))); 
+                  rpsp.queries.send(QueryMgmtMessage::NewReply(qid, (None,None))); 
                 }
               });
             },
@@ -319,7 +319,7 @@ fn request_handler
               // Storage is done by query management
             },
           };
-          rp.1.send(QueryMgmtMessage::NewReply(qid, (None,res)));
+          rp.queries.send(QueryMgmtMessage::NewReply(qid, (None,res)));
         },
         None => {
           error!("receive store node for non stored query mode");
@@ -348,7 +348,7 @@ fn request_handler
               None
             },
           };
-          rp.1.send(QueryMgmtMessage::NewReply(qid, (None,res)));
+          rp.queries.send(QueryMgmtMessage::NewReply(qid, (None,res)));
         },
         None => {
           error!("receive store node for non stored query mode");

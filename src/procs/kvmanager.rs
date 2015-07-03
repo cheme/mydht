@@ -4,7 +4,7 @@
 use rustc_serialize::json;
 use procs::mesgs::{self,PeerMgmtMessage,ClientMessage,KVStoreMgmtMessage};
 use peer::{PeerMgmtRules, PeerPriority};
-use procs::{RunningContext, RunningProcesses};
+use procs::{RunningContext,ArcRunningContext,RunningProcesses};
 use std::sync::mpsc::{Sender,Receiver};
 use std::str::from_utf8;
 use procs::client;
@@ -38,7 +38,7 @@ pub fn start
   S : KVStore<V>,
   F : FnOnce() -> Option<S> + Send + 'static,
   T : Transport> 
- (rc : RunningContext<P,V,R,Q,E,T>, 
+ (rc : ArcRunningContext<P,V,R,Q,E,T>, 
   mut storei : F, 
   r : &Receiver<KVStoreMgmtMessage<P,V>>,
   rp : RunningProcesses<P,V>,
@@ -48,12 +48,12 @@ pub fn start
   loop {
     match r.recv() {
       Ok(KVStoreMgmtMessage::KVAddPropagate(kv,ares,stconf)) => {
-        info!("Adding kv : {:?} from {:?}", kv, rc.0);
+        info!("Adding kv : {:?} from {:?}", kv, rc.me);
         let remhop = query::get_nbhop(&stconf);
         let qp = query::get_prio(&stconf);
         let qps = query::get_sprio(&stconf);
-        let esthop = (rc.2.nbhop(qp) - remhop).to_usize().unwrap();
-        let storeconf = rc.2.do_store(true, qp, qps, Some(esthop)); // first hop
+        let esthop = (rc.queryrules.nbhop(qp) - remhop).to_usize().unwrap();
+        let storeconf = rc.queryrules.do_store(true, qp, qps, Some(esthop)); // first hop
 
         let hasnode = match store.get_val(&kv.get_key()) {
           Some(_) => {true},
@@ -79,7 +79,7 @@ pub fn start
         });
       },
       Ok(KVStoreMgmtMessage::KVAdd(kv,ares,storeconf)) => {
-        info!("Adding kv : {:?} from {:?}", kv, rc.0);
+        info!("Adding kv : {:?} from {:?}", kv, rc.me);
         let hasnode = match store.get_val(&kv.get_key()) { // TODO new function has_val??
           Some(_) => {true},
           None => {false},
@@ -107,15 +107,15 @@ pub fn start
       Ok(KVStoreMgmtMessage::KVFind(key, None, queryconf)) => {
         match store.get_val(&key) {
           Some(val) => {
-            rp.0.send(PeerMgmtMessage::StoreKV(queryconf, Some(val.clone())));
+            rp.peers.send(PeerMgmtMessage::StoreKV(queryconf, Some(val.clone())));
           },
           None => {
             if query::get_nbhop(&queryconf) > 0 {
               // proxy
-              rp.0.send(PeerMgmtMessage::KVFind(key, None, queryconf));
+              rp.peers.send(PeerMgmtMessage::KVFind(key, None, queryconf));
             } else {
               // no result
-              rp.0.send(PeerMgmtMessage::StoreKV(queryconf, None));
+              rp.peers.send(PeerMgmtMessage::StoreKV(queryconf, None));
             };
           },
         };
@@ -125,9 +125,9 @@ pub fn start
           Some(val) => {
             debug!("!!!KV Found match!!! no proxying");
             let querysp = query.clone();
-            let ssp = rp.0.clone();
-            if querysp.set_query_result(Either::Right(Some(val.clone())),&rp.2) {
-              query.release_query(& rp.0);
+            let ssp = rp.peers.clone();
+            if querysp.set_query_result(Either::Right(Some(val.clone())),&rp.store) {
+              query.release_query(& rp.peers);
               true
             } else {
               // no lessen on local or more results needed : proxy
@@ -141,9 +141,9 @@ pub fn start
         if !success {
           if query::get_nbhop(&queryconf) > 0 {
             debug!("!!!KV not Found match or multiple result needed !!! proxying");
-            rp.0.send(PeerMgmtMessage::KVFind(key, Some(query), queryconf));
+            rp.peers.send(PeerMgmtMessage::KVFind(key, Some(query), queryconf));
           } else {
-             query.release_query(& rp.0);
+             query.release_query(& rp.peers);
           };
         };
       },

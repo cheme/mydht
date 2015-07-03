@@ -36,6 +36,7 @@ fn main() {
 #[cfg(feature="openssl-impl")]
 pub mod fs {
 
+use std::marker::PhantomData;
 use std::env;
 use std::io;
 use std::io::Write;
@@ -56,7 +57,7 @@ use std::sync::mpsc::{Sender,Receiver};
 
 use mydht::{Udp,Tcp};
 use mydht::peerif::PeerMgmtRules;
-use mydht::{DHT,RunningContext, RunningProcesses};
+use mydht::{DHT,RunningContext,ArcRunningContext,RunningProcesses};
 use mydht::{PeerPriority,StoragePriority,QueryChunk,QueryMode};
 use mydht::kvstoreif::KeyVal;
 use mydht::kvstoreif::FileKeyVal;
@@ -221,7 +222,15 @@ pub fn main() {
   expand_msgenc_def!(mencdef, menc, {
   expand_transport_def!(tcpdef, transport, {
 
-    let rc : RunningContext<RSAPeer, MulKV, _, dhtrules::DhtRulesImpl, _, _> = Arc::new((mynode.0, access, dhtrules::DhtRulesImpl::new(dhtrules),menc,transport,None));
+    let rc : ArcRunningContext<RSAPeer, MulKV, _, dhtrules::DhtRulesImpl, _, _> = Arc::new(
+    RunningContext {
+      me : mynode.0,
+      peerrules : access,
+      queryrules : dhtrules::DhtRulesImpl::new(dhtrules),
+      msgenc : menc,
+      transport : transport,
+      keyval : PhantomData,
+    });
 
 
 
@@ -249,7 +258,7 @@ pub fn main() {
     let bootTrustedPeers : Vec<Arc<RSAPeer>> = tmpbootTrustedPeers.into_iter().map(|p|Arc::new(p)).collect();
 
     let bootTrustedPeersSend  = bootTrustedPeers.clone();
-    let meSend = rc.0.clone(); // should be arckv if bootserver took arckv as param TODO
+    let meSend = rc.me.clone(); // should be arckv if bootserver took arckv as param TODO
 let mut multip_store = move || {
     let mut storagequery = SimpleCache::new(Some(pqueries)); // TODO a path to serialize
     let mut ca = SimpleCache::new(Some(pdbfile));// TODO a path to serialize
@@ -472,7 +481,7 @@ impl PeerMgmtRules<RSAPeer, MulKV> for UnsignedOpenAccess {
   fn checkmsg  (&self, n : &RSAPeer, chal : &String, sign : &String) -> bool{ true}
   fn accept<R : PeerMgmtRules<RSAPeer, MulKV>, Q : QueryRules, E : MsgEnc, T : Transport> (&self, n : &Arc<RSAPeer>, 
   rp : &RunningProcesses<RSAPeer,MulKV>, 
-  rc : &RunningContext<RSAPeer,MulKV,R,Q,E,T>) 
+  rc : &ArcRunningContext<RSAPeer,MulKV,R,Q,E,T>) 
   -> Option<PeerPriority> {
     // direct local query to kvstore process to know which trust we got for peer (trust is use as
     // priority level.
@@ -481,7 +490,7 @@ impl PeerMgmtRules<RSAPeer, MulKV> for UnsignedOpenAccess {
   #[inline]
   fn for_accept_ping<R : PeerMgmtRules<RSAPeer, MulKV>, Q : QueryRules, E : MsgEnc, T : Transport> (&self, n : &Arc<RSAPeer>, 
   rp : &RunningProcesses<RSAPeer,MulKV>, 
-  rc : &RunningContext<RSAPeer,MulKV,R,Q,E,T>) 
+  rc : &ArcRunningContext<RSAPeer,MulKV,R,Q,E,T>) 
   {
   }
  
@@ -498,7 +507,7 @@ struct WotAccess {
 impl WotAccess {
   fn accept_rec<R : PeerMgmtRules<RSAPeer, MulKV>, Q : QueryRules, E : MsgEnc, T : Transport> (&self, n : &Arc<RSAPeer>, 
   rp : &RunningProcesses<RSAPeer,MulKV>, 
-  rc : &RunningContext<RSAPeer,MulKV,R,Q,E,T>,
+  rc : &ArcRunningContext<RSAPeer,MulKV,R,Q,E,T>,
   rec : bool) 
   -> Option<PeerPriority> {
  
@@ -621,13 +630,13 @@ impl PeerMgmtRules<RSAPeer, MulKV> for WotAccess {
   #[inline]
   fn accept<R : PeerMgmtRules<RSAPeer, MulKV>, Q : QueryRules, E : MsgEnc, T : Transport> (&self, n : &Arc<RSAPeer>, 
   rp : &RunningProcesses<RSAPeer,MulKV>, 
-  rc : &RunningContext<RSAPeer,MulKV,R,Q,E,T>) 
+  rc : &ArcRunningContext<RSAPeer,MulKV,R,Q,E,T>) 
   -> Option<PeerPriority> {
     self.accept_rec(n, rp, rc, true)
   }
   fn for_accept_ping<R : PeerMgmtRules<RSAPeer, MulKV>, Q : QueryRules, E : MsgEnc, T : Transport> (&self, n : &Arc<RSAPeer>, 
   rp : &RunningProcesses<RSAPeer,MulKV>, 
-  rc : &RunningContext<RSAPeer,MulKV,R,Q,E,T>) 
+  rc : &ArcRunningContext<RSAPeer,MulKV,R,Q,E,T>) 
   {
     // update peer in peer kv (for new peer associated info) - localonly
     let queryconf = (QueryMode::Asynch, QueryChunk::None, None);

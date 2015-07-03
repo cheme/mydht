@@ -4,7 +4,7 @@ use std::io::Result as IoResult;
 use peer::{PeerMgmtRules, PeerPriority};
 use std::sync::mpsc::{Sender,Receiver};
 use std::str::from_utf8;
-use procs::{client, RunningContext, RunningProcesses};
+use procs::{client,RunningContext,ArcRunningContext,RunningProcesses};
 use std::collections::{HashMap,BTreeSet,VecDeque};
 use std::sync::{Arc,Semaphore,Condvar,Mutex};
 use query::{self,QueryRules,QueryModeMsg,LastSent,QueryConfMsg};
@@ -30,7 +30,7 @@ pub fn start
   E : MsgEnc,
   T : Route<P,V>, 
   TT : Transport> 
- (rc : RunningContext<P,V,R,Q,E,TT>, 
+ (rc : ArcRunningContext<P,V,R,Q,E,TT>, 
   mut route : T, 
   r : &Receiver<PeerMgmtMessage<P,V>>, 
   rp : RunningProcesses<P,V>, 
@@ -43,8 +43,8 @@ pub fn start
         route.remchan(&nodeid);
       },
       Ok(PeerMgmtMessage::PeerAdd(p,prio))  => {
-        if(p.get_key() != rc.0.get_key()) {
-        info!("Adding peer : {:?}, {:?} from {:?}", p, prio, rc.0);
+        if(p.get_key() != rc.me.get_key()) {
+        info!("Adding peer : {:?}, {:?} from {:?}", p, prio, rc.me);
           // TODO  when test writen (change of prio) try to change with get_mut
           // TODO when offline or blocked remove s
           let nodeid = p.get_key().clone(); // TODO to avoid this clone create a route.addnode which has optional priority
@@ -52,7 +52,7 @@ pub fn start
             Some(_) => {true},
             None => {false},
           };
-          debug!("-Update peer prio : {:?}, {:?} from {:?}", p, prio, rc.0);
+          debug!("-Update peer prio : {:?}, {:?} from {:?}", p, prio, rc.me);
           if(!hasnode){
             debug!("-init up");
             route.add_node(p,None);
@@ -64,7 +64,7 @@ pub fn start
         }
       },
       Ok(PeerMgmtMessage::PeerUpdatePrio(p,prio)) => {
-        debug!("Update peer prio : {:?}, {:?} from {:?}", p.get_key(), prio, rc.0.get_key());
+        debug!("Update peer prio : {:?}, {:?} from {:?}", p.get_key(), prio, rc.me.get_key());
         route.update_priority(&p.get_key(),prio);
       },
       Ok(PeerMgmtMessage::PeerQueryPlus(p)) => {
@@ -76,7 +76,7 @@ pub fn start
         route.query_count_dec(&p.get_key());
       },
       Ok(PeerMgmtMessage::PeerPing(p, ores)) => {
-        if(p.get_key() != rc.0.get_key()) {
+        if(p.get_key() != rc.me.get_key()) {
           debug!("Pinging peer : {:?}", p);
           if(connected){  
             get_or_init_client_connection::<P, V, R, Q, E, T, TT>(&p, & rc , & mut route, & rp, true, ores);
@@ -120,12 +120,12 @@ pub fn start
           match oquery {
             Some(ref query) => {
               // adjust nb request
-              query.lessen_query((nbquery.to_usize().unwrap() - rsize.to_usize().unwrap()),&rp.0);
+              query.lessen_query((nbquery.to_usize().unwrap() - rsize.to_usize().unwrap()),&rp.peers);
             },
             None => {
               if rsize == 0 {
                 // no proxy should reply None (send to ourselve)
-                rp.0.send(PeerMgmtMessage::StoreKV(queryconf, None));
+                rp.peers.send(PeerMgmtMessage::StoreKV(queryconf, None));
               };
             }, 
           };
@@ -141,7 +141,7 @@ pub fn start
             };
           };
         } else {
-          oquery.map(|q|q.release_query(&rp.0));
+          oquery.map(|q|q.release_query(&rp.peers));
         }
       },
       Ok(PeerMgmtMessage::PeerFind(nid, oquery, queryconf))  => {
@@ -187,8 +187,8 @@ pub fn start
               Some(query) => {
                 // put result !! in a spawn (do not want to manipulate mutex here (even
                 let querysp = query.clone();
-                let ssp = rp.0.clone();
-                let srp = rp.2.clone();
+                let ssp = rp.peers.clone();
+                let srp = rp.store.clone();
                 // TODO remove this spawn even if dealing with mutex (costy?? )
                 thread::spawn(move || {
                   println!("!!!!found not sent unlock semaphore");
@@ -227,7 +227,7 @@ pub fn start
                 let rsize = peers.len();
                  // adjust nb request
                  // Note that it doesnot prevent unresponsive client
-                 query.lessen_query((nbquery.to_usize().unwrap() - rsize.to_usize().unwrap()),&rp.0);
+                 query.lessen_query((nbquery.to_usize().unwrap() - rsize.to_usize().unwrap()),&rp.peers);
                },
                _ => (), 
              };
@@ -262,7 +262,7 @@ pub fn start
        Ok(PeerMgmtMessage::StoreNode(qconf, result)) => {
          match qconf.0.clone().get_rec_node() {
            Some (rec)  => {
-             if rec.get_key() != rc.0.get_key() { 
+             if rec.get_key() != rc.me.get_key() { 
                let mess = ClientMessage::StoreNode(qconf, result);
                if(connected){
                  let s = get_or_init_client_connection::<P, V, R, Q, E, T, TT>(& rec, & rc , & mut route, & rp, false, None); // TODO do something for not having to create an arc here eg arc in qconf + previous qconf clone
@@ -284,7 +284,7 @@ pub fn start
          // for proxied msg
          match qconf.0.clone().get_rec_node() {
            Some (rec) => {
-             if rec.get_key() != rc.0.get_key() {
+             if rec.get_key() != rc.me.get_key() {
                let mess = ClientMessage::StoreKV(qconf, result);
                if (connected) {
                  let s = get_or_init_client_connection::<P, V, R, Q, E, T, TT>(& rec, & rc , & mut route, & rp, false, None);
@@ -322,7 +322,7 @@ fn send_nonconnected
   T : Route<P,V>, 
   TT : Transport> 
  (p : & Arc<P> , 
-  rc : & RunningContext<P,V,R,Q,E,TT>, 
+  rc : & ArcRunningContext<P,V,R,Q,E,TT>, 
   route : & mut T , 
   rp : & RunningProcesses<P,V>,
   mess : ClientMessage<P,V>
@@ -354,7 +354,7 @@ fn send_nonconnected_ping
   T : Route<P,V>, 
   TT : Transport> 
  (p : & Arc<P> , 
-  rc : & RunningContext<P,V,R,Q,E,TT>, 
+  rc : & ArcRunningContext<P,V,R,Q,E,TT>, 
   route : & mut T , 
   rp : & RunningProcesses<P,V>,
  )
@@ -387,7 +387,7 @@ fn get_or_init_client_connection
   T : Route<P,V>, 
   TT : Transport> 
  (p : & Arc<P> , 
-  rc : & RunningContext<P,V,R,Q,E,TT>, 
+  rc : & ArcRunningContext<P,V,R,Q,E,TT>, 
   route : & mut T , 
   rp : & RunningProcesses<P,V>, 
   ping : bool, 
@@ -423,7 +423,7 @@ let (upd, s) = match route.get_node(&p.get_key()) {
   //when tcl store later
   let rcsp = rc.clone();
   let psp = p.clone();
-  debug!("#####initiating client process from {:?} to {:?} with ping {:?}",rc.0.get_key(), p.get_key(),ping);
+  debug!("#####initiating client process from {:?} to {:?} with ping {:?}",rc.me.get_key(), p.get_key(),ping);
   thread::spawn (move || {client::start::<P,V,R,Q,E,TT>(psp,Some(tcl3), Some(rcl), rcsp, rpsp, ping, pingres, None, true)});
      },
      None => {

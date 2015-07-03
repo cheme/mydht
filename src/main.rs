@@ -25,6 +25,7 @@ extern crate num;
 use rustc_serialize::json;
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 
+use std::marker::PhantomData;
 use std::thread;
 use std::fs::{File};
 use std::path::Path;
@@ -39,7 +40,7 @@ use self::rand::{thread_rng, Rng};
 use num::traits::{ToPrimitive, Bounded};
 use mydht::{StoragePriority};
 use mydht::kvstoreif::KeyVal;
-use mydht::{DHT,RunningContext,RunningProcesses};
+use mydht::{DHT,RunningContext,RunningProcesses,ArcRunningContext};
 use mydht::{QueryConf,QueryPriority,QueryMode,QueryChunk};
 use mydht::{CachePolicy};
 use mydht::queryif;
@@ -112,7 +113,16 @@ let tcp_transport : Tcp = Tcp {
     File::open(&Path::new(&bootPath[..])).unwrap().read_to_string(&mut jsonBCont).unwrap(); 
     let tmpbootNodes : Vec<Node>  = json::decode(&jsonBCont[..]).unwrap();
     let bootNodes : Vec<Arc<Node>> = tmpbootNodes.into_iter().map(|p|Arc::new(p)).collect();
-    let rc : RunningContext<Node, DummyKeyVal, DummyRules, DummyQueryRules, Json, Tcp> = Arc::new((Arc::new(mynode),DummyRules, DummyQueryRules{idcnt:Mutex::new(0)},Json,tcp_transport,None));
+    let rc : ArcRunningContext<Node, DummyKeyVal, DummyRules, DummyQueryRules, Json, Tcp> = Arc::new(
+    RunningContext {
+      me : Arc::new(mynode),
+      peerrules : DummyRules,
+      queryrules : DummyQueryRules{idcnt:Mutex::new(0)},
+      msgenc : Json,
+      transport : tcp_transport,
+      keyval : PhantomData,
+    }
+    );
  
     let mut serv = DHT::<_,DummyKeyVal, _, _, _, _>::boot_server(rc, Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), Vec::new(), bootNodes);
     serv.block();
@@ -177,7 +187,16 @@ let tcp_transport : Tcp = Tcp {
         let bpeers = nodes.clone().into_iter().filter(|i| (*i != *n && rng.gen_range(0,knownratio) == 0) ).map(|p|Arc::new(p)).collect();
 //        let mut noderng : &mut [Node] = bpeers.as_slice();
         let nsp = Arc::new(n.clone());
-        DHT::boot_server(Arc:: new((nsp,DummyRules, DummyQueryRules{idcnt:Mutex::new(0)},Json,tcp_transport,None)), Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), Vec::new(), bpeers)
+        DHT::boot_server(Arc:: new(
+        RunningContext {
+          me : nsp,
+          peerrules : DummyRules,
+          queryrules : DummyQueryRules{idcnt:Mutex::new(0)},
+          msgenc : Json,
+          transport : tcp_transport,
+          keyval : PhantomData,
+        }
+        ), Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), Vec::new(), bpeers)
     }).collect();
 
     thread::sleep_ms(2000);
@@ -218,12 +237,12 @@ impl PeerMgmtRules<Node, DummyKeyVal> for DummyRules{
   fn checkmsg  (&self, n : &Node, chal : &String, sign : &String) -> bool{ true}
   // typically accept return either normal (no priority managed) or a int priority
   fn accept<R : PeerMgmtRules<Node,DummyKeyVal>, Q : QueryRules, E : MsgEnc, T : Transport> 
-  (&self, n : &Arc<Node>, _ : &RunningProcesses<Node,DummyKeyVal>, _ : &RunningContext<Node,DummyKeyVal,R,Q,E,T>) 
+  (&self, n : &Arc<Node>, _ : &RunningProcesses<Node,DummyKeyVal>, _ : &ArcRunningContext<Node,DummyKeyVal,R,Q,E,T>) 
   -> Option<PeerPriority>
   {Some (PeerPriority::Priority(1))}
   #[inline]
   fn for_accept_ping<R : PeerMgmtRules<Node,DummyKeyVal>, Q : QueryRules, E : MsgEnc, T : Transport> 
-  (&self, n : &Arc<Node>, _ : &RunningProcesses<Node,DummyKeyVal>, _ : &RunningContext<Node,DummyKeyVal,R,Q,E,T>) 
+  (&self, n : &Arc<Node>, _ : &RunningProcesses<Node,DummyKeyVal>, _ : &ArcRunningContext<Node,DummyKeyVal,R,Q,E,T>) 
   {}
 }
 
@@ -242,12 +261,12 @@ impl PeerMgmtRules<Node, DummyKeyVal> for DummyRules2{
   fn checkmsg  (&self, n : &Node, chal : &String, sign : &String) -> bool{ true}
   // typically accept return either normal (no priority managed) or a int priority
   fn accept<R : PeerMgmtRules<Node,DummyKeyVal>, Q : QueryRules, E : MsgEnc, T : Transport> 
-  (&self, n : &Arc<Node>, _ : &RunningProcesses<Node,DummyKeyVal>, _ : &RunningContext<Node,DummyKeyVal,R,Q,E,T>) 
+  (&self, n : &Arc<Node>, _ : &RunningProcesses<Node,DummyKeyVal>, _ : &ArcRunningContext<Node,DummyKeyVal,R,Q,E,T>) 
   -> Option<PeerPriority>
   {Some (PeerPriority::Priority(2))}
   #[inline]
   fn for_accept_ping<R : PeerMgmtRules<Node,DummyKeyVal>, Q : QueryRules, E : MsgEnc, T : Transport> 
-  (&self, n : &Arc<Node>, _ : &RunningProcesses<Node,DummyKeyVal>, _ : &RunningContext<Node,DummyKeyVal,R,Q,E,T>) 
+  (&self, n : &Arc<Node>, _ : &RunningProcesses<Node,DummyKeyVal>, _ : &ArcRunningContext<Node,DummyKeyVal,R,Q,E,T>) 
   {}
 }
 
@@ -458,7 +477,16 @@ let tcp_transport : Tcp = Tcp {
 };
         // add node without ping
         //(n.clone(), DHT::boot_server(Arc:: new((nsp,rules.clone(), DummyQueryRules{idcnt:Mutex::new(0)},Json,tcp_transport)), Inefficientmap::new(), SimpleCacheQuery::new(), SimpleCache::new(), bpeers, Vec::new()))
-        (n.clone(), DHT::boot_server(Arc:: new((nsp,rules.clone(), DummyQueryRules{idcnt:Mutex::new(0)},Json,tcp_transport,None)), Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), bpeers, Vec::new()))
+        (n.clone(), DHT::boot_server(Arc:: new(
+        RunningContext {
+          me : nsp,
+          peerrules : rules.clone(),
+          queryrules : DummyQueryRules{idcnt:Mutex::new(0)},
+          msgenc : Json,
+          transport : tcp_transport,
+          keyval : PhantomData,
+        }
+        ), Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), bpeers, Vec::new()))
  }).collect();
 
     // all has started
@@ -506,7 +534,16 @@ let tcp_transport : Tcp = Tcp {
         //(n.clone(), DHT::boot_server(Arc:: new((nsp,rules.clone(), DummyQueryRules{idcnt:Mutex::new(0)},Json,tcp_transport)), Inefficientmap::new(), SimpleCacheQuery::new(), SimpleCache::new(), bpeers, Vec::new()))
         let tran = Udp::new(2048); // here udp with a json encoding with last sed over a few hop : we need a big buffer
 //        (n.clone(), DHT::boot_server(Arc:: new((nsp,rules.clone(), DummyQueryRules{idcnt:Mutex::new(0)},Json,tran)), Inefficientmap::new(), SimpleCacheQuery::new(), SimpleCache::new(), bpeers, Vec::new()))
-        (n.clone(), DHT::boot_server(Arc:: new((nsp,rules.clone(), DummyQueryRules{idcnt:Mutex::new(0)},Bincode,tran,None)), Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), bpeers, Vec::new()))
+        (n.clone(), DHT::boot_server(Arc:: new(
+        RunningContext {
+          me : nsp,
+          peerrules : rules.clone(),
+          queryrules : DummyQueryRules{idcnt:Mutex::new(0)},
+          msgenc : Bincode,
+          transport : tran,
+          keyval : PhantomData,
+        }
+        ), Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), bpeers, Vec::new()))
  }).collect();
 
     // all has started

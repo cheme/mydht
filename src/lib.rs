@@ -203,7 +203,7 @@ pub mod wot;
 
 // reexport
 pub use peer::{Peer, PeerPriority};
-pub use procs::{DHT, RunningContext, RunningProcesses};
+pub use procs::{DHT, RunningContext, RunningProcesses, ArcRunningContext};
 pub use procs::{store_val, find_val, find_local_val};
 pub use query::{QueryConf,QueryPriority,QueryMode,QueryChunk};
 pub use query::cache::{CachePolicy};

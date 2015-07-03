@@ -6,7 +6,7 @@ use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 use procs::mesgs::{PeerMgmtMessage,KVStoreMgmtMessage};
 use std::string::String;
 use std::str::FromStr;
-use procs::{RunningProcesses,RunningContext};
+use procs::{RunningProcesses,RunningContext,ArcRunningContext};
 use query::{QueryRules};
 use msgenc::{MsgEnc};
 use transport::{Transport};
@@ -45,10 +45,10 @@ pub trait PeerMgmtRules<P : Peer, V : KeyVal> : Send + Sync + 'static {
   fn checkmsg  (&self, &P, &String, &String) -> bool; // node, challenge and signature
   /// accept a peer? (reference to running process and running context could be use to query
   /// ourself
-  fn accept<R : PeerMgmtRules<P,V>, Q : QueryRules, E : MsgEnc, T : Transport> (&self, &Arc<P>, &RunningProcesses<P,V>, &RunningContext<P,V,R,Q,E,T>) -> Option<PeerPriority>;
+  fn accept<R : PeerMgmtRules<P,V>, Q : QueryRules, E : MsgEnc, T : Transport> (&self, &Arc<P>, &RunningProcesses<P,V>, &ArcRunningContext<P,V,R,Q,E,T>) -> Option<PeerPriority>;
   // call from accept it will loop on sending info to never online peer)
   /// Post action after adding a new online peer : eg propagate or update this in another store
-  fn for_accept_ping<R : PeerMgmtRules<P,V>, Q : QueryRules, E : MsgEnc, T : Transport> (&self, &Arc<P>, &RunningProcesses<P,V>, &RunningContext<P,V,R,Q,E,T>);
+  fn for_accept_ping<R : PeerMgmtRules<P,V>, Q : QueryRules, E : MsgEnc, T : Transport> (&self, &Arc<P>, &RunningProcesses<P,V>, &ArcRunningContext<P,V,R,Q,E,T>);
 }
 
 
