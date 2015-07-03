@@ -99,14 +99,30 @@ pub trait SettableAttachment {
 /// currently this could only be used for type ,
 /// If/when trait object could include associated type def, as_key_val_if should return &KeyVal,
 /// and this could be extend to derivation of enum (replacement for derive_keyval macro).
-/// Additional methods will be needed for encode/decode
-pub trait AsKeyValIf  : Encodable + Decodable + fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment + 'static {
+pub trait AsKeyValIf : fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment + 'static {
   type KV : KeyVal;
+  type BP;
   fn as_keyval_if(&self) -> &Self::KV;
-  fn build_from_keyval(Self::KV) -> Self;
+  fn build_from_keyval(Self::BP, Self::KV) -> Self;
+  fn encode_bef<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> { Ok(()) }
+  fn decode_bef<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<Self::BP, D::Error>;
 }
+/*
+impl<AKV : AsKeyValIf> Encodable for AKV {
+  fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
+    try!(self.encode_bef(true, false));
+    self.as_keyval_if().encode(s);
+  }
+}
+impl<AKV : AsKeyValIf> Decodable for AKV {
+  fn decode<D:Decoder> (d : &mut D) -> Result<AKV, D::Error> {
+    let bp = try!(<AKV as AsKeyValIf>::decode_bef(d, true, false));
+    <<AKV as AsKeyValIf>::KV as Decodable>::decode(d).map(|r|Self::build_from_keyval(r, bp))
+  }
+}
+*/
 
-impl<AKV : AsKeyValIf> KeyVal for AKV {
+impl<AKV : AsKeyValIf + Encodable + Decodable> KeyVal for AKV {
   type Key = <<AKV as AsKeyValIf>::KV as KeyVal>::Key;
 
   #[inline]
@@ -119,11 +135,13 @@ impl<AKV : AsKeyValIf> KeyVal for AKV {
   }
   #[inline]
   fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> {
+    try!(self.encode_bef(s, true, false));
     self.as_keyval_if().encode_kv(s, is_local, with_att)
   }
   #[inline]
   fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<Self, D::Error> {
-    <<AKV as AsKeyValIf>::KV as KeyVal>::decode_kv(d, is_local, with_att).map(|r|Self::build_from_keyval(r))
+    let bp = try!(<AKV as AsKeyValIf>::decode_bef(d, true, false));
+    <<AKV as AsKeyValIf>::KV as KeyVal>::decode_kv(d, is_local, with_att).map(|r|Self::build_from_keyval(bp,r))
   }
 
 }

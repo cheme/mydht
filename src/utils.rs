@@ -61,25 +61,28 @@ pub struct ArcKV<KV : KeyVal> (pub Arc<KV>);
 
 impl<KV : KeyVal> Encodable for ArcKV<KV> {
   fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-    self.0.encode(s)
+    // default to local without att
+    self.as_keyval_if().encode_kv(s, true, false)
   }
 }
 
 impl<KV : KeyVal> Decodable for ArcKV<KV> {
   fn decode<D:Decoder> (d : &mut D) -> Result<ArcKV<KV>, D::Error> {
-    let okv : Result<KV, D::Error>= Decodable::decode(d);
-    okv.map(|kv|ArcKV(Arc::new(kv)))
+    // default to local without att
+    Self::decode_kv(d, true, false)
   }
 }
 
 impl<KV : KeyVal> AsKeyValIf for ArcKV<KV> {
   type KV = KV;
+  type BP = ();
   fn as_keyval_if(&self) -> &Self::KV {
     &(*self.0)
   }
-  fn build_from_keyval(kv : Self::KV) -> Self {
+  fn build_from_keyval(_ : (), kv : Self::KV) -> Self {
     ArcKV::new(kv)
   }
+  fn decode_bef<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<Self::BP, D::Error> {Ok(())}
 }
 
 impl<KV : KeyVal> ArcKV<KV> {
@@ -88,6 +91,7 @@ impl<KV : KeyVal> ArcKV<KV> {
     ArcKV(Arc::new(kv))
   }
 }
+
 impl<V : KeyVal> Deref for ArcKV<V> {
   type Target = V;
   fn deref<'a> (&'a self) -> &'a V {
