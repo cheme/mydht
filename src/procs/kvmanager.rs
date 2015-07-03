@@ -4,7 +4,7 @@
 use rustc_serialize::json;
 use procs::mesgs::{self,PeerMgmtMessage,ClientMessage,KVStoreMgmtMessage};
 use peer::{PeerMgmtRules, PeerPriority};
-use procs::{RunningContext,ArcRunningContext,RunningProcesses};
+use procs::{RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
 use std::sync::mpsc::{Sender,Receiver};
 use std::str::from_utf8;
 use procs::client;
@@ -30,18 +30,14 @@ use num::traits::ToPrimitive;
 
 /// Start kvmanager process using a specific store.
 pub fn start
- <P : Peer,
-  V : KeyVal,
-  R : PeerMgmtRules<P,V>,
-  Q : QueryRules,
-  E : MsgEnc,
-  S : KVStore<V>,
+ <RT : RunningTypes,
+  S : KVStore<RT::V>,
   F : FnOnce() -> Option<S> + Send + 'static,
-  T : Transport> 
- (rc : ArcRunningContext<P,V,R,Q,E,T>, 
+  > 
+ (rc : ArcRunningContext<RT>, 
   mut storei : F, 
-  r : &Receiver<KVStoreMgmtMessage<P,V>>,
-  rp : RunningProcesses<P,V>,
+  r : &Receiver<KVStoreMgmtMessage<RT::P,RT::V>>,
+  rp : RunningProcesses<RT::P,RT::V>,
   sem : Arc<Semaphore>) {
   // actula store init - TODO better error management
   let mut store = storei().unwrap_or_else(||panic!("store initialization failed"));

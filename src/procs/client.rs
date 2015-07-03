@@ -11,12 +11,12 @@ use std::fs::File;
 use std::io::Result as IoResult;
 use peer::{PeerMgmtRules, PeerPriority};
 use std::str::from_utf8;
-use procs::{peermanager,RunningContext,RunningProcesses,ArcRunningContext};
+use procs::{peermanager,RunningContext,RunningProcesses,ArcRunningContext,RunningTypes};
 use time::Duration;
 use std::sync::{Arc,Semaphore,Condvar,Mutex};
 use transport::TransportStream;
 use transport::Transport;
-use keyval::Attachment;
+use keyval::{Attachment,SettableAttachment};
 use std::sync::mpsc::{Sender,Receiver};
 use query::{self,QueryRules,QueryMode,QueryChunk,QueryConfMsg,QueryModeMsg};
 use peer::Peer;
@@ -33,22 +33,15 @@ use procs::server;
 /// Start a client thread, either for one message (with or without ping) or for a connection loop
 /// (connected transport). Always begin with an accept call (complex accept should only run in
 /// connected mode).
-pub fn start
- <P : Peer,
-  V : KeyVal,
-  R : PeerMgmtRules<P,V>, 
-  Q : QueryRules, 
-  E : MsgEnc,
-  T : Transport,
- > 
- (p : Arc<P>, 
-  tcl : Option<Sender<ClientMessage<P,V>>>, 
-  orcl : Option<Receiver<ClientMessage<P,V>>>, 
-  rc : ArcRunningContext<P,V,R,Q,E,T>, 
-  rp : RunningProcesses<P,V>, 
+pub fn start <RT : RunningTypes>
+ (p : Arc<RT::P>, 
+  tcl : Option<Sender<ClientMessage<RT::P,RT::V>>>, 
+  orcl : Option<Receiver<ClientMessage<RT::P,RT::V>>>, 
+  rc : ArcRunningContext<RT>, 
+  rp : RunningProcesses<RT::P,RT::V>, 
   withPing: bool, 
   withPingReply : Option<OneResult<bool>>,
-  omessage : Option<ClientMessage<P,V>>,
+  omessage : Option<ClientMessage<RT::P,RT::V>>,
   connected : bool,
   ) {
   let mut ok = false;
@@ -59,7 +52,7 @@ pub fn start
     },
     Some(pri)=> {
       // connect
-      let mut sc : IoResult<T::Stream> = rc.transport.connectwith(&p.to_address(), Duration::seconds(5));
+      let mut sc : IoResult<<RT::T as Transport>::Stream> = rc.transport.connectwith(&p.to_address(), Duration::seconds(5));
       // TODO terrible imbricated matching see if some flatmap or helper function
       match sc {
         Err(e) => {
@@ -76,13 +69,13 @@ pub fn start
               let sign = rc.peerrules.signmsg(&(*rc.me), &chal);
               // TODO store challenge in a global map (a query in querymanager) : currently not done so no check of challenge when
               // running unconnected transport + store with ping result if present
-              let mess : ProtoMessage<P,V>  = ProtoMessage::PING((*rc.me).clone(), chal.clone(), sign);
+              let mess : ProtoMessage<RT::P,RT::V>  = ProtoMessage::PING((*rc.me).clone(), chal.clone(), sign);
               send_msg(&mess,None,&mut s1,&rc.msgenc);
               // we do not wait for a result
               true
             } else {
               debug!("pinging in start client process, {:?}, {:?}", p.get_key(), pri);
-              let r =  ping::<_,V,_,_,_,_>(&(*p), rc.clone(), &mut s1);
+              let r =  ping::<RT>(&(*p), rc.clone(), &mut s1);
               withPingReply.map(|ares|{
                 utils::ret_one_result(ares, r)
               });
@@ -175,22 +168,15 @@ pub fn start
 #[inline]
 /// manage new client message
 /// return a new transport if reconnected and a boolean if no more connectivity
-pub fn recv_match
- <P : Peer,
-  V : KeyVal,
-  R : PeerMgmtRules<P,V>, 
-  Q : QueryRules, 
-  E : MsgEnc,
-  T : Transport,
- > 
- (p : &Arc<P>, 
-  rc : &ArcRunningContext<P,V,R,Q,E,T>, 
-  rp : &RunningProcesses<P,V>, 
-  m : ClientMessage<P,V>,
+pub fn recv_match <RT : RunningTypes>
+ (p : &Arc<RT::P>, 
+  rc : &ArcRunningContext<RT>, 
+  rp : &RunningProcesses<RT::P,RT::V>, 
+  m : ClientMessage<RT::P,RT::V>,
   connected : bool,
-  s : &mut T::Stream,
+  s : &mut <RT::T as Transport>::Stream,
   pri : PeerPriority,
-  ) -> (bool, Option<T::Stream>) {
+  ) -> (bool, Option<<RT::T as Transport>::Stream>) {
   let mut ok = true;
   let mut newcon = None;
   macro_rules! sendorconnect(($mess:expr,$oa:expr) => (
@@ -224,13 +210,13 @@ pub fn recv_match
         // TODO store challenge in a global map : currently not done so no check of challenge when
         // running unconnected transport
         // we do not wait for a result
-        let mess : ProtoMessage<P,V>  = ProtoMessage::PING((*rc.me).clone(), chal.clone(), sign);
+        let mess : ProtoMessage<RT::P,RT::V>  = ProtoMessage::PING((*rc.me).clone(), chal.clone(), sign);
         sendorconnect!(&mess,None);
         // TODO asynch wait for reply as new type of query
       } else {
         debug!("Pinging peer (tcp) : {:?}", p);
         // No reconnect here but may not be an issue
-        if ping::<_,V,_,_,_,_>(&(*p), rc.clone(), s) {
+        if ping::<RT>(&(*p), rc.clone(), s) {
           // Add peer as lower priority and pending message and add its socket!!!
            debug!("Pong reply ok, adding or updating peer {:?}, {:?}", p.get_key(), pri);
            // add node as ok (with previous priority)
@@ -248,12 +234,12 @@ pub fn recv_match
         // send query with hop + 1
         server::update_query_conf(&mut queryconf, &rc.queryrules);
         query::dec_nbhop(&mut queryconf, &rc.queryrules);
-        let mess : ProtoMessage<P,V> = ProtoMessage::FIND_NODE(queryconf, nid.clone());
+        let mess : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_NODE(queryconf, nid.clone());
         sendorconnect!(&mess,None);
         // add a query to peer
         rp.peers.send(PeerMgmtMessage::PeerQueryPlus(p.clone()));
         // receive (first something or last nothing reply in repc plus rules to
-        let r : Option<(ProtoMessage<P,V>, Option<Attachment>)> = receive_msg(s, &rc.msgenc); 
+        let r : Option<(ProtoMessage<RT::P,RT::V>, Option<Attachment>)> = receive_msg(s, &rc.msgenc); 
         // store if new (with checking before (ping)))
         let success = match r {
           None => {
@@ -298,8 +284,8 @@ pub fn recv_match
           },
         };
 
-        let squ : Sender<PeerMgmtMessage<P,V>>  = rp.peers.clone();
-        let typedquery : & query::Query<P,V> = & query;
+        let squ : Sender<PeerMgmtMessage<RT::P,RT::V>>  = rp.peers.clone();
+        let typedquery : & query::Query<RT::P,RT::V> = & query;
         if success {
           typedquery.release_query(&squ);
         } else {
@@ -320,7 +306,7 @@ pub fn recv_match
         // send query with hop + 1
         // local queryid set in server here update dest
         query::dec_nbhop(&mut queryconf, &rc.queryrules);
-        let mess  : ProtoMessage<P,V> = ProtoMessage::FIND_NODE(queryconf, nid);
+        let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_NODE(queryconf, nid);
         sendorconnect!(&mess,None);
         if !ok {
           // lessen TODO asynch is pow...
@@ -333,12 +319,12 @@ pub fn recv_match
         let query = oquery.unwrap(); // unsafe code : may panic but it is a design problem : a proxy mode query should allways have a query, otherwhise it is a bug
         // send query with hop + 1
         query::dec_nbhop(&mut queryconf, &rc.queryrules);
-        let mess : ProtoMessage<P,V> = ProtoMessage::FIND_VALUE(queryconf, nid.clone());
+        let mess : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_VALUE(queryconf, nid.clone());
         sendorconnect!(&mess,None);
         // add a query to peer
         rp.peers.send(PeerMgmtMessage::PeerQueryPlus(p.clone()));
         // receive (first something or last nothing reply in repc plus rules to
-        let r  : Option<(ProtoMessage<P,V>,Option<Attachment>)> = receive_msg (s, &rc.msgenc); 
+        let r  : Option<(ProtoMessage<RT::P,RT::V>,Option<Attachment>)> = receive_msg (s, &rc.msgenc); 
         // store if new (with checking before (ping)))
         let success = match r {
           None => {
@@ -373,7 +359,7 @@ pub fn recv_match
             }
           },
         };
-        let typedquery : & query::Query<P,V> = & query;
+        let typedquery : & query::Query<RT::P,RT::V> = & query;
         if success {
           typedquery.release_query(&rp.peers);
         } else  {
@@ -391,7 +377,7 @@ pub fn recv_match
         // no adding query counter for peer
         // send query with hop + 1
         query::dec_nbhop(&mut queryconf, &rc.queryrules);
-        let mess  : ProtoMessage<P,V> = ProtoMessage::FIND_VALUE(queryconf, nid);
+        let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_VALUE(queryconf, nid);
         sendorconnect!(&mess,None);
         if !ok {
           // lessen TODO asynch is pow...
@@ -400,18 +386,18 @@ pub fn recv_match
       },
     },
     ClientMessage::StoreNode(queryconf, r) => {
-      let mess  : ProtoMessage<P,V> = ProtoMessage::STORE_NODE(queryconf.0.get_qid(), r.map(|v|DistantEnc((*v).clone())));
+      let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_NODE(queryconf.0.get_qid(), r.map(|v|DistantEnc((*v).clone())));
       sendorconnect!(&mess,None);
     },
     ClientMessage::StoreKV(queryconf, r) => {
       match (queryconf.1){
         QueryChunk::Attachment => {
           let att = r.as_ref().and_then(|kv|kv.get_attachment().map(|p|p.clone()));
-          let mess  : ProtoMessage<P,V> = ProtoMessage::STORE_VALUE(queryconf.0.get_qid(), r.clone().map(|v|DistantEnc(v)));
+          let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE(queryconf.0.get_qid(), r.clone().map(|v|DistantEnc(v)));
           sendorconnect!(&mess,att.as_ref());
         },
         _                     =>  {
-          let mess  : ProtoMessage<P,V> = ProtoMessage::STORE_VALUE_ATT(queryconf.0.get_qid(), r.clone().map(|v|DistantEncAtt(v)));
+          let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE_ATT(queryconf.0.get_qid(), r.clone().map(|v|DistantEncAtt(v)));
           sendorconnect!(&mess,None);
         },
       };
@@ -421,27 +407,21 @@ pub fn recv_match
 }
 
 
-pub fn ping
- <P : Peer,
-  V : KeyVal,
-  R : PeerMgmtRules<P,V>, 
-  Q : QueryRules, 
-  E : MsgEnc,
-  T : Transport> 
- (p : &P, 
-  rc : ArcRunningContext<P,V,R,Q,E,T>, 
-  s : &mut T::Stream) 
+pub fn ping <RT : RunningTypes>
+ (p : &RT::P, 
+  rc : ArcRunningContext<RT>, 
+  s : &mut <RT::T as Transport>::Stream) 
  -> bool {
   debug!("ping fn from {:?} to {:?}", rc.me.get_key(), p.get_key());
   let chal = rc.peerrules.challenge(&(*rc.me));
   let sign = rc.peerrules.signmsg(&(*rc.me), &chal);
   // TODO for unconnected protomessage ping is a findnode with unmanaged query (QReply none) over the node itself and
   // we do not wait for a result (the idea is getting a reply to put our peer in online state
-  let mess : ProtoMessage<P,V>  = ProtoMessage::PING((*rc.me).clone(), chal.clone(), sign);
+  let mess : ProtoMessage<RT::P,RT::V>  = ProtoMessage::PING((*rc.me).clone(), chal.clone(), sign);
   send_msg(&mess,None,s,&rc.msgenc);
   // wait for a reply message (useless currently as socket open but more info can be send
   // (Node private key))
-  let r1 : Option<(ProtoMessage<P,V>,Option<Attachment>)> = receive_msg (s, &rc.msgenc); 
+  let r1 : Option<(ProtoMessage<RT::P,RT::V>,Option<Attachment>)> = receive_msg (s, &rc.msgenc); 
   match r1 {
     None => {
       warn!("Waiting pong timeout or invalid pong");

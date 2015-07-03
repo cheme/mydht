@@ -31,22 +31,86 @@ mod peermanager;
 mod kvmanager;
 mod querymanager;
 
-//pub type ClientChanel<P : Peer, V : KeyVal> = Sender<mesgs::ClientMessage<P,V>>;
+/// utility trait to avoid lot of parameters in each struct / fn
+/// kinda aliasing
+pub trait RunningTypes : 'static + Send + Sync {
+  type P : Peer;
+  type V : KeyVal;
+  type R : PeerMgmtRules<Self::P, Self::V>;
+  type Q : QueryRules;
+  type E : MsgEnc;
+  type T : Transport;
+}
+
+/// Could be use to define the final type of a DHT, most of the time we create a new object (see
+/// example/fs.rs).
+/// This kind of struct is never use, it is just to use in parameters to use a type instead of a
+/// trait.
+struct RunningTypesImpl<
+  P : Peer,
+  V : KeyVal,
+  R : PeerMgmtRules<P, V>, 
+  Q : QueryRules,
+  E : MsgEnc, 
+  T : Transport> 
+  (PhantomData<Q>,PhantomData<P>,PhantomData<V>,PhantomData<R>,PhantomData<T>, PhantomData<E>);
+
+impl<
+  P : Peer,
+  V : KeyVal,
+  R : PeerMgmtRules<P, V>, 
+  Q : QueryRules,
+  E : MsgEnc, 
+  T : Transport> 
+     RunningTypes for RunningTypesImpl<P, V, R, Q, E, T> {
+  type P = P;
+  type V = V;
+  type R = R;
+  type Q = Q;
+  type E = E;
+  type T = T;
+}
+
+
+
+
 pub type ClientChanel<P, V> = Sender<mesgs::ClientMessage<P,V>>;
 
 /// Running context contain all information needed, mainly configuration and calculation rules.
-pub struct RunningContext<P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules, E : MsgEnc, T : Transport> {
-  pub me : Arc<P>,
-  pub peerrules : R,
-  pub queryrules : Q,
-  pub msgenc : E,
-  pub transport : T,
-  pub keyval : PhantomData<V>,
+pub struct RunningContext<RT : RunningTypes> {
+  pub me : Arc<RT::P>,
+  pub peerrules : RT::R,
+  pub queryrules : RT::Q, // Only one that can switch to trait object : No for homogeneity
+  pub msgenc : RT::E,
+  pub transport : RT::T, 
+  pub keyval : PhantomData<RT::V>,
+  pub rtype : PhantomData<RT>,
+}
+
+impl<RT : RunningTypes> RunningContext<RT> {
+  pub fn new (
+  me : Arc<RT::P>,
+  peerrules : RT::R,
+  queryrules : RT::Q,
+  msgenc : RT::E,
+  transport : RT::T, 
+  ) -> RunningContext<RT> {
+    RunningContext {
+      me : me,
+      peerrules : peerrules,
+      queryrules : queryrules,
+      msgenc : msgenc,
+      transport : transport,
+      keyval : PhantomData,
+      rtype : PhantomData,
+    }
+
+  }
 }
 
 /// There is a need for RunningContext content to be sync (we share context in an Arc (preventing us from
 /// cloning its content and therefore requiring sync to be use in multiple thread).
-pub type ArcRunningContext<P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules, E : MsgEnc, T : Transport> = Arc<RunningContext<P, V, R, Q, E, T>>;
+pub type ArcRunningContext<RT : RunningTypes> = Arc<RunningContext<RT>>;
 
 /// Channel used by several process, they are cloned/moved when send to new thread (sender are not
 /// sync)
@@ -59,15 +123,16 @@ pub struct RunningProcesses<P : Peer, V : KeyVal> {
 
 
 // TODO replace f by Arc<Condvar>
-pub struct DHT<P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules, E : MsgEnc, T : Transport> {
-  rp : RunningProcesses<P,V>, 
-  rc : ArcRunningContext<P,V,R,Q,E,T>, 
+/// DHT infos
+pub struct DHT<RT : RunningTypes> {
+  rp : RunningProcesses<RT::P,RT::V>, 
+  rc : ArcRunningContext<RT>, 
   f : Arc<Semaphore>
 }
 
 
 /// Find a value by key. Specifying our queryconf, and priorities.
-pub fn find_local_val<P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules, E : MsgEnc, T : Transport> (rp : &RunningProcesses<P,V>, rc : &ArcRunningContext<P,V,R,Q,E,T>, nid : V::Key ) -> Option<V> {
+pub fn find_local_val<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &ArcRunningContext<RT>, nid : <RT::V as KeyVal>::Key ) -> Option<RT::V> {
   debug!("Finding KeyVal locally {:?}", nid);
   let sync = Arc::new((Mutex::new(None),Condvar::new()));
   // local query replyto set to None
@@ -78,7 +143,7 @@ pub fn find_local_val<P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRu
 
 /// Store a value. Specifying our queryconf, and priorities. Note that priority rules are very
 /// important to know if we do propagate value or store local only or cache local only.
-pub fn store_val <P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules, E : MsgEnc, T : Transport> (rp : &RunningProcesses<P,V>, rc : &ArcRunningContext<P,V,R,Q,E,T>, val : V, (qmode, qchunk, lsconf) : QueryConf, prio : QueryPriority, sprio : StoragePriority) -> bool {
+pub fn store_val <RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &ArcRunningContext<RT>, val : RT::V, (qmode, qchunk, lsconf) : QueryConf, prio : QueryPriority, sprio : StoragePriority) -> bool {
   let msgqmode = init_qmode(rp, rc, &qmode);
   //let lastsent = lsconf.map(|n| LastSent(n,Vec::new()));
   let lastsent = lsconf.map(|(n,ishop)| if ishop 
@@ -103,7 +168,7 @@ pub fn store_val <P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules,
 
 
 /// Find a value by key. Specifying our queryconf, and priorities.
-pub fn find_val<P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules, E : MsgEnc, T : Transport> (rp : &RunningProcesses<P,V>, rc : &ArcRunningContext<P,V,R,Q,E,T>, nid : V::Key, (qmode, qchunk, lsconf) : QueryConf, prio : QueryPriority, sprio : StoragePriority, nb_res : usize ) -> Vec<Option<V>> {
+pub fn find_val<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &ArcRunningContext<RT>, nid : <RT::V as KeyVal>::Key, (qmode, qchunk, lsconf) : QueryConf, prio : QueryPriority, sprio : StoragePriority, nb_res : usize ) -> Vec<Option<RT::V>> {
   debug!("Finding KeyVal {:?}", nid);
   // TODO factorize code with find peer and/or specialize rules( some for peer some for kv) ??
   let maxhop = rc.queryrules.nbhop(prio);
@@ -131,7 +196,7 @@ pub fn find_val<P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules, E
 }
 
 #[inline]
-fn init_qmode<P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules, E : MsgEnc, T : Transport> (rp : &RunningProcesses<P,V>, rc : &ArcRunningContext<P,V,R,Q,E,T>, qm : &QueryMode) -> QueryModeMsg <P>{
+fn init_qmode<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &ArcRunningContext<RT>, qm : &QueryMode) -> QueryModeMsg <RT::P>{
   match qm {
     &QueryMode::Proxy => QueryModeMsg::Proxy, 
     &QueryMode::Asynch => QueryModeMsg::Asynch((rc.me).clone(),rc.queryrules.newid()),
@@ -140,7 +205,7 @@ fn init_qmode<P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules, E :
   }
 }
 
-impl<P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules, E : MsgEnc, TT : Transport> DHT<P, V, R, Q, E, TT> {
+impl<RT : RunningTypes> DHT<RT> {
   pub fn block (&self) {
     debug!("Blocking");
     self.f.acquire();
@@ -159,11 +224,11 @@ impl<P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules, E : MsgEnc, 
   }
 
   #[inline]
-  fn init_qmode(&self, qm : &QueryMode) -> QueryModeMsg <P>{
+  fn init_qmode(&self, qm : &QueryMode) -> QueryModeMsg <RT::P>{
     init_qmode(&self.rp, &self.rc, qm)
   }
 
-  pub fn find_peer (&self, nid : P::Key, (qmode, qchunk, lsconf) : QueryConf, prio : QueryPriority ) -> Option<Arc<P>>  {
+  pub fn find_peer (&self, nid : <RT::P as KeyVal>::Key, (qmode, qchunk, lsconf) : QueryConf, prio : QueryPriority ) -> Option<Arc<RT::P>>  {
     debug!("Finding peer {:?}", nid);
     let maxhop = self.rc.queryrules.nbhop(prio);
     println!("!!!!!!!!!!!!!!!!!!! maxhop : {}, prio : {}", maxhop, prio);
@@ -199,7 +264,7 @@ impl<P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules, E : MsgEnc, 
   // implementation on its content (there is quite a lot of clone involved).
   /// Find a value by key. Specifying our queryconf, and priorities.
   #[inline]
-  pub fn find_val (&self, nid : V::Key, qc : QueryConf, prio : QueryPriority, sprio : StoragePriority, nb_res : usize ) -> Vec<Option<V>> {
+  pub fn find_val (&self, nid : <RT::V as KeyVal>::Key, qc : QueryConf, prio : QueryPriority, sprio : StoragePriority, nb_res : usize ) -> Vec<Option<RT::V>> {
     find_val(&self.rp, &self.rc, nid, qc, prio, sprio, nb_res)
   }
 
@@ -208,25 +273,25 @@ impl<P : Peer, V : KeyVal, R : PeerMgmtRules<P, V>, Q : QueryRules, E : MsgEnc, 
   /// Store a value. Specifying our queryconf, and priorities. Note that priority rules are very
   /// important to know if we do propagate value or store local only or cache local only.
   #[inline]
-  pub fn store_val (&self, val : V, qc : QueryConf, prio : QueryPriority, sprio : StoragePriority) -> bool {
+  pub fn store_val (&self, val : RT::V, qc : QueryConf, prio : QueryPriority, sprio : StoragePriority) -> bool {
     store_val(&self.rp, &self.rc, val, qc, prio, sprio)
   }
 
 /// Main function to start a DHT.
 pub fn boot_server
- <T : Route<P,V>, 
-  QC : QueryCache<P,V>, 
-  S : KVStore<V>,
+ <T : Route<RT::P,RT::V>, 
+  QC : QueryCache<RT::P,RT::V>, 
+  S : KVStore<RT::V>,
   F : FnOnce() -> Option<S> + Send + 'static,
  >
- (rc : ArcRunningContext<P,V,R,Q,E,TT>, 
+ (rc : ArcRunningContext<RT>, 
   mut route : T, 
   mut querycache : QC, 
   mut kvst : F,
-  cachedNodes : Vec<Arc<P>>, 
-  bootNodes : Vec<Arc<P>>,
+  cachedNodes : Vec<Arc<RT::P>>, 
+  bootNodes : Vec<Arc<RT::P>>,
   ) 
- -> DHT<P,V,R,Q,E,TT> {
+ -> DHT<RT> {
 
 let (tquery,rquery) = channel();
 let (tkvstore,rkvstore) = channel();
@@ -255,7 +320,7 @@ let rcsp = rc.clone();
 let rpsp = rp.clone();
 let semsp = sem.clone();
 thread::spawn (move ||{
-  peermanager::start::<_,_,_,_,_,_,TT> (rcsp, route, &rpeer,rpsp, semsp)
+  peermanager::start (rcsp, route, &rpeer,rpsp, semsp)
 });
 
 // starting kvstore process
@@ -272,7 +337,7 @@ let tpeer4 = tpeer3.clone();
 let rcsp2 = rc.clone();
 let rpsp2 = rp.clone();
 thread::spawn (move ||{
-  server::servloop::<_,_,_,_,_,TT>(rcsp2, rpsp2)
+  server::servloop(rcsp2, rpsp2)
 });
 
 // Typically those cached node are more likely to be initialized with the routing backend (here it

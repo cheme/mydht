@@ -9,7 +9,7 @@
 use rustc_serialize::json;
 use procs::mesgs::{PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage};
 use msgenc::{ProtoMessage};
-use procs::{RunningContext,ArcRunningContext,RunningProcesses};
+use procs::{RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
 use peer::{Peer,PeerMgmtRules, PeerPriority};
 use std::str::from_utf8;
 use transport::TransportStream;
@@ -22,7 +22,7 @@ use time::Duration;
 use query;
 use query::{QueryID};
 use utils;
-use keyval::Attachment;
+use keyval::{Attachment,SettableAttachment};
 use keyval::{KeyVal};
 use msgenc::{MsgEnc,DistantEncAtt,DistantEnc};
 use utils::{send_msg,receive_msg};
@@ -58,22 +58,15 @@ fn new_query_mode<P : Peer> (qm : &QueryModeMsg<P>, me : &Arc<P>, qid : QueryID)
 }
 
 /// Server loop
-pub fn servloop
- <P : Peer,
-  V : KeyVal,
-  R : PeerMgmtRules<P,V>, 
-  Q : QueryRules, 
-  E : MsgEnc,
-  T : Transport,
- >
- (rc : ArcRunningContext<P,V,R,Q,E,T>, 
-  rp : RunningProcesses<P,V>) {
+pub fn servloop <RT : RunningTypes>
+ (rc : ArcRunningContext<RT>, 
+  rp : RunningProcesses<RT::P,RT::V>) {
 
     let spserv = |s, co| {
         let pm2 = rp.clone();
         let rcsp = rc.clone();
         thread::spawn (move || {
-          request_handler::<_,_,_,_,_,T>(s, &rcsp, &pm2, &co)
+          request_handler::<RT>(s, &rcsp, &pm2, &co)
         });
     };
     // loop in transport receive function
@@ -82,16 +75,10 @@ pub fn servloop
 
 /// Spawn thread either for one message (non connected) or for one connected peer (loop on stream
 /// receiver).
-fn request_handler
- <P : Peer,
-  V : KeyVal,
-  R : PeerMgmtRules<P, V>, 
-  Q : QueryRules, 
-  E : MsgEnc,
-  T : Transport> 
- (mut s1 : T::Stream, 
-  rc : &ArcRunningContext<P,V,R,Q,E,T>, 
-  rp : &RunningProcesses<P, V>,
+fn request_handler <RT : RunningTypes>
+ (mut s1 : <RT::T as Transport>::Stream, 
+  rc : &ArcRunningContext<RT>, 
+  rp : &RunningProcesses<RT::P, RT::V>,
   oneonly : &Option<(Vec<u8>, Option<Attachment>)>,
  ) {
   let s = &mut s1;
@@ -132,7 +119,7 @@ fn request_handler
             },
             Some(pri)=> {
               let repsig = rc.peerrules.signmsg(&(*rc.me), &chal);
-              let mess : ProtoMessage<P,V> = if oneonly.is_some() {
+              let mess : ProtoMessage<RT::P,RT::V> = if oneonly.is_some() {
                 // challenge use as query id
                 ProtoMessage::APONG((*rc.me).clone(),chal, repsig)
               } else { 
@@ -185,7 +172,7 @@ fn request_handler
         // block until result (proxy mode)
         let result = query.wait_query_result();
         debug!("!! {:?} replying to find with {:?}",rc.me,result);
-        let mess : ProtoMessage<P,V> = ProtoMessage::STORE_NODE(None, result.left().unwrap().map(|v|DistantEnc((*v).clone())));
+        let mess : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_NODE(None, result.left().unwrap().map(|v|DistantEnc((*v).clone())));
         send_msg(&mess, None, s,&rc.msgenc);
       },
       // general case as asynch waiting for reply
@@ -199,7 +186,7 @@ fn request_handler
         let qid = rc.queryrules.newid();
         qconf.0 = new_query_mode (&qconf.0, &rc.me, qid.clone());
         // Warning here is old qmode stored in conf new mode is for proxied query
-        let query : query::Query<P,V> = query::init_query(nbquer.to_usize().unwrap(), 1, lifetime, & rp.queries, Some(qconf.clone()), Some(qid.clone()), None);
+        let query : query::Query<RT::P,RT::V> = query::init_query(nbquer.to_usize().unwrap(), 1, lifetime, & rp.queries, Some(qconf.clone()), Some(qid.clone()), None);
         debug!("Asynch Find peer {:?}", nid);
         // warn here is new qmode
         rp.peers.send(PeerMgmtMessage::PeerFind(nid,Some(query.clone()),qconf));
@@ -231,13 +218,13 @@ fn request_handler
           QueryChunk::Attachment => {
             for val in result.right().unwrap().into_iter(){
               let att = val.as_ref().and_then(|kv|kv.get_attachment().map(|p|p.clone()));
-              let mess : ProtoMessage<P,V> = ProtoMessage::STORE_VALUE(None, val.clone().map(|v|DistantEnc(v)));
+              let mess : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE(None, val.clone().map(|v|DistantEnc(v)));
               send_msg(&mess,att.as_ref(),s,&rc.msgenc);
             }
           },
           _ /* no attachment */  =>  {
             for val in result.right().unwrap().into_iter(){
-              let mess : ProtoMessage<P,V> = ProtoMessage::STORE_VALUE_ATT(None, val.clone().map(|v|DistantEncAtt(v)));
+              let mess : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE_ATT(None, val.clone().map(|v|DistantEncAtt(v)));
               send_msg(&mess,None,s,&rc.msgenc);
             }
           },
@@ -260,7 +247,7 @@ fn request_handler
         let esthop = (rc.queryrules.nbhop(oldqp) - oldhop).to_usize().unwrap();
         let store = rc.queryrules.do_store(false, qp, sprio, Some(esthop)); // first hop
 
-        let query : query::Query<P,V> = query::init_query(nbquer.to_usize().unwrap(), nb_req, lifetime, & rp.queries, Some(queryconf.clone()), Some(qid.clone()), Some(store));
+        let query : query::Query<RT::P,RT::V> = query::init_query(nbquer.to_usize().unwrap(), nb_req, lifetime, & rp.queries, Some(queryconf.clone()), Some(qid.clone()), Some(store));
  
         debug!("Asynch Find val {:?}", nid);
         rp.store.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()),queryconf));

@@ -57,7 +57,7 @@ use std::sync::mpsc::{Sender,Receiver};
 
 use mydht::{Udp,Tcp};
 use mydht::peerif::PeerMgmtRules;
-use mydht::{DHT,RunningContext,ArcRunningContext,RunningProcesses};
+use mydht::{DHT,RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
 use mydht::{PeerPriority,StoragePriority,QueryChunk,QueryMode};
 use mydht::kvstoreif::KeyVal;
 use mydht::kvstoreif::FileKeyVal;
@@ -131,10 +131,12 @@ macro_rules! expand_transport_def(( $t:ident, $p:ident, $ftn:expr ) => (
        streamtimeout : Duration::seconds(stimeout),
        connecttimeout : Duration::seconds(ctimeout),
     };
+    type TmpTransportMacro = Tcp;
     $ftn;
       },
       &TransportDef::Udp(buffsize) => {
        let $p =  Udp::new(buffsize);
+    type TmpTransportMacro = Udp;
        $ftn;
       },
    }
@@ -144,6 +146,7 @@ macro_rules! expand_msgenc_def(( $t:ident, $p:ident, $ftn:expr ) => (
    match $t {
       &MsgEncDef::Bincode => {
         let $p = Bincode;
+        type TmpEncMacro = Bincode;
         $ftn;
       },
 /*      &MsgEncDef::Bencode => {
@@ -152,6 +155,7 @@ macro_rules! expand_msgenc_def(( $t:ident, $p:ident, $ftn:expr ) => (
       },*/
       &MsgEncDef::Json => {
         let $p = Json;
+        type TmpEncMacro = Json;
         $ftn;
       },
    }
@@ -222,15 +226,26 @@ pub fn main() {
   expand_msgenc_def!(mencdef, menc, {
   expand_transport_def!(tcpdef, transport, {
 
-    let rc : ArcRunningContext<RSAPeer, MulKV, _, dhtrules::DhtRulesImpl, _, _> = Arc::new(
-    RunningContext {
-      me : mynode.0,
-      peerrules : access,
-      queryrules : dhtrules::DhtRulesImpl::new(dhtrules),
-      msgenc : menc,
-      transport : transport,
-      keyval : PhantomData,
-    });
+    struct RunningTypesImpl;
+
+    impl RunningTypes for RunningTypesImpl {
+      type P = RSAPeer;
+      type V = MulKV;
+      type Q = dhtrules::DhtRulesImpl;
+      type T = TmpTransportMacro;
+      type E = TmpEncMacro;
+      type R = WotAccess;
+    }
+
+    //let rc : ArcRunningContext<RunningTypes<P = RSAPeer, V = MulKV, Q = dhtrules::DhtRulesImpl, T = TmpTransportMacro, E = TmpEncMacro, R = WotAccess>> = Arc::new(
+    let rc : ArcRunningContext<RunningTypesImpl> = Arc::new(
+    RunningContext::new (
+      mynode.0,
+      access,
+      dhtrules::DhtRulesImpl::new(dhtrules),
+      menc,
+      transport,
+    ));
 
 
 
@@ -318,7 +333,7 @@ let mut multip_store = move || {
 };
 
  
-    let mut serv = DHT::<_,MulKV, _, _, _, _>::boot_server(rc, route, querycache, multip_store, Vec::new(), bootTrustedPeers);
+    let mut serv = DHT::<RunningTypesImpl>::boot_server(rc, route, querycache, multip_store, Vec::new(), bootTrustedPeers);
 
  
     // prompt
@@ -479,18 +494,18 @@ impl PeerMgmtRules<RSAPeer, MulKV> for UnsignedOpenAccess {
     "".to_string()
   }
   fn checkmsg  (&self, n : &RSAPeer, chal : &String, sign : &String) -> bool{ true}
-  fn accept<R : PeerMgmtRules<RSAPeer, MulKV>, Q : QueryRules, E : MsgEnc, T : Transport> (&self, n : &Arc<RSAPeer>, 
+  fn accept<RT : RunningTypes<P=RSAPeer,V=MulKV>> (&self, n : &Arc<RSAPeer>, 
   rp : &RunningProcesses<RSAPeer,MulKV>, 
-  rc : &ArcRunningContext<RSAPeer,MulKV,R,Q,E,T>) 
+  rc : &ArcRunningContext<RT>) 
   -> Option<PeerPriority> {
     // direct local query to kvstore process to know which trust we got for peer (trust is use as
     // priority level.
     Some (PeerPriority::Normal)
   }
   #[inline]
-  fn for_accept_ping<R : PeerMgmtRules<RSAPeer, MulKV>, Q : QueryRules, E : MsgEnc, T : Transport> (&self, n : &Arc<RSAPeer>, 
+  fn for_accept_ping<RT : RunningTypes<P=RSAPeer,V=MulKV>>  (&self, n : &Arc<RSAPeer>, 
   rp : &RunningProcesses<RSAPeer,MulKV>, 
-  rc : &ArcRunningContext<RSAPeer,MulKV,R,Q,E,T>) 
+  rc : &ArcRunningContext<RT>) 
   {
   }
  
@@ -505,9 +520,9 @@ struct WotAccess {
 }
 
 impl WotAccess {
-  fn accept_rec<R : PeerMgmtRules<RSAPeer, MulKV>, Q : QueryRules, E : MsgEnc, T : Transport> (&self, n : &Arc<RSAPeer>, 
+  fn accept_rec<RT : RunningTypes<P=RSAPeer, V=MulKV>> (&self, n : &Arc<RSAPeer>, 
   rp : &RunningProcesses<RSAPeer,MulKV>, 
-  rc : &ArcRunningContext<RSAPeer,MulKV,R,Q,E,T>,
+  rc : &ArcRunningContext<RT>,
   rec : bool) 
   -> Option<PeerPriority> {
  
@@ -628,15 +643,15 @@ impl PeerMgmtRules<RSAPeer, MulKV> for WotAccess {
     }
   }
   #[inline]
-  fn accept<R : PeerMgmtRules<RSAPeer, MulKV>, Q : QueryRules, E : MsgEnc, T : Transport> (&self, n : &Arc<RSAPeer>, 
+  fn accept<RT : RunningTypes<P = RSAPeer, V = MulKV>> (&self, n : &Arc<RSAPeer>, 
   rp : &RunningProcesses<RSAPeer,MulKV>, 
-  rc : &ArcRunningContext<RSAPeer,MulKV,R,Q,E,T>) 
+  rc : &ArcRunningContext<RT>) 
   -> Option<PeerPriority> {
     self.accept_rec(n, rp, rc, true)
   }
-  fn for_accept_ping<R : PeerMgmtRules<RSAPeer, MulKV>, Q : QueryRules, E : MsgEnc, T : Transport> (&self, n : &Arc<RSAPeer>, 
+  fn for_accept_ping<RT : RunningTypes<P = RSAPeer, V = MulKV>> (&self, n : &Arc<RSAPeer>, 
   rp : &RunningProcesses<RSAPeer,MulKV>, 
-  rc : &ArcRunningContext<RSAPeer,MulKV,R,Q,E,T>) 
+  rc : &ArcRunningContext<RT>) 
   {
     // update peer in peer kv (for new peer associated info) - localonly
     let queryconf = (QueryMode::Asynch, QueryChunk::None, None);

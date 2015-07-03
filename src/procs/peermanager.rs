@@ -4,7 +4,7 @@ use std::io::Result as IoResult;
 use peer::{PeerMgmtRules, PeerPriority};
 use std::sync::mpsc::{Sender,Receiver};
 use std::str::from_utf8;
-use procs::{client,RunningContext,ArcRunningContext,RunningProcesses};
+use procs::{client,RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
 use std::collections::{HashMap,BTreeSet,VecDeque};
 use std::sync::{Arc,Semaphore,Condvar,Mutex};
 use query::{self,QueryRules,QueryModeMsg,LastSent,QueryConfMsg};
@@ -22,21 +22,14 @@ use num::traits::ToPrimitive;
 // peermanager manage communication with the storage : add remove update. The storage is therefore
 // not shared, we use message passing. 
 /// Start a new peermanager process
-pub fn start
- <P : Peer,
-  V : KeyVal,
-  R : PeerMgmtRules<P,V>,
-  Q : QueryRules, 
-  E : MsgEnc,
-  T : Route<P,V>, 
-  TT : Transport> 
- (rc : ArcRunningContext<P,V,R,Q,E,TT>, 
+pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
+ (rc : ArcRunningContext<RT>, 
   mut route : T, 
-  r : &Receiver<PeerMgmtMessage<P,V>>, 
-  rp : RunningProcesses<P,V>, 
+  r : &Receiver<PeerMgmtMessage<RT::P,RT::V>>, 
+  rp : RunningProcesses<RT::P,RT::V>, 
   sem : Arc<Semaphore>) {
   loop {
-    let connected = <TT as Transport>::is_connected();
+    let connected = <RT::T as Transport>::is_connected();
     match r.recv() {
       Ok(PeerMgmtMessage::PeerRemChannel(p))  => {
         let nodeid = p.get_key().clone();
@@ -79,10 +72,10 @@ pub fn start
         if(p.get_key() != rc.me.get_key()) {
           debug!("Pinging peer : {:?}", p);
           if(connected){  
-            get_or_init_client_connection::<P, V, R, Q, E, T, TT>(&p, & rc , & mut route, & rp, true, ores);
+            get_or_init_client_connection::<RT, T>(&p, & rc , & mut route, & rp, true, ores);
           } else {
             // TODO  ores non supported (no ping query cache - TODO )
-            send_nonconnected_ping::<P, V, R, Q, E, T, TT>(&p, & rc , & mut route, & rp);
+            send_nonconnected_ping::<RT, T>(&p, & rc , & mut route, & rp);
           };
         } else {
           error!("Trying to ping ourselves");
@@ -134,10 +127,10 @@ pub fn start
             let mess =  ClientMessage::KVFind(key.clone(),oquery.clone(), newqueryconf.clone()); // TODO queryconf arc?? + remove newqueryconf.clone() already cloned why the second (bug or the fact that we send)
             if(connected) {
               // get connection
-              let s = get_or_init_client_connection::<P, V, R, Q, E, T, TT>(p, & rc , & mut route, & rp, false, None);
+              let s = get_or_init_client_connection::<RT, T>(p, & rc , & mut route, & rp, false, None);
               s.send(mess);
             } else {
-              send_nonconnected::<P, V, R, Q, E, T, TT> (p, & rc , & mut route, & rp, mess);
+              send_nonconnected::<RT, T> (p, & rc , & mut route, & rp, mess);
             };
           };
         } else {
@@ -210,10 +203,10 @@ pub fn start
                     let mess = ClientMessage::StoreNode(queryconf, r);
                     if (connected){
                       // send result directly
-                      let s = get_or_init_client_connection::<P, V, R, Q, E, T, TT>(&recnode, & rc , & mut route, & rp, false, None);
+                      let s = get_or_init_client_connection::<RT, T>(&recnode, & rc , & mut route, & rp, false, None);
                       s.send(mess);
                     } else {
-                       send_nonconnected::<P, V, R, Q, E, T, TT> (&recnode, & rc , & mut route, & rp, mess);
+                       send_nonconnected::<RT, T> (&recnode, & rc , & mut route, & rp, mess);
                     };
                   },
                   _ => {error!("None query in none asynch peerfind");},
@@ -235,10 +228,10 @@ pub fn start
                let mess = ClientMessage::PeerFind(nid.clone(),oquery.clone(), newqueryconf.clone()); // TODO queryconf arc??
                if (connected) {
                  // get connection
-                 let s = get_or_init_client_connection::<P, V, R, Q, E, T, TT>(p, & rc , & mut route, & rp, false, None);
+                 let s = get_or_init_client_connection::<RT, T>(p, & rc , & mut route, & rp, false, None);
                  s.send(mess);
                } else {
-                 send_nonconnected::<P, V, R, Q, E, T, TT> (p, & rc , & mut route, & rp, mess);
+                 send_nonconnected::<RT, T> (p, & rc , & mut route, & rp, mess);
                };
              };
            },
@@ -249,9 +242,9 @@ pub fn start
          let torefresh = route.get_pool_nodes(max);
          for n in torefresh.iter(){
            if connected{
-             get_or_init_client_connection::<P, V, R, Q, E, T, TT>(n, & rc , & mut route, & rp, true, None);
+             get_or_init_client_connection::<RT, T>(n, & rc , & mut route, & rp, true, None);
            } else {
-             send_nonconnected_ping::<P, V, R, Q, E, T, TT>(n, & rc , & mut route, & rp);
+             send_nonconnected_ping::<RT, T>(n, & rc , & mut route, & rp);
            };
          }
        },
@@ -265,10 +258,10 @@ pub fn start
              if rec.get_key() != rc.me.get_key() { 
                let mess = ClientMessage::StoreNode(qconf, result);
                if(connected){
-                 let s = get_or_init_client_connection::<P, V, R, Q, E, T, TT>(& rec, & rc , & mut route, & rp, false, None); // TODO do something for not having to create an arc here eg arc in qconf + previous qconf clone
+                 let s = get_or_init_client_connection::<RT, T>(& rec, & rc , & mut route, & rp, false, None); // TODO do something for not having to create an arc here eg arc in qconf + previous qconf clone
                  s.send(mess);
                } else {
-                 send_nonconnected::<P, V, R, Q, E, T, TT> (&rec, & rc , & mut route, & rp, mess);
+                 send_nonconnected::<RT, T> (&rec, & rc , & mut route, & rp, mess);
                };
              } else {
                error!("local loop detected for store node");
@@ -287,10 +280,10 @@ pub fn start
              if rec.get_key() != rc.me.get_key() {
                let mess = ClientMessage::StoreKV(qconf, result);
                if (connected) {
-                 let s = get_or_init_client_connection::<P, V, R, Q, E, T, TT>(& rec, & rc , & mut route, & rp, false, None);
+                 let s = get_or_init_client_connection::<RT, T>(& rec, & rc , & mut route, & rp, false, None);
                  s.send(mess);
                } else {
-                 send_nonconnected::<P, V, R, Q, E, T, TT> (& rec, & rc , & mut route, & rp, mess);
+                 send_nonconnected::<RT, T> (& rec, & rc , & mut route, & rp, mess);
                };
              } else {
                error!("local loop detected for store kv {:?}", result);
@@ -313,19 +306,12 @@ pub fn start
 
 
 #[inline]
-fn send_nonconnected
- <P : Peer,
-  V : KeyVal,
-  R : PeerMgmtRules<P,V>, 
-  Q : QueryRules, 
-  E : MsgEnc,
-  T : Route<P,V>, 
-  TT : Transport> 
- (p : & Arc<P> , 
-  rc : & ArcRunningContext<P,V,R,Q,E,TT>, 
+fn send_nonconnected<RT : RunningTypes, T : Route<RT::P,RT::V>>
+ (p : & Arc<RT::P> , 
+  rc : & ArcRunningContext<RT>, 
   route : & mut T , 
-  rp : & RunningProcesses<P,V>,
-  mess : ClientMessage<P,V>
+  rp : & RunningProcesses<RT::P,RT::V>,
+  mess : ClientMessage<RT::P,RT::V>
  )
  ->  bool {
  match route.get_node(&p.get_key()) {
@@ -338,25 +324,18 @@ fn send_nonconnected
   let rpsp = rp.clone();
   let rcsp = rc.clone();
   let psp = p.clone();
-  thread::spawn (move || {client::start::<P,V,R,Q,E,TT>(psp, None, None, rcsp, rpsp, false, None, Some(mess),false)});
+  thread::spawn (move || {client::start::<RT>(psp, None, None, rcsp, rpsp, false, None, Some(mess),false)});
   true
   },
  }
 }
 
 #[inline]
-fn send_nonconnected_ping
- <P : Peer,
-  V : KeyVal,
-  R : PeerMgmtRules<P,V>, 
-  Q : QueryRules, 
-  E : MsgEnc,
-  T : Route<P,V>, 
-  TT : Transport> 
- (p : & Arc<P> , 
-  rc : & ArcRunningContext<P,V,R,Q,E,TT>, 
+fn send_nonconnected_ping<RT : RunningTypes, T : Route<RT::P,RT::V>>
+ (p : & Arc<RT::P> , 
+  rc : & ArcRunningContext<RT>, 
   route : & mut T , 
-  rp : & RunningProcesses<P,V>,
+  rp : & RunningProcesses<RT::P,RT::V>,
  )
  ->  bool {
  match route.get_node(&p.get_key()) {
@@ -370,7 +349,7 @@ fn send_nonconnected_ping
   let rpsp = rp.clone();
   let rcsp = rc.clone();
   let psp = p.clone();
-  thread::spawn (move || {client::start::<P,V,R,Q,E,TT>(psp, None, None, rcsp, rpsp, true, None, None,false)});
+  thread::spawn (move || {client::start::<RT>(psp, None, None, rcsp, rpsp, true, None, None,false)});
   true
   },
  }
@@ -378,21 +357,14 @@ fn send_nonconnected_ping
 
 
 #[inline]
-fn get_or_init_client_connection
- <P : Peer,
-  V : KeyVal,
-  R : PeerMgmtRules<P,V>, 
-  Q : QueryRules, 
-  E : MsgEnc,
-  T : Route<P,V>, 
-  TT : Transport> 
- (p : & Arc<P> , 
-  rc : & ArcRunningContext<P,V,R,Q,E,TT>, 
+fn get_or_init_client_connection<RT : RunningTypes, T : Route<RT::P,RT::V>>
+ (p : & Arc<RT::P> , 
+  rc : & ArcRunningContext<RT>, 
   route : & mut T , 
-  rp : & RunningProcesses<P,V>, 
+  rp : & RunningProcesses<RT::P,RT::V>, 
   ping : bool, 
   pingres : Option<OneResult<bool>>) 
- ->  Sender<ClientMessage<P,V>> {
+ ->  Sender<ClientMessage<RT::P,RT::V>> {
 let (upd, s) = match route.get_node(&p.get_key()) {
   Some(&(_,PeerPriority::Blocked,_))| Some(&(_,PeerPriority::Offline,_)) => {
     // retry connecting & accept for block
@@ -424,7 +396,7 @@ let (upd, s) = match route.get_node(&p.get_key()) {
   let rcsp = rc.clone();
   let psp = p.clone();
   debug!("#####initiating client process from {:?} to {:?} with ping {:?}",rc.me.get_key(), p.get_key(),ping);
-  thread::spawn (move || {client::start::<P,V,R,Q,E,TT>(psp,Some(tcl3), Some(rcl), rcsp, rpsp, ping, pingres, None, true)});
+  thread::spawn (move || {client::start::<RT>(psp,Some(tcl3), Some(rcl), rcsp, rpsp, ping, pingres, None, true)});
      },
      None => {
        // we found an existing channel with seemlessly open connection
