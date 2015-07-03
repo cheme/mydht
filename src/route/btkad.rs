@@ -14,7 +14,7 @@ use route::Route;
 use std::iter::Iterator;
 use std::rc::Rc;
 use keyval::KeyVal;
-use keyval::Attachment;
+use keyval::{Attachment,SettableAttachment};
 use num::traits::ToPrimitive;
 use std::hash::Hash;
 
@@ -185,7 +185,7 @@ mod test {
   use std::fs::File;
 
   use std::net::{Ipv4Addr};
-  use keyval::Attachment;
+  use keyval::{Attachment,SettableAttachment};
   use std::str::FromStr;
 
 // TODO a clean nodeK, with better serialize (use as_vec) , but here good for testing as key is not
@@ -198,9 +198,10 @@ impl KeyVal for NodeK {
     fn get_key(&self) -> NodeID {
         self.0.get_key()
     }
-    nospecificencoding!(NodeK);
     noattachment!();
 }
+
+impl SettableAttachment for NodeK { }
 
 impl Peer for NodeK {
   //type Address = <Node as Peer>::Address;

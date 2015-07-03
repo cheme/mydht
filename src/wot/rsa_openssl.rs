@@ -26,7 +26,7 @@ use keyval::{KeyVal};
 use std::net::{SocketAddr};
 use utils::SocketAddrExt;
 use utils::{TimeSpecExt};
-use keyval::Attachment;
+use keyval::{Attachment,SettableAttachment};
 
 use super::{TrustedPeer,Truster,TrustRel,TrustedVal,PeerInfoRel};
 use super::trustedpeer::{TrustedPeerToSignEnc, TrustedPeerToSignDec, SendablePeerEnc, SendablePeerDec};
@@ -378,39 +378,28 @@ impl KeyVal for RSAPeer {
   }
 
   #[inline]
-  fn encode_dist_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-    self.to_sendablepeer().encode(s)
+  fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> {
+    if is_local {
+      self.encode(s)
+    } else {
+      self.to_sendablepeer().encode(s)
+    }
   }
 
   #[inline]
-  fn decode_dist_with_att<D:Decoder> (d : &mut D) -> Result<RSAPeer, D::Error> {
-    let tmp : Result<SendablePeerDec, D::Error> = Decodable::decode(d);
-    tmp.map(|t| RSAPeer::from_sendablepeer(t))
+  fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<RSAPeer, D::Error> {
+    if is_local {
+      Decodable::decode(d)
+    } else {
+      let tmp : Result<SendablePeerDec, D::Error> = Decodable::decode(d);
+      tmp.map(|t| RSAPeer::from_sendablepeer(t))
+    }
   }
-
-  #[inline]
-  fn encode_dist<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-    self.to_sendablepeer().encode(s)
-  }
-
-  #[inline]
-  fn decode_dist<D:Decoder> (d : &mut D) -> Result<RSAPeer, D::Error> {
-    let tmp : Result<SendablePeerDec, D::Error> = Decodable::decode(d);
-    tmp.map(|t| RSAPeer::from_sendablepeer(t))
-  }
-
-  #[inline]
-  fn encode_loc_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-    self.encode(s)
-  }
-
-  #[inline]
-  fn decode_loc_with_att<D:Decoder> (d : &mut D) -> Result<RSAPeer, D::Error> {
-    Decodable::decode(d)
-  }
-
+  
   noattachment!();
 }
+
+impl SettableAttachment for RSAPeer {}
 
 impl Peer for RSAPeer {
   //type Address = SocketAddr;

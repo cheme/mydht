@@ -8,7 +8,7 @@ use keyval::{KeyVal};
 use utils::ArcKV;
 use utils::SocketAddrExt;
 use utils::{TimeSpecExt};
-use keyval::Attachment;
+use keyval::{Attachment,SettableAttachment};
 use super::{TrustedPeer,Truster,TrustedVal,PeerTrustRel};
 use peer::Peer;
 
@@ -109,9 +109,10 @@ impl<TP : TrustedPeer> KeyVal for PeerSign<TP> {
   fn get_key(&self) -> (<TP as KeyVal>::Key, <TP as KeyVal>::Key) {
     (self.from.clone(), self.about.clone())
   }
-  nospecificencoding!(PeerSign<TP>);
   noattachment!();
 }
+
+impl<TP : TrustedPeer> SettableAttachment for PeerSign<TP> {}
 
 impl<'a, TP : TrustedPeer> TrustedVal<TP, PeerTrustRel> for PeerSign<TP> {
 //  type SignedContent = (&'a Vec<u8>, &'a Vec<u8>, u8, usize);

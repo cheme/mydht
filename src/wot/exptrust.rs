@@ -1,4 +1,4 @@
-use keyval::{KeyVal,Key,Attachment};
+use keyval::{KeyVal,Key,Attachment,SettableAttachment};
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 use super::{TrustedPeer};
 use std::iter;
@@ -42,10 +42,9 @@ impl<TP : KeyVal<Key=Vec<u8>>> KeyVal for ExpWotTrust<TP> {
   fn get_key(&self) -> <TP as KeyVal>::Key {
     self.peerid.clone()
   }
-  nospecificencoding!(ExpWotTrust<TP>);
   noattachment!();
 }
-
+impl<TP : KeyVal<Key=Vec<u8>>> SettableAttachment for ExpWotTrust<TP> {}
 
 // TODO do crypto test and striplet test to
 #[cfg(test)]

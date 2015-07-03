@@ -75,7 +75,7 @@ use rustc_serialize::hex::{ToHex,FromHex};
 //use mydht::kvstoreif::KVCache;
 use mydht::queryif::{QueryRules};
 use mydht::msgencif::{MsgEnc};
-use mydht::Attachment;
+use mydht::{Attachment,SettableAttachment};
 use std::collections::BTreeSet;
 use std::path::{Path,PathBuf};
 
@@ -653,10 +653,10 @@ impl KeyVal for DummyKeyVal {
     fn get_key(&self) -> String {
         self.id.clone()
     }
-    nospecificencoding!(DummyKeyVal);
     noattachment!();
 }
 
+impl SettableAttachment for DummyKeyVal {}
 
 mod fskeyval {
   //! the keyval used for fs will be either a file id request (fileid are their hash) with list of
@@ -671,7 +671,7 @@ mod fskeyval {
   use mydht::CachePolicy;
   use std::sync::Arc;
 
-  use mydht::Attachment;
+  use mydht::{Attachment,SettableAttachment};
   use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
   use mydht::utils::ArcKV;
 
@@ -686,9 +686,9 @@ mod fskeyval {
       fn get_key(&self) -> String {
           self.query.clone()
       }
-      nospecificencoding!(FileQuery);
       noattachment!();
   }
+  impl SettableAttachment for FileQuery {}
 
   derive_enum_keyval!(FSKV {}, FSK, {
     0 , File  => ArcKV<FileKV>,

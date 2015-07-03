@@ -13,7 +13,7 @@ use std::io::Write;
 use std::ops::Deref;
 use std::collections::VecDeque;
 
-use keyval::{Key,KeyVal,Attachment};
+use keyval::{Key,KeyVal,Attachment,SettableAttachment};
 use kvstore::{KVStore,KVStoreRel};
 use query::cache::CachePolicy;
 use utils::ArcKV;
@@ -75,6 +75,14 @@ impl<TP : TrustedPeer> KeyVal for WotKV<TP> {
   });
 }
 
+impl<TP : TrustedPeer> SettableAttachment for WotKV<TP> {
+  derive_enum_setattach_inner!(WotKV<TP>, WotKV, WotK, WotK, {
+    0 , Peer       => ArcKV<TP>,
+    1 , P2S        => PromSigns<TP>,
+    2 , Sign       => PeerSign<TP>,
+    3 , TrustQuery => TrustQuery<TP>,
+  });
+}
 /// Storage of Wot info, here we use three substore. The one with relationship,
 /// should be a trensiant internal implementation loaded at start or bd
 /// related call. Here we use this implemetation for the sake of simplicity.
@@ -117,10 +125,10 @@ impl<TP : TrustedPeer> KeyVal for TrustQuery<TP> {
   fn get_key(&self) -> <TP as KeyVal>::Key {
     self.peerid.clone()
   }
-  nospecificencoding!(TrustQuery<TP>);
   noattachment!();
 }
 
+impl<TP : TrustedPeer> SettableAttachment for TrustQuery<TP> { }
 
 
 /// Special keyval for queries of signature about a peer.
@@ -218,9 +226,10 @@ impl<TP : TrustedPeer> KeyVal for PromSigns<TP> {
   }
   // TODO may be faster to have distant encoding embedding PeerSign info yet require reference to
   // other store in keyval for encoding.
-  nospecificencoding!(PromSigns<TP>);
   noattachment!();
 }
+
+impl<TP : TrustedPeer> SettableAttachment for PromSigns<TP> {}
 
 impl<TP : TrustedPeer, T : WotTrust<TP>> WotStore<TP, T> {
   pub fn new

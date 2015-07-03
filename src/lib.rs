@@ -30,40 +30,8 @@ macro_rules! noattachment(() => (
   fn get_attachment(&self) -> Option<&Attachment>{
     None
   }
-  fn set_attachment(& mut self, _ : &Attachment) -> bool{
-    false
-  }
 ));
  
-#[macro_export]
-/// Automatic define for KeyVal without specific encoding 
-macro_rules! nospecificencoding(($t:ty) => (
-  #[inline]
-  fn encode_dist_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>{
-    self.encode(s)
-  }
-  #[inline]
-  fn decode_dist_with_att<D:Decoder> (d : &mut D) -> Result<$t, D::Error>{
-    Decodable::decode(d)
-  }
-  #[inline]
-  fn encode_dist<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>{
-    self.encode(s)
-  }
-  #[inline]
-  fn decode_dist<D:Decoder> (d : &mut D) -> Result<$t, D::Error>{
-    Decodable::decode(d)
-  }
-  #[inline]
-  fn encode_loc_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>{
-    self.encode(s)
-  }
-  #[inline]
-  fn decode_loc_with_att<D:Decoder> (d : &mut D) -> Result<$t, D::Error>{
-    Decodable::decode(d)
-  }
-));
-
 
 #[macro_export]
 /// derive Keyval implementation for simple enum over * KeyVal
@@ -97,45 +65,18 @@ macro_rules! derive_enum_keyval(($kv:ident {$($para:ident => $tra:ident , )*}, $
        $( &$kv::$st(ref f)  => $k::$st(f.get_key()), )*
       }
     }
+
 #[inline]
-    fn encode_dist_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
+    fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error>{
       match self {
-        $( &$kv::$st(ref f)  => {try!(s.emit_u8($ix));f.encode_dist_with_att(s)}, )*
+        $( &$kv::$st(ref f) => {try!(s.emit_u8($ix));f.encode_kv(s, is_local, with_att)}, )*
       }
     }
 #[inline]
-    fn decode_dist_with_att<D:Decoder> (d : &mut D) -> Result<$kv, D::Error> {
+    fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<$kv, D::Error>{
       let ix = try!(d.read_u8());
       match ix {
-        $( $ix => <$skv as KeyVal>::decode_dist_with_att(d).map(|v|$kv::$st(v)), )*
-        _  => panic!("error ix decode"),
-      }
-    }
-#[inline]
-    fn encode_dist<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-      match self {
-        $( &$kv::$st(ref f)  => {try!(s.emit_u8($ix));f.encode_dist(s)}, )*
-      }
-    }
-#[inline]
-    fn decode_dist<D:Decoder> (d : &mut D) -> Result<$kv, D::Error> {
-      let ix = try!(d.read_u8());
-      match ix {
-        $( $ix => <$skv as KeyVal>::decode_dist(d).map(|v|$kv::$st(v)), )*
-        _  => panic!("error ix decode"),
-      }
-    }
-#[inline]
-    fn encode_loc_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>{
-      match self {
-        $( &$kv::$st(ref f) => {try!(s.emit_u8($ix));f.encode_loc_with_att(s)}, )*
-      }
-    }
-#[inline]
-    fn decode_loc_with_att<D:Decoder> (d : &mut D) -> Result<$kv, D::Error>{
-      let ix = try!(d.read_u8());
-      match ix {
-        $( $ix => <$skv as KeyVal>::decode_loc_with_att(d).map(|v|$kv::$st(v)), )*
+        $( $ix => <$skv as KeyVal>::decode_kv(d, is_local, with_att).map(|v|$kv::$st(v)), )*
         _  => panic!("error ix decode"),
       }
     }
@@ -145,6 +86,9 @@ macro_rules! derive_enum_keyval(($kv:ident {$($para:ident => $tra:ident , )*}, $
         $( &$kv::$st(ref f)  => f.get_attachment(), )*
       }
     }
+  }
+
+  impl SettableAttachment for $kv {
 #[inline]
     fn set_attachment(& mut self, fi:&Attachment) -> bool{
       match self {
@@ -152,6 +96,7 @@ macro_rules! derive_enum_keyval(($kv:ident {$($para:ident => $tra:ident , )*}, $
       }
     }
   }
+
 ));
 
 // dup of derive enum keyval used due to lack of possibility for parametric types in current macro
@@ -163,44 +108,16 @@ macro_rules! derive_enum_keyval_inner(($kvt:ty , $kv:ident, $kt:ty, $k:ident, {$
       }
     }
 #[inline]
-    fn encode_dist_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
+    fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_path : bool) -> Result<(), S::Error>{
       match self {
-        $( &$kv::$st(ref f)  => {try!(s.emit_u8($ix));f.encode_dist_with_att(s)}, )*
+        $( &$kv::$st(ref f) => {try!(s.emit_u8($ix));f.encode_kv(s, is_local, with_path)}, )*
       }
     }
 #[inline]
-    fn decode_dist_with_att<D:Decoder> (d : &mut D) -> Result<$kvt, D::Error> {
+    fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, with_path : bool) -> Result<$kvt, D::Error>{
       let ix = try!(d.read_u8());
       match ix {
-        $( $ix => <$skv as KeyVal>::decode_dist_with_att(d).map(|v|$kv::$st(v)), )*
-        _  => panic!("error ix decode"),
-      }
-    }
-#[inline]
-    fn encode_dist<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-      match self {
-        $( &$kv::$st(ref f)  => {try!(s.emit_u8($ix));f.encode_dist(s)}, )*
-      }
-    }
-#[inline]
-    fn decode_dist<D:Decoder> (d : &mut D) -> Result<$kvt, D::Error> {
-      let ix = try!(d.read_u8());
-      match ix {
-        $( $ix => <$skv as KeyVal>::decode_dist(d).map(|v|$kv::$st(v)), )*
-        _  => panic!("error ix decode"),
-      }
-    }
-#[inline]
-    fn encode_loc_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>{
-      match self {
-        $( &$kv::$st(ref f) => {try!(s.emit_u8($ix));f.encode_loc_with_att(s)}, )*
-      }
-    }
-#[inline]
-    fn decode_loc_with_att<D:Decoder> (d : &mut D) -> Result<$kvt, D::Error>{
-      let ix = try!(d.read_u8());
-      match ix {
-        $( $ix => <$skv as KeyVal>::decode_loc_with_att(d).map(|v|$kv::$st(v)), )*
+        $( $ix => <$skv as KeyVal>::decode_kv(d, is_local, with_path).map(|v|$kv::$st(v)), )*
         _  => panic!("error ix decode"),
       }
     }
@@ -210,13 +127,21 @@ macro_rules! derive_enum_keyval_inner(($kvt:ty , $kv:ident, $kt:ty, $k:ident, {$
         $( &$kv::$st(ref f)  => f.get_attachment(), )*
       }
     }
+
+
+));
+
+macro_rules! derive_enum_setattach_inner(($kvt:ty , $kv:ident, $kt:ty, $k:ident, {$($ix:expr , $st:ident => $skv:ty,)*}) => (
+
 #[inline]
     fn set_attachment(& mut self, fi:&Attachment) -> bool{
       match self {
         $( &mut $kv::$st(ref mut f)  => f.set_attachment(fi), )*
       }
     }
+
 ));
+
 
 #[macro_export]
 /// derive kvstore to multiple independant kvstore implementation
@@ -283,7 +208,7 @@ pub use procs::{store_val, find_val, find_local_val};
 pub use query::{QueryConf,QueryPriority,QueryMode,QueryChunk};
 pub use query::cache::{CachePolicy};
 pub use kvstore::{StoragePriority};
-pub use keyval::{Attachment};
+pub use keyval::{Attachment,SettableAttachment};
 // TODO move msgenc to mod dhtimpl
 pub use msgenc::json::{Json};
 //pub use msgenc::bencode::{Bencode};
@@ -292,7 +217,7 @@ pub use msgenc::bincode::{Bincode};
 pub use transport::tcp::{Tcp};
 pub use transport::udp::{Udp};
 pub use wot::{TrustedVal,Truster,TrustedPeer};
-//pub use kvstore::nospecificencoding;
+
 pub mod dhtimpl {
   pub use peer::node::{Node};
   #[cfg(feature="openssl-impl")]
@@ -304,13 +229,13 @@ pub mod dhtimpl {
   pub use query::simplecache::{SimpleCache,SimpleCacheQuery};
   pub use route::inefficientmap::{Inefficientmap};
 
-
   #[cfg(feature="dht-route")]
   pub use route::btkad::{BTKad};
   pub use keyval::{FileKV};
   pub use kvstore::filestore::{FileStore};
   pub use wot::truststore::{WotKV,WotK,WotStore};
   pub use wot::classictrust::{TrustRules,ClassicWotTrust};
+
 }
 // TODO rename peerif to peerrulesif
 pub mod peerif{

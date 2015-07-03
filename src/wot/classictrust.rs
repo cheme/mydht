@@ -1,4 +1,4 @@
-use keyval::{KeyVal,Key,Attachment};
+use keyval::{KeyVal,Key,Attachment,SettableAttachment};
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 use std::iter;
 use utils::TimeSpecExt;
@@ -37,9 +37,9 @@ impl<TP : KeyVal<Key=Vec<u8>>> KeyVal for ClassicWotTrust<TP> {
   fn get_key(&self) -> <TP as KeyVal>::Key {
     self.peerid.clone()
   }
-  nospecificencoding!(ClassicWotTrust<TP>);
   noattachment!();
 }
+impl<TP : KeyVal<Key=Vec<u8>>> SettableAttachment for ClassicWotTrust<TP> {}
 
 /// treshold and number of same to promote or demote trust.
 /// This mapping associate a trust level (index of the vec element) with the number of trust of this level needed to

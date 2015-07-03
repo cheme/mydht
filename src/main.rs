@@ -47,7 +47,7 @@ use mydht::Json;
 use mydht::Bincode;
 use mydht::Tcp;
 use mydht::Udp;
-use mydht::Attachment;
+use mydht::{Attachment,SettableAttachment};
 use mydht::{PeerPriority};
 use mydht::peerif::PeerMgmtRules;
 use mydht::dhtimpl::{Node,SimpleCache,SimpleCacheQuery,Inefficientmap};
@@ -137,10 +137,11 @@ impl KeyVal for DummyKeyValIn {
     fn get_key(&self) -> String {
         self.id.clone()
     }
-    nospecificencoding!(DummyKeyValIn);
     noattachment!();
 }
 
+impl SettableAttachment for DummyKeyValIn {
+}
 
 
 

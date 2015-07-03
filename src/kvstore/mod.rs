@@ -90,7 +90,7 @@ mod test {
 
   use std::str::FromStr;
 
-  use keyval::Attachment;
+  use keyval::{Attachment,SettableAttachment};
 
   // Testing only nodeK, with key different from id
   type NodeK2 = (Node,String);
@@ -100,9 +100,9 @@ mod test {
     fn get_key(&self) -> NodeID {
         self.1.clone()
     }
-    nospecificencoding!(NodeK2);
     noattachment!();
   }
+  impl SettableAttachment for NodeK2 { }
 
   impl Peer for NodeK2 {
     //type Address = <Node as Peer>::Address;

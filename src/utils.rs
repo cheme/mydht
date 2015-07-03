@@ -14,9 +14,9 @@ use self::rand::Rng;
 use self::rand::thread_rng;
 use std::sync::{Arc,Mutex,Condvar};
 use transport::{TransportStream};
-use keyval::{Attachment};
+use keyval::{Attachment,SettableAttachment};
 use msgenc::{MsgEnc,ProtoMessage};
-use keyval::{KeyVal};
+use keyval::{KeyVal,AsKeyValIf};
 use keyval::{FileKeyVal};
 use peer::{Peer};
 #[cfg(feature="openssl-impl")]
@@ -72,6 +72,15 @@ impl<KV : KeyVal> Decodable for ArcKV<KV> {
   }
 }
 
+impl<KV : KeyVal> AsKeyValIf for ArcKV<KV> {
+  type KV = KV;
+  fn as_keyval_if(&self) -> &Self::KV {
+    &(*self.0)
+  }
+  fn build_from_keyval(kv : Self::KV) -> Self {
+    ArcKV::new(kv)
+  }
+}
 
 impl<KV : KeyVal> ArcKV<KV> {
   #[inline]
@@ -85,6 +94,7 @@ impl<V : KeyVal> Deref for ArcKV<V> {
     &self.0
   }
 }
+/*
 impl<KV : KeyVal> KeyVal for ArcKV<KV> {
   type Key = <KV as KeyVal>::Key;
   #[inline]
@@ -119,6 +129,9 @@ impl<KV : KeyVal> KeyVal for ArcKV<KV> {
   fn get_attachment(&self) -> Option<&Attachment>{
     self.0.get_attachment()
   }
+}*/
+
+impl<KV : KeyVal> SettableAttachment for ArcKV<KV> {
   #[inline]
   fn set_attachment(& mut self, fi:&Attachment) -> bool {
     // TODO (need reconstruct Arc) redesign with functional style
@@ -132,8 +145,8 @@ impl<KV : KeyVal> KeyVal for ArcKV<KV> {
     let kv = unsafe {self.0.make_unique()};
     kv.set_attachment(fi)
   }
-}
 
+}
 impl<V : FileKeyVal> FileKeyVal for ArcKV<V> {
   #[inline]
   fn name(&self) -> String {

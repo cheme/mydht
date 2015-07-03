@@ -9,7 +9,7 @@ use std::string::String;
 use std::str::FromStr;
 use peer::Peer;
 use keyval::{KeyVal};
-use keyval::Attachment;
+use keyval::{Attachment,SettableAttachment};
 use utils::SocketAddrExt;
 
 #[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
@@ -25,9 +25,10 @@ impl KeyVal for Node {
   fn get_key(&self) -> NodeID {
     self.nodeid.clone()
   }
-  nospecificencoding!(Node);
   noattachment!();
 }
+
+impl SettableAttachment for Node { }
 
 impl Peer for Node{
 //  type Address = SocketAddr;

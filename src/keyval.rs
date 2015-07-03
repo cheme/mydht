@@ -35,16 +35,14 @@ impl<K : Encodable + Decodable + fmt::Debug + Eq + Clone> Key for K {
 
 /// KeyVal is the basis for DHT content, a value with key.
 // TODO rem 'static and add it only when needed (Arc) : method as_static??
-pub trait KeyVal : Encodable + Decodable + fmt::Debug + Clone + Send + Sync + Eq + 'static {
+pub trait KeyVal : Encodable + Decodable + fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment + 'static {
   /// Key type of KeyVal
   type Key : Key + Send + Sync + 'static; //aka key // Ord , Hash ... might be not mandatory but issue currently
   /// getter for key value
   fn get_key(&self) -> Self::Key; // TODO change it to return &Key (lot of useless clone in impls
   /// optional attachment
   fn get_attachment(&self) -> Option<&Attachment>;
-  /// optional attachment
-  fn set_attachment(& mut self, &Attachment) -> bool;
-
+/*
   /// default serialize encode of keyval is used at least to store localy without attachment,
   /// it could be specialize with the three next variant (or just call from).
   fn encode_dist_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>;
@@ -53,8 +51,83 @@ pub trait KeyVal : Encodable + Decodable + fmt::Debug + Clone + Send + Sync + Eq
   fn decode_dist<D:Decoder> (d : &mut D) -> Result<Self, D::Error>;
   fn encode_loc_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>;
   fn decode_loc_with_att<D:Decoder> (d : &mut D) -> Result<Self, D::Error>;
+*/
+  /// serialize function for
+  /// default to nothing specific (reuse of serialize implementation)
+  /// When specific treatment, serialize implementation should reuse this with local and no
+  /// attachment.
+  ///
+  fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, is_with_att : bool) -> Result<(), S::Error> {
+    self.encode(s)
+  }
+  fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, is_with_att : bool) -> Result<Self, D::Error> {
+    Self::decode(d)
+  }
+}
+
+/*
+/// default serialize encode of keyval is used at least to store localy without attachment,
+impl<KV : KeyVal> Encodable for KV {
+#[inline]
+  fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
+    self.encode_kv(s, true, false)
+  }
+}
+
+/// default serialize encode of keyval is used at least to store localy without attachment,
+impl<KV : KeyVal> Decodable for KV {
+#[inline]
+  fn decode<D:Decoder> (d : &mut D) -> Result<KV, D::Error> {
+    KV::decode_kv(d, true, false);
+  }
+}
+*/
+
+/// This trait has been extracted from keyval, because it is essentially use for KeyVal init,
+/// but afterwards KeyVal should be used as trait object. Furthermore in some case it simplify
+/// KeyVal derivation of structure by allowing use of `AsKeyValIf` :
+/// ``` impl<KV : Keyval> KeyVal for AsKeyValIf<KV> ```
+/// It also make trivial in most case (no attachment support) the implementation.
+pub trait SettableAttachment {
+  /// optional attachment
+  fn set_attachment(& mut self, &Attachment) -> bool {
+    // default to no attachment support
+    false
+  }
+}
+
+/// currently this could only be used for type ,
+/// If/when trait object could include associated type def, as_key_val_if should return &KeyVal,
+/// and this could be extend to derivation of enum (replacement for derive_keyval macro).
+/// Additional methods will be needed for encode/decode
+pub trait AsKeyValIf  : Encodable + Decodable + fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment + 'static {
+  type KV : KeyVal;
+  fn as_keyval_if(&self) -> &Self::KV;
+  fn build_from_keyval(Self::KV) -> Self;
+}
+
+impl<AKV : AsKeyValIf> KeyVal for AKV {
+  type Key = <<AKV as AsKeyValIf>::KV as KeyVal>::Key;
+
+  #[inline]
+  fn get_key(&self) -> Self::Key {
+    self.as_keyval_if().get_key()
+  }
+  #[inline]
+  fn get_attachment(&self) -> Option<&Attachment> {
+    self.as_keyval_if().get_attachment()
+  }
+  #[inline]
+  fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> {
+    self.as_keyval_if().encode_kv(s, is_local, with_att)
+  }
+  #[inline]
+  fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<Self, D::Error> {
+    <<AKV as AsKeyValIf>::KV as KeyVal>::decode_kv(d, is_local, with_att).map(|r|Self::build_from_keyval(r))
+  }
 
 }
+
 
 /// Specialization of Keyval for FileStore
 pub trait FileKeyVal : KeyVal {
@@ -220,39 +293,43 @@ impl KeyVal for FileKV {
   fn get_key(&self) -> Vec<u8> {
     self.hash.clone()
   }
-  #[inline]
-  /// encode without path and attachment is serialize in encoded content
-  fn encode_dist_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>{
-    self.encode_with_file(s)
+  fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> {
+    if with_att {
+  // encode with attachement in encoded content to be use with non filestore storage
+  // (default serialize include path and no attachment for use with filestore)
+  //
+  // encode without path and attachment is serialize in encoded content
+      self.encode_with_file(s)
+    } else {
+      if is_local {
+        self.encode(s)
+      } else {
+   // encode without path and attachment is to be sent as attachment (not included)
+        self.encode_distant(s)
+      }
+    }
   }
-  #[inline]
-  fn decode_dist_with_att<D:Decoder> (d : &mut D) -> Result<FileKV, D::Error>{
-    FileKV::decode_with_file(d)
+  fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<FileKV, D::Error> {
+    if with_att {
+      FileKV::decode_with_file(d)
+    } else {
+      if is_local {
+        FileKV::decode(d)
+      } else {
+        FileKV::decode_distant(d)
+      }
+    }
   }
-  #[inline]
-   /// encode without path and attachment is to be sent as attachment (not included)
-  fn encode_dist<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>{
-    self.encode_distant(s)
-  }
-  #[inline]
-  fn decode_dist<D:Decoder> (d : &mut D) -> Result<FileKV, D::Error>{
-    FileKV::decode_distant(d)
-  }
-  #[inline]
-  /// encode with attachement in encoded content to be use with non filestore storage
-  /// (default serialize include path and no attachment for use with filestore)
-  fn encode_loc_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>{
-    self.encode_with_file(s)
-  }
-  #[inline]
-  fn decode_loc_with_att<D:Decoder> (d : &mut D) -> Result<FileKV, D::Error>{
-    FileKV::decode_with_file(d)
-  }
+
+
   #[inline]
   /// attachment support as file (in tmp or in filestore)
   fn get_attachment(&self) -> Option<&Attachment>{
     Some(&self.file)
   }
+}
+
+impl SettableAttachment for FileKV {
   #[inline]
   /// attachment support as file (in tmp or in filestore)
   fn set_attachment(& mut self, f:&Attachment) -> bool{
@@ -272,6 +349,4 @@ impl FileKeyVal for FileKV {
     FileKV::from_path(tmpf)
   }
 }
-
-
 

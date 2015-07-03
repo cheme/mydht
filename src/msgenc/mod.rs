@@ -73,25 +73,29 @@ pub struct DistantEncAtt<V : KeyVal> (pub V);
 
 impl<V : KeyVal> Encodable for DistantEnc<V>{
   fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-    self.0.encode_dist(s)
+    // not local without attach
+    self.0.encode_kv(s, false, false)
   }
 }
 
 impl<V : KeyVal> Decodable for DistantEnc<V> {
   fn decode<D:Decoder> (d : &mut D) -> Result<DistantEnc<V>, D::Error> {
-    <V as KeyVal>::decode_dist(d).map(|v|DistantEnc(v))
+    // not local without attach
+    <V as KeyVal>::decode_kv(d, false, false).map(|v|DistantEnc(v))
   }
 }
 
 impl<V : KeyVal> Encodable for DistantEncAtt<V>{
   fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-        self.0.encode_dist_with_att(s)
+    // not local with attach
+        self.0.encode_kv(s, false, true)
   }
 }
 
 impl<V : KeyVal>  Decodable for DistantEncAtt<V> {
   fn decode<D:Decoder> (d : &mut D) -> Result<DistantEncAtt<V>, D::Error> {
-    <V as KeyVal>::decode_dist_with_att(d).map(|v|DistantEncAtt(v))
+    // not local with attach
+    <V as KeyVal>::decode_kv(d, false, true).map(|v|DistantEncAtt(v))
   }
 }
 
