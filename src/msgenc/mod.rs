@@ -55,19 +55,19 @@ pub struct DistantEnc<V : KeyVal> (pub V);
 /// Choice of an encoding with attachment
 pub struct DistantEncAtt<V : KeyVal> (pub V);
 
-impl<V : KeyVal>  Encodable for DistantEnc<V>{
+impl<V : KeyVal> Encodable for DistantEnc<V>{
   fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
     self.0.encode_dist(s)
   }
 }
 
-impl<V : KeyVal>  Decodable for DistantEnc<V> {
+impl<V : KeyVal> Decodable for DistantEnc<V> {
   fn decode<D:Decoder> (d : &mut D) -> Result<DistantEnc<V>, D::Error> {
     <V as KeyVal>::decode_dist(d).map(|v|DistantEnc(v))
   }
 }
 
-impl<V : KeyVal>  Encodable for DistantEncAtt<V>{
+impl<V : KeyVal> Encodable for DistantEncAtt<V>{
   fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
         self.0.encode_dist_with_att(s)
   }

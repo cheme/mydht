@@ -14,6 +14,7 @@ use std::net::Ipv4Addr;
 use query::simplecache::SimpleCache;
 
 #[cfg(test)]
+#[cfg(feature="openssl-impl")]
 use super::rsa_openssl::RSAPeer;
 
 
@@ -46,10 +47,11 @@ impl<TP : KeyVal<Key=Vec<u8>>> KeyVal for ExpWotTrust<TP> {
 }
 
 
+// TODO do crypto test and striplet test to
 #[cfg(test)]
+#[cfg(feature="openssl-impl")]
 impl ExpWotTrust<RSAPeer> {
 
-#[cfg(test)]
   pub fn wottrust_update() {
     let peer = RSAPeer::new ("myname".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 8080));
     let rules : TrustRules = vec![1,1,2,2,2];
@@ -320,6 +322,7 @@ if (new_trust == self.trust) {
 
 
 #[test]
+#[cfg(feature="openssl-impl")]
 fn exp_wottrust_update() {
   ExpWotTrust::wottrust_update()
 }

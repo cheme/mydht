@@ -1,3 +1,4 @@
+
 #![feature(int_uint)]
 #![feature(core)]
 #![feature(io)]
@@ -13,15 +14,28 @@
 #![feature(thread_sleep)]
 #![feature(rsawot)]
 
-//! Toy implementation of a filestore using mydht.
 #[macro_use] extern crate log;
-extern crate env_logger;
 #[macro_use] extern crate mydht;
+extern crate env_logger;
 extern crate rustc_serialize;
 extern crate uuid;
 extern crate time;
 extern crate rand;
 extern crate num;
+
+#[cfg(feature="openssl-impl")]
+fn main() {
+  fs::main()
+}
+
+#[cfg(not(feature="openssl-impl"))]
+fn main() {
+  panic!("Missing openssl dependency for fs example");
+}
+
+#[cfg(feature="openssl-impl")]
+pub mod fs {
+
 use std::env;
 use std::io;
 use std::io::Write;
@@ -69,6 +83,11 @@ use mydht::utils::ArcKV;
 use mydht::utils;
 
 use std::net::Ipv4Addr;
+use uuid;
+use mydht;
+use env_logger;
+use time;
+
 
 #[derive(Debug,RustcDecodable,RustcEncodable)]
 /// Config of the storage
@@ -137,7 +156,7 @@ macro_rules! expand_msgenc_def(( $t:ident, $p:ident, $ftn:expr ) => (
    }
 ));
 
-fn main() {
+pub fn main() {
     env_logger::init().unwrap();
     let showHelp = || println!("-C <file> to select config file, -B <file> to choose node bootstrap file");
     let mut sconfPath = "fsconf.json".to_string();
@@ -282,7 +301,7 @@ let mut multip_store = move || {
     }
 
     // TODO route possible errors to none
-    Some(MultiplStore{
+    Some(MultiplStore {
       fsstore : fsstore,
       wotstore : wotstore,
     })
@@ -847,4 +866,4 @@ impl queryif::QueryRules for DhtRulesImpl {
 }
 }
 
-
+}

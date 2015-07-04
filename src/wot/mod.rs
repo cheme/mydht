@@ -9,7 +9,9 @@ use peer::Peer;
 use utils::ArcKV;
 use utils::TimeSpecExt;
 
+#[cfg(feature="openssl-impl")]
 pub mod rsa_openssl;
+#[cfg(feature="rust-crypto-impl")]
 pub mod ecdsapeer;
 pub mod truststore;
 pub mod trustedpeer;

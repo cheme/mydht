@@ -34,6 +34,7 @@ use super::classictrust::TrustRules;
 #[cfg(test)]
 use query::simplecache::SimpleCache;
 #[cfg(test)]
+#[cfg(feature="openssl-impl")]
 use super::rsa_openssl::RSAPeer;
 #[cfg(test)]
 use std::net::Ipv4Addr; 
@@ -532,6 +533,7 @@ fn addpeer_trust<TP : TrustedPeer, T : WotTrust<TP>> (by : &ArcKV<TP>, about : &
 }
 
 #[test]
+#[cfg(feature="openssl-impl")]
 fn test_wot_rsa() {
   let initRSAPeer = |name| ArcKV::new(RSAPeer::new (name, None, utils::sa4(Ipv4Addr::new(127,0,0,1), 8080)));
   test_wot_gen(&initRSAPeer)

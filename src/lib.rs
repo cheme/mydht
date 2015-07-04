@@ -293,10 +293,17 @@ pub use wot::{TrustedVal,Truster,TrustedPeer};
 //pub use kvstore::nospecificencoding;
 pub mod dhtimpl{
   pub use peer::node::{Node};
+  #[cfg(feature="openssl-impl")]
   pub use wot::rsa_openssl::RSAPeer;
+  #[cfg(feature="rust-crypto-impl")]
+  pub use wot::ecdsapeer::ECDSAPeer;
+
   pub use wot::trustedpeer::PeerSign;
   pub use query::simplecache::{SimpleCache,SimpleCacheQuery};
   pub use route::inefficientmap::{Inefficientmap};
+
+
+  #[cfg(feature="dht-route")]
   pub use route::btkad::{BTKad};
   pub use kvstore::{FileKV};
   pub use kvstore::filestore::{FileStore};

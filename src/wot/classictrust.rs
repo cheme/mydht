@@ -14,6 +14,7 @@ use query::simplecache::SimpleCache;
 
 
 #[cfg(test)]
+#[cfg(feature="openssl-impl")]
 use super::rsa_openssl::RSAPeer;
 
 
@@ -52,11 +53,11 @@ impl<TP : KeyVal<Key=Vec<u8>>> KeyVal for ClassicWotTrust<TP> {
 pub type TrustRules = Vec<usize>;
 
 
-
+// TODO replace with a dumy TrustedPeer??
 #[cfg(test)]
+#[cfg(feature="openssl-impl")]
 impl ClassicWotTrust<RSAPeer> {
 
-  #[cfg(test)]
   pub fn wottrust_update() {
     let peer = RSAPeer::new ("myname".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 8080));
     let rules : TrustRules = vec![1,1,2,2,2];
@@ -279,6 +280,7 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ClassicWotTrust<TP> {
 
 
 #[test]
+#[cfg(feature="openssl-impl")]
 fn classic_wottrust_update() {
   ClassicWotTrust::wottrust_update()
 }

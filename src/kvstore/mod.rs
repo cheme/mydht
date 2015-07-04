@@ -74,7 +74,6 @@ pub trait KVStore2<V : KeyVal> : KVCache<V::Key, Arc<V>> {
 
 #[cfg(test)]
 mod test {
-  extern crate dht as odht;
   extern crate num;
   extern crate rand;
   use rustc_serialize as serialize;
@@ -84,7 +83,6 @@ mod test {
   use std::sync::{Arc};
   use peer::node::{Node,NodeID};
   use std::net::Ipv4Addr;
-  use self::odht::Peer as DhtPeer;
   use self::num::{BigUint};
   use self::num::bigint::RandBigInt;
   use std::net::{ToSocketAddrs, SocketAddr};
@@ -257,7 +255,8 @@ impl FileKV {
     File::open(&path).map(|mut f|{
       // TODO choose hash lib
       //let hash = utils::hash_crypto(tmpf);
-      let hasho = utils::hash_openssl(&mut f);
+      // sha256 default impl TODO multiple hash support
+      let hasho = utils::hash_default(&mut f);
       //error!("{:?}", hash);
       //error!("{:?}", hash.to_hex());
       debug!("Hash of file : {:?}", hasho.to_hex());

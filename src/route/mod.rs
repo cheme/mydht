@@ -4,7 +4,10 @@ use kvstore::KeyVal;
 use std::sync::Arc;
 use std::rc::Rc;
 use std::collections::VecDeque;
+
 pub mod inefficientmap;
+
+#[cfg(feature="dht-route")]
 pub mod btkad;
 
 // TODO refactor to got explicit add and rem chan plus prio

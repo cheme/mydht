@@ -1,7 +1,10 @@
+
+#[cfg(feature="rust-crypto-impl")]
 extern crate crypto;
 extern crate num;
 extern crate rand;
 extern crate time;
+#[cfg(feature="openssl-impl")]
 extern crate openssl;
 extern crate bincode;
 
@@ -16,10 +19,14 @@ use msgenc::{MsgEnc,ProtoMessage};
 use kvstore::{KeyVal};
 use kvstore::{FileKeyVal};
 use peer::{Peer};
+#[cfg(feature="openssl-impl")]
 use self::openssl::crypto::hash::{Hasher,Type};
 use std::io::Write;
 use std::io::Read;
+#[cfg(feature="rust-crypto-impl")]
 use self::crypto::digest::Digest;
+#[cfg(feature="rust-crypto-impl")]
+use self::crypto::sha2::Sha256;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::fs::File;
@@ -328,6 +335,7 @@ pub fn sendUnconnectMsg<P : Per, V : KeyVal, T : TransportStream, E : MsgEnc>( p
     }
 }*/
 
+#[cfg(feature="rust-crypto-impl")]
 pub fn hash_buf_crypto(buff : &[u8], digest : &mut Digest) -> Vec<u8> {
   let bsize = digest.block_size();
   let bbytes = ((bsize+7)/8);
@@ -359,6 +367,7 @@ pub fn hash_buf_crypto(buff : &[u8], digest : &mut Digest) -> Vec<u8> {
 }
 
 
+#[cfg(feature="rust-crypto-impl")]
 pub fn hash_file_crypto(f : &mut File, digest : &mut Digest) -> Vec<u8> {
   let bsize = digest.block_size();
   let bbytes = ((bsize+7)/8);
@@ -394,7 +403,26 @@ pub fn hash_file_crypto(f : &mut File, digest : &mut Digest) -> Vec<u8> {
   //rbuf.to_vec()
   rbuf.to_vec()
 }
-
+#[cfg(feature="openssl-impl")]
+#[inline]
+pub fn hash_default(f : &mut File) -> Vec<u8> {
+  hash_openssl(f)
+}
+#[cfg(not(feature="openssl-impl"))]
+#[cfg(feature="rust-crypto-impl")]
+#[inline]
+pub fn hash_default(f : &mut File) -> Vec<u8> {
+  let mut digest = Sha256::new();
+  hash_file_crypto(f,&mut digest)
+}
+#[cfg(not(feature="openssl-impl"))]
+#[cfg(not(feature="rust-crypto-impl"))]
+#[inline]
+pub fn hash_default(f : &mut File) -> Vec<u8> {
+  panic!("No hash lib dependency to hash content");
+}
+ 
+#[cfg(feature="openssl-impl")]
 pub fn hash_openssl(f : &mut File) -> Vec<u8> {
   let mut digest = Hasher::new(Type::SHA256); // TODO in filestore parameter with a supported hash enum
   let bsize = 64;

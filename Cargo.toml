@@ -17,6 +17,7 @@ path = "examples/fs.rs"
 
 [features]
 default = ["striple-impl","openssl-impl","rust-crypto-impl","dht-route"]
+#default = ["striple-impl","rust-crypto-impl"]
 striple-impl = ["striple"]
 openssl-impl = ["openssl"]
 rust-crypto-impl = ["rust-crypto"]
