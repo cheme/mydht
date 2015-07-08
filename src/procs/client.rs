@@ -228,162 +228,29 @@ pub fn recv_match <RT : RunningTypes>
         }
       };
     },
-    ClientMessage::PeerFind(nid,oquery, mut queryconf) => match queryconf.0 {
-      QueryModeMsg::Proxy => {
-        let query = oquery.unwrap(); // unsafe code : may panic but it is a design problem : a proxy mode query should allways have a query, otherwhise it is a bug
-        // send query with hop + 1
-        server::update_query_conf(&mut queryconf, &rc.queryrules);
-        query::dec_nbhop(&mut queryconf, &rc.queryrules);
-        let mess : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_NODE(queryconf, nid.clone());
-        sendorconnect!(&mess,None);
-        // add a query to peer
-        rp.peers.send(PeerMgmtMessage::PeerQueryPlus(p.clone()));
-        // receive (first something or last nothing reply in repc plus rules to
-        let r : Option<(ProtoMessage<RT::P,RT::V>, Option<Attachment>)> = receive_msg(s, &rc.msgenc); 
-        // store if new (with checking before (ping)))
-        let success = match r {
-          None => {
-            warn!("Waiting peer query timeout or Invalid find peer reply");
-            false
-          },
-          Some((dmess,oa))  => {
-            match dmess {
-              ProtoMessage::STORE_NODE(rconf, None) => {
-                false // it is a success (there is a reply) but we still need to wait for other query so its consider a failure
-              },
-              ProtoMessage::STORE_NODE(rconf, Some(DistantEnc(snod))) => {
-                let node = Arc::new(snod);
-                // check the returned node is not the connected node (should
-                // not happen but if it happen we will deadlock this thread
-                if node.get_key() != p.get_key() {
-                  // Adding is done by simple PeerPing
-                  let sync = Arc::new((Mutex::new(false),Condvar::new()));
-                  rp.peers.send(PeerMgmtMessage::PeerPing(node.clone(), Some(sync.clone())));
-                  let pingok = match utils::clone_wait_one_result(&sync,None){
-                    None => {
-                      error!("Condvar issue for ping of {:?} ", node); 
-                      false // bad logic 
-                    },
-                    Some (r) => r,
-                  };
-                  if pingok{
-                    query.set_query_result(Either::Left(Some(node)),&rp.store)
-                  } else {
-                    false
-                  }
-                } else {
-                  error!("Proxy store node is the first hop which we already know");
-                  false
-                }
-              },
-              _ => {
-                error!("Invalid message waiting for store_node");
-                false
-              },
-            }
-          },
-        };
-
-        let squ : Sender<PeerMgmtMessage<RT::P,RT::V>>  = rp.peers.clone();
-        let typedquery : & query::Query<RT::P,RT::V> = & query;
-        if success {
-          typedquery.release_query(&squ);
-        } else {
-          // release on semaphore
-          typedquery.lessen_query(1,&squ);
-        }
-        // remove a proxyied query from peer
-        rp.peers.send(PeerMgmtMessage::PeerQueryMinus(p.clone()));
-        if !ok {
-          // lessen TODO asynch is pow...
-          query.lessen_query(1, &rp.peers);
-        }
-
-      },
-      _  => {
-        // note that new queryid and recnode has been set in server
-        // and query count in server -> amix and aproxy became as simple send
-        // send query with hop + 1
-        // local queryid set in server here update dest
-        query::dec_nbhop(&mut queryconf, &rc.queryrules);
-        let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_NODE(queryconf, nid);
-        sendorconnect!(&mess,None);
-        if !ok {
-          // lessen TODO asynch is pow...
-          oquery.map(|query|query.lessen_query(1, &rp.peers));
-        }
-      },
+    ClientMessage::PeerFind(nid,oquery, mut queryconf) =>  {
+      // note that new queryid and recnode has been set in server
+      // and query count in server -> amix and aproxy became as simple send
+      // send query with hop + 1
+      // local queryid set in server here update dest
+      query::dec_nbhop(&mut queryconf, &rc.queryrules);
+      let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_NODE(queryconf, nid);
+      sendorconnect!(&mess,None);
+      if !ok {
+        // lessen TODO asynch is pow...
+        oquery.map(|query|query.lessen_query(1, &rp.peers));
+      }
     },
-    ClientMessage::KVFind(nid, oquery, mut queryconf) => match queryconf.0 {
-      QueryModeMsg::Proxy => {
-        let query = oquery.unwrap(); // unsafe code : may panic but it is a design problem : a proxy mode query should allways have a query, otherwhise it is a bug
-        // send query with hop + 1
-        query::dec_nbhop(&mut queryconf, &rc.queryrules);
-        let mess : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_VALUE(queryconf, nid.clone());
-        sendorconnect!(&mess,None);
-        // add a query to peer
-        rp.peers.send(PeerMgmtMessage::PeerQueryPlus(p.clone()));
-        // receive (first something or last nothing reply in repc plus rules to
-        let r  : Option<(ProtoMessage<RT::P,RT::V>,Option<Attachment>)> = receive_msg (s, &rc.msgenc); 
-        // store if new (with checking before (ping)))
-        let success = match r {
-          None => {
-            warn!("Waiting peer query timeout or invalid find peer reply");
-            false
-          },
-          Some((dmess,oa))  => {
-            match dmess {
-              ProtoMessage::STORE_VALUE_ATT(rconf, None) | ProtoMessage::STORE_VALUE(rconf, None) => {
-                false // it is a success (there is a reply) but we still need to wait for other query so its consider a failure
-              },
-              ProtoMessage::STORE_VALUE_ATT(rconf, Some(DistantEncAtt(node))) => {
-                query.set_query_result(Either::Right(Some(node)),&rp.store)
-              },
-              ProtoMessage::STORE_VALUE(rconf, Some(DistantEnc(mut node))) => {
-                match oa {
-                  Some(ref at) => {
-                    if !node.set_attachment(at) {
-                      error!("error setting an attachment")
-                      };
-                  },
-                  _ => {
-                    error!("no attachment for store value att");
-                  },
-                }
-                query.set_query_result(Either::Right(Some(node)),&rp.store)
-              },
-              _ => {
-                error!("wrong message waiting for store_value");
-                false
-              },
-            }
-          },
-        };
-        let typedquery : & query::Query<RT::P,RT::V> = & query;
-        if success {
-          typedquery.release_query(&rp.peers);
-        } else  {
-          // release on semaphore
-          typedquery.lessen_query(1,&rp.peers);
-        };
-        // remove a proxyied query from peer
-        rp.peers.send(PeerMgmtMessage::PeerQueryMinus(p.clone()));
-        if !ok {
-          // lessen TODO asynch is pow...
-          query.lessen_query(1, &rp.peers);
-        }
-      },
-      _ => {
-        // no adding query counter for peer
-        // send query with hop + 1
-        query::dec_nbhop(&mut queryconf, &rc.queryrules);
-        let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_VALUE(queryconf, nid);
-        sendorconnect!(&mess,None);
-        if !ok {
-          // lessen TODO asynch is pow...
-          oquery.map(|query|query.lessen_query(1, &rp.peers));
-        }
-      },
+    ClientMessage::KVFind(nid, oquery, mut queryconf) => {
+      // no adding query counter for peer
+      // send query with hop + 1
+      query::dec_nbhop(&mut queryconf, &rc.queryrules);
+      let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_VALUE(queryconf, nid);
+      sendorconnect!(&mess,None);
+      if !ok {
+        // lessen TODO asynch is pow...
+        oquery.map(|query|query.lessen_query(1, &rp.peers));
+      }
     },
     ClientMessage::StoreNode(queryconf, r) => {
       let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_NODE(queryconf.0.get_qid(), r.map(|v|DistantEnc((*v).clone())));

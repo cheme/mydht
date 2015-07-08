@@ -165,22 +165,6 @@ fn request_handler <RT : RunningTypes>
         debug!("Asynch Find peer {:?}", nid);
         rp.peers.send(PeerMgmtMessage::PeerFind(nid,None,qconf));
       },
-      // particular case with synchronous blocking request : proxy query directly
-      ProtoMessage::FIND_NODE(mut qconf@(QueryModeMsg::Proxy,_,_,_,_,_,_,_), nid) => {
-        update_query_conf (&mut qconf ,&rc.queryrules);
-        debug!("Proxying Find peer {:?}", nid);
-        let qp = query::get_prio(&qconf);
-        let nbquer = query::get_nbquer(&qconf);
-        let lifetime = rc.queryrules.lifetime(qp); // TODO proxy no lifetime mgmt = null -> init fn without lifetime?
-        // unmanaged query
-        let query = query::init_query(nbquer.to_usize().unwrap(), 1, lifetime, & rp.queries, None, None, None);
-        rp.peers.send(PeerMgmtMessage::PeerFind(nid,Some(query.clone()), qconf.clone()));
-        // block until result (proxy mode)
-        let result = query.wait_query_result();
-        debug!("!! {:?} replying to find with {:?}",rc.me,result);
-        let mess : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_NODE(None, result.left().unwrap().map(|v|DistantEnc((*v).clone())));
-        send_msg(&mess, None, s,&rc.msgenc);
-      },
       // general case as asynch waiting for reply
       ProtoMessage::FIND_NODE(mut qconf@(_, _,_,_,_,_,_,_), nid) => {
         update_query_conf (&mut qconf ,&rc.queryrules);
@@ -202,39 +186,6 @@ fn request_handler <RT : RunningTypes>
         update_query_conf (&mut qconf ,&rc.queryrules);
         debug!("Asynch Find val {:?}", nid);
         rp.store.send(KVStoreMgmtMessage::KVFind(nid,None,qconf));
-      },
-      // particular case with synchronous blocking request
-      ProtoMessage::FIND_VALUE(mut queryconf@(QueryModeMsg::Proxy, _,_,_,_,_,_,_), nid) => {
-        let oldhop = query::get_nbhop(&queryconf); // Warn no set of this value
-        let oldqp = query::get_prio(&queryconf);
-        update_query_conf (&mut queryconf ,&rc.queryrules);
-        let nbquer = query::get_nbquer(&queryconf);
-        let qp = query::get_prio(&queryconf);
-        let sprio = query::get_sprio(&queryconf);
-        let nb_req = query::get_req_nb_res(&queryconf);
-        debug!("Proxying Find val {:?}", nid);
-        let lifetime = rc.queryrules.lifetime(qp); // TODO proxy no lifetime mgmt = null -> init fn without lifetime?
-        let esthop = (rc.queryrules.nbhop(oldqp) - oldhop).to_usize().unwrap();
-        let store = rc.queryrules.do_store(false, qp, sprio, Some(esthop)); // first hop
-        let query = query::init_query(nbquer.to_usize().unwrap(), nb_req, lifetime, & rp.queries, None, None, Some(store));
-        rp.store.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()), queryconf.clone()));
-        // block until result (proxy mode)
-        let result = query.wait_query_result();
-        match (queryconf.1){
-          QueryChunk::Attachment => {
-            for val in result.right().unwrap().into_iter(){
-              let att = val.as_ref().and_then(|kv|kv.get_attachment().map(|p|p.clone()));
-              let mess : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE(None, val.clone().map(|v|DistantEnc(v)));
-              send_msg(&mess,att.as_ref(),s,&rc.msgenc);
-            }
-          },
-          _ /* no attachment */  =>  {
-            for val in result.right().unwrap().into_iter(){
-              let mess : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE_ATT(None, val.clone().map(|v|DistantEncAtt(v)));
-              send_msg(&mess,None,s,&rc.msgenc);
-            }
-          },
-        };
       },
       // general case as asynch waiting for reply
       ProtoMessage::FIND_VALUE(mut queryconf, nid) => {

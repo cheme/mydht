@@ -197,7 +197,6 @@ pub fn find_val<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &A
 #[inline]
 fn init_qmode<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &ArcRunningContext<RT>, qm : &QueryMode) -> QueryModeMsg <RT::P>{
   match qm {
-    &QueryMode::Proxy => QueryModeMsg::Proxy, 
     &QueryMode::Asynch => QueryModeMsg::Asynch((rc.me).clone(),rc.queryrules.newid()),
     &QueryMode::AProxy => QueryModeMsg::AProxy((rc.me).clone(),rc.queryrules.newid()),
     &QueryMode::AMix(i) => QueryModeMsg::AMix(i,rc.me.clone(),rc.queryrules.newid()),

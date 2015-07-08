@@ -385,7 +385,6 @@ pub fn get_origin_queryID
 /// For some application it could be relevant to forbid the reply to some query mode : 
 /// TODO implement a filter in server process (and client proxy).
 pub enum QueryMode{ 
-  Proxy,
   /// Asynch proxy. Query do not block, they are added to the query manager
   /// cache.
   /// When proxied, the query (unless using noloop history) may not give you the originator of the query (only
@@ -404,8 +403,6 @@ pub enum QueryMode{
 #[derive(RustcDecodable,RustcEncodable,Debug,Clone)]
 /// QueryMode info to use in message between peers.
 pub enum QueryModeMsg<P : Peer> {
-    /// nothing specific
-    Proxy,
     /// The node to reply to, and the managed query id for this node (not our id).
     AProxy(Arc<P>, QueryID), // reply to preceding Node which keep a trace of this query  // TODO switc to arc node to avoid all clone
     /// The node to reply to, and the managed query id for this node (not our id).
@@ -422,8 +419,6 @@ impl<P : Peer> QueryModeMsg<P> {
             QueryModeMsg::AProxy (n, _) => Some (n),
             QueryModeMsg::Asynch (n, _) => Some (n),
             QueryModeMsg::AMix (_,n, _) => Some (n),
-            _ => None,
-
         }
     }
     /// Get queryid if the mode use managed query.
@@ -432,7 +427,6 @@ impl<P : Peer> QueryModeMsg<P> {
             QueryModeMsg::AProxy (_, q) => Some (q),
             QueryModeMsg::Asynch (_, q) => Some (q),
             QueryModeMsg::AMix (_,_, q) => Some (q),
-            _ => None,
         }
     }
     /// Copy conf with a new qid and peer to reply to : when proxying a managed query we do not use the previous id.
@@ -441,7 +435,6 @@ impl<P : Peer> QueryModeMsg<P> {
             QueryModeMsg::AProxy (_, _) => QueryModeMsg::AProxy (p, qid),
             QueryModeMsg::Asynch (_, _) => QueryModeMsg::Asynch (p, qid),
             QueryModeMsg::AMix (a,_, _) => QueryModeMsg::AMix (a,p, qid),
-            a => a,
         }
     }
     /// Copy conf with a new qid : when proxying a managed query we do not use the previous id.
@@ -450,7 +443,6 @@ impl<P : Peer> QueryModeMsg<P> {
             QueryModeMsg::AProxy (a, _) => QueryModeMsg::AProxy (a, qid),
             QueryModeMsg::Asynch (a, _) => QueryModeMsg::Asynch (a, qid),
             QueryModeMsg::AMix (a,b, _) => QueryModeMsg::AMix (a,b, qid),
-            a => a,
         }
     }
     /// Copy conf with a new  andpeer to reply to : when proxying a managed query we do not use the previous id.
@@ -459,7 +451,6 @@ impl<P : Peer> QueryModeMsg<P> {
             QueryModeMsg::AProxy (_, a) => QueryModeMsg::AProxy (p, a),
             QueryModeMsg::Asynch (_, a) => QueryModeMsg::Asynch (p, a),
             QueryModeMsg::AMix (a,_, b) => QueryModeMsg::AMix (a,p, b),
-            a => a,
         }
     }
     /// Get the query id of a managed query.
@@ -468,7 +459,6 @@ impl<P : Peer> QueryModeMsg<P> {
             &QueryModeMsg::AProxy (_, ref q) => Some (q),
             &QueryModeMsg::Asynch (_, ref q) => Some (q),
             &QueryModeMsg::AMix (_,_, ref q) => Some (q),
-            &_ => None,
         }
     }
 

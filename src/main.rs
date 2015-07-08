@@ -154,9 +154,6 @@ impl SettableAttachment for DummyKeyValIn {
 
 
 
-//#[test] // TODO hardcoded ip and port, find a way to define it
-fn proxyPeerDiscovery () {peerConnectScenario((QueryMode::Proxy, QueryChunk::None, Some((2,true))), 40534, 5, 2)}
-
 //#[test]
 fn aproxyPeerDiscovery () {peerConnectScenario((QueryMode::AProxy, QueryChunk::None, Some((4,false))), 40534, 5, 2)}
 
@@ -383,7 +380,6 @@ static alltestmode : [QueryMode; 1] = [
 fn testPeer2hopget (){
     let n = 4;
     let map : &[&[usize]] = &[&[2],&[3],&[],&[3]];
-    finddistantpeer(45440,n,QueryMode::Proxy,DummyRules,1,map,true); 
     finddistantpeer(45450,n,QueryMode::Asynch,DummyRules,1,map,true); 
     finddistantpeer(45460,n,QueryMode::AProxy,DummyRules,1,map,true); 
     finddistantpeer(45470,n,QueryMode::AMix(1),DummyRules,1,map,true); 
@@ -395,7 +391,6 @@ fn testPeer2hopget (){
 fn testPeermultipeersnoresult (){
     let n = 6;
     let map : &[&[usize]] = &[&[2,3,4],&[3,5],&[1],&[4],&[1],&[]];
-    finddistantpeer(45540,n,QueryMode::Proxy,DummyRules,1,map,false); 
     finddistantpeer(45550,n,QueryMode::Asynch,DummyRules,1,map,false); 
     finddistantpeer(45560,n,QueryMode::AProxy,DummyRules,1,map,false); 
     finddistantpeer(45570,n,QueryMode::AMix(1),DummyRules,1,map,false); 
@@ -408,14 +403,12 @@ fn testPeermultipeersnoresult (){
 fn testPeer4hopget (){
     let n = 6;
     let map : &[&[usize]] = &[&[2],&[3],&[4],&[5],&[6],&[]];
-    finddistantpeer(46440,n,QueryMode::Proxy,DummyRules,1,map,true); 
     finddistantpeer(46450,n,QueryMode::Asynch,DummyRules,1,map,true); 
     finddistantpeer(46460,n,QueryMode::AProxy,DummyRules,1,map,true); 
     finddistantpeer(46470,n,QueryMode::AMix(2),DummyRules,1,map,true); 
     finddistantpeer(46480,n,QueryMode::AMix(4),DummyRules,1,map,true); 
     finddistantpeer(46490,n,QueryMode::AMix(5),DummyRules,1,map,true);
     // prio 2 max nb hop is 3 
-    finddistantpeer(46500,n,QueryMode::Proxy,DummyRules,2,map,false);
     finddistantpeer(46510,n,QueryMode::Asynch,DummyRules,2,map,false); 
     finddistantpeer(46520,n,QueryMode::AProxy,DummyRules,2,map,false); 
     finddistantpeer(46530,n,QueryMode::AMix(1),DummyRules,2,map,false); 
@@ -428,7 +421,6 @@ fn testloopget (){ // TODO this only test loop over our node TODO circuit loop 
     // closest used are two first nodes (first being ourselves
     let map : &[&[usize]] = &[&[1,2],&[2,3],&[3,4],&[4]];
     //let map : &[&[usize]] = &[&[1,2],&[2,1,3],&[3,4],&[4]];
-    finddistantpeer(55440,n,QueryMode::Proxy,DummyRules,1,map,true); 
     finddistantpeer(55450,n,QueryMode::Asynch,DummyRules,1,map,true); 
     finddistantpeer(55460,n,QueryMode::AProxy,DummyRules,1,map,true); 
     finddistantpeer(55470,n,QueryMode::AMix(1),DummyRules,1,map,true); 
