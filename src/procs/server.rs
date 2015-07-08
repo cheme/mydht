@@ -27,6 +27,7 @@ use keyval::{KeyVal};
 use msgenc::{MsgEnc,DistantEncAtt,DistantEnc};
 use utils::{send_msg,receive_msg};
 use num::traits::ToPrimitive;
+use std::io::Result as IoResult;
 
 // all update of query prio and nbquery and else are not done every where : it is a security issue
 /// all update of query conf when receiving something, this is a filter to avoid invalid or network
@@ -60,17 +61,22 @@ fn new_query_mode<P : Peer> (qm : &QueryModeMsg<P>, me : &Arc<P>, qid : QueryID)
 /// Server loop
 pub fn servloop <RT : RunningTypes>
  (rc : ArcRunningContext<RT>, 
-  rp : RunningProcesses<RT::P,RT::V>) {
+  rp : RunningProcesses<RT::P, RT::V>) {
 
     let spserv = |s, co| {
+      if rc.queryrules.rec_spawn_thread() {
         let pm2 = rp.clone();
         let rcsp = rc.clone();
         thread::spawn (move || {
           request_handler::<RT>(s, &rcsp, &pm2, &co)
         });
+      } else {
+        request_handler::<RT>(s, &rc, &rp, &co);
+      };
+      Ok(())
     };
     // loop in transport receive function
-    rc.transport.receive(&rc.me.to_address(), spserv);
+    rc.transport.start(&rc.me.to_address(), spserv);
 }
 
 /// Spawn thread either for one message (non connected) or for one connected peer (loop on stream
@@ -80,10 +86,10 @@ fn request_handler <RT : RunningTypes>
   rc : &ArcRunningContext<RT>, 
   rp : &RunningProcesses<RT::P, RT::V>,
   oneonly : &Option<(Vec<u8>, Option<Attachment>)>,
- ) {
+ ) -> IoResult<()>  {
   let s = &mut s1;
   let anone = None;
-  loop{
+  loop {
     // r is message and oa an optional attachmnet (in pair because a reference owhen disconnected
     // and not when connected).
     let (r, oa) = match oneonly {
@@ -273,7 +279,7 @@ fn request_handler <RT : RunningTypes>
                 // spawn ping node first (= checking)
                 debug!("start ping on store node reception");
                 rpsp.peers.send(PeerMgmtMessage::PeerPing(node.clone(), Some(sync.clone())) ); // peer ping will run all needed control (accept, up, get prio) and update peer table
-                let pingok =  match utils::clone_wait_one_result(sync){
+                let pingok =  match utils::clone_wait_one_result(&sync,None){
                   None => {
                     error!("Condvar issue for ping of {:?} ", node); 
                     false
@@ -346,7 +352,8 @@ fn request_handler <RT : RunningTypes>
     if oneonly.is_some() {
       break;
     }
-  }
+  };
+  Ok(())
 }
 
 

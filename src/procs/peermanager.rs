@@ -23,7 +23,7 @@ use num::traits::ToPrimitive;
 // not shared, we use message passing. 
 /// Start a new peermanager process
 pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
- (rc : ArcRunningContext<RT>, 
+ (rc : ArcRunningContext<RT>,
   mut route : T, 
   r : &Receiver<PeerMgmtMessage<RT::P,RT::V>>, 
   rp : RunningProcesses<RT::P,RT::V>, 
@@ -401,7 +401,7 @@ let (upd, s) = match route.get_node(&p.get_key()) {
      None => {
        // we found an existing channel with seemlessly open connection
       pingres.map(|ares|{
-              utils::ret_one_result(ares, true)
+              utils::ret_one_result(&ares, true)
       });
 
      },

@@ -77,7 +77,7 @@ pub fn start <RT : RunningTypes>
               debug!("pinging in start client process, {:?}, {:?}", p.get_key(), pri);
               let r =  ping::<RT>(&(*p), rc.clone(), &mut s1);
               withPingReply.map(|ares|{
-                utils::ret_one_result(ares, r)
+                utils::ret_one_result(&ares, r)
               });
               if r {
                 rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), pri));
@@ -259,7 +259,7 @@ pub fn recv_match <RT : RunningTypes>
                   // Adding is done by simple PeerPing
                   let sync = Arc::new((Mutex::new(false),Condvar::new()));
                   rp.peers.send(PeerMgmtMessage::PeerPing(node.clone(), Some(sync.clone())));
-                  let pingok = match utils::clone_wait_one_result(sync){
+                  let pingok = match utils::clone_wait_one_result(&sync,None){
                     None => {
                       error!("Condvar issue for ping of {:?} ", node); 
                       false // bad logic 

@@ -1,7 +1,6 @@
-//! Tcp transport. Connected transport (tcp), with basic support for attachment.
+//! Tcp transport. Connected transport (tcp), with basic support for attachment (like all connected
+//! transport).
 //! Some overhead to send size of frame.
-//! For new IO temporarilly use bincode to encode byte inf TODO when api stabilize use the right
-//! serialization. + strengthen (non expected size receive and max size then split).
 extern crate byteorder;
 use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::net::{TcpListener};
@@ -10,28 +9,28 @@ use std::io::Result as IoResult;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
 use std::net::{SocketAddr};
-use std::io::Seek;
 use std::io::Write;
 use std::io::Read;
-use std::io::SeekFrom;
-use std::fs::File;
-use std::fs::OpenOptions;
 use time::Duration;
+use std::time::Duration as StdDuration;
 use std::thread::Thread;
 use peer::{Peer};
-use super::Attachment;
 use super::{Transport,TransportStream};
 use std::iter;
 use utils;
-use std::path::{Path,PathBuf};
 use num::traits::ToPrimitive;
+use super::Attachment;
 
 const BUFF_SIZE : usize = 10000; // use for attachment send/receive -- 21888 seems to be maxsize
 const MAX_BUFF_SIZE : usize = 21888; // 21888 seems to be maxsize
 
 /// Tcp struct : two options, timeout for connect and time out when connected.
 pub struct Tcp {
+  /// currently use for keep_alive, read and write timeout (api unstable so we do not care yet for
+  /// distinction). When stable should become Option<Duration>.
+  /// Currently only seconds are used (conversion over seconds!! waiting for api stabilize).
   pub streamtimeout : Duration,
+  /// courrently not used
   pub connecttimeout : Duration,
 }
 
@@ -43,9 +42,9 @@ impl Transport for Tcp {
     true
   }
 
-  fn receive<C> (&self, p : &SocketAddr, closure : C) where C : Fn(TcpStream, Option<(Vec<u8>, Option<Attachment>)>) -> () {
+  fn start<C> (&self, p : &SocketAddr, handler : C) -> IoResult<()>  where C : Fn(TcpStream, Option<(Vec<u8>, Option<Attachment>)>) -> IoResult<()> {
     let mut listener = TcpListener::bind(p).unwrap();
-    for socket in listener.incoming(){
+    for socket in listener.incoming() {
         match socket {
             Err(e) => {error!("Socket acceptor error : {:?}", e);}
             Ok(mut s)  => {
@@ -54,21 +53,21 @@ impl Transport for Tcp {
               debug!("  - From {:?}", s.peer_addr());
               debug!("  - With {:?}", s.peer_addr());
               s.set_keepalive (self.streamtimeout.num_seconds().to_u32());
-//              s.set_timeout (self.streamtimeout.num_milliseconds().to_u64()); 
-              closure(s, None);
+              s.set_read_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs));
+              s.set_write_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs));
+              handler(s, None);
             }
         }
-    }
+    };
+    Ok(())
   }
 
-  fn connectwith (&self, p : &SocketAddr, timeout : Duration) -> IoResult<TcpStream>{
+  fn connectwith (&self, p : &SocketAddr, timeout : Duration) -> IoResult<TcpStream> {
     // connect TODO new api timeout
     //let s = TcpStream::connect_timeout(p, self.connecttimeout);
-    let s = TcpStream::connect(p);
-    s.map(|mut s| {
-      s.set_keepalive (self.streamtimeout.num_seconds().to_u32());
-      s
-    })
+    let s = try!(TcpStream::connect(p));
+    try!(s.set_keepalive (self.streamtimeout.num_seconds().to_u32()));
+    Ok(s)
   }
 
 }
@@ -156,7 +155,7 @@ impl TransportStream for TcpStream {
   }*/
 
 }
-
+/*
 fn read_to_tmp(s : &mut TcpStream)-> IoResult<PathBuf> {
 
   let nbframe = try!(s.read_u32::<LittleEndian>()).to_usize().unwrap();
@@ -195,7 +194,7 @@ fn read_to_tmp(s : &mut TcpStream)-> IoResult<PathBuf> {
 
   f.seek(SeekFrom::Start(0));
   Ok(fp)
-}
+}*/
 
 
 /* useless drop (defined in tcp stream) only for debugging

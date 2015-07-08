@@ -44,8 +44,8 @@ pub trait RunningTypes : 'static + Send + Sync {
 
 /// Could be use to define the final type of a DHT, most of the time we create a new object (see
 /// example/fs.rs).
-/// This kind of struct is never use, it is just to use in parameters to use a type instead of a
-/// trait.
+/// This kind of struct is never use, it is just to a type instead of a
+/// trait in generic parameters.
 struct RunningTypesImpl<
   P : Peer,
   V : KeyVal,
@@ -70,9 +70,6 @@ impl<
   type E = E;
   type T = T;
 }
-
-
-
 
 pub type ClientChanel<P, V> = Sender<mesgs::ClientMessage<P,V>>;
 
@@ -106,11 +103,13 @@ impl<RT : RunningTypes> RunningContext<RT> {
     }
 
   }
+
 }
 
 /// There is a need for RunningContext content to be sync (we share context in an Arc (preventing us from
 /// cloning its content and therefore requiring sync to be use in multiple thread).
-pub type ArcRunningContext<RT : RunningTypes> = Arc<RunningContext<RT>>;
+pub type ArcRunningContext<RT> = Arc<RunningContext<RT>>;
+//pub type ArcRunningContext<RT : RunningTypes> = Arc<RunningContext<RT>>;
 
 /// Channel used by several process, they are cloned/moved when send to new thread (sender are not
 /// sync)
@@ -138,7 +137,7 @@ pub fn find_local_val<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, r
   // local query replyto set to None
   rp.store.send(KVStoreMgmtMessage::KVFindLocally(nid, Some(sync.clone())));
   // block until result
-  utils::clone_wait_one_result(sync).unwrap_or(None)
+  utils::clone_wait_one_result(&sync, None).unwrap_or(None)
 }
 
 /// Store a value. Specifying our queryconf, and priorities. Note that priority rules are very
@@ -160,7 +159,7 @@ pub fn store_val <RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : 
   // TODO wait for propagate result...??? plus new message cause storekv is
   // wait for conflict management issue reply TODO instead of simple bool
   // for local
-  match utils::clone_wait_one_result(sync){
+  match utils::clone_wait_one_result(&sync,None) {
     None => {error!("Condvar issue for storing value!!"); false},// not logic 
     Some (r) => r,
   }

@@ -16,11 +16,12 @@ path = "examples/fs.rs"
 
 
 [features]
-default = ["striple-impl","openssl-impl","rust-crypto-impl","dht-route"]
+default = ["striple-impl","openssl-impl","rust-crypto-impl","dht-route","mio-impl"]
 #default = ["striple-impl","rust-crypto-impl"]
 striple-impl = ["striple"]
 openssl-impl = ["openssl"]
 rust-crypto-impl = ["rust-crypto"]
+mio-impl = ["mio","coroutine"]
 dht-route = ["dht"]
 
 [dependencies]
@@ -33,6 +34,17 @@ bincode = "0.3.0"
 rustc-serialize = "0.3.14"
 time = "0.1.25"
 byteorder = "0.3.9"
+
+[dependencies.mio]
+version = "0.3.6"
+#git = "https://github.com/carllerche/mio.git"
+optional = true
+
+[dependencies.coroutine]
+version = "0.3.2"
+#git = "https://github.com/rustcc/coroutine-rs.git"
+optional = true
+
 
 [dependencies.openssl]
 version = "0.6.2"

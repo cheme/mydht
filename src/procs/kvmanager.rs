@@ -71,7 +71,7 @@ pub fn start
         // TODO all propagate stuff!!! Do it here because quite convenient (from query release and
         // other)
         ares.map(|ares|{
-          utils::ret_one_result(ares, res);
+          utils::ret_one_result(&ares, res);
         });
       },
       Ok(KVStoreMgmtMessage::KVAdd(kv,ares,storeconf)) => {
@@ -89,14 +89,14 @@ pub fn start
           true
         };
         ares.map(|ares|{
-          utils::ret_one_result(ares, res);
+          utils::ret_one_result(&ares, res);
         });
       },
       // Local find
       Ok(KVStoreMgmtMessage::KVFindLocally(key, ares)) => {
         let res = store.get_val(&key);
         ares.map(|ares|{
-          utils::ret_one_result(ares, res);
+          utils::ret_one_result(&ares, res);
         });
       },
       //asynch find

@@ -291,9 +291,24 @@ macro_rules! static_buff {
   )
 }
 
+#[inline]
+// TODO test in tcp loop
+/// TODO return MyDHTResult!!
+pub fn one_result_val_clone<V : Clone + Send> (ores : &OneResult<V>) -> Option<V> {
+  match ores.0.lock() {
+    Ok(res) => Some(res.clone()),
+    Err(m) => {
+      error!("poisoned mutex for ping result");
+      None
+    },
+  }
+ 
+}
+ 
 
 #[inline]
-pub fn ret_one_result<V : Send> (ores : OneResult<V>, v : V) {
+/// TODO return MyDHTResult!!
+pub fn ret_one_result<V : Send> (ores : &OneResult<V>, v : V) {
   match ores.0.lock() {
     Ok(mut res) => *res = v,
     Err(m) => error!("poisoned mutex for ping result"),
@@ -301,16 +316,54 @@ pub fn ret_one_result<V : Send> (ores : OneResult<V>, v : V) {
   ores.1.notify_all();
 }
 
+#[inline]
+/// TODO return MyDHTResult!!
+pub fn change_one_result<V : Send> (ores : &OneResult<V>, v : V) {
+  match ores.0.lock() {
+    Ok(mut res) => *res = v,
+    Err(m) => error!("poisoned mutex for ping result"),
+  }
+}
+
+
 
 #[inline]
-// use only for small clonable stuff or arc it
-pub fn clone_wait_one_result<V : Clone + Send> (ores : OneResult<V>) -> Option<V> {
+/// use only for small clonable stuff or arc it TODO return MyDHTResult!!
+/// Second parameter let you specify a new value.
+pub fn clone_wait_one_result<V : Clone + Send> (ores : &OneResult<V>, newval : Option<V>) -> Option<V> {
  let r = match ores.0.lock() {
     Ok(mut guard) => {
       match ores.1.wait(guard) {
         Ok(mut r) => {
+          let res = r.clone();
+          newval.map(|v| *r = v).is_some();
 //          Some(*r)
-          Some(r.clone())
+          Some(res)
+        }
+        Err(_) => {error!("Condvar issue for return res"); None}, // TODO what to do??? panic?
+      }
+    },
+    Err(poisoned) => {error!("poisonned mutex on one res"); None}, // not logic
+ };
+ r
+}
+#[inline]
+/// use only for small clonable stuff or arc it TODO return MyDHTResult!!
+/// Second parameter let you specify a new value.
+pub fn clone_wait_one_result_timeout_ms<V : Clone + Send> (ores : &OneResult<V>, newval : Option<V>, to : u32) -> Option<V> {
+ let r = match ores.0.lock() {
+    Ok(mut guard) => {
+      match ores.1.wait_timeout_ms(guard, to) {
+        Ok(mut r) => {
+          if !r.1 {
+            let res = r.0.clone();
+            newval.map(|v| *r.0 = v).is_some();
+//          Some(*r)
+            Some(res)
+          } else {
+            debug!("timeout waiting for oneresult");
+            None
+          }
         }
         Err(_) => {error!("Condvar issue for return res"); None}, // TODO what to do??? panic?
       }

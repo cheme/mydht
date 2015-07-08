@@ -17,6 +17,8 @@
 #![feature(duration)]
 #![feature(arc_unique)]
 #![feature(deque_extras)]
+#![feature(socket_timeout)]
+#![feature(vecmap)] // in tcp_loop
 #[macro_use] extern crate log;
 extern crate rustc_serialize;
 extern crate time;
@@ -31,7 +33,6 @@ macro_rules! noattachment(() => (
     None
   }
 ));
- 
 
 #[macro_export]
 /// derive Keyval implementation for simple enum over * KeyVal
@@ -322,10 +323,6 @@ impl From<BOError> for Error {
   }
 }
 
-
-
-
-
 impl Display for Error {
 
   fn fmt(&self, ftr : &mut Formatter) -> FmtResult {
@@ -352,10 +349,7 @@ pub enum ErrorKind {
   ByteOrderError,
 }
 
-
 /// Result type internal to mydht
 pub type Result<R> = StdResult<R,Error>;
-
-
 
 }

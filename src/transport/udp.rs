@@ -38,6 +38,7 @@ impl Udp {
     }
   }
 }
+
 struct UdpStream {
   sock : UdpSocket,  // we clone old io but streamreceive is not allowed
   with : SocketAddr, // old io could be clone , with new io manage protection ourselve
@@ -64,7 +65,7 @@ impl Transport for Udp {
     false
   }
 
-  fn receive<C> (&self, p : &SocketAddr, closure : C) where C : Fn(UdpStream, Option<(Vec<u8>, Option<Attachment>)>) -> () {
+  fn start<C> (&self, p : &SocketAddr, closure : C) -> IoResult<()>  where C : Fn(UdpStream, Option<(Vec<u8>, Option<Attachment>)>) -> IoResult<()> {
     let mut socket = match UdpSocket::bind(p) {
       Ok(s) => s,
       Err(e) => panic!("Couldnot bind socket {}",e),
@@ -86,6 +87,7 @@ impl Transport for Udp {
             let r = unsafe {
               slice::from_raw_parts(buf.as_ptr(), size).to_vec()
             };
+            // TODO new interface : buf in udpstream so read ok
             closure(UdpStream{with : from, sock : socket.try_clone().unwrap(),buf : Vec::new()}, Some((r,None)));
           }else{
             error!("Datagram on udp transport with size {:?} over buff {:?}, lost datagram", size, buffsize);
@@ -93,7 +95,8 @@ impl Transport for Udp {
         },
         Err(e) => error!("Couldnot receive datagram {}",e),
       }
-    }
+    };
+    Ok(())
   }
 
   /// Unconected, will simply instantiate a handle over write only udp stream
@@ -134,8 +137,10 @@ impl TransportStream for UdpStream {
   }
 */
 }
+
 impl Read for UdpStream {
   fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+    // TODO read from internal udpstream buff
     error!("Trying to read on non connected send only stream");
     Err(IoError::new(
       IoErrorKind::Other,

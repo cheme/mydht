@@ -107,6 +107,16 @@ pub trait AsKeyValIf : fmt::Debug + Clone + Send + Sync + Eq + SettableAttachmen
   fn encode_bef<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> { Ok(()) }
   fn decode_bef<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<Self::BP, D::Error>;
 }
+
+/// Library adapter to convert AsRef
+pub struct AsRefSt<'a, KV : 'a> (&'a KV);
+
+impl<'a, KV : KeyVal, BP, AKV : AsKeyValIf<KV = KV, BP = BP>> AsRef<KV> for AsRefSt<'a, AKV> {
+  fn as_ref (&self) -> &KV {
+    self.0.as_keyval_if()
+  }
+}
+
 /*
 impl<AKV : AsKeyValIf> Encodable for AKV {
   fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {

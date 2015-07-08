@@ -385,20 +385,19 @@ pub fn get_origin_queryID
 /// For some application it could be relevant to forbid the reply to some query mode : 
 /// TODO implement a filter in server process (and client proxy).
 pub enum QueryMode{ 
-    /// replies through the same circuit - simple but extremelly slow (use the same connection with blocking wait on reply) : more for local network with low timeout or large peer nb (if choice of closest peer takes into account the number of proxied running query) : queries are blocked. 
-    /// Warning this mode will fail in combination with unconnected transport!!!
-    Proxy, 
-    /// Asynch proxy. Same as Proxy but query do not block, they are added to the query manager
-    /// cache.
-    /// The query (unless using noloop history) may not give you the originator of the query (only
-    /// the remaining number of hop which could be randon depending on rulse).
-    AProxy,
-    /// reply directly to given Node. The peer to reply to is added to the query. 
-    Asynch,
-    /// After a few hop switch to asynch (from AProxy). Therefore AProxy originator may not be the
-    /// query originator.
-    AMix(u8),
-    // TODO new meeting point mode (involve asking (getting or setting meeting point as kv request) for meeting point and storing them in query). meeting point being only proxy making node id translation (possible n meeting point) -> kind of designing random routes. (meeting points do not read content just change dest/origin (no local search (content may be unreadable for the meeting points))). meeting point may communicate their routing table and when sending we creat a n route (each hop decriptable only by reader(and with a reply route (not same as query (and same thing preencoded)) for final dest)). -> in fact predesigned route with encoded/decoded each hop and if a hop do not know next, reply fail (may need some routing table publish to lower those fails). PB from size of frame you get nbhop... -> Random size message filler...??? so you probabilistic know your nb hop without knowing.
+  Proxy,
+  /// Asynch proxy. Query do not block, they are added to the query manager
+  /// cache.
+  /// When proxied, the query (unless using noloop history) may not give you the originator of the query (only
+  /// the remaining number of hop which could be randon depending on rulse).
+  AProxy,
+  /// reply directly to the emitter of the query, even if the query has been proxied. 
+  /// The peer to reply to is therefore added to the query. 
+  Asynch,
+  /// After a few hop switch to asynch (from AProxy). Therefore AProxy originator may not be the
+  /// query originator.
+  AMix(u8),
+  // TODO new meeting point mode (involve asking (getting or setting meeting point as kv request) for meeting point and storing them in query). meeting point being only proxy making node id translation (possible n meeting point) -> kind of designing random routes. (meeting points do not read content just change dest/origin (no local search (content may be unreadable for the meeting points))). meeting point may communicate their routing table and when sending we creat a n route (each hop decriptable only by reader(and with a reply route (not same as query (and same thing preencoded)) for final dest)). -> in fact predesigned route with encoded/decoded each hop and if a hop do not know next, reply fail (may need some routing table publish to lower those fails). PB from size of frame you get nbhop... -> Random size message filler...??? so you probabilistic know your nb hop without knowing.
 }
 
 // variant of query mode to communicate with peers
@@ -502,6 +501,8 @@ pub trait ChunkTable<V : KeyVal> {
 /// Rules for query. This is used to map priorities with actual query strategies.
 /// Rules are designed as trait to allow more flexibility than conf, yet here it might be good to
 /// have fast implementations.
+/// In fact some info are related to DHT, this is more DHTRules than QueryRules (could be split in
+/// two).
 pub trait QueryRules : Sync + Send + 'static {
   /// create a new id : use for asynch query (most of the time will simply be the key of the resource
   fn newid (&self) -> QueryID;
@@ -522,5 +523,11 @@ pub trait QueryRules : Sync + Send + 'static {
   /// seemingly remaining number of hop equal to max number of hop mode may not be send by the
   /// query originator
   fn nbhop_dec (&self) -> u8;
+  /// Server threading conf, do we create new thread for message reception when we use a transport
+  /// with multiplexed reception?
+  /// Please note that setting it to false with some transports will completly break the DHT (it
+  /// will only spawn one connection and stop waiting for others). That is why :
+  /// It defaults to true (depends on DHT).
+  fn rec_spawn_thread(&self) -> bool { true }
 }
 
