@@ -1,6 +1,9 @@
 //! Tcp transport. Connected transport (tcp), with basic support for attachment (like all connected
 //! transport).
 //! Some overhead to send size of frame.
+//! TODO tcp mode where we open socket for every new transaction (no persistence in peermgmt of
+//! socket (only server thread)) : result in no shared and running server thread using direct client
+//! handle
 extern crate byteorder;
 use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::net::{TcpListener};

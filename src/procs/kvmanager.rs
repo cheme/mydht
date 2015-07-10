@@ -3,14 +3,14 @@
 //! It uses a `KVStore` object and reply to instruction given through a dedicated channel.
 use rustc_serialize::json;
 use procs::mesgs::{self,PeerMgmtMessage,ClientMessage,KVStoreMgmtMessage};
-use peer::{PeerMgmtRules, PeerPriority};
+use peer::{PeerMgmtMeths, PeerPriority};
 use procs::{RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
 use std::sync::mpsc::{Sender,Receiver};
 use std::str::from_utf8;
 use procs::client;
 use std::collections::{HashMap,BTreeSet};
 use std::sync::{Arc,Semaphore,Condvar,Mutex};
-use query::{self,QueryRules,QueryModeMsg};
+use query::{self,QueryModeMsg};
 use route::Route;
 use std::sync::mpsc::channel;
 use std::thread::Thread;
@@ -23,6 +23,7 @@ use kvstore::{KVStore,StoragePriority};
 use keyval::{KeyVal};
 use msgenc::MsgEnc;
 use num::traits::ToPrimitive;
+use rules::DHTRules;
 
 // Multiplexing kvstore can be fastly bad (only one process).
 // Best should be a dedicated dispatch process with independant code : TODO this is ok : aka
@@ -48,8 +49,8 @@ pub fn start
         let remhop = query::get_nbhop(&stconf);
         let qp = query::get_prio(&stconf);
         let qps = query::get_sprio(&stconf);
-        let esthop = (rc.queryrules.nbhop(qp) - remhop).to_usize().unwrap();
-        let storeconf = rc.queryrules.do_store(true, qp, qps, Some(esthop)); // first hop
+        let esthop = (rc.rules.nbhop(qp) - remhop).to_usize().unwrap();
+        let storeconf = rc.rules.do_store(true, qp, qps, Some(esthop)); // first hop
 
         let hasnode = match store.get_val(&kv.get_key()) {
           Some(_) => {true},

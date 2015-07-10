@@ -10,14 +10,15 @@ use rustc_serialize::json;
 use procs::mesgs::{PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage};
 use msgenc::{ProtoMessage};
 use procs::{RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
-use peer::{Peer,PeerMgmtRules, PeerPriority};
+use peer::{Peer,PeerMgmtMeths,PeerPriority};
 use std::str::from_utf8;
 use transport::TransportStream;
 use transport::Transport;
 use std::sync::{Mutex,Semaphore,Arc,Condvar};
 use std::sync::mpsc::{Sender,Receiver};
 use std::thread;
-use query::{QueryConfMsg, QueryRules, QueryMode, QueryPriority, QueryChunk, QueryModeMsg};
+use query::{QueryConfMsg, QueryMode, QueryPriority, QueryChunk, QueryModeMsg};
+use rules::DHTRules;
 use time::Duration;
 use query;
 use query::{QueryID};
@@ -28,11 +29,17 @@ use msgenc::{MsgEnc,DistantEncAtt,DistantEnc};
 use utils::{send_msg,receive_msg};
 use num::traits::ToPrimitive;
 use std::io::Result as IoResult;
+use procs::ServerMode;
+
+/// either we created a permanent thread for server, or it is managed otherwhise (for instance udp
+/// single reception loop or tcp evented loop).
+pub type ServerHandle = Option<Arc<Mutex<bool>>>;
+
 
 // all update of query prio and nbquery and else are not done every where : it is a security issue
 /// all update of query conf when receiving something, this is a filter to avoid invalid or network
 /// dangerous queries (we apply local conf other requested conf)
-pub fn update_query_conf<P : Peer> (qconf  : &mut QueryConfMsg<P>, r : &QueryRules) {
+pub fn update_query_conf<P : Peer, R : DHTRules> (qconf  : &mut QueryConfMsg<P>, r : &R) {
 //(qmode, qchunk,lsent,store,remhop,nbquer,qp, rnbres)
   // ensure number of query is not changed
   qconf.5 = r.nbquery(qconf.5); // TODO special function for when hoping?? with initial nbquer in param : eg less and less??
@@ -58,11 +65,45 @@ fn new_query_mode<P : Peer> (qm : &QueryModeMsg<P>, me : &Arc<P>, qid : QueryID)
    }
 }
 
+/// fn to define server mode depending on what transport allows and DHTRules
+#[inline]
+fn resolve_server_mode <RT : RunningTypes> (rc : &ArcRunningContext<RT>) -> ServerMode {
+  let (max, pool, timeoutmul, otimeout) = rc.rules.server_mode_conf();
+  match rc.transport.do_spawn_rec() {
+      // spawn and managed eg tcp
+      (true,true) => {
+        if max > 1 {
+          ServerMode::ThreadedMax(max,timeoutmul)
+        } else if pool > 1 {
+          ServerMode::ThreadedPool(pool,timeoutmul)
+        } else {
+          ServerMode::ThreadedOne(otimeout)
+        }
+      },
+      // spawn in non managed
+      (true,false) => {
+        if max > 1 {
+          ServerMode::LocalMax(max)
+        } else if pool > 1 {
+          ServerMode::LocalPool(pool)
+        } else {
+          ServerMode::Local(true)
+        }
+      },
+      // non managed no spawn
+      (false,false) => {
+        ServerMode::Local(false)
+      },
+      _ => panic!("Invalid transport definition"),
+  }
+}
+
 /// Server loop
 pub fn servloop <RT : RunningTypes>
  (rc : ArcRunningContext<RT>, 
   rp : RunningProcesses<RT::P, RT::V>) {
 
+    let servermode = resolve_server_mode (&rc); 
     let spserv = |s, ows| {
       let (spawn, man) = rc.transport.do_spawn_rec();
       if spawn {
@@ -157,19 +198,19 @@ fn request_handler <RT : RunningTypes>
       },
       // asynch mode we do not need to keep trace of the query
       ProtoMessage::FIND_NODE(mut qconf@(QueryModeMsg::Asynch(_,_), _,_,_,_,_,_,_), nid) => {
-        update_query_conf (&mut qconf ,&rc.queryrules);
+        update_query_conf (&mut qconf ,&rc.rules);
         debug!("Asynch Find peer {:?}", nid);
         rp.peers.send(PeerMgmtMessage::PeerFind(nid,None,qconf));
       },
       // general case as asynch waiting for reply
       ProtoMessage::FIND_NODE(mut qconf@(_, _,_,_,_,_,_,_), nid) => {
-        update_query_conf (&mut qconf ,&rc.queryrules);
+        update_query_conf (&mut qconf ,&rc.rules);
         let nbquer = query::get_nbquer(&qconf);
         let qp = query::get_prio(&qconf);
         // TODO server query initialization is not really efficient it should be done after local
         debug!("Proxying Find peer {:?}", nid);
-        let lifetime = rc.queryrules.lifetime(qp); // TODO special lifetime when hoping?
-        let qid = rc.queryrules.newid();
+        let lifetime = rc.rules.lifetime(qp); // TODO special lifetime when hoping?
+        let qid = rc.rules.newid();
         qconf.0 = new_query_mode (&qconf.0, &rc.me, qid.clone());
         // Warning here is old qmode stored in conf new mode is for proxied query
         let query : query::Query<RT::P,RT::V> = query::init_query(nbquer.to_usize().unwrap(), 1, lifetime, & rp.queries, Some(qconf.clone()), Some(qid.clone()), None);
@@ -179,7 +220,7 @@ fn request_handler <RT : RunningTypes>
       },
       // particular case for asynch where we skip node during reply process
       ProtoMessage::FIND_VALUE(mut qconf@(QueryModeMsg::Asynch(_,_), _,_,_,_,_,_,_), nid) => {
-        update_query_conf (&mut qconf ,&rc.queryrules);
+        update_query_conf (&mut qconf ,&rc.rules);
         debug!("Asynch Find val {:?}", nid);
         rp.store.send(KVStoreMgmtMessage::KVFind(nid,None,qconf));
       },
@@ -187,18 +228,18 @@ fn request_handler <RT : RunningTypes>
       ProtoMessage::FIND_VALUE(mut queryconf, nid) => {
         let oldhop = query::get_nbhop(&queryconf); // Warn no set of this value
         let oldqp = query::get_prio(&queryconf);
-        update_query_conf (&mut queryconf ,&rc.queryrules);
+        update_query_conf (&mut queryconf ,&rc.rules);
         let nbquer = query::get_nbquer(&queryconf);
         let qp = query::get_prio(&queryconf);
         let sprio = query::get_sprio(&queryconf);
         let nb_req = query::get_req_nb_res(&queryconf);
         debug!("Proxying Find value {:?}", nid);
-        let lifetime = rc.queryrules.lifetime(qp); // TODO special lifetime when hoping
+        let lifetime = rc.rules.lifetime(qp); // TODO special lifetime when hoping
         // TODO same thing for prio that is 
-        let qid = rc.queryrules.newid();
+        let qid = rc.rules.newid();
         queryconf.0 = new_query_mode (&queryconf.0, &rc.me, qid.clone());
-        let esthop = (rc.queryrules.nbhop(oldqp) - oldhop).to_usize().unwrap();
-        let store = rc.queryrules.do_store(false, qp, sprio, Some(esthop)); // first hop
+        let esthop = (rc.rules.nbhop(oldqp) - oldhop).to_usize().unwrap();
+        let store = rc.rules.do_store(false, qp, sprio, Some(esthop)); // first hop
 
         let query : query::Query<RT::P,RT::V> = query::init_query(nbquer.to_usize().unwrap(), nb_req, lifetime, & rp.queries, Some(queryconf.clone()), Some(qid.clone()), Some(store));
  

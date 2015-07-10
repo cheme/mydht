@@ -9,7 +9,7 @@ use procs::mesgs::{self,PeerMgmtMessage,ClientMessage};
 use msgenc::{ProtoMessage};
 use std::fs::File;
 use std::io::Result as IoResult;
-use peer::{PeerMgmtRules, PeerPriority};
+use peer::{PeerMgmtMeths, PeerPriority};
 use std::str::from_utf8;
 use procs::{peermanager,RunningContext,RunningProcesses,ArcRunningContext,RunningTypes};
 use time::Duration;
@@ -19,7 +19,7 @@ use transport::WriteTransportStream;
 use transport::Transport;
 use keyval::{Attachment,SettableAttachment};
 use std::sync::mpsc::{Sender,Receiver};
-use query::{self,QueryRules,QueryMode,QueryChunk,QueryConfMsg,QueryModeMsg};
+use query::{self,QueryMode,QueryChunk,QueryConfMsg,QueryModeMsg};
 use peer::Peer;
 use keyval::KeyVal;
 use utils::{self,OneResult,receive_msg,send_msg,Either};
@@ -30,34 +30,31 @@ use std::thread::Thread;
 
 
 /// TODO replace client channel by that
+/// Reference used to send Client Message.
+/// This could be used by any process to keep trace of a client process : 
+/// for instance from server client direct client query (without peermgmt)
 enum ClientHandle<RT : RunningTypes> {
+
+  /// Uninitialised client or no handle from peermgmt
+  /// First message is querying a handle from peermgmt (through OneResult), when in server.
+  /// When in query no new handle are needed but next query created from server will certainly use
+  /// a faster handle.
+  /// - optional WriteStream, this is only in server context when transport has instantiate write
+  /// stream on connect
+  /// Result in communication with PeerMgmt Process
+  NotStarted(Option<<RT::T as Transport>::WriteStream>),
+
   /// no new thread, the function is called, for DHT where there is not much client treatment
   /// (from peermanager thread). TODO plus all fields
-  NoSpawn(Sender<PeerMgmtMessage<RT::P,RT::V>>, <RT::P as KeyVal>::Key),
-//  NoSpawn(<RT::T as Transport>::WriteTransportStream),
-  /// WriteTransportStrem is runing in its own thread
-  Threaded(Sender<ClientMessage<RT::P,RT::V>>), 
+  /// Result in communication with peermgmtprocess
+  Local,
+
+  /// WriteTransportStrem is runing (loop) in its own thread
+  Threaded(Sender<ClientMessage<RT::P,RT::V>>),
+
   /// thread do multiplexe some client : usize is client ix
-  ThreadedMult(Sender<ClientMessage<RT::P,RT::V>>,usize),
+  ThreadedMult(Sender<ClientMessage<RT::P,RT::V>>, usize),
 
-}
-/// either their is a server thread or not : either 
-/// nothing to close on client removal (for event_loop we should deregister : by calling remove on
-/// transport with peer address (allways called)), or 
-/// Server Thread could be drop on client removal (no need to listen to its queries)
-/// TODO change to JoinHandle?? (no way to drop thread could try to park and drop Thread handle : a
-/// park thread with no in scope handle should be swiped) TODO drop over unsafe mut cast of thread
-/// pb is stop thread will fail since blocked on transport receive -> TODO post how to on stack!!
-/// and for now just Arcmutex an exit bool
-//type ServerHandle = Option<Thread>;
-type ServerHandle = Option<Arc<Mutex<bool>>>;
-
-/// TODO use it for storage in Route
-enum ClientInfo<RT : RunningTypes> {
-  // TODO folowing dec is correct
-  //Local(<RT::T as Transport>::WriteStream, ServerHandle),
-  Local(Box<WriteTransportStream>, ServerHandle),
-  Threaded(Sender<ClientMessage<RT::P,RT::V>>,usize, ServerHandle),
 }
 
 impl<RT : RunningTypes> ClientHandle<RT> {
@@ -69,6 +66,7 @@ impl<RT : RunningTypes> ClientHandle<RT> {
   fn start() {}
   //fn start() -> ClientHandle<RT> {}
 }
+
 // ping a peer creating a thread with client when com ok, if thread exists (querying peermanager)
 // use it directly to receive pong
 // return nothing, send message to ppermgmt instead
@@ -279,7 +277,7 @@ pub fn recv_match <RT : RunningTypes>
       // and query count in server -> amix and aproxy became as simple send
       // send query with hop + 1
       // local queryid set in server here update dest
-      query::dec_nbhop(&mut queryconf, &rc.queryrules);
+      query::dec_nbhop(&mut queryconf, &rc.rules);
       let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_NODE(queryconf, nid);
       sendorconnect!(&mess,None);
       if !ok {
@@ -290,7 +288,7 @@ pub fn recv_match <RT : RunningTypes>
     ClientMessage::KVFind(nid, oquery, mut queryconf) => {
       // no adding query counter for peer
       // send query with hop + 1
-      query::dec_nbhop(&mut queryconf, &rc.queryrules);
+      query::dec_nbhop(&mut queryconf, &rc.rules);
       let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_VALUE(queryconf, nid);
       sendorconnect!(&mess,None);
       if !ok {

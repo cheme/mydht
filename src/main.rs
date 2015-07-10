@@ -39,21 +39,21 @@ use std::sync::mpsc::channel;
 use self::rand::{thread_rng, Rng};
 use num::traits::{ToPrimitive, Bounded};
 use mydht::{StoragePriority};
-use mydht::kvstoreif::KeyVal;
+use mydht::dhtif::KeyVal;
 use mydht::{DHT,RunningContext,RunningProcesses,ArcRunningContext,RunningTypes};
 use mydht::{QueryConf,QueryPriority,QueryMode,QueryChunk};
 use mydht::{CachePolicy};
-use mydht::queryif;
+use mydht::dhtif;
 use mydht::Json;
 use mydht::Bincode;
 use mydht::Tcp;
 use mydht::Udp;
 use mydht::{Attachment,SettableAttachment};
 use mydht::{PeerPriority};
-use mydht::peerif::{Peer,PeerMgmtRules};
+use mydht::dhtif::{Peer,PeerMgmtMeths};
 use mydht::dhtimpl::{Node,SimpleCache,SimpleCacheQuery,Inefficientmap};
 
-use mydht::queryif::{QueryRules};
+use mydht::dhtif::{DHTRules};
 use mydht::transportif::Transport;
 use mydht::msgencif::{MsgEnc};
 use mydht::utils::ArcKV;
@@ -221,7 +221,7 @@ struct DummyRules;
 unsafe impl Send for DummyRules {
 }
 
-impl PeerMgmtRules<Node, DummyKeyVal> for DummyRules{
+impl PeerMgmtMeths<Node, DummyKeyVal> for DummyRules{
   fn challenge (&self, n : &Node) -> String{
     "dummychallenge not random at all".to_string()
   }
@@ -246,7 +246,7 @@ struct DummyRules2;
 unsafe impl Send for DummyRules2 {
 }
 
-impl PeerMgmtRules<Node, DummyKeyVal> for DummyRules2 {
+impl PeerMgmtMeths<Node, DummyKeyVal> for DummyRules2 {
   fn challenge (&self, n : &Node) -> String{
     "dummychallenge not random at all".to_string()
   }
@@ -277,7 +277,7 @@ struct DummyQueryRules{
 unsafe impl Send for DummyQueryRules {
 }
 
-impl queryif::QueryRules for DummyQueryRules {
+impl dhtif::DHTRules for DummyQueryRules {
 
   #[inline]
   fn nbhop_dec (&self) -> u8{
@@ -370,9 +370,29 @@ impl queryif::QueryRules for DummyQueryRules {
   fn is_authenticated(&self) -> bool {
     true
   }
+  #[inline]
+  fn client_mode(&self) -> &dhtif::ClientMode {
+    &cmode
+  }
+
+  #[inline]
+  fn server_mode_conf(&self) -> (usize, usize, usize, Option<Duration>) {
+    (0, 0, 0, None)
+  }
+  
+  #[inline]
+  fn is_accept_heavy(&self) -> bool {
+    false
+  }
+
+  #[inline]
+  fn is_routing_heavy(&self) -> (bool,bool,bool) {
+    (false, false, false)
+  }
+
 
 }
-
+static cmode : dhtif::ClientMode = dhtif::ClientMode::ThreadedOne;
 static alltestmode : [QueryMode; 1] = [
 //                   QueryMode::Proxy,
 //                   QueryMode::Proxy,
@@ -436,8 +456,8 @@ fn testloopget (){ // TODO this only test loop over our node TODO circuit loop 
 }
 
 
-fn finddistantpeer<R : PeerMgmtRules<Node, DummyKeyVal> + Clone>  (startport : u16,nbpeer : usize, qm : QueryMode, rules : R, prio : QueryPriority, map : &[&[usize]], find : bool) {
-    let peers = initpeers(startport,nbpeer, map, rules);
+fn finddistantpeer<M : PeerMgmtMeths<Node, DummyKeyVal> + Clone>  (startport : u16,nbpeer : usize, qm : QueryMode, meths : M, prio : QueryPriority, map : &[&[usize]], find : bool) {
+    let peers = initpeers(startport,nbpeer, map, meths);
     let queryconf = (qm.clone(), QueryChunk::None, Some((3,true))); // note that we only unloop to 3 hop 
     let dest = peers.get(nbpeer -1).unwrap().0.clone();
     let fpeer = peers.get(0).unwrap().1.find_peer(dest.nodeid.clone(), queryconf.clone(), prio);
@@ -452,19 +472,19 @@ fn finddistantpeer<R : PeerMgmtRules<Node, DummyKeyVal> + Clone>  (startport : u
     }
 }
 
-struct RunningTypesImpl<R : PeerMgmtRules<Node, DummyKeyVal>, T : Transport, E : MsgEnc> (PhantomData<R>,PhantomData<T>, PhantomData<E>);
+struct RunningTypesImpl<M : PeerMgmtMeths<Node, DummyKeyVal>, T : Transport, E : MsgEnc> (PhantomData<M>,PhantomData<T>, PhantomData<E>);
 
-impl<R : PeerMgmtRules<Node, DummyKeyVal>, T : Transport<Address=SocketAddr>, E : MsgEnc> RunningTypes for RunningTypesImpl<R, T, E> {
+impl<M : PeerMgmtMeths<Node, DummyKeyVal>, T : Transport<Address=SocketAddr>, E : MsgEnc> RunningTypes for RunningTypesImpl<M, T, E> {
   type A = SocketAddr;
   type P = Node;
   type V = DummyKeyVal;
-  type R = R;
-  type Q = DummyQueryRules;
+  type M = M;
+  type R = DummyQueryRules;
   type E = E;
   type T = T;
 }
 
-fn initpeers<R : PeerMgmtRules<Node, DummyKeyVal> + Clone> (startPort : u16, nbpeer : usize, map : &[&[usize]], rules : R) -> Vec<(Node, DHT<RunningTypesImpl<R,Tcp,Json>>)>{
+fn initpeers<M : PeerMgmtMeths<Node, DummyKeyVal> + Clone> (startPort : u16, nbpeer : usize, map : &[&[usize]], meths : M) -> Vec<(Node, DHT<RunningTypesImpl<M,Tcp,Json>>)>{
 
 
     let mut r : Vec<usize> = (0..nbpeer).collect();
@@ -475,7 +495,7 @@ fn initpeers<R : PeerMgmtRules<Node, DummyKeyVal> + Clone> (startPort : u16, nbp
     ).collect();
     let nodes2 = nodes.clone(); // not efficient but for test
     let mut i = 0;// TODO redesign with zip of map and nodes iter
-    let result :  Vec<(Node, DHT<RunningTypesImpl<R,Tcp,Json>>)> = nodes.iter().map(|n|{
+    let result :  Vec<(Node, DHT<RunningTypesImpl<M,Tcp,Json>>)> = nodes.iter().map(|n|{
         info!("node : {:?}", n);
         println!("{:?}",map[i]);
         let bpeers = map[i].iter().map(|j| nodes2.get(*j-1).unwrap().clone()).map(|p|Arc::new(p)).collect();
@@ -490,7 +510,7 @@ let tcp_transport : Tcp = Tcp {
         (n.clone(), DHT::boot_server(Arc:: new(
         RunningContext::new( 
           nsp,
-          rules.clone(),
+          meths.clone(),
           DummyQueryRules{idcnt:Mutex::new(0)},
           Json,
           tcp_transport,
@@ -512,9 +532,9 @@ let tcp_transport : Tcp = Tcp {
 
 
 
-fn initpeers_udp<R : PeerMgmtRules<Node,DummyKeyVal> + Clone> (startPort : u16, nbpeer : usize, map : &[&[usize]], rules : R) -> Vec<(Node, DHT<RunningTypesImpl<R,Udp,Bincode>>)> {
-//fn initpeers_udp<R : PeerMgmtRules<Node> + Clone> (startPort : u16, nbpeer : usize, map : &[&[usize]], rules : R) -> Vec<(Node, DHT<Node,DummyKeyVal,R,DummyQueryRules,Json,Udp>)>{
-//fn initpeers<R : PeerMgmtRules<Node> + Clone> (startPort : u16, nbpeer : usize, map : &[&[usize]], rules : R) -> Vec<(Node, DHT<Node,DummyKeyVal,R,DummyQueryRules,Json,Tcp>)>{
+fn initpeers_udp<M : PeerMgmtMeths<Node,DummyKeyVal> + Clone> (startPort : u16, nbpeer : usize, map : &[&[usize]], meths : M) -> Vec<(Node, DHT<RunningTypesImpl<M,Udp,Bincode>>)> {
+//fn initpeers_udp<R : PeerMgmtMeths<Node> + Clone> (startPort : u16, nbpeer : usize, map : &[&[usize]], rules : R) -> Vec<(Node, DHT<Node,DummyKeyVal,R,DummyQueryRules,Json,Udp>)>{
+//fn initpeers<R : PeerMgmtMeths<Node> + Clone> (startPort : u16, nbpeer : usize, map : &[&[usize]], rules : R) -> Vec<(Node, DHT<Node,DummyKeyVal,R,DummyQueryRules,Json,Tcp>)>{
 
 
     let mut r : Vec<usize> = (0..nbpeer).collect();
@@ -527,7 +547,7 @@ fn initpeers_udp<R : PeerMgmtRules<Node,DummyKeyVal> + Clone> (startPort : u16, 
     let mut i = 0;// TODO redesign with zip of map and nodes iter
     //let result :  Vec<(Node, DHT<Node,DummyKeyVal,R,DummyQueryRules,Json,Tcp>)> = nodes.iter().map(|n|{
 //    let result :  Vec<(Node, DHT<Node,DummyKeyVal,R,DummyQueryRules,Json,Udp>)> = nodes.iter().map(|n|{
-    let result :  Vec<(Node, DHT<RunningTypesImpl<R,Udp,Bincode>>)> = nodes.iter().map(|n|{
+    let result :  Vec<(Node, DHT<RunningTypesImpl<M,Udp,Bincode>>)> = nodes.iter().map(|n|{
         info!("node : {:?}", n);
         println!("{:?}",map[i]);
         let bpeers = map[i].iter().map(|j| nodes2.get(*j-1).unwrap().clone()).map(|p|Arc::new(p)).collect();
@@ -546,7 +566,7 @@ let tcp_transport : Tcp = Tcp {
         (n.clone(), DHT::boot_server(Arc:: new(
         RunningContext::new (
           nsp,
-          rules.clone(),
+          meths.clone(),
           DummyQueryRules{idcnt:Mutex::new(0)},
           Bincode,
           tran,

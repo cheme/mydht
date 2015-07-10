@@ -7,7 +7,6 @@ use procs::mesgs::{PeerMgmtMessage,KVStoreMgmtMessage};
 use std::string::String;
 use std::str::FromStr;
 use procs::{RunningProcesses,RunningContext,ArcRunningContext,RunningTypes};
-use query::{QueryRules};
 use msgenc::{MsgEnc};
 use transport::{Transport};
 use keyval::KeyVal;
@@ -36,7 +35,7 @@ pub enum PeerPriority {
 
 
 /// Rules for peers. Usefull for web of trust for instance, or just to block some peers.
-pub trait PeerMgmtRules<P : Peer, V : KeyVal> : Send + Sync + 'static {
+pub trait PeerMgmtMeths<P : Peer, V : KeyVal> : Send + Sync + 'static {
   /// get challenge for a node, most of the time a random value to avoid replay attack
   fn challenge (&self, &P) -> String; 
   /// sign a message. Node and challenge.

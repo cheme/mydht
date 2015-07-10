@@ -1,10 +1,12 @@
 use procs::{ClientChanel};
 use peer::{Peer, PeerPriority};
 use keyval::KeyVal;
+use procs::RunningProcesses;
 use std::sync::Arc;
 use std::rc::Rc;
 use std::collections::VecDeque;
-
+use mydhtresult::Result as MydhtResult;
+use std::thread;
 pub mod inefficientmap;
 
 #[cfg(feature="dht-route")]
@@ -48,6 +50,53 @@ pub trait Route<P:Peer,V:KeyVal> : Send + 'static {
   /// Get n peer even if offline
   fn get_pool_nodes(& self, usize) -> Vec<Arc<P>>;
 
+  // TODO lot of missing params(queryconf, msg...) : change it when implementing (first good code
+  // for light client separating concerns in fn).
+  /// Interface allowing complex route implementation to run slow lookup then do the stuff in a
+  /// continuation passing way.
+  /// Typically a route like this should have a main thread for cache lookup (fast access to node),
+  /// and thread(s) running slow closest node calculation, the main thread interface to them for
+  /// get_closest (waiting for result), but for heavy_get_closest it do not have to wait for result
+  /// since it is continuation passing design.
+  ///
+  /// Default implementation should simply panic, here instead it do a slow get_closest (same as
+  /// slow one).
+  fn heavy_get_closest_for_node<C,D>(& self, node : &P::Key, nb : u8, filter : &VecDeque<P::Key>, rc : &RunningProcesses<P,V>, each : C, adjustnb : D) 
+    where C : Fn(&Arc<P>, &RunningProcesses<P, V>), 
+          D : Fn(usize) {
+       let vclo = self.get_closest_for_node(node, nb, filter);
+       let s = vclo.len();
+       adjustnb(s);
+       for n in vclo.iter() {
+         each(n, rc)
+       }
+  }
+  
+  // TODO lot of missing params(queryconf, msg...) : change it when implementing (first good code
+  // for light client separating concerns in fn).
+  fn heavy_get_closest_for_query<C,D>(& self, k : &V::Key, nb : u8, filter : &VecDeque<P::Key>, rc : &RunningProcesses<P,V>, each : C, adjustnb : D)
+    where C : Fn(&Arc<P>, &RunningProcesses<P, V>), 
+          D : Fn(usize) {
+       let vclo = self.get_closest_for_query(k, nb, filter);
+       let s = vclo.len();
+       adjustnb(s);
+       for n in vclo.iter() {
+         each(n, rc)
+       }
+  }
+  
+  // TODO lot of missing params(queryconf, msg...) : change it when implementing (first good code
+  // for light client separating concerns in fn).
+  fn heavy_get_pool_nodes<C>(&self, nb : usize, rc : &RunningProcesses<P,V>, each : C) 
+    where C : Fn(&Arc<P>, &RunningProcesses<P, V>) {
+     let vclo = self.get_pool_nodes(nb);
+     for n in vclo.iter() {
+       each(n, rc)
+     }
+  }
+ 
+
+
   /// Possible Serialize on quit
   fn commit_store(& mut self) -> bool;
 }
@@ -60,7 +109,7 @@ mod test {
   use std::sync::{Arc};
   use std::collections::VecDeque;
 use peer::{Peer, PeerPriority};
-  pub fn test_route<P:Peer,V:KeyVal> (peers : &[Arc<P>; 5], route : & mut Route<P,V>, valkey : V::Key) {
+  pub fn test_route<P:Peer,V:KeyVal,R:Route<P,V>> (peers : &[Arc<P>; 5], route : & mut R, valkey : V::Key) {
     let fpeer = peers[0].clone();
     let fkey = fpeer.get_key();
     assert!(route.get_node(&fkey).is_none());

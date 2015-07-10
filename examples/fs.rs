@@ -57,11 +57,11 @@ use mydht::Json;
 use std::sync::mpsc::{Sender,Receiver};
 
 use mydht::{Udp,Tcp};
-use mydht::peerif::{Peer,PeerMgmtRules};
+use mydht::dhtif::{Peer,PeerMgmtMeths};
 use mydht::{DHT,RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
 use mydht::{PeerPriority,StoragePriority,QueryChunk,QueryMode};
-use mydht::kvstoreif::KeyVal;
-use mydht::kvstoreif::FileKeyVal;
+use mydht::dhtif::KeyVal;
+use mydht::dhtif::FileKeyVal;
 use mydht::transportif::Transport;
 use mydht::dhtimpl::FileKV;
 use mydht::CachePolicy;
@@ -75,7 +75,7 @@ use mydht::dhtimpl::{RSAPeer,PeerSign};
 use mydht::dhtimpl::{WotStore,WotKV,WotK,TrustRules,ClassicWotTrust};
 use rustc_serialize::hex::{ToHex,FromHex};
 //use mydht::kvstoreif::KVCache;
-use mydht::queryif::{QueryRules};
+use mydht::dhtif::{DHTRules};
 use mydht::msgencif::{MsgEnc};
 use mydht::{Attachment,SettableAttachment};
 use std::collections::BTreeSet;
@@ -234,10 +234,10 @@ pub fn main() {
       type A = SocketAddr;
       type P = RSAPeer;
       type V = MulKV;
-      type Q = dhtrules::DhtRulesImpl;
+      type M = WotAccess;
+      type R = dhtrules::DhtRulesImpl;
       type T = TmpTransportMacro;
       type E = TmpEncMacro;
-      type R = WotAccess;
     }
 
     //let rc : ArcRunningContext<RunningTypes<P = RSAPeer, V = MulKV, Q = dhtrules::DhtRulesImpl, T = TmpTransportMacro, E = TmpEncMacro, R = WotAccess>> = Arc::new(
@@ -489,7 +489,7 @@ struct UnsignedOpenAccess;
 unsafe impl Send for UnsignedOpenAccess {
 }
 
-impl PeerMgmtRules<RSAPeer, MulKV> for UnsignedOpenAccess {
+impl PeerMgmtMeths<RSAPeer, MulKV> for UnsignedOpenAccess {
   fn challenge (&self, n : &RSAPeer) -> String{
     "".to_string()
   }
@@ -627,8 +627,8 @@ impl WotAccess {
 
 }
 
-// TODO PeerMgmtRules to Vec<u8> !!!! here parse_str is very unsaf (si
-impl PeerMgmtRules<RSAPeer, MulKV> for WotAccess {
+// TODO PeerMgmtMeths to Vec<u8> !!!! here parse_str is very unsaf (si
+impl PeerMgmtMeths<RSAPeer, MulKV> for WotAccess {
   fn challenge (&self, n : &RSAPeer) -> String{
     uuid::Uuid::new_v4().to_simple_string()
   }
@@ -691,7 +691,8 @@ mod fskeyval {
  
   use mydht::dhtimpl::FileKV;
   use std::fs::File;
-  use mydht::kvstoreif::{FileKeyVal,KeyVal,KVStore};
+  use mydht::kvstoreif::{KVStore};
+  use mydht::dhtif::{FileKeyVal,KeyVal};
 //  use mydht::kvstoreif::{KVCache};
   use mydht::CachePolicy;
   use std::sync::Arc;
@@ -790,7 +791,7 @@ use mydht::{StoragePriority};
 use time::Duration;
 use mydht::{CachePolicy};
 use mydht::{QueryPriority};
-use mydht::queryif;
+use mydht::dhtif;
 use mydht::{PeerPriority};
 use std::sync::Mutex;
 use self::rand::{thread_rng,Rng};
@@ -819,7 +820,7 @@ pub struct DhtRules {
   pub storeproxied : Option<usize>, // store only if less than nbhop // TODO implement other alternative (see comment)
 }
 
-impl queryif::QueryRules for DhtRulesImpl {
+impl dhtif::DHTRules for DhtRulesImpl {
 
 
   #[inline]
@@ -892,8 +893,30 @@ impl queryif::QueryRules for DhtRulesImpl {
   fn is_authenticated(&self) -> bool {
     true 
   }
+  #[inline]
+  fn client_mode(&self) -> &dhtif::ClientMode {
+    &cmode
+  }
+
+  #[inline]
+  fn server_mode_conf(&self) -> (usize, usize, usize, Option<Duration>) {
+    (0, 0, 0, None)
+  }
+  
+  #[inline]
+  fn is_accept_heavy(&self) -> bool {
+    false
+  }
+
+  #[inline]
+  fn is_routing_heavy(&self) -> (bool,bool,bool) {
+    (false, false, false)
+  }
+
 
 }
+static cmode : dhtif::ClientMode = dhtif::ClientMode::ThreadedOne;
+
 }
 
 }

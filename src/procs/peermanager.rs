@@ -1,13 +1,13 @@
 use rustc_serialize::json;
 use procs::mesgs::{self,PeerMgmtMessage,ClientMessage};
 use std::io::Result as IoResult;
-use peer::{PeerMgmtRules, PeerPriority};
+use peer::{PeerMgmtMeths, PeerPriority};
 use std::sync::mpsc::{Sender,Receiver};
 use std::str::from_utf8;
 use procs::{client,RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
 use std::collections::{HashMap,BTreeSet,VecDeque};
 use std::sync::{Arc,Semaphore,Condvar,Mutex};
-use query::{self,QueryRules,QueryModeMsg,LastSent,QueryConfMsg};
+use query::{self,QueryModeMsg,LastSent,QueryConfMsg};
 use route::Route;
 use std::sync::mpsc::channel;
 use std::thread;
@@ -17,19 +17,33 @@ use utils::{self,OneResult,Either};
 use keyval::{KeyVal};
 use msgenc::{MsgEnc};
 use num::traits::ToPrimitive;
+use procs::ClientMode;
 
-// TODO implement : client mode in queryrules!!
-#[derive(Debug,PartialEq,Eq)]
-enum ClientMode {
-  /// all run in peermanager thread
-  Local,
-  /// one thread by client for sending
-  ThreadedOne,
-  /// n client by thread
-  ThreadedPool(usize),
-  /// n thread to share all client
-  ThreadedNb(usize),
+/// TODO use it for storage in Route
+/// Stored info about client in peer management (in route transient cache).
+enum ClientInfo<RT : RunningTypes> {
+  /// Stream is used locally
+  Local(<RT::T as Transport>::WriteStream),
+  /// usize is only useful for client thread shared
+  Threaded(Sender<ClientMessage<RT::P,RT::V>>,usize),
+
 }
+
+/// TODO change to JoinHandle?? (no way to drop thread could try to park and drop Thread handle : a
+/// park thread with no in scope handle should be swiped) TODO drop over unsafe mut cast of thread
+/// pb is stop thread will fail since blocked on transport receive -> TODO post how to on stack!!
+/// and for now just Arcmutex an exit bool
+enum ServerInfo {
+  /// transport manage the server, disconnection with transport primitive (calling remove on
+  /// transport with peer address (alwayse called).
+  TransportManaged,
+  /// a thread exists (instanciated from transport reception or from peermgmt on connect)
+  /// We keep a reference to end it on client side failure or simply peer removal.
+  Threaded(Arc<Mutex<bool>>),
+}
+
+type PeerInfo<RT> = (Option<ServerInfo>, Option<ClientInfo<RT>>);
+
 // peermanager manage communication with the storage : add remove update. The storage is therefore
 // not shared, we use message passing. 
 /// TODO need new storage for known client info but no Peer def yet (during ping) = not auth peer
@@ -44,7 +58,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
     // TODO add to queryrules
     //let clientmode = rc.queryrules.clientmode();
     let clientmode = ClientMode::ThreadedOne;
-    let local = clientmode == ClientMode::Local;
+    let local = clientmode == ClientMode::Local(true) || clientmode == ClientMode::Local(false);
     match r.recv() {
 
       Ok(PeerMgmtMessage::ClientMsg(msg, key)) => {
@@ -260,11 +274,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
          info!("Refreshing connection pool");
          let torefresh = route.get_pool_nodes(max);
          for n in torefresh.iter(){
-           if !local {
-             get_or_init_client_connection::<RT, T>(n, & rc , & mut route, & rp, true, None);
-           } else {
-             send_nonconnected_ping::<RT, T>(n, & rc , & mut route, & rp);
-           };
+           send_nonconnected_ping::<RT, T>(n, & rc , & mut route, & rp);
          }
        },
        Ok(PeerMgmtMessage::ShutDown)  => {

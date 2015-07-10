@@ -13,7 +13,7 @@ use keyval::{KeyVal};
 use kvstore::{StoragePriority};
 use utils::Either;
 use num::traits::ToPrimitive;
-
+use rules::DHTRules;
 pub mod cache;
 pub mod simplecache;
 // a semaphore with access to its current state
@@ -57,6 +57,7 @@ pub type QueryConf = (QueryMode, QueryChunk, LastSentConf); // TODO remove if on
 ///  Main infos about a running query. Notably running mode, chunk config, no loop info, priorities
 ///  and remaing hop (on a new query it is the max number of hop) plus number of query (on each hop
 ///  number of peer where query should be forwarded).
+///  TODO replace by struct
 //pub type QueryConfMsg<P : Peer> = (QueryModeMsg<P>, QueryChunk, Option<LastSent<P>>, StoragePriority, u8, u8, QueryPriority, usize);
 pub type QueryConfMsg<P> = (QueryModeMsg<P>, QueryChunk, Option<LastSent<P>>, StoragePriority, u8, u8, QueryPriority, usize); // first u8 is remaining nb hop second one is nbquery last uint is the nb or result expected
 
@@ -74,7 +75,7 @@ pub fn get_sprio<P : Peer>(c : &QueryConfMsg<P>) -> StoragePriority {
   c.3
 }
 #[inline]
-pub fn dec_nbhop<P : Peer, QR : QueryRules>(c : & mut QueryConfMsg<P>,qr : &QR) {
+pub fn dec_nbhop<P : Peer, QR : DHTRules>(c : & mut QueryConfMsg<P>,qr : &QR) {
   c.4 -= qr.nbhop_dec();
 }
 #[inline]
@@ -488,38 +489,4 @@ pub trait ChunkTable<V : KeyVal> {
   fn check(&self, u32, String) -> bool; // check chunk for a index (calculate and verify hash) TODO not string but some byte array for ressource
 }
 
-/// Rules for query. This is used to map priorities with actual query strategies.
-/// Rules are designed as trait to allow more flexibility than conf, yet here it might be good to
-/// have fast implementations.
-/// In fact some info are related to DHT, this is more DHTRules than QueryRules (could be split in
-/// two).
-pub trait QueryRules : Sync + Send + 'static {
-  /// create a new id : use for asynch query (most of the time will simply be the key of the resource
-  fn newid (&self) -> QueryID;
-  /// Max number of hop for the query, the method is currently called in main peermgmt process, therefore it must be fast (a mapping, not a db access).
-  fn nbhop (&self, QueryPriority) -> u8;
-  /// Number of peers to transmit to at each hop, the method is currently called in main peermgmt process, therefore it must be fast (a mapping not a db access).
-  fn nbquery (&self, QueryPriority) -> u8;
-  /// delay between to cleaning of cache query
-  fn asynch_clean(&self) -> Option<Duration>; 
-  /// get the lifetime of a query (before clean and possibly no results).
-  fn lifetime (&self, prio : QueryPriority) -> Duration;
-  /// get the storage rules (a pair with persistent storage as bool plus cache storage as possible
-  /// duration), depending on we beeing query originator, query priority, query storage priority
-  /// and possible estimation of the number of hop at this point, very important
-  fn do_store (&self, islocal : bool, qprio : QueryPriority, sprio : StoragePriority, hopnb : Option <usize>) -> (bool,Option<CachePolicy>); // wether you need to store the keyval or not
-  /// Most of the time return one, as when proxying we want to decrease by one hop the number of
-  /// hop, but sometimes we may by random  this nbhop to be 0 (this way a received query with
-  /// seemingly remaining number of hop equal to max number of hop mode may not be send by the
-  /// query originator
-  fn nbhop_dec (&self) -> u8;
-  /// Define if we require authentication, this way Ping/Pong challenge exchange could be skip and peers is
-  /// immediatly stored.
-  /// So if this function reply no, implementation of challenge, signmsg and checkmsg for
-  /// peermgmtrules is useless
-  fn is_authenticated(&self) -> bool;
-  // TODO option to do authentication on every message (with is_authenticated only adress is
-  // subsequantly trusted).
-
-}
 

@@ -1,8 +1,9 @@
 use std::io::Result as IoResult;
 use std::sync::mpsc::{Receiver,Sender};
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
-use peer::{PeerMgmtRules, PeerPriority};
-use query::{self,QueryConf,QueryRules,QueryPriority,QueryMode,QueryModeMsg,LastSent};
+use peer::{PeerMgmtMeths, PeerPriority};
+use query::{self,QueryConf,QueryPriority,QueryMode,QueryModeMsg,LastSent};
+use rules::DHTRules;
 use kvstore::{StoragePriority, KVStore};
 use keyval::{KeyVal};
 use query::cache::QueryCache;
@@ -17,7 +18,7 @@ use std::thread;
 use route::Route;
 use peer::Peer;
 use transport::{TransportStream,Transport,Address};
-use time;
+use time::Duration;
 use utils::{self,OneResult};
 use msgenc::MsgEnc;
 use num;
@@ -37,12 +38,58 @@ pub trait RunningTypes : 'static + Send + Sync {
   type A : Address;
   type P : Peer<Address = Self::A>;
   type V : KeyVal;
-  type R : PeerMgmtRules<Self::P, Self::V>;
-  type Q : QueryRules;
+  type M : PeerMgmtMeths<Self::P, Self::V>;
+  type R : DHTRules;
   type E : MsgEnc;
   type T : Transport<Address = Self::A>;
 }
 
+// TODO implement : client mode in rules!!
+#[derive(Debug,PartialEq,Eq)]
+pub enum ClientMode {
+  /// client run from PeerManagement and does not loop
+  /// - bool say if we spawn a thread or not
+  Local(bool),
+  /// client stream run in its own stream
+  /// one thread by client for sending
+  ThreadedOne,
+  /// max n clients by threads
+  ThreadedMax(usize),
+  /// n threads sharing all client
+  ThreadPool(usize),
+}
+
+#[derive(Debug,PartialEq,Eq)]
+pub enum ServerMode {
+  /// server code is run once on reception, this is for transport that do not need to block on each
+  /// message reception : for instance tcp event loop or udp transport.
+  /// In this case transport is run for one message only (no loop)
+  Local(bool),
+  /// Thread recycle local execution (got all stream and receive message to start a read).
+  /// Read must be considered Nonblocking.
+  /// This is mainly implemented in the handler which will not spawn, otherwhise it is similar to
+  /// Local(true)
+  /// - max nb of stream to read
+  LocalMax(usize),
+  /// Same as LocalMax but
+  /// - number of thread to share
+  LocalPool(usize),
+  /// Transport Stream (generally blocking) is read in its own loop in its own Thread.
+  /// - optional duration is a timeout to end from peermanager (cleanup), normally transport should
+  /// implement a reception timeout for this and this option should be useless in most cases. TODO unimplemented
+  ThreadedOne(Option<Duration>),
+  /// alternatively receive from blocking thread with a short timeout (timeout will does not mean
+  /// thread is off). This is not really good, it will only work if transport read timeout is
+  /// short.
+  /// - max nb of stream to read
+  /// - number of short timeout to consider peer offlint
+  ThreadedMax(usize,usize),
+  /// same as TreadedMax but in pool mode
+  /// - number of thread to share
+  /// - number of short timeout to consider peer offlint
+  ThreadedPool(usize,usize),
+}
+ 
 /// Could be use to define the final type of a DHT, most of the time we create a new object (see
 /// example/fs.rs).
 /// This kind of struct is never use, it is just to a type instead of a
@@ -51,26 +98,26 @@ struct RunningTypesImpl<
   A : Address,
   P : Peer<Address = A>,
   V : KeyVal,
-  R : PeerMgmtRules<P, V>, 
-  Q : QueryRules,
+  M : PeerMgmtMeths<P, V>, 
+  R : DHTRules,
   E : MsgEnc, 
   T : Transport<Address = A>>
-  (PhantomData<A>,PhantomData<Q>,PhantomData<P>,PhantomData<V>,PhantomData<R>,PhantomData<T>, PhantomData<E>);
+  (PhantomData<A>,PhantomData<R>,PhantomData<P>,PhantomData<V>,PhantomData<M>,PhantomData<T>, PhantomData<E>);
 
 impl<
   A : Address,
   P : Peer<Address = A>,
   V : KeyVal,
-  R : PeerMgmtRules<P, V>, 
-  Q : QueryRules,
+  M : PeerMgmtMeths<P, V>, 
+  R : DHTRules,
   E : MsgEnc, 
   T : Transport<Address = A>>
-     RunningTypes for RunningTypesImpl<A, P, V, R, Q, E, T> {
+     RunningTypes for RunningTypesImpl<A, P, V, M, R, E, T> {
   type A = A;
   type P = P;
   type V = V;
+  type M = M;
   type R = R;
-  type Q = Q;
   type E = E;
   type T = T;
 }
@@ -80,8 +127,8 @@ pub type ClientChanel<P, V> = Sender<mesgs::ClientMessage<P,V>>;
 /// Running context contain all information needed, mainly configuration and calculation rules.
 pub struct RunningContext<RT : RunningTypes> {
   pub me : Arc<RT::P>,
-  pub peerrules : RT::R,
-  pub queryrules : RT::Q, // Only one that can switch to trait object : No for homogeneity
+  pub peerrules : RT::M,
+  pub rules : RT::R, // Only one that can switch to trait object : No for homogeneity
   pub msgenc : RT::E,
   pub transport : RT::T, 
   pub keyval : PhantomData<RT::V>,
@@ -91,15 +138,15 @@ pub struct RunningContext<RT : RunningTypes> {
 impl<RT : RunningTypes> RunningContext<RT> {
   pub fn new (
   me : Arc<RT::P>,
-  peerrules : RT::R,
-  queryrules : RT::Q,
+  peerrules : RT::M,
+  rules : RT::R,
   msgenc : RT::E,
   transport : RT::T, 
   ) -> RunningContext<RT> {
     RunningContext {
       me : me,
       peerrules : peerrules,
-      queryrules : queryrules,
+      rules : rules,
       msgenc : msgenc,
       transport : transport,
       keyval : PhantomData,
@@ -154,8 +201,8 @@ pub fn store_val <RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : 
     else
     {LastSent::LastSentPeer(n,vec![rc.me.get_key()].into_iter().collect())}
   );
-  let maxhop = rc.queryrules.nbhop(prio);
-  let nbquer = rc.queryrules.nbquery(prio);
+  let maxhop = rc.rules.nbhop(prio);
+  let nbquer = rc.rules.nbquery(prio);
   let queryconf = (msgqmode.clone(), qchunk, lastsent, sprio,maxhop,nbquer,prio,1);
   let sync = Arc::new((Mutex::new(false),Condvar::new()));
   // for propagate 
@@ -174,22 +221,22 @@ pub fn store_val <RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : 
 pub fn find_val<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &ArcRunningContext<RT>, nid : <RT::V as KeyVal>::Key, (qmode, qchunk, lsconf) : QueryConf, prio : QueryPriority, sprio : StoragePriority, nb_res : usize ) -> Vec<Option<RT::V>> {
   debug!("Finding KeyVal {:?}", nid);
   // TODO factorize code with find peer and/or specialize rules( some for peer some for kv) ??
-  let maxhop = rc.queryrules.nbhop(prio);
-  let nbquer = rc.queryrules.nbquery(prio);
+  let maxhop = rc.rules.nbhop(prio);
+  let nbquer = rc.rules.nbquery(prio);
   let semsize = match qmode {
     QueryMode::Asynch => num::pow(nbquer.to_usize().unwrap(), maxhop.to_usize().unwrap()),
     // general case we wait reply in each client query
     _ => nbquer.to_usize().unwrap(),
   };
   let msgqmode = init_qmode(rp, rc, &qmode);
-  let lifetime = rc.queryrules.lifetime(prio);
+  let lifetime = rc.rules.lifetime(prio);
   let managed =  msgqmode.clone().get_qid(); // TODO redesign get_qid to avoid clone
   let lastsent = lsconf.map(|(n,ishop)| if ishop 
     {LastSent::LastSentHop(n,vec![rc.me.get_key()].into_iter().collect())}
     else
     {LastSent::LastSentPeer(n,vec![rc.me.get_key()].into_iter().collect())}
   );
-  let store = rc.queryrules.do_store(true, prio, sprio, Some(0)); // first hop
+  let store = rc.rules.do_store(true, prio, sprio, Some(0)); // first hop
   let queryconf = (msgqmode, qchunk, lastsent, sprio,maxhop,nbquer,prio,nb_res);
   // local query replyto set to None
   let query = query::init_query(semsize, nb_res, lifetime, & rp.queries, None, managed,Some(store));
@@ -201,9 +248,9 @@ pub fn find_val<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &A
 #[inline]
 fn init_qmode<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &ArcRunningContext<RT>, qm : &QueryMode) -> QueryModeMsg <RT::P>{
   match qm {
-    &QueryMode::Asynch => QueryModeMsg::Asynch((rc.me).clone(),rc.queryrules.newid()),
-    &QueryMode::AProxy => QueryModeMsg::AProxy((rc.me).clone(),rc.queryrules.newid()),
-    &QueryMode::AMix(i) => QueryModeMsg::AMix(i,rc.me.clone(),rc.queryrules.newid()),
+    &QueryMode::Asynch => QueryModeMsg::Asynch((rc.me).clone(),rc.rules.newid()),
+    &QueryMode::AProxy => QueryModeMsg::AProxy((rc.me).clone(),rc.rules.newid()),
+    &QueryMode::AMix(i) => QueryModeMsg::AMix(i,rc.me.clone(),rc.rules.newid()),
   }
 }
 
@@ -232,16 +279,16 @@ impl<RT : RunningTypes> DHT<RT> {
 
   pub fn find_peer (&self, nid : <RT::P as KeyVal>::Key, (qmode, qchunk, lsconf) : QueryConf, prio : QueryPriority ) -> Option<Arc<RT::P>>  {
     debug!("Finding peer {:?}", nid);
-    let maxhop = self.rc.queryrules.nbhop(prio);
+    let maxhop = self.rc.rules.nbhop(prio);
     println!("!!!!!!!!!!!!!!!!!!! maxhop : {}, prio : {}", maxhop, prio);
-    let nbquer = self.rc.queryrules.nbquery(prio);
+    let nbquer = self.rc.rules.nbquery(prio);
     let semsize = match qmode {
       QueryMode::Asynch => num::pow(nbquer.to_usize().unwrap(), maxhop.to_usize().unwrap()),
       // general case we wait reply in each client query
       _ => nbquer.to_usize().unwrap(),
     };
     let msgqmode = self.init_qmode(&qmode);
-    let lifetime = self.rc.queryrules.lifetime(prio);
+    let lifetime = self.rc.rules.lifetime(prio);
     let managed =  msgqmode.clone().get_qid(); // TODO redesign get_qid to avoid clone
     let lastsent = lsconf.map(|(n,ishop)| if ishop 
       {LastSent::LastSentHop(n,vec![self.rc.me.get_key()].into_iter().collect())}
@@ -298,7 +345,7 @@ pub fn boot_server
 let (tquery,rquery) = channel();
 let (tkvstore,rkvstore) = channel();
 let (tpeer,rpeer) = channel();
-let cleandelay = rc.queryrules.asynch_clean();
+let cleandelay = rc.rules.asynch_clean();
 let cleantquery = tquery.clone();
 let resulttquery = tquery.clone();
 let cleantpeer = tpeer.clone();
