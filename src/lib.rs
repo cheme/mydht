@@ -19,6 +19,8 @@
 #![feature(deque_extras)]
 #![feature(socket_timeout)]
 #![feature(vecmap)] // in tcp_loop
+#![feature(slice_bytes)] // in tcp_loop
+#![feature(split_off)] // in tcp_loop
 #[macro_use] extern crate log;
 extern crate rustc_serialize;
 extern crate time;
@@ -203,7 +205,7 @@ pub mod utils;
 pub mod wot;
 
 // reexport
-pub use peer::{Peer, PeerPriority};
+pub use peer::{PeerPriority};
 pub use procs::{DHT, RunningContext, RunningProcesses, ArcRunningContext, RunningTypes};
 pub use procs::{store_val, find_val, find_local_val};
 pub use query::{QueryConf,QueryPriority,QueryMode,QueryChunk};
@@ -240,7 +242,7 @@ pub mod dhtimpl {
 }
 // TODO rename peerif to peerrulesif
 pub mod peerif{
-  pub use peer::{PeerMgmtRules};
+  pub use peer::{Peer,PeerMgmtRules};
 }
 pub mod queryif{
   pub use query::cache::{QueryCache,CachePolicy};
@@ -266,7 +268,7 @@ pub mod msgencif{
 pub mod mydhtresult {
 
 use std::fmt::Result as FmtResult;
-use std::fmt::{Display,Debug,Formatter};
+use std::fmt::{Display,Formatter};
 use std::error::Error as ErrorTrait;
 use std::io::Error as IOError;
 use byteorder::Error as BOError;

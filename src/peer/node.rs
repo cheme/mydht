@@ -31,7 +31,7 @@ impl KeyVal for Node {
 impl SettableAttachment for Node { }
 
 impl Peer for Node{
-//  type Address = SocketAddr;
+  type Address = SocketAddr;
   fn to_address(&self) -> SocketAddr {
     self.address.0
   }

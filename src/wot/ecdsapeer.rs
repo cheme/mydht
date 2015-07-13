@@ -314,7 +314,7 @@ impl KeyVal for ECDSAPeer {
 impl SettableAttachment for ECDSAPeer { }
 
 impl Peer for ECDSAPeer {
-  //type Address = SocketAddr;
+  type Address = SocketAddr;
   #[inline]
   fn to_address(&self) -> SocketAddr {
     self.address.0

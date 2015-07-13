@@ -15,6 +15,18 @@
 //!  All this thread state stuff is pretty racy...
 //!  Need handler fn in MyHandlefn r
 //!  
+//!  Note that spawn mode is not the same as usual transport because thread do not persist with the
+//!  peermanager clientinfo : it allow a spawn (spawn occurs in transport (and end
+//!  of loop is automatic)) but not its loop. // TODO may scoped thread to access TcpStream without Fd unsafty. see
+//!  ScopedKey (rather not as scoped threads looks deprecated).
+//!
+//!
+//!  TODO for the threaded mode it could be better to have already spawn threads for multiple
+//!  connection : see client definition. A loop event start a read for a thread : we need to
+//!  add  functionalities to handler message to manage pool and send msg with token for read (then run once
+//!  thread). We might need another conf for dht rules (not transport (neutral)).
+//!  That is more a mater of creating a new recv handler managing pool of readstream.
+//!  (avoid all those spawn in run once).
 
 extern crate byteorder;
 extern crate mio;
@@ -25,7 +37,7 @@ use std::io::ErrorKind as IoErrorKind;
 use std::io::Write;
 use std::io::Read;
 use time::Duration;
-use super::{Transport,TransportStream};
+use super::{Transport,ReadTransportStream,WriteTransportStream};
 use std::net::SocketAddr;
 use self::mio::tcp::TcpSocket;
 use self::mio::tcp::TcpListener;
@@ -41,6 +53,7 @@ use self::mio::Sender;
 use self::mio::Handler;
 use self::mio::FromFd;
 use super::Attachment;
+use std::net::Shutdown;
 use num::traits::ToPrimitive;
 use std::collections::VecMap;
 use std::sync::Mutex;
@@ -88,6 +101,7 @@ impl StreamInfo {
     }
   }
 }
+
 #[derive(PartialEq,Eq,Clone)]
 pub enum ThreadState {
   // Handler not started
@@ -101,20 +115,26 @@ pub enum ThreadState {
   // timeout for read thread or other error
   Timeout,
 }
-
-pub enum TcpStream {
+pub struct WriteTcpStream (MioTcpStream);
+pub enum ReadTcpStream {
   Threaded(NonBlock<MioTcpStream>,Token, OneResult<ThreadState>,Sender<HandlerMessage>,u32),
   CoRout(NonBlock<MioTcpStream>,Token,Sender<HandlerMessage>),
 }
 
-struct MyHandler {
+struct MyHandler<C>
+    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> IoResult<()> {
+
   /// info about stream (for unlocking read)
   tokens : VecMap<StreamInfo>,
   timeout : u64,
   listener : NonBlock<TcpListener>,
+  readHandler : C,
 }
 
-impl MyHandler {
+impl<C> MyHandler<C>
+    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> IoResult<()> {
+
+
   // TODO maybe map token on RawFd of socket values (no need for tokens persistence for
   // coroutine??) - > then deregister is easier (fromfd of token val). !!!!!
   fn new_token(&self) -> Token {
@@ -136,13 +156,14 @@ impl MyHandler {
   }
 }
 
-impl Handler for MyHandler {
+impl<C> Handler for MyHandler<C>
+    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> IoResult<()> {
   type Timeout = Token;
   type Message = HandlerMessage;
 
 
   /// Message for setting a timeout or adding a connection
-  fn notify(&mut self, event_loop: &mut EventLoop<MyHandler>, msg: HandlerMessage) {
+  fn notify(&mut self, event_loop: &mut EventLoop<Self>, msg: HandlerMessage) {
     match msg {
       HandlerMessage::NewConnTh(r, fd) => {
         let tok = self.new_token();
@@ -243,7 +264,7 @@ impl Handler for MyHandler {
         event_loop.register(&s, tok);
         let si = StreamInfo::Threaded(sync.clone());
         self.tokens.insert(tok.as_usize(), si.clone());
- 
+ // TODO both handlers !!!!!
               //handler(s, None);
             }
         }
@@ -285,19 +306,18 @@ pub enum HandlerMessage {
   StartTimeout(Token),
 }
 
-impl TcpStream {
+impl ReadTcpStream {
   fn get_stream(&mut self) -> &mut NonBlock<MioTcpStream> {
     match self {
-      &mut TcpStream::Threaded(ref mut s,_,_,_,_) => s,
-      &mut TcpStream::CoRout(ref mut s,_,_) => s,
+      &mut ReadTcpStream::Threaded(ref mut s,_,_,_,_) => s,
+      &mut ReadTcpStream::CoRout(ref mut s,_,_) => s,
     }
   }
 }
 
 impl Tcp {
-  /// constructor. 
-  pub fn new (keepalive : Option<Duration>, timeout : Duration) -> Tcp {
-    let spawn = Self::is_connected();
+  /// constructor.
+  pub fn new (keepalive : Option<Duration>, timeout : Duration, spawn : bool) -> Tcp {
     Tcp {
       keepalive : keepalive,
       timeout : timeout,
@@ -308,14 +328,11 @@ impl Tcp {
 }
 
 impl Transport for Tcp {
-
-  type Stream  = TcpStream;
-  fn is_connected() -> bool {
-    true
-  }
-
-
-  fn start<C> (&self, p : &SocketAddr, handler : C) -> IoResult<()> where C : Fn(TcpStream, Option<(Vec<u8>, Option<Attachment>)>) -> IoResult<()> {
+  type ReadStream = ReadTcpStream;
+  type WriteStream = WriteTcpStream;
+  type Address = SocketAddr;
+  fn start<C> (&self, p: &SocketAddr, readHandler : C) -> IoResult<()>
+    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> IoResult<()> {
     /*let sock : TcpSocket = try!(tcp:match *p {
       SocketAddr::V4(..) => TcpSocket::v4(),
       SocketAddr::V6(..) => TcpSocket::v6(),
@@ -344,13 +361,15 @@ impl Transport for Tcp {
       tokens : VecMap::new(),
       timeout : self.timeout.num_milliseconds().to_u64().unwrap(),
       listener : tcplistener,
+      readHandler : readHandler,
       })
   }
 
-  fn connectwith (&self, p : &SocketAddr, timeout : Duration) -> IoResult<TcpStream> {
+  fn connectwith(&self,  p : &SocketAddr, timeout : Duration) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
     //let s = try!(TcpStream::connect(p));
     let s = try!(tcp::connect(p));
     try!(s.0.set_keepalive (self.keepalive.map(|d|d.num_seconds().to_u32().unwrap())));
+    let ws = try!(s.0.try_clone());
 //    try!((s.0).0.set_write_timeout_ms(self.timeout.num_milliseconds().to_usize().unwrap()));
     //try!(s.0.set_read_timeout_ms(self.timeout.num_milliseconds().to_usize().unwrap()));
     
@@ -393,22 +412,33 @@ impl Transport for Tcp {
     let tok = si.0;
     match si.1 {
       StreamInfo::Threaded(state) => {
-        Ok(TcpStream::Threaded(s.0, tok, state,ch,self.timeout.num_milliseconds().to_u32().unwrap()))
+        Ok((WriteTcpStream(ws),
+          Some(ReadTcpStream::Threaded(s.0, tok, state,ch,self.timeout.num_milliseconds().to_u32().unwrap())
+        )))
       },
       StreamInfo::CoRout(_,_) => {
-        Ok(TcpStream::CoRout(s.0,tok,ch))
+        Ok((WriteTcpStream(ws),
+        Some(ReadTcpStream::CoRout(s.0,tok,ch))))
       },
 
     }
   }
+  /// if spawn we do not loop (otherwhise we should not event loop at all), the thread is just for
+  /// one message.
+  fn do_spawn_rec(&self) -> (bool,bool) {(self.spawn,false)}
+
+  /// deregister the read stream for this address
+  fn disconnect(&self, sock : &SocketAddr) -> IoResult<bool> {
+    // TODO  deregister ReadStream : PB we do not have mapping address stream token -> TODO add
+    // this mapping (costy...
+
+    Ok(true)
+  }
+
 }
 
 
-// TODO handler
-// on timeout : deregister token and read fail
-impl TransportStream for TcpStream {
-}
-impl TcpStream {
+impl ReadTcpStream {
   fn read_th(buf: &mut [u8], s : &mut MioTcpStream, tok : &Token, or : &OneResult<ThreadState>, ch : &Sender<HandlerMessage>, to : &u32) -> IoResult<usize> {
     // on read start if state is "nothing to read", start timeout and init condvar
     let nb = try!(s.read(buf));
@@ -455,22 +485,58 @@ impl TcpStream {
 
 }
 
-impl Read for TcpStream {
+impl Read for ReadTcpStream {
   fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
     match self {
-      &mut TcpStream::Threaded(ref mut s,ref tok, ref or, ref ch, ref to) => TcpStream::read_th(buf,s,tok,or,ch,to),
-      &mut TcpStream::CoRout(ref mut s,ref tok, ref ch) =>  TcpStream::read_co(buf,s,tok,ch),
+      &mut ReadTcpStream::Threaded(ref mut s,ref tok, ref or, ref ch, ref to) => ReadTcpStream::read_th(buf,s,tok,or,ch,to),
+      &mut ReadTcpStream::CoRout(ref mut s,ref tok, ref ch) =>  ReadTcpStream::read_co(buf,s,tok,ch),
     }
   }
 }
+impl ReadTransportStream for ReadTcpStream {
 
-impl Write for TcpStream {
+  fn disconnect(&mut self) -> IoResult<()> {
+    match self {
+      &mut ReadTcpStream::Threaded(ref mut s,ref tok, ref or, ref ch, ref to) => {
+    // TODO send token (plus address for mapping table) Disconnect in channel and from msg deregister and remove infos
+      },
+      &mut ReadTcpStream::CoRout(ref mut s,ref tok, ref ch) =>  {
+        //TODO howto ???
+      },
+    };
+    Ok(())
+  }
+ 
+  /// no loop (already event loop)
+  fn rec_end_condition(&self) -> bool {
+    true
+  }
+
+}
+/*
+impl Write for WriteTcpStream {
   fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
-    self.get_stream().write(buf)
+    self.write(buf)
   }
   fn flush(&mut self) -> IoResult<()> {
-    self.get_stream().flush()
+    self.flush()
   }
+}*/
+
+impl WriteTransportStream for WriteTcpStream {
+
+  fn disconnect(&mut self) -> IoResult<()> {
+    self.0.shutdown(Shutdown::Write)
+  }
+ 
+}
+impl Write for WriteTcpStream {
+    fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+      self.0.write(buf)
+    }
+    fn flush(&mut self) -> IoResult<()> {
+      self.0.flush()
+    }
 }
 
 

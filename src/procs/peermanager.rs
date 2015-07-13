@@ -18,9 +18,21 @@ use keyval::{KeyVal};
 use msgenc::{MsgEnc};
 use num::traits::ToPrimitive;
 
-
+// TODO implement : client mode in queryrules!!
+#[derive(Debug,PartialEq,Eq)]
+enum ClientMode {
+  /// all run in peermanager thread
+  Local,
+  /// one thread by client for sending
+  ThreadedOne,
+  /// n client by thread
+  ThreadedPool(usize),
+  /// n thread to share all client
+  ThreadedNb(usize),
+}
 // peermanager manage communication with the storage : add remove update. The storage is therefore
 // not shared, we use message passing. 
+/// TODO need new storage for known client info but no Peer def yet (during ping) = not auth peer
 /// Start a new peermanager process
 pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
  (rc : ArcRunningContext<RT>,
@@ -29,8 +41,15 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
   rp : RunningProcesses<RT::P,RT::V>, 
   sem : Arc<Semaphore>) {
   loop {
-    let connected = <RT::T as Transport>::is_connected();
+    // TODO add to queryrules
+    //let clientmode = rc.queryrules.clientmode();
+    let clientmode = ClientMode::ThreadedOne;
+    let local = clientmode == ClientMode::Local;
     match r.recv() {
+
+      Ok(PeerMgmtMessage::ClientMsg(msg, key)) => {
+        // TODO get from route and send with client info (either direct or with channel)
+      },
       Ok(PeerMgmtMessage::PeerRemChannel(p))  => {
         let nodeid = p.get_key().clone();
         route.remchan(&nodeid);
@@ -71,7 +90,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
       Ok(PeerMgmtMessage::PeerPing(p, ores)) => {
         if(p.get_key() != rc.me.get_key()) {
           debug!("Pinging peer : {:?}", p);
-          if(connected){  
+          if(!local){  
             get_or_init_client_connection::<RT, T>(&p, & rc , & mut route, & rp, true, ores);
           } else {
             // TODO  ores non supported (no ping query cache - TODO )
@@ -125,7 +144,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
  
           for p in peers.iter(){
             let mess =  ClientMessage::KVFind(key.clone(),oquery.clone(), newqueryconf.clone()); // TODO queryconf arc?? + remove newqueryconf.clone() already cloned why the second (bug or the fact that we send)
-            if(connected) {
+            if(!local) {
               // get connection
               let s = get_or_init_client_connection::<RT, T>(p, & rc , & mut route, & rp, false, None);
               s.send(mess);
@@ -201,7 +220,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
                 match queryconf.0.clone().get_rec_node() {
                   Some (recnode) => {
                     let mess = ClientMessage::StoreNode(queryconf, r);
-                    if (connected){
+                    if (!local){
                       // send result directly
                       let s = get_or_init_client_connection::<RT, T>(&recnode, & rc , & mut route, & rp, false, None);
                       s.send(mess);
@@ -226,7 +245,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
              };
              for p in peers.iter() {
                let mess = ClientMessage::PeerFind(nid.clone(),oquery.clone(), newqueryconf.clone()); // TODO queryconf arc??
-               if (connected) {
+               if (!local) {
                  // get connection
                  let s = get_or_init_client_connection::<RT, T>(p, & rc , & mut route, & rp, false, None);
                  s.send(mess);
@@ -241,7 +260,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
          info!("Refreshing connection pool");
          let torefresh = route.get_pool_nodes(max);
          for n in torefresh.iter(){
-           if connected{
+           if !local {
              get_or_init_client_connection::<RT, T>(n, & rc , & mut route, & rp, true, None);
            } else {
              send_nonconnected_ping::<RT, T>(n, & rc , & mut route, & rp);
@@ -257,7 +276,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
            Some (rec)  => {
              if rec.get_key() != rc.me.get_key() { 
                let mess = ClientMessage::StoreNode(qconf, result);
-               if(connected){
+               if(!local){
                  let s = get_or_init_client_connection::<RT, T>(& rec, & rc , & mut route, & rp, false, None); // TODO do something for not having to create an arc here eg arc in qconf + previous qconf clone
                  s.send(mess);
                } else {
@@ -279,7 +298,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
            Some (rec) => {
              if rec.get_key() != rc.me.get_key() {
                let mess = ClientMessage::StoreKV(qconf, result);
-               if (connected) {
+               if (!local) {
                  let s = get_or_init_client_connection::<RT, T>(& rec, & rc , & mut route, & rp, false, None);
                  s.send(mess);
                } else {

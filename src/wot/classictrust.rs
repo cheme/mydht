@@ -1,6 +1,5 @@
 use keyval::{KeyVal,Key,Attachment,SettableAttachment};
-use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
-use std::iter;
+use rustc_serialize::{Encodable, Encoder, Decoder};
 use utils::TimeSpecExt;
 use utils::NULL_TIMESPEC;
 use super::WotTrust;
@@ -202,7 +201,6 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ClassicWotTrust<TP> {
       (false, false)
     } else {
       let mut new_trust     = None;
-      let mut decreasetrust = false;
       let mut changedcache  = false;
       let nblevel = rules.len().to_u8().unwrap();
       let mut nbtrust : Vec<usize> = vec![0usize; rules.len()];
@@ -219,7 +217,6 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ClassicWotTrust<TP> {
         }
       };
       if from_new_trust < nblevel
-          && from_new_trust >= 0
           && cap_from_new_sig >= from_new_trust 
           && cap_from_new_sig < nblevel {
         let ix1 = from_new_trust.to_usize().unwrap();
@@ -228,7 +225,7 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ClassicWotTrust<TP> {
         changedcache = true;
       };
 
-      if(changedcache){
+      if changedcache {
         // recalculate
         let mut cur_level     = 0;
         for count in self.calcmap.iter() {

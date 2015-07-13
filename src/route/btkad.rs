@@ -204,10 +204,9 @@ impl KeyVal for NodeK {
 impl SettableAttachment for NodeK { }
 
 impl Peer for NodeK {
-  //type Address = <Node as Peer>::Address;
+  type Address = <Node as Peer>::Address;
   #[inline]
-  //fn to_address(&self) -> <Node as Peer>::Address {
-  fn to_address(&self) -> SocketAddr {
+  fn to_address(&self) -> <Node as Peer>::Address {
     self.0.to_address()
   }
 

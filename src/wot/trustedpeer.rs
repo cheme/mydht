@@ -71,11 +71,11 @@ impl<TP : TrustedPeer> PeerSign<TP> {
 
   /// sign an new trust level, from peer must be a peer for whom we got the privatekey (ourselves
   /// for instance). TODO remove those ArcKV
-  pub fn new (fromP : &ArcKV<TP>, aboutP : &ArcKV<TP>, trust : u8, tag : usize) -> Option<PeerSign<TP>> {
+  pub fn new (fromp : &ArcKV<TP>, aboutp : &ArcKV<TP>, trust : u8, tag : usize) -> Option<PeerSign<TP>> {
     // Note that we use bincode but if serializing scheme change, we will be lost, so we add an
     // encoding version in first position (currently serialized as is)
-    let from  = fromP.get_key();
-    let about = aboutP.get_key();
+    let from  = fromp.get_key();
+    let about = aboutp.get_key();
     let vsign = {
       let tosign = bincode::encode(&
        
@@ -83,7 +83,7 @@ impl<TP : TrustedPeer> PeerSign<TP> {
 
 , bincode::SizeLimit::Infinite).unwrap()
       ;
-      <Self as TrustedVal<TP, PeerTrustRel>>::sign_val(fromP, &PeerTrustRel, &tosign)
+      <Self as TrustedVal<TP, PeerTrustRel>>::sign_val(fromp, &PeerTrustRel, &tosign)
     };
     debug!("sign : {:?}", vsign);
     // current openssl if is strange

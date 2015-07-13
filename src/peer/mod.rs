@@ -16,9 +16,9 @@ pub mod node;
 
 /// A peer is a special keyval with an attached address over the network
 pub trait Peer : KeyVal {
-//  type Address : 'static;
-//  fn to_address (&self) -> Self::Address;
-  fn to_address (&self) -> SocketAddr;
+  type Address : 'static;
+  fn to_address (&self) -> Self::Address;
+//  fn to_address (&self) -> SocketAddr;
 }
 
 #[derive(RustcDecodable,RustcEncodable,Debug,Copy,PartialEq,Clone)]

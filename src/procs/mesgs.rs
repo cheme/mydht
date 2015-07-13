@@ -38,6 +38,10 @@ pub enum PeerMgmtMessage<P : Peer,V : KeyVal> {
   StoreNode(QueryConfMsg<P>,Option<Arc<P>>), // destination storage node must be in query conf
   /// Store value depending on queryconf (locally plus possibly propagate)
   StoreKV(QueryConfMsg<P>,Option<V>),
+
+
+  /// for client send message without client thread : should only be used by clienthandle
+  ClientMsg(ClientMessage<P,V>,P::Key),
 }
 
 /// message for query management process

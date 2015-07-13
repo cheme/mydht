@@ -63,53 +63,48 @@ pub fn servloop <RT : RunningTypes>
  (rc : ArcRunningContext<RT>, 
   rp : RunningProcesses<RT::P, RT::V>) {
 
-    let spserv = |s, co| {
-      if rc.queryrules.rec_spawn_thread() {
+    let spserv = |s, ows| {
+      let (spawn, man) = rc.transport.do_spawn_rec();
+      if spawn {
         let pm2 = rp.clone();
         let rcsp = rc.clone();
         thread::spawn (move || {
-          request_handler::<RT>(s, &rcsp, &pm2, &co)
+          request_handler::<RT>(s, &rcsp, &pm2, ows, man)
         });
       } else {
-        request_handler::<RT>(s, &rc, &rp, &co);
+        request_handler::<RT>(s, &rc, &rp, ows, man);
       };
       Ok(())
     };
-    // loop in transport receive function
+    // loop in transport receive function TODO if looping : start it from PeerManager thread
     rc.transport.start(&rc.me.to_address(), spserv);
 }
 
 /// Spawn thread either for one message (non connected) or for one connected peer (loop on stream
 /// receiver).
+///
+/// TODO add if managed as parameter and if managed send handle (mutex on close) to peermgmt
+/// TODO add ows to send writer if we receive a message with a node (switch to none when sent),
+/// peeradd msg with this ows.
 fn request_handler <RT : RunningTypes>
- (mut s1 : <RT::T as Transport>::Stream, 
+ (mut s1 : <RT::T as Transport>::ReadStream, 
   rc : &ArcRunningContext<RT>, 
   rp : &RunningProcesses<RT::P, RT::V>,
-  oneonly : &Option<(Vec<u8>, Option<Attachment>)>,
+  mut ows : Option<<RT::T as Transport>::WriteStream>,
+  managed : bool,
  ) -> IoResult<()>  {
   let s = &mut s1;
   let anone = None;
   loop {
     // r is message and oa an optional attachmnet (in pair because a reference owhen disconnected
     // and not when connected).
-    let (r, oa) = match oneonly {
-      &None => {
-        match receive_msg (s, &rc.msgenc) {
-          None => {
-            info!("Serving connection lost");
-            break;
-          },
-          Some(r) => (r.0,(r.1,&anone)),
-        }
+    let (r, oa) = match receive_msg (s, &rc.msgenc) {
+      None => {
+          info!("Serving connection lost or malformed message");
+        // TODO different result : warn on malformed message 
+        break;
       },
-      // unconnected
-      &Some((ref v, ref oa)) => match rc.msgenc.decode(v.as_slice()) {
-         None => {
-           error!("invalid message");
-           break;
-         },
-         Some(r) => (r, (None,oa)),
-      },
+      Some(r) => (r.0,(r.1,&anone)),
     };
     debug!("{:?} RECEIVED : {:?}", rc.me, r);
     match r {
@@ -125,17 +120,18 @@ fn request_handler <RT : RunningTypes>
             },
             Some(pri)=> {
               let repsig = rc.peerrules.signmsg(&(*rc.me), &chal);
-              let mess : ProtoMessage<RT::P,RT::V> = if oneonly.is_some() {
+              let mess : ProtoMessage<RT::P,RT::V> = if !managed {
                 // challenge use as query id
                 ProtoMessage::APONG((*rc.me).clone(),chal, repsig)
               } else { 
                 // connected
                 ProtoMessage::PONG(repsig)
               };
-              send_msg(&mess, None, s,&rc.msgenc);
+
+              // TODO HEERE TODO send msg to pong with OWS to peermanager
               // add the peer
               rc.peerrules.for_accept_ping(&afrom, &rp, &rc);
-              rp.peers.send(PeerMgmtMessage::PeerAdd(afrom, pri));
+              rp.peers.send(PeerMgmtMessage::PeerAdd(afrom, pri)); // OWS missing plus need explicit routing of pong message in it
             }
           }
         } else {
@@ -300,9 +296,13 @@ fn request_handler <RT : RunningTypes>
       },
       u => error!("Unmanaged query to serving process : {:?}", u),
     }
-    if oneonly.is_some() {
+    if !managed {
       break;
     }
+    // TODO if not oneonly (reader is managed and persistent) 
+    // exit condition + exit mutex + send event to peermanager( subsequent close write ) +
+    // exit on timeout
+    // else local disconnect and through event to peermanager (close write).
   };
   Ok(())
 }

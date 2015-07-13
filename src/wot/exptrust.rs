@@ -1,6 +1,5 @@
 use keyval::{KeyVal,Key,Attachment,SettableAttachment};
-use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
-use super::{TrustedPeer};
+use rustc_serialize::{Encodable, Encoder, Decoder};
 use std::iter;
 use utils::TimeSpecExt;
 use utils::NULL_TIMESPEC;
@@ -10,8 +9,6 @@ use num::traits::{Bounded,ToPrimitive};
 use utils;
 #[cfg(test)]
 use std::net::Ipv4Addr; 
-#[cfg(test)]
-use query::simplecache::SimpleCache;
 
 #[cfg(test)]
 #[cfg(feature="openssl-impl")]
@@ -178,13 +175,13 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ExpWotTrust<TP> {
       (false, false)
     } else {
       let mut new_trust     = <u8 as Bounded>::max_value();
-      let mut decreasetrust = false;
+//      let mut decreasetrust = false;
       let mut changedcache  = false;
       let mut nbtrust : Vec<usize> = vec![0usize; rules.len()];
       let mut cur_level     = 0;
       for count in self.calcmap.iter_mut() {
         if cur_level == cap_from_old_trust {
-          let mut icount = count.get_mut(from_old_trust.to_usize().unwrap()).unwrap();
+          let icount = count.get_mut(from_old_trust.to_usize().unwrap()).unwrap();
           if *icount > 0 {
             *icount -= 1;
             changedcache = true;
@@ -192,7 +189,7 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ExpWotTrust<TP> {
         };
 
         if cur_level == cap_from_new_trust {
-          let mut icount = count.get_mut(from_new_trust.to_usize().unwrap()).unwrap();
+          let icount = count.get_mut(from_new_trust.to_usize().unwrap()).unwrap();
           *icount += 1;
           changedcache = true;
         };
@@ -214,7 +211,7 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ExpWotTrust<TP> {
         cur_level += 1;
       }
 
-      if (new_trust == self.trust) {
+      if new_trust == self.trust {
         debug!("final trust not changed");
         // no impact on value but calcmap has changed
         (changedcache, false)

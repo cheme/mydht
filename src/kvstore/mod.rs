@@ -105,10 +105,9 @@ mod test {
   impl SettableAttachment for NodeK2 { }
 
   impl Peer for NodeK2 {
-    //type Address = <Node as Peer>::Address;
+    type Address = <Node as Peer>::Address;
     #[inline]
-    //fn to_address(&self) -> <Node as Peer>::Address {
-    fn to_address(&self) -> SocketAddr {
+    fn to_address(&self) -> <Node as Peer>::Address {
         self.0.to_address()
     }
   }

@@ -16,7 +16,7 @@ use std::thread::{JoinGuard};
 use std::thread;
 use route::Route;
 use peer::Peer;
-use transport::{TransportStream,Transport};
+use transport::{TransportStream,Transport,Address};
 use time;
 use utils::{self,OneResult};
 use msgenc::MsgEnc;
@@ -34,12 +34,13 @@ mod querymanager;
 /// utility trait to avoid lot of parameters in each struct / fn
 /// kinda aliasing
 pub trait RunningTypes : 'static + Send + Sync {
-  type P : Peer;
+  type A : Address;
+  type P : Peer<Address = Self::A>;
   type V : KeyVal;
   type R : PeerMgmtRules<Self::P, Self::V>;
   type Q : QueryRules;
   type E : MsgEnc;
-  type T : Transport;
+  type T : Transport<Address = Self::A>;
 }
 
 /// Could be use to define the final type of a DHT, most of the time we create a new object (see
@@ -47,22 +48,25 @@ pub trait RunningTypes : 'static + Send + Sync {
 /// This kind of struct is never use, it is just to a type instead of a
 /// trait in generic parameters.
 struct RunningTypesImpl<
-  P : Peer,
+  A : Address,
+  P : Peer<Address = A>,
   V : KeyVal,
   R : PeerMgmtRules<P, V>, 
   Q : QueryRules,
   E : MsgEnc, 
-  T : Transport> 
-  (PhantomData<Q>,PhantomData<P>,PhantomData<V>,PhantomData<R>,PhantomData<T>, PhantomData<E>);
+  T : Transport<Address = A>>
+  (PhantomData<A>,PhantomData<Q>,PhantomData<P>,PhantomData<V>,PhantomData<R>,PhantomData<T>, PhantomData<E>);
 
 impl<
-  P : Peer,
+  A : Address,
+  P : Peer<Address = A>,
   V : KeyVal,
   R : PeerMgmtRules<P, V>, 
   Q : QueryRules,
   E : MsgEnc, 
-  T : Transport> 
-     RunningTypes for RunningTypesImpl<P, V, R, Q, E, T> {
+  T : Transport<Address = A>>
+     RunningTypes for RunningTypesImpl<A, P, V, R, Q, E, T> {
+  type A = A;
   type P = P;
   type V = V;
   type R = R;
@@ -305,7 +309,7 @@ let cleantkstor = tkvstore.clone();
 thread::spawn (move ||{
   querymanager::start(&rquery, &cleantquery, &cleantpeer, &cleantkstor, querycache, cleandelay);
 });
-let sem = Arc::new(Semaphore::new(-1)); // wait end of two process from shutdown
+let sem = Arc::new(Semaphore::new(-1)); // wait end of two process from shutdown TODO replace that by joinhandle wait!!!
 
 let rp = RunningProcesses {
   peers : tpeer.clone(), 

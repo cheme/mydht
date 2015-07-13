@@ -49,6 +49,7 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::fs::File;
 use std::io::stdin;
+use std::net::SocketAddr;
 use time::Duration;
 use mydht::Bincode;
 //use mydht::Bencode;
@@ -56,7 +57,7 @@ use mydht::Json;
 use std::sync::mpsc::{Sender,Receiver};
 
 use mydht::{Udp,Tcp};
-use mydht::peerif::PeerMgmtRules;
+use mydht::peerif::{Peer,PeerMgmtRules};
 use mydht::{DHT,RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
 use mydht::{PeerPriority,StoragePriority,QueryChunk,QueryMode};
 use mydht::kvstoreif::KeyVal;
@@ -124,7 +125,7 @@ pub enum MsgEncDef {
 
 // this macros (expand kind) implies it is build for every enum variant (with smaller transport def smaller
 // bin), there is a multiplicative factor in size
-macro_rules! expand_transport_def(( $t:ident, $p:ident, $ftn:expr ) => (
+macro_rules! expand_transport_def(($t:ident, $p:ident, $add:expr, $ftn:expr ) => (
    match $t {
       &TransportDef::Tcp(stimeout,ctimeout) => {
         let $p = Tcp {
@@ -135,7 +136,8 @@ macro_rules! expand_transport_def(( $t:ident, $p:ident, $ftn:expr ) => (
     $ftn;
       },
       &TransportDef::Udp(buffsize) => {
-       let $p =  Udp::new(buffsize);
+        // TODO cfg with or without spawn
+       let $p =  Udp::new($add,buffsize,true).unwrap();
     type TmpTransportMacro = Udp;
        $ftn;
       },
@@ -224,11 +226,12 @@ pub fn main() {
     };
 
   expand_msgenc_def!(mencdef, menc, {
-  expand_transport_def!(tcpdef, transport, {
+  expand_transport_def!(tcpdef, transport, &mynode.to_address(), {
 
     struct RunningTypesImpl;
 
     impl RunningTypes for RunningTypesImpl {
+      type A = SocketAddr;
       type P = RSAPeer;
       type V = MulKV;
       type Q = dhtrules::DhtRulesImpl;
@@ -508,7 +511,6 @@ impl PeerMgmtRules<RSAPeer, MulKV> for UnsignedOpenAccess {
   rc : &ArcRunningContext<RT>) 
   {
   }
- 
 }
 
 //#[derive(Clone)]
@@ -657,7 +659,6 @@ impl PeerMgmtRules<RSAPeer, MulKV> for WotAccess {
     let queryconf = (QueryMode::Asynch, QueryChunk::None, None);
     mydht::store_val(rp, rc, MulKV::Wot(WotKV::Peer(ArcKV(n.clone()))), queryconf,1, StoragePriority::Local);
   }
-
 }
 
 #[derive(Debug,Clone)]
@@ -887,6 +888,11 @@ impl queryif::QueryRules for DhtRulesImpl {
       };
       (res.0, res.1.map(|d| CachePolicy(time::get_time() + d)))
   } // wether you need to store the keyval or not
+  #[inline]
+  fn is_authenticated(&self) -> bool {
+    true 
+  }
+
 }
 }
 

@@ -15,6 +15,7 @@ use procs::{peermanager,RunningContext,RunningProcesses,ArcRunningContext,Runnin
 use time::Duration;
 use std::sync::{Arc,Semaphore,Condvar,Mutex};
 use transport::TransportStream;
+use transport::WriteTransportStream;
 use transport::Transport;
 use keyval::{Attachment,SettableAttachment};
 use std::sync::mpsc::{Sender,Receiver};
@@ -25,7 +26,49 @@ use utils::{self,OneResult,receive_msg,send_msg,Either};
 use std::net::{SocketAddr};
 use msgenc::{MsgEnc,DistantEncAtt,DistantEnc};
 use procs::server;
+use std::thread::Thread;
 
+
+/// TODO replace client channel by that
+enum ClientHandle<RT : RunningTypes> {
+  /// no new thread, the function is called, for DHT where there is not much client treatment
+  /// (from peermanager thread). TODO plus all fields
+  NoSpawn(Sender<PeerMgmtMessage<RT::P,RT::V>>, <RT::P as KeyVal>::Key),
+//  NoSpawn(<RT::T as Transport>::WriteTransportStream),
+  /// WriteTransportStrem is runing in its own thread
+  Threaded(Sender<ClientMessage<RT::P,RT::V>>), 
+  /// thread do multiplexe some client : usize is client ix
+  ThreadedMult(Sender<ClientMessage<RT::P,RT::V>>,usize),
+
+}
+/// either their is a server thread or not : either 
+/// nothing to close on client removal (for event_loop we should deregister : by calling remove on
+/// transport with peer address (allways called)), or 
+/// Server Thread could be drop on client removal (no need to listen to its queries)
+/// TODO change to JoinHandle?? (no way to drop thread could try to park and drop Thread handle : a
+/// park thread with no in scope handle should be swiped) TODO drop over unsafe mut cast of thread
+/// pb is stop thread will fail since blocked on transport receive -> TODO post how to on stack!!
+/// and for now just Arcmutex an exit bool
+//type ServerHandle = Option<Thread>;
+type ServerHandle = Option<Arc<Mutex<bool>>>;
+
+/// TODO use it for storage in Route
+enum ClientInfo<RT : RunningTypes> {
+  // TODO folowing dec is correct
+  //Local(<RT::T as Transport>::WriteStream, ServerHandle),
+  Local(Box<WriteTransportStream>, ServerHandle),
+  Threaded(Sender<ClientMessage<RT::P,RT::V>>,usize, ServerHandle),
+}
+
+impl<RT : RunningTypes> ClientHandle<RT> {
+  
+  /// either 
+  fn send_msg(&self) {}
+
+  /// for mode threaded, will spawn the client thread
+  fn start() {}
+  //fn start() -> ClientHandle<RT> {}
+}
 // ping a peer creating a thread with client when com ok, if thread exists (querying peermanager)
 // use it directly to receive pong
 // return nothing, send message to ppermgmt instead
@@ -33,6 +76,7 @@ use procs::server;
 /// Start a client thread, either for one message (with or without ping) or for a connection loop
 /// (connected transport). Always begin with an accept call (complex accept should only run in
 /// connected mode).
+/// TODO add param saying if we start receive trait!!!!
 pub fn start <RT : RunningTypes>
  (p : Arc<RT::P>, 
   tcl : Option<Sender<ClientMessage<RT::P,RT::V>>>, 
@@ -52,14 +96,15 @@ pub fn start <RT : RunningTypes>
     },
     Some(pri)=> {
       // connect
-      let mut sc : IoResult<<RT::T as Transport>::Stream> = rc.transport.connectwith(&p.to_address(), Duration::seconds(5));
+      let mut sc = rc.transport.connectwith(&p.to_address(), Duration::seconds(5));
       // TODO terrible imbricated matching see if some flatmap or helper function
       match sc {
         Err(e) => {
           info!("Cannot connect");
           rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), PeerPriority::Offline));
         },
-        Ok(mut s1) => {
+        Ok((mut s1,_)) => {
+          // TODO if needed start receive and send handle to peermgmt!!!
           // closure to send message with one reconnect try on error
           let r = if withPing {
             if !connected {
@@ -174,9 +219,9 @@ pub fn recv_match <RT : RunningTypes>
   rp : &RunningProcesses<RT::P,RT::V>, 
   m : ClientMessage<RT::P,RT::V>,
   connected : bool,
-  s : &mut <RT::T as Transport>::Stream,
+  s : &mut <RT::T as Transport>::WriteStream,
   pri : PeerPriority,
-  ) -> (bool, Option<<RT::T as Transport>::Stream>) {
+  ) -> (bool, Option<<RT::T as Transport>::WriteStream>) {
   let mut ok = true;
   let mut newcon = None;
   macro_rules! sendorconnect(($mess:expr,$oa:expr) => (
@@ -184,8 +229,9 @@ pub fn recv_match <RT : RunningTypes>
     ok = send_msg($mess,$oa,s,&rc.msgenc);
     if !ok {
       debug!("trying reconnection");
-      rc.transport.connectwith(&p.to_address(), Duration::seconds(2)).map(|mut n|{
+      rc.transport.connectwith(&p.to_address(), Duration::seconds(2)).map(|(mut n,_)|{
         debug!("reconnection in client process ok");
+        // TODO send to peermgmet optional writeTransportStream
         ok = send_msg($mess, $oa,&mut n,&rc.msgenc);
         newcon = Some(n);
       });
@@ -273,11 +319,11 @@ pub fn recv_match <RT : RunningTypes>
   (ok, newcon)
 }
 
-
+// TODO TODO TODO TODO remove : ping is an asynch action and not an addable action
 pub fn ping <RT : RunningTypes>
  (p : &RT::P, 
   rc : ArcRunningContext<RT>, 
-  s : &mut <RT::T as Transport>::Stream) 
+  s : &mut <RT::T as Transport>::WriteStream) 
  -> bool {
   debug!("ping fn from {:?} to {:?}", rc.me.get_key(), p.get_key());
   let chal = rc.peerrules.challenge(&(*rc.me));
@@ -286,8 +332,10 @@ pub fn ping <RT : RunningTypes>
   // we do not wait for a result (the idea is getting a reply to put our peer in online state
   let mess : ProtoMessage<RT::P,RT::V>  = ProtoMessage::PING((*rc.me).clone(), chal.clone(), sign);
   send_msg(&mess,None,s,&rc.msgenc);
+  true
   // wait for a reply message (useless currently as socket open but more info can be send
   // (Node private key))
+  /* TODO here synch wait for reply : remove all ping wait no more synch ping
   let r1 : Option<(ProtoMessage<RT::P,RT::V>,Option<Attachment>)> = receive_msg (s, &rc.msgenc); 
   match r1 {
     None => {
@@ -313,5 +361,6 @@ pub fn ping <RT : RunningTypes>
       }
     },
   }
+  */
 }
 

@@ -2,15 +2,9 @@
 
 
 
-use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
-use std::io::Result as IoResult;
-use std::fmt::Error as FmtError;
-use std::str::FromStr;
-use std::cmp::PartialEq;
+use rustc_serialize::{Encoder,Encodable,Decoder};
 use std::cmp::Eq;
 use num::traits::Bounded;
-use std::io::Write;
-use std::ops::Deref;
 use std::collections::VecDeque;
 
 use keyval::{Key,KeyVal,Attachment,SettableAttachment};
@@ -19,14 +13,14 @@ use query::cache::CachePolicy;
 use utils::ArcKV;
 use utils::TimeSpecExt;
 use time::Timespec;
-use utils;
 
 use super::WotTrust;
 use super::PeerInfoRel;
-use super::{TrustedPeer,Truster,TrustedVal,TrustRel,PeerTrustRel};
+use super::{TrustedPeer,Truster,TrustedVal,PeerTrustRel};
 use super::trustedpeer::PeerSign;
-use peer::Peer;
 
+#[cfg(test)]
+use utils;
 #[cfg(test)]
 use super::classictrust::ClassicWotTrust;
 #[cfg(test)]
@@ -39,8 +33,6 @@ use super::rsa_openssl::RSAPeer;
 #[cfg(test)]
 use std::net::Ipv4Addr; 
 
-
-static NULL_TIMESPEC : Timespec = Timespec{ sec : 0, nsec : 0};
 
 #[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
 pub enum WotKV<TP : TrustedPeer> {
@@ -238,12 +230,12 @@ impl<TP : TrustedPeer, T : WotTrust<TP>> WotStore<TP, T> {
   S3 : KVStoreRel<Vec<u8>,Vec<u8>,PeerSign<TP>>,
   S4 : KVStore<T>
   > 
-  (mut s1 : S1, mut s2 : S2, mut s3 : S3,  mut s4 : S4, ame : ArcKV<TP>, psize : usize, rules : T::Rule) 
+  (mut s1 : S1, s2 : S2, mut s3 : S3,  mut s4 : S4, ame : ArcKV<TP>, psize : usize, rules : T::Rule) 
   -> WotStore<TP, T> {
     let me = &(*ame);
     let psignme : PeerSign<TP> = PeerSign::new(&ame, &ame, 0, 0).unwrap();
     // add me with manually set trust
-    let mut me2 = me.clone();
+    let me2 = me.clone();
     let mut trust : T = WotTrust::new(me, &rules);
     // update from non existing 0 peer from non existing 1 sign to non existing 0 peer :
     // consequently update of 0 calculate direct level as 0 (plus changing)
@@ -349,7 +341,6 @@ impl<TP : TrustedPeer, T : WotTrust<TP>> KVStore<WotKV<TP>> for WotStore<TP, T> 
             },
             Some (xpval) => {
               // add all promsign only
-              let new = false;
               let newrel = xpval.merge(&skv).unwrap_or(skv.clone());
               self.promstore.add_val(newrel, stconf);
             },
@@ -360,9 +351,8 @@ impl<TP : TrustedPeer, T : WotTrust<TP>> KVStore<WotKV<TP>> for WotStore<TP, T> 
           match self.peerstore.get_val(&skv.from) {
             None => (),
             Some(from) => {
-              let e = skv.get_sign();
 
-              if (skv.check_val(&from, &PeerTrustRel)) {
+              if skv.check_val(&from, &PeerTrustRel) {
                 // TODO some conflict mgmt in keystore
                 match self.signstore.get_val(&skv.get_key()) {
                   None => debug!("NNOOO signstore before"),
@@ -406,7 +396,7 @@ impl<TP : TrustedPeer, T : WotTrust<TP>> KVStore<WotKV<TP>> for WotStore<TP, T> 
             },
           }
         },
-        WotKV::TrustQuery(ref skv) => {
+        WotKV::TrustQuery(_) => {
           // nothing to do (get only struct).
           // add is done by adding sign or when receiving sign subsequent to find or discover
           // operation
@@ -460,7 +450,8 @@ fn remove_val(& mut self, k : &<WotKV<TP> as KeyVal>::Key) {
       self.promstore.remove_val(sk)
         // no right way to remove relation in the other direction : bad
     },
-      &WotK::P2S (ref sk) => {
+      &WotK::P2S (_) => {
+        // TODO  realy nothing???
         //self.promstore.remove_val(sk)
         // Done with peer removal
         ()
@@ -496,7 +487,7 @@ fn remove_val(& mut self, k : &<WotKV<TP> as KeyVal>::Key) {
             });
 
       },
-      &WotK::TrustQuery(ref sk) => {
+      &WotK::TrustQuery(_) => {
         // nothing to do (get only struct)
       },
 

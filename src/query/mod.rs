@@ -513,11 +513,13 @@ pub trait QueryRules : Sync + Send + 'static {
   /// seemingly remaining number of hop equal to max number of hop mode may not be send by the
   /// query originator
   fn nbhop_dec (&self) -> u8;
-  /// Server threading conf, do we create new thread for message reception when we use a transport
-  /// with multiplexed reception?
-  /// Please note that setting it to false with some transports will completly break the DHT (it
-  /// will only spawn one connection and stop waiting for others). That is why :
-  /// It defaults to true (depends on DHT).
-  fn rec_spawn_thread(&self) -> bool { true }
+  /// Define if we require authentication, this way Ping/Pong challenge exchange could be skip and peers is
+  /// immediatly stored.
+  /// So if this function reply no, implementation of challenge, signmsg and checkmsg for
+  /// peermgmtrules is useless
+  fn is_authenticated(&self) -> bool;
+  // TODO option to do authentication on every message (with is_authenticated only adress is
+  // subsequantly trusted).
+
 }
 

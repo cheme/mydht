@@ -13,7 +13,7 @@ use self::num::bigint::RandBigInt;
 use self::rand::Rng;
 use self::rand::thread_rng;
 use std::sync::{Arc,Mutex,Condvar};
-use transport::{TransportStream};
+use transport::{ReadTransportStream,WriteTransportStream};
 use keyval::{Attachment,SettableAttachment};
 use msgenc::{MsgEnc,ProtoMessage};
 use keyval::{KeyVal,AsKeyValIf};
@@ -281,8 +281,13 @@ pub struct TransientOption<V> (Option<V>);
 // when complex value : default at start to none. TODO init function
 /// for receiving one result only from other processes
 //pub type OneResult<V : Send> = Arc<(Mutex<V>,Condvar)>;
+/// TODO refactor to a struct alias and do some xtensive testcases
 pub type OneResult<V> = Arc<(Mutex<V>,Condvar)>;
 
+#[inline]
+pub fn new_oneresult<V>(v : V) -> OneResult<V>  {
+  Arc::new((Mutex::new(v),Condvar::new()))
+}
  
 macro_rules! static_buff {
   ($bname:ident, $bname_size:ident, $bsize:expr) => (
@@ -386,7 +391,7 @@ pub fn send_msg<P : Peer, V : KeyVal, T : TransportStream, E : MsgEnc>(m : &Prot
   }
 }*/
 // TODO return messg in result
-pub fn send_msg<P : Peer, V : KeyVal, T : TransportStream, E : MsgEnc>(m : &ProtoMessage<P,V>, a : Option<&Attachment>, t : &mut T, e : &E) -> bool {
+pub fn send_msg<P : Peer, V : KeyVal, T : WriteTransportStream, E : MsgEnc>(m : &ProtoMessage<P,V>, a : Option<&Attachment>, t : &mut T, e : &E) -> bool {
   let mut r = true;
   r = e.encode_into(t,m).is_ok();
   r = e.attach_into(t,a).is_ok();
@@ -396,14 +401,14 @@ pub fn send_msg<P : Peer, V : KeyVal, T : TransportStream, E : MsgEnc>(m : &Prot
 }
 
 // TODO switch receive to this iface
-pub fn receive_msg_tmp<P : Peer, V : KeyVal, T : TransportStream + Read, E : MsgEnc>(t : &mut T, e : &E) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
+pub fn receive_msg_tmp<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc>(t : &mut T, e : &E) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
     let m = try!(e.decode_from(t));
     let oa = try!(e.attach_from(t));
     Ok((m,oa))
 }
 
 #[inline]
-pub fn receive_msg<P : Peer, V : KeyVal, T : TransportStream + Read, E : MsgEnc>(t : &mut T, e : &E) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
+pub fn receive_msg<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc>(t : &mut T, e : &E) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
   receive_msg_tmp(t,e).ok()
 }
 /*

@@ -402,7 +402,7 @@ impl KeyVal for RSAPeer {
 impl SettableAttachment for RSAPeer {}
 
 impl Peer for RSAPeer {
-  //type Address = SocketAddr;
+  type Address = SocketAddr;
   #[inline]
   fn to_address(&self) -> SocketAddr {
     self.address.0

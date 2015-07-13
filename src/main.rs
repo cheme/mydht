@@ -32,7 +32,7 @@ use std::path::Path;
 use std::io::Read;
 use time::Duration;
 use std::env;
-use std::net::{Ipv4Addr};
+use std::net::{Ipv4Addr,SocketAddr};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::mpsc::channel;
@@ -50,7 +50,7 @@ use mydht::Tcp;
 use mydht::Udp;
 use mydht::{Attachment,SettableAttachment};
 use mydht::{PeerPriority};
-use mydht::peerif::PeerMgmtRules;
+use mydht::peerif::{Peer,PeerMgmtRules};
 use mydht::dhtimpl::{Node,SimpleCache,SimpleCacheQuery,Inefficientmap};
 
 use mydht::queryif::{QueryRules};
@@ -246,7 +246,7 @@ struct DummyRules2;
 unsafe impl Send for DummyRules2 {
 }
 
-impl PeerMgmtRules<Node, DummyKeyVal> for DummyRules2{
+impl PeerMgmtRules<Node, DummyKeyVal> for DummyRules2 {
   fn challenge (&self, n : &Node) -> String{
     "dummychallenge not random at all".to_string()
   }
@@ -265,6 +265,8 @@ impl PeerMgmtRules<Node, DummyKeyVal> for DummyRules2{
   fn for_accept_ping<RT : RunningTypes<P=Node,V=DummyKeyVal>>
   (&self, n : &Arc<Node>, _ : &RunningProcesses<Node,DummyKeyVal>, _ : &ArcRunningContext<RT>) 
   {}
+  
+
 }
 
 
@@ -275,7 +277,7 @@ struct DummyQueryRules{
 unsafe impl Send for DummyQueryRules {
 }
 
-impl queryif::QueryRules for DummyQueryRules{
+impl queryif::QueryRules for DummyQueryRules {
 
   #[inline]
   fn nbhop_dec (&self) -> u8{
@@ -364,6 +366,11 @@ impl queryif::QueryRules for DummyQueryRules{
       };
       (res.0, res.1.map(|d| CachePolicy(time::get_time() + d)))
   } // wether you need to store the keyval or not
+  #[inline]
+  fn is_authenticated(&self) -> bool {
+    true
+  }
+
 }
 
 static alltestmode : [QueryMode; 1] = [
@@ -447,7 +454,8 @@ fn finddistantpeer<R : PeerMgmtRules<Node, DummyKeyVal> + Clone>  (startport : u
 
 struct RunningTypesImpl<R : PeerMgmtRules<Node, DummyKeyVal>, T : Transport, E : MsgEnc> (PhantomData<R>,PhantomData<T>, PhantomData<E>);
 
-impl<R : PeerMgmtRules<Node, DummyKeyVal>, T : Transport, E : MsgEnc> RunningTypes for RunningTypesImpl<R, T, E> {
+impl<R : PeerMgmtRules<Node, DummyKeyVal>, T : Transport<Address=SocketAddr>, E : MsgEnc> RunningTypes for RunningTypesImpl<R, T, E> {
+  type A = SocketAddr;
   type P = Node;
   type V = DummyKeyVal;
   type R = R;
@@ -533,7 +541,7 @@ let tcp_transport : Tcp = Tcp {
 
         // add node without ping
         //(n.clone(), DHT::boot_server(Arc:: new((nsp,rules.clone(), DummyQueryRules{idcnt:Mutex::new(0)},Json,tcp_transport)), Inefficientmap::new(), SimpleCacheQuery::new(), SimpleCache::new(), bpeers, Vec::new()))
-        let tran = Udp::new(2048); // here udp with a json encoding with last sed over a few hop : we need a big buffer
+        let tran = Udp::new(&n.to_address(),2048,true).unwrap(); // here udp with a json encoding with last sed over a few hop : we need a big buffer
 //        (n.clone(), DHT::boot_server(Arc:: new((nsp,rules.clone(), DummyQueryRules{idcnt:Mutex::new(0)},Json,tran)), Inefficientmap::new(), SimpleCacheQuery::new(), SimpleCache::new(), bpeers, Vec::new()))
         (n.clone(), DHT::boot_server(Arc:: new(
         RunningContext::new (

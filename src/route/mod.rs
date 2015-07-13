@@ -18,7 +18,9 @@ pub mod btkad;
 /// (either for querying a peer or a value).
 /// Trait contains serializable content (Peer), but also trensiant content like channel to peer
 /// client process.
-/// TODO route to store enum over client chanel or direct writestream
+/// TODO route to store enum over client chanel or direct writestream see clientinfo (will require
+/// get_mut for info (as write stream need to be mut(or refcell usage))
+/// TODO split route into composition of transient cache of ClientInfo and routing algo?? 
 pub trait Route<P:Peer,V:KeyVal> : Send + 'static {
   /// count of running query (currently only updated in proxy mode)
   fn query_count_inc(& mut self, &P::Key);

@@ -5,6 +5,7 @@ use time::Duration;
 use peer::{Peer};
 use std::net::{SocketAddr};
 use std::path::PathBuf;
+use std::fmt::Debug;
 use mydhtresult::Result; 
 
 
@@ -18,7 +19,7 @@ pub type Attachment = PathBuf;
 /// Transport trait
 /// TODO a synch primitive to check if start in ok state (if needed (see tcp_loop where init
 /// eventloop)).
-pub trait Transport : Send + Sync + 'static {
+pub trait Transport_old : Send + Sync + 'static {
 
   /// Transport stream
   type Stream : TransportStream;
@@ -44,46 +45,60 @@ pub trait Transport : Send + Sync + 'static {
   fn connectwith(&self, &SocketAddr, Duration) -> IoResult<Self::Stream>;
 
 }
-pub trait Transport_New : Send + Sync + 'static {
+
+pub trait Address : Sync + Send + Clone + Debug + 'static {}
+
+impl Address for SocketAddr {}
+
+pub trait Transport : Send + Sync + 'static {
   type ReadStream : ReadTransportStream;
   type WriteStream : WriteTransportStream;
-  type Address : Send + Clone + Sync;
+  type Address : Address;
  
   /// should we spawn a new thread for reception
   /// Defaults to true
-  fn do_spawn_rec() -> bool {true}
+  /// First returned bool is true if spawn false if not
+  /// Second returned bool is true if spawn process need to be managed (likely to loop)
+  fn do_spawn_rec(&self) -> (bool,bool) {(true,true)}
+ 
 
   /// depending on impl method should send stream to peermgmt as a writestream (for instance tcp socket are
   /// read/write).
   /// D fn will not start every time (only if WriteStream created), and is only to transmit stream
   /// to either peermanager or as query (waiting for auth).
-  fn start<C,D> (&self, &Self::Address, C, D) -> IoResult<()>
-    where C : Fn(Self::ReadStream) -> IoResult<()>,
-          D : Fn(Self::WriteStream) -> IoResult<()>;
+  /// TODO Remove second parameter (bind address should be in initialization of transport(see udp))
+  fn start<C> (&self, &Self::Address, C) -> IoResult<()>
+    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> IoResult<()>;
 
   /// Sometimes : for instance with tcp, the writestream is the same as the read stream,
   /// if we expect to use the same (and not open two socket), receive watching process should be
   /// start.
   fn connectwith(&self, &Self::Address, Duration) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)>;
+
+  /// Disconnect an active connection in case we have a no spawn transport model (eg deregister a
+  /// socket on an event_loop).
+  /// Return false if spawn rec (then closing conn is done by ending the thread from the
+  /// peermanager).
+  fn disconnect(&self, &Self::Address) -> IoResult<bool> {Ok(false)}
 }
 
 
-pub trait WriteTransportStream : Send + Sync + Write {
+pub trait WriteTransportStream : Send + Sync + Write + 'static {
   // most of the time unneeded
   /// simply result in check connectivity false
-  fn disconnect(&mut self);
-  fn checkconnectivity(&self) -> bool;
+  fn disconnect(&mut self) -> IoResult<()>;
+//  fn checkconnectivity(&self) -> bool;
 }
 
-pub trait ReadTransportStream : Send + Sync + Read {
+pub trait ReadTransportStream : Send + Sync + Read + 'static {
   
   /// should end read loop
-  fn disconnect(&mut self);
+  fn disconnect(&mut self) -> IoResult<()>;
 
-  /// check stream connectivity, on disconnected transport
-  /// will allways return true
-  /// (false would mean something is abnormal and peer may be removed)
-  fn checkconnectivity(&self) -> bool;
+  // check stream connectivity, on disconnected transport
+  // will allways return true
+  // (false would mean something is abnormal and peer may be removed)
+ // fn checkconnectivity(&self) -> bool;
 
   /// Receive loop unless RecTermCondition return true
   /// to decide if receive loop on a ReadStream should end.
