@@ -19,7 +19,7 @@ use transport::WriteTransportStream;
 use transport::Transport;
 use keyval::{Attachment,SettableAttachment};
 use std::sync::mpsc::{Sender,Receiver};
-use query::{self,QueryMode,QueryChunk,QueryConfMsg,QueryModeMsg};
+use query::{self,QueryMode,QueryChunk,QueryModeMsg};
 use peer::Peer;
 use keyval::KeyVal;
 use utils::{self,OneResult,receive_msg,send_msg,Either};
@@ -277,7 +277,7 @@ pub fn recv_match <RT : RunningTypes>
       // and query count in server -> amix and aproxy became as simple send
       // send query with hop + 1
       // local queryid set in server here update dest
-      query::dec_nbhop(&mut queryconf, &rc.rules);
+      queryconf.dec_nbhop(&rc.rules);
       let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_NODE(queryconf, nid);
       sendorconnect!(&mess,None);
       if !ok {
@@ -288,7 +288,7 @@ pub fn recv_match <RT : RunningTypes>
     ClientMessage::KVFind(nid, oquery, mut queryconf) => {
       // no adding query counter for peer
       // send query with hop + 1
-      query::dec_nbhop(&mut queryconf, &rc.rules);
+      queryconf.dec_nbhop(&rc.rules);
       let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_VALUE(queryconf, nid);
       sendorconnect!(&mess,None);
       if !ok {
@@ -297,18 +297,18 @@ pub fn recv_match <RT : RunningTypes>
       }
     },
     ClientMessage::StoreNode(queryconf, r) => {
-      let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_NODE(queryconf.0.get_qid(), r.map(|v|DistantEnc((*v).clone())));
+      let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_NODE(queryconf.modeinfo.get_qid().map(|r|r.clone()), r.map(|v|DistantEnc((*v).clone())));
       sendorconnect!(&mess,None);
     },
     ClientMessage::StoreKV(queryconf, r) => {
-      match (queryconf.1){
+      match (queryconf.chunk){
         QueryChunk::Attachment => {
           let att = r.as_ref().and_then(|kv|kv.get_attachment().map(|p|p.clone()));
-          let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE(queryconf.0.get_qid(), r.clone().map(|v|DistantEnc(v)));
+          let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE(queryconf.modeinfo.get_qid().map(|r|r.clone()), r.clone().map(|v|DistantEnc(v)));
           sendorconnect!(&mess,att.as_ref());
         },
         _                     =>  {
-          let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE_ATT(queryconf.0.get_qid(), r.clone().map(|v|DistantEncAtt(v)));
+          let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE_ATT(queryconf.modeinfo.get_qid().map(|r|r.clone()), r.clone().map(|v|DistantEncAtt(v)));
           sendorconnect!(&mess,None);
         },
       };

@@ -43,52 +43,49 @@ pub enum QReply<P : Peer> {
   /// when querying we start a query and wait on the semaphore (actually a condvar/mutex) for a result
   Local(Condvar),
   /// reply should be forwarded given a query conf.
-  Dist(QueryConfMsg<P>),
+  Dist(QueryMsg<P>),
 }
 
 /// Query Priority.
 pub type QueryPriority = u8; // TODO rules for getting number of hop from priority -> convert this to a trait with methods.
 /// Query ID.
 pub type QueryID = String;
-/// Query conf used to initiat a query. See `QueryMode`, `QueryChunk` and `LastSentConf`.
-pub type QueryConf = (QueryMode, QueryChunk, LastSentConf); // TODO remove if only use once (currently yes)
-// TODO put it in an arc : with last sent it could be big, clone look painfull
 
+pub struct QueryConf {
+  pub mode : QueryMode,
+  pub chunk : QueryChunk,
+  pub hop_hist : LastSentConf,
+}
+
+
+#[derive(RustcDecodable,RustcEncodable,Debug,Clone)]
 ///  Main infos about a running query. Notably running mode, chunk config, no loop info, priorities
 ///  and remaing hop (on a new query it is the max number of hop) plus number of query (on each hop
 ///  number of peer where query should be forwarded).
-///  TODO replace by struct
-//pub type QueryConfMsg<P : Peer> = (QueryModeMsg<P>, QueryChunk, Option<LastSent<P>>, StoragePriority, u8, u8, QueryPriority, usize);
-pub type QueryConfMsg<P> = (QueryModeMsg<P>, QueryChunk, Option<LastSent<P>>, StoragePriority, u8, u8, QueryPriority, usize); // first u8 is remaining nb hop second one is nbquery last uint is the nb or result expected
-
-/////////////////////////////////////
-//Query conf utilities  /////////////
-/////////////////////////////////////
-
-#[inline]
-pub fn get_req_nb_res<P : Peer>(c : &QueryConfMsg<P>) -> usize {
-  c.7
+pub struct QueryMsg<P : Peer> {
+  /// Info required to identify query and its mode
+  /// TODO most of internal info should be in queryconfmsg
+  pub modeinfo : QueryModeMsg<P>,
+  /// Query chunk
+  pub chunk : QueryChunk,
+  /// history of previous hop for routing (especialy in small non anonymous networks)
+  pub hop_hist : Option<LastSent<P>>,
+  /// storage mode (propagate, store if proxy...) 
+  pub storage : StoragePriority,
+  /// remaining nb hop
+  pub rem_hop : u8,
+  /// nb query forward
+  pub nb_forw : u8,
+  /// prio
+  pub prio : QueryPriority,
+  /// nb result expected
+  pub nb_res : usize,
 }
 
-#[inline]
-pub fn get_sprio<P : Peer>(c : &QueryConfMsg<P>) -> StoragePriority {
-  c.3
-}
-#[inline]
-pub fn dec_nbhop<P : Peer, QR : DHTRules>(c : & mut QueryConfMsg<P>,qr : &QR) {
-  c.4 -= qr.nbhop_dec();
-}
-#[inline]
-pub fn get_nbhop<P : Peer>(c : &QueryConfMsg<P>) -> u8 {
-  c.4
-}
-#[inline]
-pub fn get_nbquer<P : Peer>(c : &QueryConfMsg<P>) -> u8 {
-  c.5
-}
-#[inline]
-pub fn get_prio<P : Peer>(c : &QueryConfMsg<P>) -> QueryPriority {
-  c.6
+impl<P : Peer> QueryMsg<P> {
+  pub fn dec_nbhop<QR : DHTRules>(&mut self,qr : &QR) {
+    self.rem_hop -= qr.nbhop_dec();
+  }
 }
 
 
@@ -322,7 +319,7 @@ pub fn init_query<P : Peer + Send, V : KeyVal + Send>
  nbresp   : usize,
  lifetime : Duration, 
  s : & Sender<QueryMgmtMessage<P, V>>, 
- replyto : Option<QueryConfMsg<P>>, 
+ replyto : Option<QueryMsg<P>>, 
  managed : Option<QueryID>,
 // senthist : Option<LastSent<P>>, 
 // storepol : (bool,Option<CachePolicy>),
@@ -415,54 +412,48 @@ pub enum QueryModeMsg<P : Peer> {
 /// Query mode utilities
 impl<P : Peer> QueryModeMsg<P> {
     /// Get peers to reply to if the mode allows it.
-    pub fn get_rec_node(self) -> Option<Arc<P>> {
+    pub fn get_rec_node(&self) -> Option<&Arc<P>> {
         match self {
-            QueryModeMsg::AProxy (n, _) => Some (n),
-            QueryModeMsg::Asynch (n, _) => Some (n),
-            QueryModeMsg::AMix (_,n, _) => Some (n),
+            &QueryModeMsg::AProxy (ref n, _) => Some (n),
+            &QueryModeMsg::Asynch (ref n, _) => Some (n),
+            &QueryModeMsg::AMix (_,ref n, _) => Some (n),
         }
     }
     /// Get queryid if the mode use managed query.
-    pub fn get_qid (self) -> Option<QueryID> {
-        match self {
-            QueryModeMsg::AProxy (_, q) => Some (q),
-            QueryModeMsg::Asynch (_, q) => Some (q),
-            QueryModeMsg::AMix (_,_, q) => Some (q),
-        }
-    }
-    /// Copy conf with a new qid and peer to reply to : when proxying a managed query we do not use the previous id.
-    pub fn new_hop<p : Peer> (self, p : Arc<P>, qid : QueryID) -> Self {
-        match self {
-            QueryModeMsg::AProxy (_, _) => QueryModeMsg::AProxy (p, qid),
-            QueryModeMsg::Asynch (_, _) => QueryModeMsg::Asynch (p, qid),
-            QueryModeMsg::AMix (a,_, _) => QueryModeMsg::AMix (a,p, qid),
-        }
-    }
-    /// Copy conf with a new qid : when proxying a managed query we do not use the previous id.
-    pub fn new_qid (self, qid : QueryID) -> Self {
-        match self {
-            QueryModeMsg::AProxy (a, _) => QueryModeMsg::AProxy (a, qid),
-            QueryModeMsg::Asynch (a, _) => QueryModeMsg::Asynch (a, qid),
-            QueryModeMsg::AMix (a,b, _) => QueryModeMsg::AMix (a,b, qid),
-        }
-    }
-    /// Copy conf with a new  andpeer to reply to : when proxying a managed query we do not use the previous id.
-    pub fn new_peer<p : Peer> (self, p : Arc<P>) -> Self {
-        match self {
-            QueryModeMsg::AProxy (_, a) => QueryModeMsg::AProxy (p, a),
-            QueryModeMsg::Asynch (_, a) => QueryModeMsg::Asynch (p, a),
-            QueryModeMsg::AMix (a,_, b) => QueryModeMsg::AMix (a,p, b),
-        }
-    }
-    /// Get the query id of a managed query.
-    fn get_qid_ref (& self) -> Option<&QueryID> {
+    pub fn get_qid (&self) -> Option<&QueryID> {
         match self {
             &QueryModeMsg::AProxy (_, ref q) => Some (q),
             &QueryModeMsg::Asynch (_, ref q) => Some (q),
             &QueryModeMsg::AMix (_,_, ref q) => Some (q),
         }
     }
-
+    /// Copy conf with a new qid and peer to reply to : when proxying a managed query we do not use the previous id.
+    /// TODO see in mut not better
+    pub fn new_hop<p : Peer> (&self, p : Arc<P>, qid : QueryID) -> Self {
+        match self {
+            &QueryModeMsg::AProxy (_, _) => QueryModeMsg::AProxy (p, qid),
+            &QueryModeMsg::Asynch (_, _) => QueryModeMsg::Asynch (p, qid),
+            &QueryModeMsg::AMix (ref a,_, _) => QueryModeMsg::AMix (a.clone(),p, qid),
+        }
+    }
+    /// Copy conf with a new qid : when proxying a managed query we do not use the previous id.
+    /// TODO see in mut not better
+    pub fn new_qid (&self, qid : QueryID) -> Self {
+        match self {
+            &QueryModeMsg::AProxy (ref a, _) => QueryModeMsg::AProxy (a.clone(), qid),
+            &QueryModeMsg::Asynch (ref a, _) => QueryModeMsg::Asynch (a.clone(), qid),
+            &QueryModeMsg::AMix (ref a, ref b, _) => QueryModeMsg::AMix (a.clone(), b.clone(), qid),
+        }
+    }
+    /// Copy conf with a new  andpeer to reply to : when proxying a managed query we do not use the previous id.
+    /// TODO see in mut not better
+    pub fn new_peer<p : Peer> (&self, p : Arc<P>) -> Self {
+        match self {
+            &QueryModeMsg::AProxy (_, ref a) => QueryModeMsg::AProxy (p, a.clone()),
+            &QueryModeMsg::Asynch (_, ref a) => QueryModeMsg::Asynch (p, a.clone()),
+            &QueryModeMsg::AMix (ref a,_, ref b) => QueryModeMsg::AMix (a.clone(), p, b.clone()),
+        }
+    }
 }
 
 #[derive(RustcDecodable,RustcEncodable,Debug,Clone)]

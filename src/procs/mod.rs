@@ -2,7 +2,7 @@ use std::io::Result as IoResult;
 use std::sync::mpsc::{Receiver,Sender};
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 use peer::{PeerMgmtMeths, PeerPriority};
-use query::{self,QueryConf,QueryPriority,QueryMode,QueryModeMsg,LastSent};
+use query::{self,QueryConf,QueryPriority,QueryMode,QueryModeMsg,LastSent,QueryMsg};
 use rules::DHTRules;
 use kvstore::{StoragePriority, KVStore};
 use keyval::{KeyVal};
@@ -193,17 +193,24 @@ pub fn find_local_val<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, r
 
 /// Store a value. Specifying our queryconf, and priorities. Note that priority rules are very
 /// important to know if we do propagate value or store local only or cache local only.
-pub fn store_val <RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &ArcRunningContext<RT>, val : RT::V, (qmode, qchunk, lsconf) : QueryConf, prio : QueryPriority, sprio : StoragePriority) -> bool {
-  let msgqmode = init_qmode(rp, rc, &qmode);
-  //let lastsent = lsconf.map(|n| LastSent(n,Vec::new()));
-  let lastsent = lsconf.map(|(n,ishop)| if ishop 
+pub fn store_val <RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &ArcRunningContext<RT>, val : RT::V, qconf : &QueryConf, prio : QueryPriority, sprio : StoragePriority) -> bool {
+  let msgqmode = init_qmode(rp, rc, &qconf.mode);
+  let lastsent = qconf.hop_hist.map(|(n,ishop)| if ishop 
     {LastSent::LastSentHop(n,vec![rc.me.get_key()].into_iter().collect())}
     else
     {LastSent::LastSentPeer(n,vec![rc.me.get_key()].into_iter().collect())}
   );
   let maxhop = rc.rules.nbhop(prio);
   let nbquer = rc.rules.nbquery(prio);
-  let queryconf = (msgqmode.clone(), qchunk, lastsent, sprio,maxhop,nbquer,prio,1);
+  let queryconf = QueryMsg {
+    modeinfo : msgqmode, 
+    chunk : qconf.chunk.clone(), 
+    hop_hist : lastsent, 
+    storage : sprio,
+    rem_hop : maxhop,
+    nb_forw : nbquer,
+    prio : prio,
+    nb_res : 1};
   let sync = Arc::new((Mutex::new(false),Condvar::new()));
   // for propagate 
   rp.store.send(KVStoreMgmtMessage::KVAddPropagate(val,Some(sync.clone()),queryconf));
@@ -218,28 +225,36 @@ pub fn store_val <RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : 
 
 
 /// Find a value by key. Specifying our queryconf, and priorities.
-pub fn find_val<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &ArcRunningContext<RT>, nid : <RT::V as KeyVal>::Key, (qmode, qchunk, lsconf) : QueryConf, prio : QueryPriority, sprio : StoragePriority, nb_res : usize ) -> Vec<Option<RT::V>> {
+pub fn find_val<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &ArcRunningContext<RT>, nid : <RT::V as KeyVal>::Key, qconf : &QueryConf, prio : QueryPriority, sprio : StoragePriority, nb_res : usize ) -> Vec<Option<RT::V>> {
   debug!("Finding KeyVal {:?}", nid);
   // TODO factorize code with find peer and/or specialize rules( some for peer some for kv) ??
   let maxhop = rc.rules.nbhop(prio);
   let nbquer = rc.rules.nbquery(prio);
-  let semsize = match qmode {
+  let semsize = match qconf.mode {
     QueryMode::Asynch => num::pow(nbquer.to_usize().unwrap(), maxhop.to_usize().unwrap()),
     // general case we wait reply in each client query
     _ => nbquer.to_usize().unwrap(),
   };
-  let msgqmode = init_qmode(rp, rc, &qmode);
+  let msgqmode = init_qmode(rp, rc, &qconf.mode);
   let lifetime = rc.rules.lifetime(prio);
-  let managed =  msgqmode.clone().get_qid(); // TODO redesign get_qid to avoid clone
-  let lastsent = lsconf.map(|(n,ishop)| if ishop 
+  let managed =  msgqmode.get_qid().map(|r|r.clone()); // TODO redesign get_qid to avoid clone
+  let lastsent = qconf.hop_hist.map(|(n,ishop)| if ishop 
     {LastSent::LastSentHop(n,vec![rc.me.get_key()].into_iter().collect())}
     else
     {LastSent::LastSentPeer(n,vec![rc.me.get_key()].into_iter().collect())}
   );
   let store = rc.rules.do_store(true, prio, sprio, Some(0)); // first hop
-  let queryconf = (msgqmode, qchunk, lastsent, sprio,maxhop,nbquer,prio,nb_res);
+  let queryconf = QueryMsg {
+    modeinfo : msgqmode,
+    chunk : qconf.chunk.clone(),
+    hop_hist : lastsent,
+    storage : sprio,
+    rem_hop : maxhop,
+    nb_forw : nbquer,
+    prio : prio,
+    nb_res : nb_res};
   // local query replyto set to None
-  let query = query::init_query(semsize, nb_res, lifetime, & rp.queries, None, managed,Some(store));
+  let query = query::init_query(semsize, nb_res, lifetime, &rp.queries, None, managed,Some(store));
   rp.store.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()), queryconf));
   // block until result
   query.wait_query_result().right().unwrap()
@@ -277,29 +292,36 @@ impl<RT : RunningTypes> DHT<RT> {
     init_qmode(&self.rp, &self.rc, qm)
   }
 
-  pub fn find_peer (&self, nid : <RT::P as KeyVal>::Key, (qmode, qchunk, lsconf) : QueryConf, prio : QueryPriority ) -> Option<Arc<RT::P>>  {
+  pub fn find_peer (&self, nid : <RT::P as KeyVal>::Key, qconf : &QueryConf, prio : QueryPriority ) -> Option<Arc<RT::P>>  {
     debug!("Finding peer {:?}", nid);
     let maxhop = self.rc.rules.nbhop(prio);
     println!("!!!!!!!!!!!!!!!!!!! maxhop : {}, prio : {}", maxhop, prio);
     let nbquer = self.rc.rules.nbquery(prio);
-    let semsize = match qmode {
+    let semsize = match qconf.mode {
       QueryMode::Asynch => num::pow(nbquer.to_usize().unwrap(), maxhop.to_usize().unwrap()),
       // general case we wait reply in each client query
       _ => nbquer.to_usize().unwrap(),
     };
-    let msgqmode = self.init_qmode(&qmode);
+    let msgqmode = self.init_qmode(&qconf.mode);
     let lifetime = self.rc.rules.lifetime(prio);
-    let managed =  msgqmode.clone().get_qid(); // TODO redesign get_qid to avoid clone
-    let lastsent = lsconf.map(|(n,ishop)| if ishop 
+    let managed =  msgqmode.get_qid().map(|r|r.clone());
+    let lastsent = qconf.hop_hist.map(|(n,ishop)| if ishop 
       {LastSent::LastSentHop(n,vec![self.rc.me.get_key()].into_iter().collect())}
     else
       {LastSent::LastSentPeer(n,vec![self.rc.me.get_key()].into_iter().collect())}
     );
     let nb_res = 1;
-    let queryconf = (msgqmode.clone(), qchunk, lastsent,  StoragePriority::All ,maxhop,nbquer,prio,nb_res); // querystorage priority is hadcoded but not used to (peer are curently always stored) TODO switch to option??
+    let queryconf = QueryMsg {
+      modeinfo : msgqmode.clone(), 
+      chunk : qconf.chunk.clone(), 
+      hop_hist : lastsent,
+      storage : StoragePriority::All,
+      rem_hop : maxhop,
+      nb_forw : nbquer,
+      prio : prio,
+      nb_res : nb_res}; // querystorage priority is hadcoded but not used to (peer are curently always stored) TODO switch to option??
     // local query replyto set to None
-    let query = query::init_query(semsize, nb_res, lifetime, & self.rp.queries, None, managed, None); // Dummy store policy
-//pub fn init_query (semsize : int, lifetime : Duration, rp : RunningProcesses, replyto : Option<QueryConfMsg>, managed : Option<QueryID>) -> Query<Node> 
+    let query = query::init_query(semsize, nb_res, lifetime, &self.rp.queries, None, managed, None); // Dummy store policy
     self.rp.peers.send(PeerMgmtMessage::PeerFind(nid,Some(query.clone()), queryconf));
     // block until result
     query.wait_query_result().left().unwrap()
@@ -313,7 +335,7 @@ impl<RT : RunningTypes> DHT<RT> {
   // implementation on its content (there is quite a lot of clone involved).
   /// Find a value by key. Specifying our queryconf, and priorities.
   #[inline]
-  pub fn find_val (&self, nid : <RT::V as KeyVal>::Key, qc : QueryConf, prio : QueryPriority, sprio : StoragePriority, nb_res : usize ) -> Vec<Option<RT::V>> {
+  pub fn find_val (&self, nid : <RT::V as KeyVal>::Key, qc : &QueryConf, prio : QueryPriority, sprio : StoragePriority, nb_res : usize ) -> Vec<Option<RT::V>> {
     find_val(&self.rp, &self.rc, nid, qc, prio, sprio, nb_res)
   }
 
@@ -322,7 +344,7 @@ impl<RT : RunningTypes> DHT<RT> {
   /// Store a value. Specifying our queryconf, and priorities. Note that priority rules are very
   /// important to know if we do propagate value or store local only or cache local only.
   #[inline]
-  pub fn store_val (&self, val : RT::V, qc : QueryConf, prio : QueryPriority, sprio : StoragePriority) -> bool {
+  pub fn store_val (&self, val : RT::V, qc : &QueryConf, prio : QueryPriority, sprio : StoragePriority) -> bool {
     store_val(&self.rp, &self.rc, val, qc, prio, sprio)
   }
 

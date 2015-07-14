@@ -7,7 +7,7 @@ use std::str::from_utf8;
 use procs::{client,RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
 use std::collections::{HashMap,BTreeSet,VecDeque};
 use std::sync::{Arc,Semaphore,Condvar,Mutex};
-use query::{self,QueryModeMsg,LastSent,QueryConfMsg};
+use query::{self,QueryModeMsg,LastSent,QueryMsg};
 use route::Route;
 use std::sync::mpsc::channel;
 use std::thread;
@@ -115,14 +115,14 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
         }
       },
       Ok(PeerMgmtMessage::KVFind(key, oquery, queryconf))  => {
-        let remhop = query::get_nbhop(&queryconf);
-        let nbquery = query::get_nbquer(&queryconf);
-        let qp = query::get_prio(&queryconf);
+        let remhop = queryconf.rem_hop;
+        let nbquery = queryconf.nb_forw;
+        let qp = queryconf.prio;
         if remhop > 0 {
           // get closest node to query
           // if no result launch (spawn) discovery processing
           debug!("!!!in peer find of procman bef get closest");
-          let peers = match queryconf.2 {
+          let peers = match queryconf.hop_hist {
             None => route.get_closest_for_query(&key, nbquery, &VecDeque::new()),
             Some(LastSent::LastSentPeer(_, ref filter)) | Some(LastSent::LastSentHop(_, ref filter))  => route.get_closest_for_query(&key, nbquery, filter),
           };
@@ -130,7 +130,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
           let rsize = peers.len();
           // update number of result to expect for each proxyied request
           let nbqus = rsize.to_usize().unwrap();
-          let rnbres = query::get_req_nb_res(&newqueryconf);
+          let rnbres = newqueryconf.nb_res;
           let newrnbres = if nbqus == 0 {
             rnbres
           } else {
@@ -142,7 +142,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
               newrnbres_round
             }
           };
-          newqueryconf.7 = newrnbres;
+          newqueryconf.nb_res = newrnbres;
           match oquery {
             Some(ref query) => {
               // adjust nb request
@@ -171,9 +171,9 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
         }
       },
       Ok(PeerMgmtMessage::PeerFind(nid, oquery, queryconf))  => {
-        let remhop = query::get_nbhop(&queryconf);
-        let nbquery = query::get_nbquer(&queryconf);
-        let qp = query::get_prio(&queryconf);
+        let remhop = queryconf.rem_hop;
+        let nbquery = queryconf.nb_forw;
+        let qp = queryconf.prio;
    
         // query ourselve if here and local // no ping at this point : trust current
         // status, proxyto is either right with destination or left with a possible result in
@@ -189,7 +189,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
             if remhop > 0 {
               // get closest node to query
               // if no result launch (spawn) discovery processing
-              let peers = match queryconf.2 {
+              let peers = match queryconf.hop_hist {
                 None => route.get_closest_for_node(&nid, nbquery, &VecDeque::new()),
                 Some(LastSent::LastSentPeer(_, ref filter)) | Some(LastSent::LastSentHop(_, ref filter))  => 
                   route.get_closest_for_node(&nid, nbquery, filter),
@@ -231,15 +231,15 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
                 // Here no query object created
                 // eg Async hop reply directly
                 debug!("!!!AsyncResult returning {:?}", r);
-                match queryconf.0.clone().get_rec_node() {
-                  Some (recnode) => {
+                match queryconf.modeinfo.get_rec_node().map(|r|r.clone()) {
+                  Some (ref recnode) => {
                     let mess = ClientMessage::StoreNode(queryconf, r);
                     if (!local){
                       // send result directly
-                      let s = get_or_init_client_connection::<RT, T>(&recnode, & rc , & mut route, & rp, false, None);
+                      let s = get_or_init_client_connection::<RT, T>(&recnode.clone(), & rc , & mut route, & rp, false, None);
                       s.send(mess);
                     } else {
-                       send_nonconnected::<RT, T> (&recnode, & rc , & mut route, & rp, mess);
+                       send_nonconnected::<RT, T> (recnode, & rc , & mut route, & rp, mess);
                     };
                   },
                   _ => {error!("None query in none asynch peerfind");},
@@ -282,7 +282,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
          break;
        },
        Ok(PeerMgmtMessage::StoreNode(qconf, result)) => {
-         match qconf.0.clone().get_rec_node() {
+         match qconf.modeinfo.get_rec_node().map(|r|r.clone()) {
            Some (rec)  => {
              if rec.get_key() != rc.me.get_key() { 
                let mess = ClientMessage::StoreNode(qconf, result);
@@ -297,14 +297,14 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
              }
            },
            None => {
-             error!("Cannot proxied received store node to originator for conf {:?} ",qconf.0);
+             error!("Cannot proxied received store node to originator for conf {:?} ",qconf.modeinfo);
            },
          }
        },
        Ok(PeerMgmtMessage::StoreKV(qconf, result)) => {
          // (query sync over clients(the query contains nothing)) // TODO factorize a fun
-         // for proxied msg
-         match qconf.0.clone().get_rec_node() {
+         // for proxied msg 
+         match qconf.modeinfo.get_rec_node().map(|r|r.clone()) {
            Some (rec) => {
              if rec.get_key() != rc.me.get_key() {
                let mess = ClientMessage::StoreKV(qconf, result);
@@ -319,7 +319,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
              }
            },
            None => {
-             error!("Cannot proxied received store value to originator for conf {:?} ",qconf.0);
+             error!("Cannot proxied received store value to originator for conf {:?} ",qconf.modeinfo);
            },
          }
        },
@@ -439,36 +439,35 @@ let (upd, s) = match route.get_node(&p.get_key()) {
 }
 
 #[inline]
-fn update_lastsent_conf<P : Peer> ( queryconf : &QueryConfMsg<P>,  peers : &Vec<Arc<P>>, nbquery : u8) -> QueryConfMsg<P> {
-                let mut newqueryconf = queryconf.clone();
-                newqueryconf.2 = match newqueryconf.2 {
-                  Some(LastSent::LastSentPeer(maxnb,mut lpeers)) => {
-                    let totalnb =  (peers.len() + lpeers.len());
-                    if totalnb > maxnb {
-                    for _ in 0..(totalnb - maxnb) {
-                      lpeers.pop_front();
-                    };}else{};
-                    for p in peers.iter(){
-                      lpeers.push_back(p.get_key());
-                    };
-                    Some(LastSent::LastSentPeer(maxnb, lpeers))
-                    
-                  },
-                  Some(LastSent::LastSentHop(mut hop,mut lpeers)) => {
-                    if(hop > 0){
-                      hop -= 1;
-                    }
-                    else{
-                    for _ in 0..(nbquery) { // this is an approximation (could be less)
-                      lpeers.pop_front();
-                    };
-                    };
-                    for p in peers.iter(){
-                      lpeers.push_back(p.get_key());
-                    };
-                    Some(LastSent::LastSentHop(hop, lpeers))
-                  },
-                  None => None,
-                };
-                newqueryconf
+fn update_lastsent_conf<P : Peer> ( queryconf : &QueryMsg<P>,  peers : &Vec<Arc<P>>, nbquery : u8) -> QueryMsg<P> {
+  let mut newqueryconf = queryconf.clone();
+  newqueryconf.hop_hist = match newqueryconf.hop_hist {
+    Some(LastSent::LastSentPeer(maxnb,mut lpeers)) => {
+      let totalnb =  (peers.len() + lpeers.len());
+      if totalnb > maxnb {
+        for _ in 0..(totalnb - maxnb) {
+          lpeers.pop_front();
+        };
+      }else{};
+      for p in peers.iter(){
+        lpeers.push_back(p.get_key());
+      };
+      Some(LastSent::LastSentPeer(maxnb, lpeers))
+    },
+    Some(LastSent::LastSentHop(mut hop,mut lpeers)) => {
+      if(hop > 0){
+        hop -= 1;
+      } else {
+        for _ in 0..(nbquery) { // this is an approximation (could be less)
+          lpeers.pop_front();
+        };
+      };
+      for p in peers.iter(){
+        lpeers.push_back(p.get_key());
+      };
+      Some(LastSent::LastSentHop(hop, lpeers))
+    },
+    None => None,
+  };
+  newqueryconf
 }

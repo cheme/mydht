@@ -155,16 +155,37 @@ impl SettableAttachment for DummyKeyValIn {
 
 
 //#[test]
-fn aproxyPeerDiscovery () {peerConnectScenario((QueryMode::AProxy, QueryChunk::None, Some((4,false))), 40534, 5, 2)}
+fn aproxyPeerDiscovery () {
+  let qconf = QueryConf {
+    mode : QueryMode::AProxy,
+    chunk : QueryChunk::None,
+    hop_hist : Some((4,false)),
+  };
+  peerConnectScenario(&qconf, 40534, 5, 2)
+}
 
 //#[test]
-fn amixProxyPeerDiscovery () {peerConnectScenario((QueryMode::AMix(9), QueryChunk::None, None), 40534, 5, 2)}
+fn amixProxyPeerDiscovery () {
+  let qconf = QueryConf {
+    mode : QueryMode::AMix(9),
+    chunk : QueryChunk::None,
+    hop_hist : None,
+  };
+  peerConnectScenario(&qconf, 40534, 5, 2)
+}
 
 //#[test]
-fn asynchPeerDiscovery () {peerConnectScenario((QueryMode::Asynch, QueryChunk::None, Some((3,true))), 41534, 5, 2)}
+fn asynchPeerDiscovery () {
+  let qconf = QueryConf {
+    mode : QueryMode::Asynch,
+    chunk : QueryChunk::None,
+    hop_hist : Some((3,true)),
+  };
+  peerConnectScenario(&qconf, 41534, 5, 2)
+}
 
 
-fn peerConnectScenario (queryconf : QueryConf, startPort: u16, nbpeer : u16, knownratio : u16){
+fn peerConnectScenario (queryconf : &QueryConf, startPort: u16, nbpeer : u16, knownratio : u16){
 
     let mut r : Vec<u16> = (startPort .. startPort+nbpeer).collect();
     let nodes : Vec<Node> = r.iter().map(
@@ -200,7 +221,7 @@ let tcp_transport : Tcp = Tcp {
     let mut itern = nodes.iter();
     itern.next();
     for n in itern{
-        let fpeer = fprocs.find_peer(n.nodeid.clone(), queryconf.clone(), 1); // TODO put in future first then match result (simultaneous search) + queryconf.clone inacceptable : use Arc queryconf!!!
+        let fpeer = fprocs.find_peer(n.nodeid.clone(), queryconf, 1); // TODO put in future first then match result (simultaneous search)
         let matched = match fpeer {
             Some(v) => *v == *n,
             _ => false,
@@ -458,9 +479,13 @@ fn testloopget (){ // TODO this only test loop over our node TODO circuit loop 
 
 fn finddistantpeer<M : PeerMgmtMeths<Node, DummyKeyVal> + Clone>  (startport : u16,nbpeer : usize, qm : QueryMode, meths : M, prio : QueryPriority, map : &[&[usize]], find : bool) {
     let peers = initpeers(startport,nbpeer, map, meths);
-    let queryconf = (qm.clone(), QueryChunk::None, Some((3,true))); // note that we only unloop to 3 hop 
+    let queryconf = QueryConf {
+      mode : qm.clone(), 
+      chunk : QueryChunk::None, 
+      hop_hist : Some((3,true))
+    }; // note that we only unloop to 3 hop 
     let dest = peers.get(nbpeer -1).unwrap().0.clone();
-    let fpeer = peers.get(0).unwrap().1.find_peer(dest.nodeid.clone(), queryconf.clone(), prio);
+    let fpeer = peers.get(0).unwrap().1.find_peer(dest.nodeid.clone(), &queryconf, prio);
     let matched = match fpeer {
        Some(ref v) => **v == dest,
        _ => false,
@@ -595,9 +620,13 @@ fn testPeer2hopfindval_udp (){
     let peers = initpeers_udp(startport,nbpeer, map, DummyRules);
     let ref dest = peers.get(nbpeer -1).unwrap().1;
     for conf in alltestmode.iter(){
-    let queryconf = (conf.clone(), QueryChunk::None, Some((7,false)));
-    assert!(dest.store_val(val.clone(), queryconf.clone(), prio, StoragePriority::Local));
-    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), queryconf.clone(), prio,StoragePriority::NoStore, 1).pop().unwrap_or(None);
+    let queryconf = QueryConf {
+      mode : conf.clone(), 
+      chunk : QueryChunk::None, 
+      hop_hist : Some((7,false))
+    };
+    assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
+    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), &queryconf, prio,StoragePriority::NoStore, 1).pop().unwrap_or(None);
     assert_eq!(res, Some(val.clone()));
     }
 }
@@ -615,9 +644,13 @@ fn testPeer2hopfindval (){
     let peers = initpeers(startport,nbpeer, map, DummyRules);
     let ref dest = peers.get(nbpeer -1).unwrap().1;
     for conf in alltestmode.iter(){
-    let queryconf = (conf.clone(), QueryChunk::None, Some((7,false)));
-    assert!(dest.store_val(val.clone(), queryconf.clone(), prio, StoragePriority::Local));
-    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), queryconf.clone(), prio,StoragePriority::NoStore, 1).pop().unwrap_or(None);
+    let queryconf = QueryConf {
+      mode : conf.clone(), 
+      chunk : QueryChunk::None, 
+      hop_hist : Some((7,false))
+    };
+    assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
+    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), &queryconf, prio,StoragePriority::NoStore, 1).pop().unwrap_or(None);
     assert_eq!(res, Some(val.clone()));
     }
 }
@@ -632,14 +665,18 @@ fn testPeer2hopstoreval (){
     let peers = initpeers(startport,nbpeer, map, DummyRules);
     let ref dest = peers.get(nbpeer -1).unwrap().1;
     let conf = alltestmode.get(0).unwrap();
-    let queryconf = (conf.clone(), QueryChunk::None, Some((4,true)));
-    assert!(dest.store_val(val.clone(), queryconf.clone(), prio, StoragePriority::Local));
-    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), queryconf.clone(), prio,StoragePriority::Local, 1).pop().unwrap_or(None);
+    let queryconf = QueryConf {
+      mode : conf.clone(), 
+      chunk : QueryChunk::None, 
+      hop_hist : Some((4,true))
+    };
+    assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
+    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), &queryconf, prio,StoragePriority::Local, 1).pop().unwrap_or(None);
     assert_eq!(res, Some(val.clone()));
     // prio 10 is nohop (we see if localy store)
-    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), queryconf.clone(), 10,StoragePriority::NoStore, 1).pop().unwrap_or(None);
+    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), &queryconf, 10,StoragePriority::NoStore, 1).pop().unwrap_or(None);
     assert_eq!(res, Some(val.clone()));
-    let res = peers.get(1).unwrap().1.find_val(val.get_key().clone(), queryconf.clone(), 10,StoragePriority::NoStore, 1).pop().unwrap_or(None);
+    let res = peers.get(1).unwrap().1.find_val(val.get_key().clone(), &queryconf, 10,StoragePriority::NoStore, 1).pop().unwrap_or(None);
     assert!(!(res == Some(val.clone())));
 }
 

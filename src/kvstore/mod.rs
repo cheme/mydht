@@ -3,7 +3,7 @@ use procs::{ClientChanel};
 use peer::{Peer,PeerPriority};
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 use std::fmt;
-use super::query::{Query, QueryConfMsg, QueryPriority};
+use super::query::{Query, QueryPriority};
 use std::sync::{Arc,Condvar,Mutex};
 use utils::OneResult;
 use query::cache::CachePolicy;

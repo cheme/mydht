@@ -208,7 +208,7 @@ pub mod wot;
 pub use peer::{PeerPriority};
 pub use procs::{DHT, RunningContext, RunningProcesses, ArcRunningContext, RunningTypes};
 pub use procs::{store_val, find_val, find_local_val};
-pub use query::{QueryConf,QueryPriority,QueryMode,QueryChunk};
+pub use query::{QueryConf,QueryPriority,QueryMode,QueryChunk,LastSentConf};
 pub use query::cache::{CachePolicy};
 pub use kvstore::{StoragePriority};
 pub use keyval::{Attachment,SettableAttachment};

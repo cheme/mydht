@@ -8,7 +8,7 @@
 
 use keyval::{KeyVal,Attachment};
 use peer::{Peer};
-use query::{QueryID,QueryConfMsg};
+use query::{QueryID,QueryMsg};
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 use mydhtresult::Result as MDHTResult;
 use std::io::Write;
@@ -43,6 +43,7 @@ pub trait MsgEnc : Send + Sync + 'static {
 
 #[derive(RustcDecodable,RustcEncodable,Debug)]
 /// Messages between peers
+/// TODO ref variant for send
 pub enum ProtoMessage<P : Peer, V : KeyVal> {
   /// Our node pinging plus challenge and message signing
   PING(P,String, String), 
@@ -59,9 +60,9 @@ pub enum ProtoMessage<P : Peer, V : KeyVal> {
   /// reply to query of propagate
   STORE_VALUE_ATT(Option<QueryID>, Option<DistantEncAtt<V>>), // same as store value but use encoding distant with attachment
   /// Query for Peer
-  FIND_NODE(QueryConfMsg<P>, P::Key), // int is remaining nb hop -- TODO plus message signing for private node communication (add a primitive to check mess like those
+  FIND_NODE(QueryMsg<P>, P::Key), // int is remaining nb hop -- TODO plus message signing for private node communication (add a primitive to check mess like those
   /// Query for Value
-  FIND_VALUE(QueryConfMsg<P>, V::Key),
+  FIND_VALUE(QueryMsg<P>, V::Key),
 }
 
 #[derive(Debug)]

@@ -59,7 +59,7 @@ use std::sync::mpsc::{Sender,Receiver};
 use mydht::{Udp,Tcp};
 use mydht::dhtif::{Peer,PeerMgmtMeths};
 use mydht::{DHT,RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
-use mydht::{PeerPriority,StoragePriority,QueryChunk,QueryMode};
+use mydht::{PeerPriority,StoragePriority,QueryChunk,QueryMode,QueryConf};
 use mydht::dhtif::KeyVal;
 use mydht::dhtif::FileKeyVal;
 use mydht::transportif::Transport;
@@ -360,8 +360,12 @@ let mut multip_store = move || {
           match kv {
             None => println!("cannot initialize file"),
             Some(kv) => {
-          let queryconf = (QueryMode::Asynch, QueryChunk::None, None);
-          if serv.store_val (MulKV::File(fskeyval::FSKV::File(ArcKV::new(kv))), queryconf, 1, StoragePriority::Local){
+          let queryconf = QueryConf {
+            mode : QueryMode::Asynch, 
+            chunk : QueryChunk::None, 
+            hop_hist : None,
+          };
+          if serv.store_val (MulKV::File(fskeyval::FSKV::File(ArcKV::new(kv))), &queryconf, 1, StoragePriority::Local){
             println!("local store ok");
           }else{
             println!("local store ko");
@@ -374,8 +378,12 @@ let mut multip_store = move || {
           let mut query = String::new();
           stdin.read_line(&mut query).unwrap();
           query.pop();
-          let queryconf = (QueryMode::Asynch, QueryChunk::None, Some((2,false)));
-          let result = serv.find_val(MulK::File(fskeyval::FSK::Query(query)), queryconf.clone(), 1, StoragePriority::Local, 1);
+          let queryconf = QueryConf {
+            mode : QueryMode::Asynch, 
+            chunk : QueryChunk::None, 
+            hop_hist : Some((2,false))
+          };
+          let result = serv.find_val(MulK::File(fskeyval::FSK::Query(query)), &queryconf, 1, StoragePriority::Local, 1);
           match result.into_iter().next().unwrap_or(None) {
             Some(kv) => {
               println!("found {:?}",kv);
@@ -388,8 +396,12 @@ let mut multip_store = move || {
                let hash = q.0.result.get(six.parse().unwrap());
                hash.map(|h|{
                  // TODO file size in h then use treshold to add use querychuncknone or file
-                 let queryconf2 = (QueryMode::Asynch, QueryChunk::Attachment, Some((2,false)));
-                 let result = serv.find_val(MulK::File(fskeyval::FSK::File(h.1.clone())), queryconf2, 1, StoragePriority::Local, 1);
+                 let queryconf2 = QueryConf {
+                   mode : QueryMode::Asynch, 
+                   chunk : QueryChunk::Attachment, 
+                   hop_hist : Some((2,false)),
+                 };
+                 let result = serv.find_val(MulK::File(fskeyval::FSK::File(h.1.clone())), &queryconf2, 1, StoragePriority::Local, 1);
                  println!("getfile {:?}",result);
                });
                  },
@@ -558,12 +570,16 @@ impl WotAccess {
     if disc {
           if rec {
           debug!("NEED Peer Discovery");
-          let queryconf = (QueryMode::Asynch, QueryChunk::None, Some((3,true)));
+          let queryconf = QueryConf {
+            mode : QueryMode::Asynch, 
+            chunk : QueryChunk::None, 
+            hop_hist : Some((3,true))
+          };
           // for now find one promsign TODO find n promsign!!! (if we got one with only one sign,
           // we are kinda f***
           // TODO configure number of prom for discovery
           let nbprosign = 5;
-          let promsigns = mydht::find_val(rp, rc, MulK::Wot(WotK::P2S(n.get_key())), queryconf.clone(), 1, StoragePriority::NoStore, 5);
+          let promsigns = mydht::find_val(rp, rc, MulK::Wot(WotK::P2S(n.get_key())), &queryconf, 1, StoragePriority::NoStore, 5);
 
           debug!("PROMSIGN got : {:?}", promsigns);
           // fuse result
@@ -573,7 +589,7 @@ impl WotAccess {
              // in query and include in wotkv impl : because sometime it is already here
              // (subsequent to findpeer), sometime not (direct reply in Asynch mode for
              // instance).
-             mydht::store_val(rp, rc, MulKV::Wot(WotKV::Peer(ArcKV(n.clone()))), queryconf.clone(),1, StoragePriority::Local);
+             mydht::store_val(rp, rc, MulKV::Wot(WotKV::Peer(ArcKV(n.clone()))), &queryconf,1, StoragePriority::Local);
           };
 
           for promsign in promsigns.into_iter() {
@@ -589,7 +605,7 @@ impl WotAccess {
                   for sigkey in prosigns.signby.iter() {
                     if !alreadysend.contains(sigkey){
                     // Do find on sign (about only) through multiple find to update this 
-                    match mydht::find_val(rp, rc, MulK::Wot(WotK::Sign(sigkey.clone())), queryconf.clone(), 1, StoragePriority::Local, 1).pop().unwrap_or(None) {
+                    match mydht::find_val(rp, rc, MulK::Wot(WotK::Sign(sigkey.clone())), &queryconf, 1, StoragePriority::Local, 1).pop().unwrap_or(None) {
                       None => (),
                       Some(_) => {
                         alreadysend.insert(sigkey.clone());
@@ -656,8 +672,12 @@ impl PeerMgmtMeths<RSAPeer, MulKV> for WotAccess {
   rc : &ArcRunningContext<RT>) 
   {
     // update peer in peer kv (for new peer associated info) - localonly
-    let queryconf = (QueryMode::Asynch, QueryChunk::None, None);
-    mydht::store_val(rp, rc, MulKV::Wot(WotKV::Peer(ArcKV(n.clone()))), queryconf,1, StoragePriority::Local);
+    let queryconf = QueryConf {
+      mode : QueryMode::Asynch, 
+      chunk : QueryChunk::None, 
+      hop_hist : None,
+    };
+    mydht::store_val(rp, rc, MulKV::Wot(WotKV::Peer(ArcKV(n.clone()))), &queryconf,1, StoragePriority::Local);
   }
 }
 

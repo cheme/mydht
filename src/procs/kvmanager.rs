@@ -46,9 +46,9 @@ pub fn start
     match r.recv() {
       Ok(KVStoreMgmtMessage::KVAddPropagate(kv,ares,stconf)) => {
         info!("Adding kv : {:?} from {:?}", kv, rc.me);
-        let remhop = query::get_nbhop(&stconf);
-        let qp = query::get_prio(&stconf);
-        let qps = query::get_sprio(&stconf);
+        let remhop = stconf.rem_hop;
+        let qp = stconf.prio;
+        let qps = stconf.storage;
         let esthop = (rc.rules.nbhop(qp) - remhop).to_usize().unwrap();
         let storeconf = rc.rules.do_store(true, qp, qps, Some(esthop)); // first hop
 
@@ -107,7 +107,7 @@ pub fn start
             rp.peers.send(PeerMgmtMessage::StoreKV(queryconf, Some(val.clone())));
           },
           None => {
-            if query::get_nbhop(&queryconf) > 0 {
+            if queryconf.rem_hop > 0 {
               // proxy
               rp.peers.send(PeerMgmtMessage::KVFind(key, None, queryconf));
             } else {
@@ -136,7 +136,7 @@ pub fn start
           },
         };
         if !success {
-          if query::get_nbhop(&queryconf) > 0 {
+          if queryconf.rem_hop > 0 {
             debug!("!!!KV not Found match or multiple result needed !!! proxying");
             rp.peers.send(PeerMgmtMessage::KVFind(key, Some(query), queryconf));
           } else {
