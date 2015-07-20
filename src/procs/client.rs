@@ -28,12 +28,11 @@ use msgenc::{MsgEnc,DistantEncAtt,DistantEnc};
 use procs::server;
 use std::thread::Thread;
 
-
 /// TODO replace client channel by that
 /// Reference used to send Client Message.
 /// This could be used by any process to keep trace of a client process : 
 /// for instance from server client direct client query (without peermgmt)
-enum ClientHandle<RT : RunningTypes> {
+pub enum ClientHandle<P : Peer, V : KeyVal, TW : WriteTransportStream> {
 
   /// Uninitialised client or no handle from peermgmt
   /// First message is querying a handle from peermgmt (through OneResult), when in server.
@@ -42,28 +41,33 @@ enum ClientHandle<RT : RunningTypes> {
   /// - optional WriteStream, this is only in server context when transport has instantiate write
   /// stream on connect
   /// Result in communication with PeerMgmt Process
-  NotStarted(Option<<RT::T as Transport>::WriteStream>),
+  NotStarted(Option<TW>),
 
   /// no new thread, the function is called, for DHT where there is not much client treatment
   /// (from peermanager thread). TODO plus all fields
   /// Result in communication with peermgmtprocess
   Local,
 
-  /// WriteTransportStrem is runing (loop) in its own thread
-  Threaded(Sender<ClientMessage<RT::P,RT::V>>),
+  /// WriteTransportStream is runing (loop) in its own thread
+  Threaded(Sender<ClientMessage<P,V>>),
 
   /// thread do multiplexe some client : usize is client ix
-  ThreadedMult(Sender<ClientMessage<RT::P,RT::V>>, usize),
+  ThreadedMult(Sender<ClientMessage<P,V>>, usize),
 
 }
 
-impl<RT : RunningTypes> ClientHandle<RT> {
+impl<P : Peer, V : KeyVal, TW : WriteTransportStream> ClientHandle<P,V,TW> {
   
   /// either 
-  fn send_msg(&self) {}
+  pub fn send_msg(&self) {}
+
+  pub fn send_pong(&self,repsig : String) {
+    // TODO !!
+  }
+
 
   /// for mode threaded, will spawn the client thread
-  fn start() {}
+  pub fn start() {}
   //fn start() -> ClientHandle<RT> {}
 }
 
@@ -80,7 +84,7 @@ pub fn start <RT : RunningTypes>
   tcl : Option<Sender<ClientMessage<RT::P,RT::V>>>, 
   orcl : Option<Receiver<ClientMessage<RT::P,RT::V>>>, 
   rc : ArcRunningContext<RT>, 
-  rp : RunningProcesses<RT::P,RT::V>, 
+  rp : RunningProcesses<RT>,
   withPing: bool, 
   withPingReply : Option<OneResult<bool>>,
   omessage : Option<ClientMessage<RT::P,RT::V>>,
@@ -123,7 +127,7 @@ pub fn start <RT : RunningTypes>
                 utils::ret_one_result(&ares, r)
               });
               if r {
-                rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), pri));
+                rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), pri.clone()));
                 true
               } else {
                 error!("Started unpingable client process");
@@ -133,7 +137,7 @@ pub fn start <RT : RunningTypes>
             }
           } else {
             if connected {
-              rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), pri));
+              rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), pri.clone()));
             };
             true
           };
@@ -145,7 +149,7 @@ pub fn start <RT : RunningTypes>
                 error!("Unexpected client process without channel or message")
               },
               Some(m) => {
-                recv_match(&p,&rc,&rp,m,false, &mut s1,pri);
+                recv_match(&p,&rc,&rp,m,false, &mut s1,&pri);
               },
             },
             Some(ref r) => {
@@ -156,7 +160,7 @@ pub fn start <RT : RunningTypes>
                     break;
                   },
                   Ok(m) => {
-                    let (okrecv, s) = recv_match(&p,&rc,&rp,m,true,&mut s1,pri); 
+                    let (okrecv, s) = recv_match(&p,&rc,&rp,m,true,&mut s1,&pri); 
                      match s {
                        // update of stream is for possible reconnect
                        Some(s) => s1 = s,
@@ -180,7 +184,7 @@ pub fn start <RT : RunningTypes>
     // remove channel
     // TODO unsafe race condition here (a new one could have been open in between)
     debug!("Query for remove channnel");
-    rp.peers.send(PeerMgmtMessage::PeerRemChannel(p.clone()));
+    rp.peers.send(PeerMgmtMessage::PeerRemFromClient(p.clone(), PeerPriority::Offline));
 //    tcl.unwrap().drop();
   } 
   if !ok {
@@ -214,11 +218,11 @@ pub fn start <RT : RunningTypes>
 pub fn recv_match <RT : RunningTypes>
  (p : &Arc<RT::P>, 
   rc : &ArcRunningContext<RT>, 
-  rp : &RunningProcesses<RT::P,RT::V>, 
+  rp : &RunningProcesses<RT>,
   m : ClientMessage<RT::P,RT::V>,
   connected : bool,
   s : &mut <RT::T as Transport>::WriteStream,
-  pri : PeerPriority,
+  pri : &PeerPriority,
   ) -> (bool, Option<<RT::T as Transport>::WriteStream>) {
   let mut ok = true;
   let mut newcon = None;
@@ -241,6 +245,9 @@ pub fn recv_match <RT : RunningTypes>
   ));
 
   match m {
+    ClientMessage::PeerPong(_,_) => {
+      // TODO !!!!
+    },
     ClientMessage::ShutDown => {
       warn!("shuting client");
       ok = false;
@@ -264,7 +271,7 @@ pub fn recv_match <RT : RunningTypes>
           // Add peer as lower priority and pending message and add its socket!!!
            debug!("Pong reply ok, adding or updating peer {:?}, {:?}", p.get_key(), pri);
            // add node as ok (with previous priority)
-           rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p, pri));
+           rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p, pri.clone()));
         } else {
           debug!("User seem offline");
           rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p, PeerPriority::Offline));
@@ -296,19 +303,19 @@ pub fn recv_match <RT : RunningTypes>
         oquery.map(|query|query.lessen_query(1, &rp.peers));
       }
     },
-    ClientMessage::StoreNode(queryconf, r) => {
-      let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_NODE(queryconf.modeinfo.get_qid().map(|r|r.clone()), r.map(|v|DistantEnc((*v).clone())));
+    ClientMessage::StoreNode(oqid, r) => {
+      let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_NODE(oqid, r.map(|v|DistantEnc((*v).clone())));
       sendorconnect!(&mess,None);
     },
-    ClientMessage::StoreKV(queryconf, r) => {
-      match (queryconf.chunk){
+    ClientMessage::StoreKV(oqid, chunk, r) => {
+      match chunk {
         QueryChunk::Attachment => {
           let att = r.as_ref().and_then(|kv|kv.get_attachment().map(|p|p.clone()));
-          let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE(queryconf.modeinfo.get_qid().map(|r|r.clone()), r.clone().map(|v|DistantEnc(v)));
+          let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE(oqid, r.clone().map(|v|DistantEnc(v)));
           sendorconnect!(&mess,att.as_ref());
         },
         _                     =>  {
-          let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE_ATT(queryconf.modeinfo.get_qid().map(|r|r.clone()), r.clone().map(|v|DistantEncAtt(v)));
+          let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE_ATT(oqid, r.clone().map(|v|DistantEncAtt(v)));
           sendorconnect!(&mess,None);
         },
       };

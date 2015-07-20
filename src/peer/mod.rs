@@ -15,18 +15,23 @@ pub mod node;
 
 /// A peer is a special keyval with an attached address over the network
 pub trait Peer : KeyVal {
-  type Address : 'static;
+  type Address;
   fn to_address (&self) -> Self::Address;
 //  fn to_address (&self) -> SocketAddr;
 }
 
-#[derive(RustcDecodable,RustcEncodable,Debug,Copy,PartialEq,Clone)]
+#[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Clone)]
 /// State of a peer
 pub enum PeerPriority {
   /// our DHT rules reject the peer
   Blocked,
   /// peers has not yet been ping or connection broke
   Offline,
+  /// peers is online but not already accepted
+  /// it should be used to send ping/pong msg only
+  Unchecked,
+  /// sending ping with given challenge string
+  Ping(String),
   /// online, no prio distinction between peers
   Normal,
   /// online, with a u8 priority
@@ -35,7 +40,7 @@ pub enum PeerPriority {
 
 
 /// Rules for peers. Usefull for web of trust for instance, or just to block some peers.
-pub trait PeerMgmtMeths<P : Peer, V : KeyVal> : Send + Sync + 'static {
+pub trait PeerMgmtMeths<P : Peer, V : KeyVal> : Send + Sync {
   /// get challenge for a node, most of the time a random value to avoid replay attack
   fn challenge (&self, &P) -> String; 
   /// sign a message. Node and challenge.
@@ -44,10 +49,10 @@ pub trait PeerMgmtMeths<P : Peer, V : KeyVal> : Send + Sync + 'static {
   fn checkmsg  (&self, &P, &String, &String) -> bool; // node, challenge and signature
   /// accept a peer? (reference to running process and running context could be use to query
   /// ourself
-  fn accept<RT : RunningTypes<P=P,V=V>> (&self, &Arc<P>, &RunningProcesses<P,V>, &ArcRunningContext<RT>) -> Option<PeerPriority>;
+  fn accept<RT : RunningTypes<P=P,V=V>> (&self, &Arc<P>, &RunningProcesses<RT>, &ArcRunningContext<RT>) -> Option<PeerPriority>;
   // call from accept it will loop on sending info to never online peer)
   /// Post action after adding a new online peer : eg propagate or update this in another store
-  fn for_accept_ping<RT : RunningTypes<P=P,V=V>> (&self, &Arc<P>, &RunningProcesses<P,V>, &ArcRunningContext<RT>);
+  fn for_accept_ping<RT : RunningTypes<P=P,V=V>> (&self, &Arc<P>, &RunningProcesses<RT>, &ArcRunningContext<RT>);
 }
 
 

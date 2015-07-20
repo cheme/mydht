@@ -19,7 +19,7 @@ pub mod classictrust;
 pub mod exptrust;
 
 pub trait WotTrust<P : KeyVal<Key = Vec<u8>>> : KeyVal<Key = Vec<u8>> {
-  type Rule : Send + 'static;
+  type Rule : Send;
   fn new(p : &P, rules : &Self::Rule) -> Self;
 
   /// first return bool tells if wottrust change (so we update it in kvstore (no inplace kvstore
@@ -77,7 +77,7 @@ pub trait TrustedVal<T : Truster, R : TrustRel> : KeyVal {
 // TODO if needed parameterized over a TrustedVal to allow multiple sign or check
 /// a content which can sign and check other content, a trust provider
 pub trait Truster : KeyVal<Key = Vec<u8>> {
-  type Internal : 'static;
+  type Internal;
   fn content_sign (&self, to_sign : &[u8]) -> Vec<u8>;
   fn init_content_sign (&Self::Internal, to_sign : &[u8]) -> Vec<u8>;
   fn content_check (&self, tocheckenc : &[u8], sign : &[u8]) -> bool;

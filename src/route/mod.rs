@@ -7,6 +7,7 @@ use std::rc::Rc;
 use std::collections::VecDeque;
 use mydhtresult::Result as MydhtResult;
 use std::thread;
+use procs::RunningTypes;
 pub mod inefficientmap;
 
 #[cfg(feature="dht-route")]
@@ -20,10 +21,15 @@ pub mod btkad;
 /// (either for querying a peer or a value).
 /// Trait contains serializable content (Peer), but also trensiant content like channel to peer
 /// client process.
+///
+/// Route design may separate storage of Blocked peers and Offline peers from others (online),
+/// those one must not have handles (both closed) in their cli info so their cli info is useless
+/// and can be dropped.
+///
 /// TODO route to store enum over client chanel or direct writestream see clientinfo (will require
 /// get_mut for info (as write stream need to be mut(or refcell usage))
 /// TODO split route into composition of transient cache of ClientInfo and routing algo?? 
-pub trait Route<P:Peer,V:KeyVal> : Send + 'static {
+pub trait Route<P:Peer,V:KeyVal> {
   /// count of running query (currently only updated in proxy mode)
   fn query_count_inc(& mut self, &P::Key);
   /// count of running query (currently only updated in proxy mode)
@@ -61,8 +67,8 @@ pub trait Route<P:Peer,V:KeyVal> : Send + 'static {
   ///
   /// Default implementation should simply panic, here instead it do a slow get_closest (same as
   /// slow one).
-  fn heavy_get_closest_for_node<C,D>(& self, node : &P::Key, nb : u8, filter : &VecDeque<P::Key>, rc : &RunningProcesses<P,V>, each : C, adjustnb : D) 
-    where C : Fn(&Arc<P>, &RunningProcesses<P, V>), 
+  fn heavy_get_closest_for_node<RT : RunningTypes<P = P, V = V>,C,D>(& self, node : &P::Key, nb : u8, filter : &VecDeque<P::Key>, rc : &RunningProcesses<RT>, each : C, adjustnb : D) 
+    where C : Fn(&Arc<P>, &RunningProcesses<RT>), 
           D : Fn(usize) {
        let vclo = self.get_closest_for_node(node, nb, filter);
        let s = vclo.len();
@@ -74,8 +80,8 @@ pub trait Route<P:Peer,V:KeyVal> : Send + 'static {
   
   // TODO lot of missing params(queryconf, msg...) : change it when implementing (first good code
   // for light client separating concerns in fn).
-  fn heavy_get_closest_for_query<C,D>(& self, k : &V::Key, nb : u8, filter : &VecDeque<P::Key>, rc : &RunningProcesses<P,V>, each : C, adjustnb : D)
-    where C : Fn(&Arc<P>, &RunningProcesses<P, V>), 
+  fn heavy_get_closest_for_query<RT : RunningTypes<P = P, V = V>,C,D>(& self, k : &V::Key, nb : u8, filter : &VecDeque<P::Key>, rc : &RunningProcesses<RT>, each : C, adjustnb : D)
+    where C : Fn(&Arc<P>, &RunningProcesses<RT>), 
           D : Fn(usize) {
        let vclo = self.get_closest_for_query(k, nb, filter);
        let s = vclo.len();
@@ -87,8 +93,8 @@ pub trait Route<P:Peer,V:KeyVal> : Send + 'static {
   
   // TODO lot of missing params(queryconf, msg...) : change it when implementing (first good code
   // for light client separating concerns in fn).
-  fn heavy_get_pool_nodes<C>(&self, nb : usize, rc : &RunningProcesses<P,V>, each : C) 
-    where C : Fn(&Arc<P>, &RunningProcesses<P, V>) {
+  fn heavy_get_pool_nodes<RT : RunningTypes<P = P, V = V>,C>(&self, nb : usize, rc : &RunningProcesses<RT>, each : C) 
+    where C : Fn(&Arc<P>, &RunningProcesses<RT>) {
      let vclo = self.get_pool_nodes(nb);
      for n in vclo.iter() {
        each(n, rc)

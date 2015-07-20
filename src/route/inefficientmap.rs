@@ -54,7 +54,7 @@ impl<P : Peer, V : KeyVal> Route<P,V> for Inefficientmap<P,V> where P::Key : Ord
   fn remchan(& mut self, nodeid : &P::Key) where P::Key : Send {
     let toadd = match self.peers.get(nodeid) {
       Some(&(_,_, None)) => {None},
-      Some(&(ref ap,prio, ref s)) => {Some ((ap.clone(), prio, None))}, // TODO rewrite with in place write of hashmap (currently some issue with arc).
+      Some(&(ref ap,ref prio, ref s)) => {Some ((ap.clone(), prio.clone(), None))}, // TODO rewrite with in place write of hashmap (currently some issue with arc).
       None => {None},
     };
     match toadd {
@@ -109,7 +109,7 @@ impl<P : Peer, V : KeyVal> Route<P,V> for Inefficientmap<P,V> where P::Key : Ord
       match self.peers.get(&nid.1) {
         // no status check this method is usefull for refreshing or initiating
         // connections
-        Some(&(ref ap,prio, ref s)) => {
+        Some(&(ref ap,ref prio, ref s)) => {
           println!("found {:?}", prio);
           r.push(ap.clone());
           i = i + 1;

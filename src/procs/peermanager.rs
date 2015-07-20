@@ -18,6 +18,7 @@ use keyval::{KeyVal};
 use msgenc::{MsgEnc};
 use num::traits::ToPrimitive;
 use procs::ClientMode;
+use rules::DHTRules;
 
 /// TODO use it for storage in Route
 /// Stored info about client in peer management (in route transient cache).
@@ -44,31 +45,75 @@ enum ServerInfo {
 
 type PeerInfo<RT> = (Option<ServerInfo>, Option<ClientInfo<RT>>);
 
+
 // peermanager manage communication with the storage : add remove update. The storage is therefore
 // not shared, we use message passing. 
 /// TODO need new storage for known client info but no Peer def yet (during ping) = not auth peer
+/// TODO AKA cache over ping id token.
 /// Start a new peermanager process
-pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
+pub fn start<RT : RunningTypes, 
+  T : Route<RT::P,RT::V>,
+  F : FnOnce() -> Option<T> + Send + 'static,
+  >
  (rc : ArcRunningContext<RT>,
-  mut route : T, 
-  r : &Receiver<PeerMgmtMessage<RT::P,RT::V>>, 
-  rp : RunningProcesses<RT::P,RT::V>, 
+  mut routei : F, 
+  r : &Receiver<PeerMgmtMessage<RT::P,RT::V,<RT::T as Transport>::ReadStream,<RT::T as Transport>::WriteStream>>, 
+  rp : RunningProcesses<RT>, 
   sem : Arc<Semaphore>) {
+  let mut route = routei().unwrap_or_else(||panic!("route initialization failed"));
   loop {
-    // TODO add to queryrules
-    //let clientmode = rc.queryrules.clientmode();
-    let clientmode = ClientMode::ThreadedOne;
-    let local = clientmode == ClientMode::Local(true) || clientmode == ClientMode::Local(false);
-    match r.recv() {
 
+    let clientmode = rc.rules.client_mode();
+
+    let local = *clientmode == ClientMode::Local(true) || *clientmode == ClientMode::Local(false);
+    match r.recv() {
+      Ok(PeerMgmtMessage::PeerAuth(node,sign)) => {
+        // TODO check auth with peer challenge
+        // TODO spawn accept if it is heavy accept
+        // TODO transition to peer status on success, keep Ping status on fail (to avoid attacks)
+        ()
+      },
       Ok(PeerMgmtMessage::ClientMsg(msg, key)) => {
         // TODO get from route and send with client info (either direct or with channel)
       },
-      Ok(PeerMgmtMessage::PeerRemChannel(p))  => {
+      Ok(PeerMgmtMessage::PeerRemFromClient(p,prio))  => {
+        // TODO if needed close server (remchan : plus bool to close either both handle plus prio
+        // opt (none means remove totally))
         let nodeid = p.get_key().clone();
         route.remchan(&nodeid);
+        // TODO update prio if blocked keep peer
       },
-      Ok(PeerMgmtMessage::PeerAdd(p,prio))  => {
+      Ok(PeerMgmtMessage::PeerRemFromServer(p,prio))  => {
+        // TODO if needed close Clinet
+        let nodeid = p.get_key().clone();
+        route.remchan(&nodeid);
+        // TODO update prio
+      },
+ 
+      Ok(PeerMgmtMessage::PeerAddOffline(p,tryconnect)) => {
+        info!("Adding offline peer : {:?}", p);
+        let nodeid = p.get_key().clone(); // TODO to avoid this clone create a route.addnode which has optional priority
+        let hasnode = match route.get_node(&nodeid) { // TODO new function route.hasP
+          Some(_) => {true},
+          None => {false},
+        };
+        if(!hasnode){
+          route.add_node(p,None);
+        }
+        route.update_priority(&nodeid,PeerPriority::Offline);
+        if tryconnect {
+          // TODO tryconnect by sending ping...
+        };
+ 
+ 
+      },
+      Ok(PeerMgmtMessage::PeerPong(_,_,_))  => {
+        //TODO!!!
+      },
+      Ok(PeerMgmtMessage::PeerAddFromClient(p,prio,ors,ssend))  => {
+        //TODO!!!
+      },
+      Ok(PeerMgmtMessage::PeerAddFromServer(p,prio,ows,ssend))  => {
         if(p.get_key() != rc.me.get_key()) {
         info!("Adding peer : {:?}, {:?} from {:?}", p, prio, rc.me);
           // TODO  when test writen (change of prio) try to change with get_mut
@@ -151,7 +196,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
             None => {
               if rsize == 0 {
                 // no proxy should reply None (send to ourselve)
-                rp.peers.send(PeerMgmtMessage::StoreKV(queryconf, None));
+                rp.peers.send(PeerMgmtMessage::StoreKV(queryconf.clone(), None));
               };
             }, 
           };
@@ -216,7 +261,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
                 let ssp = rp.peers.clone();
                 let srp = rp.store.clone();
                 // TODO remove this spawn even if dealing with mutex (costy?? )
-                thread::spawn(move || {
+                thread::scoped(move || {
                   println!("!!!!found not sent unlock semaphore");
                   if (r != None) {
                     if querysp.set_query_result(Either::Left(r),&srp) {
@@ -233,7 +278,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
                 debug!("!!!AsyncResult returning {:?}", r);
                 match queryconf.modeinfo.get_rec_node().map(|r|r.clone()) {
                   Some (ref recnode) => {
-                    let mess = ClientMessage::StoreNode(queryconf, r);
+                    let mess = ClientMessage::StoreNode(queryconf.modeinfo.to_qid(), r);
                     if (!local){
                       // send result directly
                       let s = get_or_init_client_connection::<RT, T>(&recnode.clone(), & rc , & mut route, & rp, false, None);
@@ -285,7 +330,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
          match qconf.modeinfo.get_rec_node().map(|r|r.clone()) {
            Some (rec)  => {
              if rec.get_key() != rc.me.get_key() { 
-               let mess = ClientMessage::StoreNode(qconf, result);
+               let mess = ClientMessage::StoreNode(qconf.modeinfo.to_qid(), result);
                if(!local){
                  let s = get_or_init_client_connection::<RT, T>(& rec, & rc , & mut route, & rp, false, None); // TODO do something for not having to create an arc here eg arc in qconf + previous qconf clone
                  s.send(mess);
@@ -307,7 +352,7 @@ pub fn start<RT : RunningTypes, T : Route<RT::P,RT::V>>
          match qconf.modeinfo.get_rec_node().map(|r|r.clone()) {
            Some (rec) => {
              if rec.get_key() != rc.me.get_key() {
-               let mess = ClientMessage::StoreKV(qconf, result);
+               let mess = ClientMessage::StoreKV(qconf.modeinfo.to_qid(), qconf.chunk, result);
                if (!local) {
                  let s = get_or_init_client_connection::<RT, T>(& rec, & rc , & mut route, & rp, false, None);
                  s.send(mess);
@@ -339,7 +384,7 @@ fn send_nonconnected<RT : RunningTypes, T : Route<RT::P,RT::V>>
  (p : & Arc<RT::P> , 
   rc : & ArcRunningContext<RT>, 
   route : & mut T , 
-  rp : & RunningProcesses<RT::P,RT::V>,
+  rp : & RunningProcesses<RT>,
   mess : ClientMessage<RT::P,RT::V>
  )
  ->  bool {
@@ -353,7 +398,7 @@ fn send_nonconnected<RT : RunningTypes, T : Route<RT::P,RT::V>>
   let rpsp = rp.clone();
   let rcsp = rc.clone();
   let psp = p.clone();
-  thread::spawn (move || {client::start::<RT>(psp, None, None, rcsp, rpsp, false, None, Some(mess),false)});
+  thread::scoped (move || {client::start::<RT>(psp, None, None, rcsp, rpsp, false, None, Some(mess),false)});
   true
   },
  }
@@ -364,7 +409,7 @@ fn send_nonconnected_ping<RT : RunningTypes, T : Route<RT::P,RT::V>>
  (p : & Arc<RT::P> , 
   rc : & ArcRunningContext<RT>, 
   route : & mut T , 
-  rp : & RunningProcesses<RT::P,RT::V>,
+  rp : & RunningProcesses<RT>,
  )
  ->  bool {
  match route.get_node(&p.get_key()) {
@@ -378,7 +423,7 @@ fn send_nonconnected_ping<RT : RunningTypes, T : Route<RT::P,RT::V>>
   let rpsp = rp.clone();
   let rcsp = rc.clone();
   let psp = p.clone();
-  thread::spawn (move || {client::start::<RT>(psp, None, None, rcsp, rpsp, true, None, None,false)});
+  thread::scoped (move || {client::start::<RT>(psp, None, None, rcsp, rpsp, true, None, None,false)});
   true
   },
  }
@@ -390,7 +435,7 @@ fn get_or_init_client_connection<RT : RunningTypes, T : Route<RT::P,RT::V>>
  (p : & Arc<RT::P> , 
   rc : & ArcRunningContext<RT>, 
   route : & mut T , 
-  rp : & RunningProcesses<RT::P,RT::V>, 
+  rp : & RunningProcesses<RT>,
   ping : bool, 
   pingres : Option<OneResult<bool>>) 
  ->  Sender<ClientMessage<RT::P,RT::V>> {
@@ -425,7 +470,7 @@ let (upd, s) = match route.get_node(&p.get_key()) {
   let rcsp = rc.clone();
   let psp = p.clone();
   debug!("#####initiating client process from {:?} to {:?} with ping {:?}",rc.me.get_key(), p.get_key(),ping);
-  thread::spawn (move || {client::start::<RT>(psp,Some(tcl3), Some(rcl), rcsp, rpsp, ping, pingres, None, true)});
+  thread::scoped (move || {client::start::<RT>(psp,Some(tcl3), Some(rcl), rcsp, rpsp, ping, pingres, None, true)});
      },
      None => {
        // we found an existing channel with seemlessly open connection

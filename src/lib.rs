@@ -21,12 +21,15 @@
 #![feature(vecmap)] // in tcp_loop
 #![feature(slice_bytes)] // in tcp_loop
 #![feature(split_off)] // in tcp_loop
+#![feature(scoped)] // to avoid static lifetime
+
 #[macro_use] extern crate log;
 extern crate rustc_serialize;
 extern crate time;
 extern crate num;
 extern crate bincode;
 extern crate byteorder;
+extern crate rand;
 
 #[macro_export]
 /// Automatic define for KeyVal without attachment
@@ -194,6 +197,7 @@ macro_rules! derive_kvstore(($kstore:ident, $kv:ident, $k:ident,
 ));
 
 mod keyval;
+mod kvcache;
 mod peer;
 mod procs;
 mod query;
@@ -220,6 +224,7 @@ pub use msgenc::bincode::{Bincode};
 pub use transport::tcp::{Tcp};
 pub use transport::udp::{Udp};
 pub use wot::{TrustedVal,Truster,TrustedPeer};
+pub use query::{QueryID,Query};
 
 pub mod dhtimpl {
   pub use peer::node::{Node};
@@ -229,6 +234,7 @@ pub mod dhtimpl {
   pub use wot::ecdsapeer::ECDSAPeer;
 
   pub use wot::trustedpeer::PeerSign;
+  pub use kvcache::{NoCache};
   pub use query::simplecache::{SimpleCache,SimpleCacheQuery};
   pub use route::inefficientmap::{Inefficientmap};
 
@@ -248,12 +254,10 @@ pub mod dhtif{
   pub use keyval::{KeyVal,FileKeyVal,Key};
   pub use rules::DHTRules;
   pub use peer::{Peer,PeerMgmtMeths};
-  pub use query::{QueryID,Query};
   pub use procs::{ClientMode,ServerMode};
 }
 pub mod kvstoreif{
-  //pub use kvstore::KVCache;
-  pub use kvstore::{KVCache,KVStore2};
+  pub use kvcache::{KVCache};
   pub use kvstore::{KVStore, KVStoreRel};
   pub use procs::mesgs::{KVStoreMgmtMessage};
 }
@@ -374,8 +378,9 @@ mod rules {
 /// have fast implementations.
 /// In fact some info are related to DHT, this is more DHTRules than QueryRules (could be split in
 /// two).
-pub trait DHTRules : Sync + Send + 'static {
+pub trait DHTRules : Sync + Send {
   /// create a query new id : use for asynch query (most of the time will simply be the key of the resource
+  /// TODO remove : as soon as new flow for query creation (id created in querymanager)
   fn newid (&self) -> QueryID;
   /// Max number of hop for the query, the method is currently called in main peermgmt process, therefore it must be fast (a mapping, not a db access).
   fn nbhop (&self, QueryPriority) -> u8;
@@ -401,6 +406,7 @@ pub trait DHTRules : Sync + Send + 'static {
   /// immediatly stored.
   /// So if this function reply no, implementation of challenge, signmsg and checkmsg for
   /// peermgmtrules is useless
+  /// TODO not implemented (need to pass Peer info in each query)
   fn is_authenticated(&self) -> bool;
   // TODO option to do authentication on every message (with is_authenticated only adress is
   // subsequantly trusted).

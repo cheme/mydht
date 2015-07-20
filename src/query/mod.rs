@@ -14,10 +14,15 @@ use kvstore::{StoragePriority};
 use utils::Either;
 use num::traits::ToPrimitive;
 use rules::DHTRules;
+use transport::{ReadTransportStream,WriteTransportStream};
+
 pub mod cache;
 pub mod simplecache;
 // a semaphore with access to its current state
 pub type SemaState = (Semaphore,isize);
+
+
+// TODO all sender peermgmt replaced by client handle
 
 #[derive(RustcDecodable,RustcEncodable,Debug,Clone)]
 /// keep trace of route to avoid loop when proxying
@@ -49,7 +54,7 @@ pub enum QReply<P : Peer> {
 /// Query Priority.
 pub type QueryPriority = u8; // TODO rules for getting number of hop from priority -> convert this to a trait with methods.
 /// Query ID.
-pub type QueryID = String;
+pub type QueryID = usize;
 
 pub struct QueryConf {
   pub mode : QueryMode,
@@ -110,12 +115,13 @@ pub enum Query<P : Peer, V : KeyVal> {
 impl<P : Peer, V : KeyVal> Query<P, V> {
 
   #[inline]
-  /// Reply with current query value
-  pub fn release_query // TODO refactor to use sender only when needed eg two function or option (here we clone sender a lot for nothing)
+  /// Reply with current query value TODO might consume query (avoiding some clone and clearer
+  /// semantic : check this)!!
+  pub fn release_query<TR : ReadTransportStream, TW : WriteTransportStream>
   (& self, 
-   sp : &Sender<PeerMgmtMessage<P,V>>
+   sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>
   )
-  where PeerMgmtMessage<P,V> : Send {
+  where PeerMgmtMessage<P,V,TR,TW> : Send {
     debug!("Query Full release");
     match self {
       &Query::PeerQuery(ref s) => {
@@ -140,7 +146,7 @@ impl<P : Peer, V : KeyVal> Query<P, V> {
           QReply::Dist(ref conf) => {
             // Send them result one by one
             for v in (*mutg).0.iter() {
-              sp.send(PeerMgmtMessage::StoreKV((*conf).clone(),v.clone()));
+              sp.send(PeerMgmtMessage::StoreKV(conf.clone(), v.clone()));
             }
           },
         };
@@ -151,12 +157,13 @@ impl<P : Peer, V : KeyVal> Query<P, V> {
 #[inline] // TODO closure to avoid redundant code??
 // return true if unlock query (so that cache man know it can remove its query
 /// Remove one peer to wait on, if no more peer query is released
-pub fn lessen_query
+pub fn lessen_query<TR : ReadTransportStream, TW : WriteTransportStream>
+
  (&self, 
   i : usize, 
-  sp : &Sender<PeerMgmtMessage<P,V>>)
+  sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>)
  -> bool
- where PeerMgmtMessage<P,V> : Send {
+ where PeerMgmtMessage<P,V,TR,TW> : Send {
   debug!("Query lessen {:?}", i);
   match self {
     &Query::PeerQuery(ref s) => {
@@ -196,7 +203,7 @@ pub fn lessen_query
                {cv.notify_all();},
           QReply::Dist(ref conf) => {
             for v in (*mutg).0.iter() {
-              sp.send(PeerMgmtMessage::StoreKV((*conf).clone(),v.clone()));
+              sp.send(PeerMgmtMessage::StoreKV(conf.clone(),v.clone()));
             }
           },
         };
@@ -314,28 +321,28 @@ pub fn set_expire(&mut self, expire : Timespec) {
 #[inline]
 /// Utility function to create a query.
 /// Warning, this could be slow (depends upon query manager implementation)
-pub fn init_query<P : Peer + Send, V : KeyVal + Send> 
+/// TODO remove this : instead msg to forward send and send forward from here to peermanager
+/// rename to send_for_query,  rp to param, managed is bool, qid calculated here with update of
+/// QueryMsg,  + add peermgmt msg 
+pub fn init_query<P : Peer, V : KeyVal> 
  (semsize : usize,
  nbresp   : usize,
  lifetime : Duration, 
- s : & Sender<QueryMgmtMessage<P, V>>, 
  replyto : Option<QueryMsg<P>>, 
- managed : Option<QueryID>,
 // senthist : Option<LastSent<P>>, 
 // storepol : (bool,Option<CachePolicy>),
  peerquery : Option<(bool,Option<CachePolicy>)>) 
--> Query<P,V> 
-where P::Key : Send, QueryMgmtMessage<P,V> : Send  {
+-> Query<P,V> {
   let expire = CachePolicy(time::get_time() + lifetime);
   let q : Query<P,V> = match peerquery { 
     None => {
       let query = match replyto {
-        Some(node) => 
-          Arc::new((QReply::Dist(node), Mutex::new((None, semsize)),Some(expire))),
+        Some(qconf) => 
+          Arc::new((QReply::Dist(qconf), Mutex::new((None, semsize)),Some(expire))),
         None =>
           Arc::new((QReply::Local(Condvar::new()),Mutex::new((None, semsize)),Some(expire))),
        };
-       Query::PeerQuery(query.clone())
+       Query::PeerQuery(query)
     },
     Some(storeconf) => {
       let query = match replyto {
@@ -344,22 +351,9 @@ where P::Key : Send, QueryMgmtMessage<P,V> : Send  {
         None =>
           Arc::new((QReply::Local(Condvar::new()),Mutex::new((vec!(), semsize)),Some(expire),storeconf,nbresp)),
         };
-        Query::KVQuery(query.clone())
+        Query::KVQuery(query)
     },
   };
-
-  // add query in query manager unless we use proxy mode (unmanaged query
-  match managed {
-    Some(qid) => {
-      let asem = Arc::new(Semaphore::new(0));
-      let mess : QueryMgmtMessage<P,V> = QueryMgmtMessage::NewQuery(qid, q.clone(), asem.clone());
-      s.send(mess);
-      // wait added
-      asem.acquire(); // TODO this is a bottleneck (also in asynch) think about a way to keep query reply in query manager when no query xisting -> like adding it before any send of PeerMgmtMessage::PeerFind( -> just search = at the time of query init : add query manager channel in param of query init function!!!!!
-    },
-    _ => (),
-  };
-
   q
 }
 /*
@@ -382,7 +376,7 @@ pub fn get_origin_queryID
 /// Unless messageencoding does not serialize it, all query mode could be used. 
 /// For some application it could be relevant to forbid the reply to some query mode : 
 /// TODO implement a filter in server process (and client proxy).
-pub enum QueryMode{ 
+pub enum QueryMode {
   /// Asynch proxy. Query do not block, they are added to the query manager
   /// cache.
   /// When proxied, the query (unless using noloop history) may not give you the originator of the query (only
@@ -427,6 +421,21 @@ impl<P : Peer> QueryModeMsg<P> {
             &QueryModeMsg::AMix (_,_, ref q) => Some (q),
         }
     }
+    pub fn get_qid_clone (&self) -> Option<QueryID> {
+        match self {
+            &QueryModeMsg::AProxy (_, ref q) => Some (q.clone()),
+            &QueryModeMsg::Asynch (_, ref q) => Some (q.clone()),
+            &QueryModeMsg::AMix (_,_, ref q) => Some (q.clone()),
+        }
+    }
+    pub fn to_qid (self) -> Option<QueryID> {
+        match self {
+            QueryModeMsg::AProxy (_, q) => Some (q),
+            QueryModeMsg::Asynch (_, q) => Some (q),
+            QueryModeMsg::AMix (_,_, q) => Some (q),
+        }
+    }
+ 
     /// Copy conf with a new qid and peer to reply to : when proxying a managed query we do not use the previous id.
     /// TODO see in mut not better
     pub fn new_hop<p : Peer> (&self, p : Arc<P>, qid : QueryID) -> Self {
@@ -445,6 +454,14 @@ impl<P : Peer> QueryModeMsg<P> {
             &QueryModeMsg::AMix (ref a, ref b, _) => QueryModeMsg::AMix (a.clone(), b.clone(), qid),
         }
     }
+    pub fn set_qid (&mut self, qid : QueryID) {
+        match self {
+            &mut QueryModeMsg::AProxy (ref a, ref mut q) => *q = qid,
+            &mut QueryModeMsg::Asynch (ref a, ref mut q) => *q = qid,
+            &mut QueryModeMsg::AMix (ref a, ref b, ref mut q) => *q = qid,
+        }
+    }
+ 
     /// Copy conf with a new  andpeer to reply to : when proxying a managed query we do not use the previous id.
     /// TODO see in mut not better
     pub fn new_peer<p : Peer> (&self, p : Arc<P>) -> Self {

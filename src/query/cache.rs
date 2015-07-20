@@ -7,6 +7,7 @@ use peer::Peer;
 use keyval::KeyVal;
 use time::Timespec;
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
+use transport::{ReadTransportStream,WriteTransportStream};
 
 /// cache policies apply to queries to know how long they may cache before we consider current
 /// result ok. Currently our cache policies are only an expiration date.
@@ -29,19 +30,23 @@ impl Encodable for CachePolicy {
 //TODO rewrite with parameterization ok!! (generic simplecache) TODO move to mod.rs
 // TODO cache of a value : here only cache of peer query
 /// cache of query interface
-pub trait QueryCache<P : Peer, V : KeyVal> : Send + 'static {
-  fn query_add(& mut self, &QueryID, Query<P,V>);
-  fn query_get(& mut self, &QueryID) -> Option<&Query<P,V>>; // TODO return Option<Query instead ??
-  fn query_remove(& mut self, &QueryID);
-  fn cache_clean_nodes(& mut self) -> Vec<Query<P,V>>;
+pub trait QueryCache<P : Peer, V : KeyVal> {
+  fn query_add(&mut self, QueryID, Query<P,V>);
+  fn query_get(&mut self, &QueryID) -> Option<&Query<P,V>>; // TODO return Option<Query instead ??
+  fn query_remove(&mut self, &QueryID);
+  fn cache_clean_nodes(&mut self) -> Vec<Query<P,V>>;
+  /// get a new id , used before query_add
+  fn newid(&mut self) -> QueryID;
 }
 
 pub fn cache_clean
  <P : Peer,
   V : KeyVal,
+  TR : ReadTransportStream,
+  TW : WriteTransportStream,
   QC : QueryCache<P,V>>
  (qc : & mut QC, 
-  sp : &Sender<PeerMgmtMessage<P,V>>){
+  sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>){
     let to_clean = qc.cache_clean_nodes();
     for q in to_clean.iter(){
       debug!("Cache clean process relase a query");

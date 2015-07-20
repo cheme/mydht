@@ -16,14 +16,16 @@ use std::fs::copy;
 use std::fs::PathExt;
 use utils;
 use keyval::{FileKeyVal,KeyVal};
-use kvstore::{KVStore};
-//use super::KVCache;
+use kvstore::KVStore;
+use kvcache::{KVCache,NoCache};
 use std::sync::Arc;
 use query::cache::CachePolicy;
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
 
+//type BoxedStore<V> = Box<KVStore<V, Cache = KVCache<K = <V as KeyVal>::Key, V = V> >>;
+pub type BoxedStore<V> = Box<KVStore<V>>;
 /// File system based storage, it is hash related and need a supporting keystore to run (to manage
 /// hash - path association).
 /// This is an example of a storage with attachment.
@@ -33,7 +35,8 @@ pub struct FileStore<V : KeyVal> {
   // with new rustc versions
   /// underlying kvstore associating KeyVal with its File path.
   /// Note that underlining kvstore must store in mode local_without_attachment
-  data : Box<KVStore<V>>,
+  /// TODO remove box...
+  data : BoxedStore<V>,
   // store info on files existing (redundant with data, use to avoid unnecessary init // TODO change to kvstore??
   paths : BTreeSet<PathBuf>, 
   // path for storage
@@ -44,7 +47,7 @@ pub struct FileStore<V : KeyVal> {
 impl<V : FileKeyVal> FileStore<V> {
   /// constructor, with filestore path, pathstore serialization path, kvstore for hash, reinit of
   /// content from path and a function to run during init on FileKeyVal.
-  pub fn new(rep : PathBuf, pstore : PathBuf, mut st : Box<KVStore<V>>, fillref : bool, initfn :&mut (FnMut(&V) -> ())) -> IoResult<FileStore<V>> 
+  pub fn new(rep : PathBuf, pstore : PathBuf, mut st : BoxedStore<V>, fillref : bool, initfn :&mut (FnMut(&V) -> ())) -> IoResult<FileStore<V>> 
   { 
     //    if (!rep.exists() | !rep.is_dir())
     if !rep.is_dir() {
@@ -88,6 +91,8 @@ impl<V : FileKeyVal> FileStore<V> {
 }
 
 impl<V : FileKeyVal> KVStore<V> for FileStore<V> {
+  // no cache use (usage of underlying store cache instead)
+  //type Cache = NoCache<<V as KeyVal>::Key, V>;
   fn add_val(& mut self,  v : V, (local, cp) : (bool, Option<CachePolicy>)) {
     // check if in tmpdir (utils fn) and if in tmpdir move to filestore dir
     if local {

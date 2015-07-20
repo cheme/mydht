@@ -46,11 +46,11 @@ pub trait Transport_old : Send + Sync + 'static {
 
 }
 
-pub trait Address : Sync + Send + Clone + Debug + 'static {}
+pub trait Address : Sync + Send + Clone + Debug {}
 
 impl Address for SocketAddr {}
 
-pub trait Transport : Send + Sync + 'static {
+pub trait Transport : Send + Sync {
   type ReadStream : ReadTransportStream;
   type WriteStream : WriteTransportStream;
   type Address : Address;
@@ -83,14 +83,14 @@ pub trait Transport : Send + Sync + 'static {
 }
 
 
-pub trait WriteTransportStream : Send + Sync + Write + 'static {
+pub trait WriteTransportStream : Send + Sync + Write {
   // most of the time unneeded
   /// simply result in check connectivity false
   fn disconnect(&mut self) -> IoResult<()>;
 //  fn checkconnectivity(&self) -> bool;
 }
 
-pub trait ReadTransportStream : Send + Sync + Read + 'static {
+pub trait ReadTransportStream : Send + Sync + Read {
   
   /// should end read loop
   fn disconnect(&mut self) -> IoResult<()>;

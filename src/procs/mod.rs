@@ -2,14 +2,14 @@ use std::io::Result as IoResult;
 use std::sync::mpsc::{Receiver,Sender};
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 use peer::{PeerMgmtMeths, PeerPriority};
-use query::{self,QueryConf,QueryPriority,QueryMode,QueryModeMsg,LastSent,QueryMsg};
+use query::{self,QueryConf,QueryPriority,QueryMode,QueryModeMsg,LastSent,QueryMsg,Query};
 use rules::DHTRules;
 use kvstore::{StoragePriority, KVStore};
 use keyval::{KeyVal};
 use query::cache::QueryCache;
 use std::str::from_utf8;
 use rustc_serialize::json;
-use self::mesgs::{PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage};
+use self::mesgs::{PeerMgmtMessage,PeerMgmtInitMessage,KVStoreMgmtMessage,QueryMgmtMessage};
 use std::str::FromStr;
 use std::sync::{Arc,Semaphore,Mutex,Condvar};
 use std::sync::mpsc::channel;
@@ -17,7 +17,7 @@ use std::thread::{JoinGuard};
 use std::thread;
 use route::Route;
 use peer::Peer;
-use transport::{TransportStream,Transport,Address};
+use transport::{Transport,ReadTransportStream,WriteTransportStream,Address};
 use time::Duration;
 use utils::{self,OneResult};
 use msgenc::MsgEnc;
@@ -34,7 +34,7 @@ mod querymanager;
 
 /// utility trait to avoid lot of parameters in each struct / fn
 /// kinda aliasing
-pub trait RunningTypes : 'static + Send + Sync {
+pub trait RunningTypes : Send + Sync {
   type A : Address;
   type P : Peer<Address = Self::A>;
   type V : KeyVal;
@@ -164,25 +164,35 @@ pub type ArcRunningContext<RT> = Arc<RunningContext<RT>>;
 
 /// Channel used by several process, they are cloned/moved when send to new thread (sender are not
 /// sync)
-#[derive(Clone)]
-pub struct RunningProcesses<P : Peer, V : KeyVal> {
-  peers : Sender<mesgs::PeerMgmtMessage<P,V>>,
-  queries : Sender<QueryMgmtMessage<P,V>>,
-  store : Sender<mesgs::KVStoreMgmtMessage<P,V>>,
+pub struct RunningProcesses<RT : RunningTypes> {
+  peers : Sender<mesgs::PeerMgmtMessage<RT::P,RT::V,<RT::T as Transport>::ReadStream,<RT::T as Transport>::WriteStream>>,
+  queries : Sender<QueryMgmtMessage<RT::P,RT::V>>,
+  store : Sender<mesgs::KVStoreMgmtMessage<RT::P,RT::V>>,
 }
 
+// deriving seems ko for now TODO test with derive again
+impl<RT : RunningTypes> Clone for RunningProcesses<RT> {
+  fn clone(&self) ->  RunningProcesses<RT> {
+    RunningProcesses {
+      peers : self.peers.clone(),
+      queries : self.queries.clone(),
+      store : self.store.clone(),
+    }
+  }
+}
+ 
 
 // TODO replace f by Arc<Condvar>
 /// DHT infos
 pub struct DHT<RT : RunningTypes> {
-  rp : RunningProcesses<RT::P,RT::V>, 
+  rp : RunningProcesses<RT>,
   rc : ArcRunningContext<RT>, 
   f : Arc<Semaphore>
 }
 
 
 /// Find a value by key. Specifying our queryconf, and priorities.
-pub fn find_local_val<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &ArcRunningContext<RT>, nid : <RT::V as KeyVal>::Key ) -> Option<RT::V> {
+pub fn find_local_val<RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcRunningContext<RT>, nid : <RT::V as KeyVal>::Key ) -> Option<RT::V> {
   debug!("Finding KeyVal locally {:?}", nid);
   let sync = Arc::new((Mutex::new(None),Condvar::new()));
   // local query replyto set to None
@@ -193,7 +203,7 @@ pub fn find_local_val<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, r
 
 /// Store a value. Specifying our queryconf, and priorities. Note that priority rules are very
 /// important to know if we do propagate value or store local only or cache local only.
-pub fn store_val <RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &ArcRunningContext<RT>, val : RT::V, qconf : &QueryConf, prio : QueryPriority, sprio : StoragePriority) -> bool {
+pub fn store_val <RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcRunningContext<RT>, val : RT::V, qconf : &QueryConf, prio : QueryPriority, sprio : StoragePriority) -> bool {
   let msgqmode = init_qmode(rp, rc, &qconf.mode);
   let lastsent = qconf.hop_hist.map(|(n,ishop)| if ishop 
     {LastSent::LastSentHop(n,vec![rc.me.get_key()].into_iter().collect())}
@@ -225,7 +235,7 @@ pub fn store_val <RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : 
 
 
 /// Find a value by key. Specifying our queryconf, and priorities.
-pub fn find_val<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &ArcRunningContext<RT>, nid : <RT::V as KeyVal>::Key, qconf : &QueryConf, prio : QueryPriority, sprio : StoragePriority, nb_res : usize ) -> Vec<Option<RT::V>> {
+pub fn find_val<RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcRunningContext<RT>, nid : <RT::V as KeyVal>::Key, qconf : &QueryConf, prio : QueryPriority, sprio : StoragePriority, nb_res : usize ) -> Vec<Option<RT::V>> {
   debug!("Finding KeyVal {:?}", nid);
   // TODO factorize code with find peer and/or specialize rules( some for peer some for kv) ??
   let maxhop = rc.rules.nbhop(prio);
@@ -237,7 +247,6 @@ pub fn find_val<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &A
   };
   let msgqmode = init_qmode(rp, rc, &qconf.mode);
   let lifetime = rc.rules.lifetime(prio);
-  let managed =  msgqmode.get_qid().map(|r|r.clone()); // TODO redesign get_qid to avoid clone
   let lastsent = qconf.hop_hist.map(|(n,ishop)| if ishop 
     {LastSent::LastSentHop(n,vec![rc.me.get_key()].into_iter().collect())}
     else
@@ -254,14 +263,16 @@ pub fn find_val<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &A
     prio : prio,
     nb_res : nb_res};
   // local query replyto set to None
-  let query = query::init_query(semsize, nb_res, lifetime, &rp.queries, None, managed,Some(store));
-  rp.store.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()), queryconf));
+  let query = query::init_query(semsize, nb_res, lifetime, None, Some(store));
+  
+  rp.store.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()),queryconf, true));
+
   // block until result
   query.wait_query_result().right().unwrap()
 }
 
 #[inline]
-fn init_qmode<RT : RunningTypes> (rp : &RunningProcesses<RT::P,RT::V>, rc : &ArcRunningContext<RT>, qm : &QueryMode) -> QueryModeMsg <RT::P>{
+fn init_qmode<RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcRunningContext<RT>, qm : &QueryMode) -> QueryModeMsg <RT::P>{
   match qm {
     &QueryMode::Asynch => QueryModeMsg::Asynch((rc.me).clone(),rc.rules.newid()),
     &QueryMode::AProxy => QueryModeMsg::AProxy((rc.me).clone(),rc.rules.newid()),
@@ -304,7 +315,6 @@ impl<RT : RunningTypes> DHT<RT> {
     };
     let msgqmode = self.init_qmode(&qconf.mode);
     let lifetime = self.rc.rules.lifetime(prio);
-    let managed =  msgqmode.get_qid().map(|r|r.clone());
     let lastsent = qconf.hop_hist.map(|(n,ishop)| if ishop 
       {LastSent::LastSentHop(n,vec![self.rc.me.get_key()].into_iter().collect())}
     else
@@ -321,8 +331,8 @@ impl<RT : RunningTypes> DHT<RT> {
       prio : prio,
       nb_res : nb_res}; // querystorage priority is hadcoded but not used to (peer are curently always stored) TODO switch to option??
     // local query replyto set to None
-    let query = query::init_query(semsize, nb_res, lifetime, &self.rp.queries, None, managed, None); // Dummy store policy
-    self.rp.peers.send(PeerMgmtMessage::PeerFind(nid,Some(query.clone()), queryconf));
+    let query : Query<RT::P,RT::V> = query::init_query(semsize, nb_res, lifetime, None, None); // Dummy store policy
+    self.rp.queries.send(QueryMgmtMessage::NewQuery(query.clone(), PeerMgmtInitMessage::PeerFind(nid, queryconf)));
     // block until result
     query.wait_query_result().left().unwrap()
 
@@ -353,12 +363,14 @@ pub fn boot_server
  <T : Route<RT::P,RT::V>, 
   QC : QueryCache<RT::P,RT::V>, 
   S : KVStore<RT::V>,
-  F : FnOnce() -> Option<S> + Send + 'static,
+  F1 : FnOnce() -> Option<S> + Send + 'static,
+  F2 : FnOnce() -> Option<T> + Send + 'static,
+  F3 : FnOnce() -> Option<QC> + Send + 'static,
  >
  (rc : ArcRunningContext<RT>, 
-  mut route : T, 
-  mut querycache : QC, 
-  mut kvst : F,
+  mut route : F2, 
+  mut querycache : F3, 
+  mut kvst : F1,
   cachedNodes : Vec<Arc<RT::P>>, 
   bootNodes : Vec<Arc<RT::P>>,
   ) 
@@ -375,8 +387,8 @@ let cleantkstor = tkvstore.clone();
 
 // Query manager is allways start TODO a parameter for not starting it (if running dht in full
 // proxy mode for instance)
-thread::spawn (move ||{
-  querymanager::start(&rquery, &cleantquery, &cleantpeer, &cleantkstor, querycache, cleandelay);
+thread::scoped (move ||{
+  querymanager::start::<RT,_,_>(&rquery, &cleantquery, &cleantpeer, &cleantkstor, querycache, cleandelay);
 });
 let sem = Arc::new(Semaphore::new(-1)); // wait end of two process from shutdown TODO replace that by joinhandle wait!!!
 
@@ -390,7 +402,7 @@ let tpeer3 = tpeer.clone();
 let rcsp = rc.clone();
 let rpsp = rp.clone();
 let semsp = sem.clone();
-thread::spawn (move ||{
+thread::scoped (move ||{
   peermanager::start (rcsp, route, &rpeer,rpsp, semsp)
 });
 
@@ -398,7 +410,7 @@ thread::spawn (move ||{
 let rcst = rc.clone();
 let rpst = rp.clone();
 let semsp2 = sem.clone();
-thread::spawn (move ||{
+thread::scoped (move ||{
   kvmanager::start (rcst, kvst, &rkvstore,rpst, semsp2);
 });
 
@@ -407,7 +419,7 @@ let tpeer2 = tpeer3.clone();
 let tpeer4 = tpeer3.clone();
 let rcsp2 = rc.clone();
 let rpsp2 = rp.clone();
-thread::spawn (move ||{
+thread::scoped (move ||{
   server::servloop(rcsp2, rpsp2)
 });
 
@@ -415,7 +427,7 @@ thread::spawn (move ||{
 // is slower as we need to clone nodes)
 info!("loading additional cached node {:?}", cachedNodes);
 for p in cachedNodes.iter() {
-  tpeer3.send(PeerMgmtMessage::PeerAdd(p.clone(),PeerPriority::Offline));
+  tpeer3.send(PeerMgmtMessage::PeerAddOffline(p.clone(),false));
 }
 
 info!("bootstrapping with {:?}", bootNodes);

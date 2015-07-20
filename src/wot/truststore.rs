@@ -9,6 +9,7 @@ use std::collections::VecDeque;
 
 use keyval::{Key,KeyVal,Attachment,SettableAttachment};
 use kvstore::{KVStore,KVStoreRel};
+use kvcache::{KVCache,NoCache};
 use query::cache::CachePolicy;
 use utils::ArcKV;
 use utils::TimeSpecExt;
@@ -18,6 +19,9 @@ use super::WotTrust;
 use super::PeerInfoRel;
 use super::{TrustedPeer,Truster,TrustedVal,PeerTrustRel};
 use super::trustedpeer::PeerSign;
+//use std::iter::Iterator;
+use std::collections::HashMap;
+use std::collections::hash_map::Iter as HMIter;
 
 #[cfg(test)]
 use utils;
@@ -32,6 +36,9 @@ use query::simplecache::SimpleCache;
 use super::rsa_openssl::RSAPeer;
 #[cfg(test)]
 use std::net::Ipv4Addr; 
+#[cfg(test)]
+use peer::Peer; 
+
 
 
 #[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
@@ -75,6 +82,13 @@ impl<TP : TrustedPeer> SettableAttachment for WotKV<TP> {
     3 , TrustQuery => TrustQuery<TP>,
   });
 }
+
+
+//type BoxedStore<V> = Box<KVStore<V, Cache = KVCache<K = <V as KeyVal>::Key, V = V>>>;
+type BoxedStore<V> = Box<KVStore<V>>;
+//type BoxedStoreRel<K1,K2,V> = Box<KVStoreRel<K1,K2,V, Cache = KVCache<K = <V as KeyVal>::Key, V = V>>>;
+type BoxedStoreRel<K1,K2,V> = Box<KVStoreRel<K1,K2,V>>;
+
 /// Storage of Wot info, here we use three substore. The one with relationship,
 /// should be a trensiant internal implementation loaded at start or bd
 /// related call. Here we use this implemetation for the sake of simplicity.
@@ -87,16 +101,18 @@ impl<TP : TrustedPeer> SettableAttachment for WotKV<TP> {
 ///
 /// WotStore manage trust locally, this explain that we do not attach trust to peer but that trust
 /// is only accessible through a special KeyVal : TrustQuery.
+/// TODO some store should be replace by KVCache
+/// TODO get rid of BoxedStore?? (no heap no 'static).
 pub struct WotStore<TP : TrustedPeer, T : WotTrust<TP>> {
   /// Peer indexed by PeerId
-  peerstore : Box<KVStore<ArcKV<TP>>>,
+  peerstore : BoxedStore<ArcKV<TP>>,
   /// Special KeyVal to query signature about a peer.
-  promstore : Box<KVStore<PromSigns<TP>>>,
+  promstore : BoxedStore<PromSigns<TP>>,
   /// Cache of curent trust calculation state (and trust level)
   /// This may be stored, yet we can recalculate it.
-  wotstore  : Box<KVStore<T>>,
+  wotstore  : BoxedStore<T>,
   /// Sign trust
-  signstore : Box<KVStoreRel<<TP as KeyVal>::Key,<TP as KeyVal>::Key, PeerSign<TP>>>,
+  signstore : BoxedStoreRel<<TP as KeyVal>::Key,<TP as KeyVal>::Key, PeerSign<TP>>,
   /// Max size of promoted trust (we keep the last ones)
   promsize  : usize,
   /// Rule used to calculate trust level from PeerSign (s).
@@ -225,10 +241,10 @@ impl<TP : TrustedPeer> SettableAttachment for PromSigns<TP> {}
 
 impl<TP : TrustedPeer, T : WotTrust<TP>> WotStore<TP, T> {
   pub fn new
-  <S1 : KVStore<ArcKV<TP>>, 
-  S2 : KVStore<PromSigns<TP>>, 
-  S3 : KVStoreRel<Vec<u8>,Vec<u8>,PeerSign<TP>>,
-  S4 : KVStore<T>
+  <S1 : KVStore<ArcKV<TP>> + 'static,
+  S2 : KVStore<PromSigns<TP>> + 'static,
+  S3 : KVStoreRel<Vec<u8>,Vec<u8>,PeerSign<TP>> + 'static,
+  S4 : KVStore<T> + 'static,
   > 
   (mut s1 : S1, s2 : S2, mut s3 : S3,  mut s4 : S4, ame : ArcKV<TP>, psize : usize, rules : T::Rule) 
   -> WotStore<TP, T> {
@@ -316,6 +332,7 @@ impl<TP : TrustedPeer, T : WotTrust<TP>> WotStore<TP, T> {
 }
 
 impl<TP : TrustedPeer, T : WotTrust<TP>> KVStore<WotKV<TP>> for WotStore<TP, T> {
+  //type Cache = Self;
 
   // TODO arc make no sense
   fn add_val(& mut self,  kv : WotKV<TP>, stconf : (bool, Option<CachePolicy>)){
@@ -539,7 +556,10 @@ fn test_wot_rsa() {
   test_wot_gen(&initRSAPeer)
 }
 #[cfg(test)]
-fn test_wot_gen<T : TrustedPeer, F : Fn(String) -> ArcKV<T>>(init : &F) {
+fn test_wot_gen<T : TrustedPeer + 'static, F : Fn(String) -> ArcKV<T>>(init : &F) 
+where <T as Peer>::Address : 'static,
+      <T as Truster>::Internal : 'static,
+ {
   // initiate with simple cache map
   let mut wotpeers = SimpleCache::new(None);
   let mut wotrels  = SimpleCache::new(None);

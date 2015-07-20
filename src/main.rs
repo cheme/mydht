@@ -41,7 +41,7 @@ use num::traits::{ToPrimitive, Bounded};
 use mydht::{StoragePriority};
 use mydht::dhtif::KeyVal;
 use mydht::{DHT,RunningContext,RunningProcesses,ArcRunningContext,RunningTypes};
-use mydht::{QueryConf,QueryPriority,QueryMode,QueryChunk};
+use mydht::{QueryConf,QueryPriority,QueryMode,QueryChunk,QueryID};
 use mydht::{CachePolicy};
 use mydht::dhtif;
 use mydht::Json;
@@ -123,7 +123,7 @@ let tcp_transport : Tcp = Tcp {
     )
     );
  
-    let mut serv = DHT::<RunningTypesImpl<DummyRules, Tcp, Json>>::boot_server(rc, Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), Vec::new(), bootNodes);
+    let mut serv = DHT::<RunningTypesImpl<DummyRules, Tcp, Json>>::boot_server(rc, move || Some(Inefficientmap::new()), move || Some(SimpleCacheQuery::new(false)), move || Some(SimpleCache::new(None)), Vec::new(), bootNodes);
     serv.block();
     info!("exiting...");
  
@@ -211,7 +211,7 @@ let tcp_transport : Tcp = Tcp {
           DummyQueryRules{idcnt:Mutex::new(0)},
           Json,
           tcp_transport,
-        )), Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), Vec::new(), bpeers)
+        )), move || Some(Inefficientmap::new()), move || Some(SimpleCacheQuery::new(false)), move || Some(SimpleCache::new(None)), Vec::new(), bpeers)
     }).collect();
 
     thread::sleep_ms(2000);
@@ -253,12 +253,12 @@ impl PeerMgmtMeths<Node, DummyKeyVal> for DummyRules{
   // typically accept return either normal (no priority managed) or a int priority
  
   fn accept<RT : RunningTypes<P=Node,V=DummyKeyVal>>
-  (&self, n : &Arc<Node>, _ : &RunningProcesses<Node,DummyKeyVal>, _ : &ArcRunningContext<RT>) 
+  (&self, n : &Arc<Node>, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
   -> Option<PeerPriority>
   {Some (PeerPriority::Priority(1))}
   #[inline]
   fn for_accept_ping<RT : RunningTypes<P=Node,V=DummyKeyVal>>
-  (&self, n : &Arc<Node>, _ : &RunningProcesses<Node,DummyKeyVal>, _ : &ArcRunningContext<RT>) 
+  (&self, n : &Arc<Node>, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
   {}
 }
 
@@ -279,12 +279,12 @@ impl PeerMgmtMeths<Node, DummyKeyVal> for DummyRules2 {
 
   // typically accept return either normal (no priority managed) or a int priority
   fn accept<RT : RunningTypes<P=Node,V=DummyKeyVal>>
-  (&self, n : &Arc<Node>, _ : &RunningProcesses<Node,DummyKeyVal>, _ : &ArcRunningContext<RT>) 
+  (&self, n : &Arc<Node>, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
   -> Option<PeerPriority>
   {Some (PeerPriority::Priority(2))}
   #[inline]
   fn for_accept_ping<RT : RunningTypes<P=Node,V=DummyKeyVal>>
-  (&self, n : &Arc<Node>, _ : &RunningProcesses<Node,DummyKeyVal>, _ : &ArcRunningContext<RT>) 
+  (&self, n : &Arc<Node>, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
   {}
   
 
@@ -306,15 +306,16 @@ impl dhtif::DHTRules for DummyQueryRules {
   }
 
   // here both a static counter and a rand one just for show
-  fn newid (&self) -> String{
+  fn newid (&self) -> QueryID {
       // (eg database connection)
       let mut rng = thread_rng();
-      let s = rng.gen_range(0,65555);
+      //let s = rng.gen_range(0,65555);
+      let s = rng.next_u64().to_usize().unwrap();
       let mut i = self.idcnt.lock().unwrap();
       *i += 1;
-      let r = "query ".to_string() + &s.to_string()[..] + "_" + &(*i).to_string()[..];
-      println!("############### {}" , r);
-      r
+//      let r = "query ".to_string() + &s.to_string()[..] + "_" + &(*i).to_string()[..];
+ //     println!("############### {}" , r);
+      *i
   }
   fn nbhop (&self, prio : QueryPriority) -> u8{
       match prio {
@@ -540,7 +541,11 @@ let tcp_transport : Tcp = Tcp {
           Json,
           tcp_transport,
         )
-        ), Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), bpeers, Vec::new()))
+        ), 
+        move || Some(Inefficientmap::new()), 
+        move || Some(SimpleCacheQuery::new(false)), 
+        move || Some(SimpleCache::new(None)), 
+        bpeers, Vec::new()))
  }).collect();
 
     // all has started
@@ -596,7 +601,11 @@ let tcp_transport : Tcp = Tcp {
           Bincode,
           tran,
         )
-        ), Inefficientmap::new(), SimpleCacheQuery::new(), move || Some(SimpleCache::new(None)), bpeers, Vec::new()))
+        ), 
+        move || Some(Inefficientmap::new()),
+        move || Some(SimpleCacheQuery::new(false)),
+        move || Some(SimpleCache::new(None)),
+        bpeers, Vec::new()))
  }).collect();
 
     // all has started

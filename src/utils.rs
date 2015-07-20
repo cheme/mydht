@@ -1,22 +1,22 @@
 
 #[cfg(feature="rust-crypto-impl")]
 extern crate crypto;
-extern crate num;
-extern crate rand;
 extern crate time;
 #[cfg(feature="openssl-impl")]
 extern crate openssl;
 extern crate bincode;
 
 #[macro_use]
-use self::num::bigint::RandBigInt;
-use self::rand::Rng;
-use self::rand::thread_rng;
+
+use num::bigint::{BigUint,RandBigInt};
+use rand::Rng;
+use rand::thread_rng;
 use std::sync::{Arc,Mutex,Condvar};
 use transport::{ReadTransportStream,WriteTransportStream};
 use keyval::{Attachment,SettableAttachment};
 use msgenc::{MsgEnc,ProtoMessage};
-use keyval::{KeyVal,AsKeyValIf};
+use keyval::{KeyVal};
+//use keyval::{AsKeyValIf};
 use keyval::{FileKeyVal};
 use peer::{Peer};
 #[cfg(feature="openssl-impl")]
@@ -62,7 +62,7 @@ pub struct ArcKV<KV : KeyVal> (pub Arc<KV>);
 impl<KV : KeyVal> Encodable for ArcKV<KV> {
   fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
     // default to local without att
-    self.as_keyval_if().encode_kv(s, true, false)
+    self.0.encode_kv(s, true, false)
   }
 }
 
@@ -72,11 +72,12 @@ impl<KV : KeyVal> Decodable for ArcKV<KV> {
     Self::decode_kv(d, true, false)
   }
 }
-
-impl<KV : KeyVal> AsKeyValIf for ArcKV<KV> {
+/*
+impl<KV : KeyVal> AsKeyValIf for ArcKV<KV> 
+  {
   type KV = KV;
   type BP = ();
-  fn as_keyval_if(&self) -> &Self::KV {
+  fn as_keyval_if(& self) -> & Self::KV {
     &(*self.0)
   }
   fn build_from_keyval(_ : (), kv : Self::KV) -> Self {
@@ -84,7 +85,7 @@ impl<KV : KeyVal> AsKeyValIf for ArcKV<KV> {
   }
   fn decode_bef<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<Self::BP, D::Error> {Ok(())}
 }
-
+*/
 impl<KV : KeyVal> ArcKV<KV> {
   #[inline]
   pub fn new(kv : KV) -> ArcKV<KV> {
@@ -98,7 +99,9 @@ impl<V : KeyVal> Deref for ArcKV<V> {
     &self.0
   }
 }
-/*
+
+
+
 impl<KV : KeyVal> KeyVal for ArcKV<KV> {
   type Key = <KV as KeyVal>::Key;
   #[inline]
@@ -106,34 +109,18 @@ impl<KV : KeyVal> KeyVal for ArcKV<KV> {
         self.0.get_key()
   }
   #[inline]
-  fn encode_dist_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-    self.0.encode_dist_with_att(s)
+  fn get_attachment(&self) -> Option<&Attachment> {
+    self.0.get_attachment() 
   }
   #[inline]
-  fn decode_dist_with_att<D:Decoder> (d : &mut D) -> Result<ArcKV<KV>, D::Error> {
-    <KV as KeyVal>::decode_dist_with_att(d).map(|r|ArcKV::new(r))
+  fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> {
+    self.0.encode_kv(s, is_local, with_att)
   }
   #[inline]
-  fn encode_dist<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-    self.0.encode_dist(s)
+  fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<Self, D::Error> {
+    <KV as KeyVal>::decode_kv(d, is_local, with_att).map(|r|ArcKV::new(r))
   }
-  #[inline]
-  fn decode_dist<D:Decoder> (d : &mut D) -> Result<ArcKV<KV>, D::Error> {
-    <KV as KeyVal>::decode_dist(d).map(|r|ArcKV::new(r))
-  }
-  #[inline]
-  fn encode_loc_with_att<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error>{
-    self.0.encode_loc_with_att(s)
-  }
-  #[inline]
-  fn decode_loc_with_att<D:Decoder> (d : &mut D) -> Result<ArcKV<KV>, D::Error>{
-    <KV as KeyVal>::decode_loc_with_att(d).map(|r|ArcKV::new(r))
-  }
-  #[inline]
-  fn get_attachment(&self) -> Option<&Attachment>{
-    self.0.get_attachment()
-  }
-}*/
+}
 
 impl<KV : KeyVal> SettableAttachment for ArcKV<KV> {
   #[inline]
@@ -257,7 +244,7 @@ pub fn is_in_tmp_dir(f : &Path) -> bool {
   f.starts_with(&env::temp_dir())
 }
 
-fn random_uuid(hash_size : usize) -> num::BigUint {
+fn random_uuid(hash_size : usize) -> BigUint {
    let mut rng = thread_rng();
    rng.gen_biguint(hash_size)
 }
@@ -282,6 +269,7 @@ pub struct TransientOption<V> (Option<V>);
 /// for receiving one result only from other processes
 //pub type OneResult<V : Send> = Arc<(Mutex<V>,Condvar)>;
 /// TODO refactor to a struct alias and do some xtensive testcases
+/// TODO struct with optional val : all oneresult<bool> may switch to oneresult<()>
 pub type OneResult<V> = Arc<(Mutex<V>,Condvar)>;
 
 #[inline]

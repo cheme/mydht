@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use msgenc;
 use utils::ArcKV;
 use keyval::{KeyVal,Key};
+use std::collections::{HashMap};
 
 pub mod filestore;
 
@@ -28,60 +29,16 @@ pub mod filestore;
 // of keyval (serializable ...)
 
 
-/// Note linked anywhere. Cache for `KeyVal` TODO retry later usage (currently type inference fails) cf KVStore2
-pub trait KVCache<K, V> : Send + 'static {
-  /// Add value, pair is boolean for do persistent local store, and option for do cache value for
-  /// CachePolicy duration
-  fn c_add_val(& mut self, K, V, (bool, Option<CachePolicy>));
-  /// Get value
-  fn c_get_val(& self, &K) -> Option<V>;
-  /// Remove value
-  fn c_remove_val(& mut self, &K);
-}
-
-/// Note linked anywhere. TODO retry associated trait with later compiler to see if still no found type in fstore test
-pub trait KVCacheA : Send {
-  type K;
-  type KV;
-  /// Add value, pair is boolean for do persistent local store, and option for do cache value for
-  /// CachePolicy duration
-  fn c_add_val(& mut self, Self::KV, (bool, Option<CachePolicy>));
-  /// Get value
-  fn c_get_val(& self, &Self::K) -> Option<Self::KV>;
-  /// Remove value
-  fn c_remove_val(& mut self, &Self::K);
-}
-
-/// Note linked anywhere. TODO retry associated trait with later compiler to see if still no found type in fstore test
-pub trait KVStore2<V : KeyVal> : KVCache<V::Key, Arc<V>> {
-  #[inline]
-  fn add_val(& mut self, kv : Arc<V>, op : (bool, Option<CachePolicy>)){
-    self.c_add_val(kv.get_key(), kv,op)
-  }
- 
-  #[inline]
-  fn get_val(& self, k : &V::Key) -> Option<Arc<V>>{
-    self.c_get_val(k)
-  }
-  #[inline]
-  fn remove_val(& mut self, k : &V::Key){
-    self.remove_val(k)
-  }
-}
-
 #[cfg(test)]
 mod test {
-  extern crate num;
-  extern crate rand;
   use rustc_serialize as serialize;
   use keyval::KeyVal;
-  use kvstore::KVStore2;
   use query::simplecache::SimpleCache;
   use std::sync::{Arc};
   use peer::node::{Node,NodeID};
   use std::net::Ipv4Addr;
-  use self::num::{BigUint};
-  use self::num::bigint::RandBigInt;
+  use num::{BigUint};
+  use num::bigint::RandBigInt;
   use std::net::{ToSocketAddrs, SocketAddr};
   use std::io::Result as IoResult;
   use peer::Peer;
@@ -115,9 +72,7 @@ mod test {
 } 
 
 /// Storage for `KeyVal`
-//pub trait KVStore<V : KeyVal> : KVCache<K=V::Key, KV=Arc<V>> {
-//pub trait KVStore<V : KeyVal> : KVCache<V::Key, Arc<V>> {
-pub trait KVStore<V : KeyVal> : Send + 'static {
+pub trait KVStore<V : KeyVal> {
   /// Add value, pair is boolean for do persistent local store, and option for do cache value for
   /// CachePolicy duration
   fn add_val(& mut self, V, (bool, Option<CachePolicy>));
@@ -140,19 +95,6 @@ pub trait KVStore<V : KeyVal> : Send + 'static {
 
   /// Do periodic time consuming action. Typically serialize (eg on kvmanager shutdown)
   fn commit_store(& mut self) -> bool;
-}
-
-/// kvstore with a cache
-pub trait KVStoreCache<V : KeyVal> : Send + 'static {
-  /// Add value, pair is boolean for do persistent local store, and option for do cache value for
-  /// CachePolicy duration
-  fn add_val_c(& mut self, ArcKV<V>, (bool, Option<CachePolicy>));
-  /// Get value
-  fn get_val_c(& self, &V::Key) -> Option<ArcKV<V>>;
-  /// Remove value
-  fn remove_val_c(& mut self, &V::Key);
-  /// Do periodic time consuming action. Typically serialize (eg on kvmanager shutdown)
-  fn commit_store_c(& mut self) -> bool;
 }
 
 

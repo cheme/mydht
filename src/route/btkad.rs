@@ -69,7 +69,7 @@ impl<P : Peer + DhtPeer, V : KeyVal> Route<P,V> for BTKad<P,V> where P::Key : Dh
   fn remchan(& mut self, nodeid : &P::Key) {
     let mut peer = match self.peers.get(nodeid) {
       Some(&(_,_, None)) => {None}, // TODO rewrite with in place write of hashmap (currently some issue with arc).
-      Some(&(ref ap,prio, ref s)) => {Some ((ap.clone(), prio, None))}, // TODO rewrite with in place write of hashmap (currently some issue with arc).
+      Some(&(ref ap,ref prio, ref s)) => {Some ((ap.clone(), prio.clone(), None))}, // TODO rewrite with in place write of hashmap (currently some issue with arc).
       None => {None},
     };
     match peer {
@@ -162,8 +162,6 @@ impl<P:Peer + DhtPeer,V: KeyVal> BTKad<P,V> where P::Key : Hash {
 #[cfg(test)]
 mod test {
   extern crate dht as odht;
-  extern crate num;
-  extern crate rand;
   use rustc_serialize as serialize;
   use super::super::Route;
   use super::BTKad;
@@ -174,8 +172,8 @@ mod test {
   use std::collections::VecDeque;
   use peer::node::{Node,NodeID};
   use self::odht::Peer as DhtPeer;
-  use self::num::{BigUint};
-  use self::num::bigint::RandBigInt;
+  use num::{BigUint};
+  use num::bigint::RandBigInt;
   use std::net::{SocketAddr};
   use utils::{SocketAddrExt};
   use utils;
@@ -183,7 +181,7 @@ mod test {
   use peer::Peer;
   use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
   use std::fs::File;
-
+  use rand;
   use std::net::{Ipv4Addr};
   use keyval::{Attachment,SettableAttachment};
   use std::str::FromStr;

@@ -59,7 +59,7 @@ use std::sync::mpsc::{Sender,Receiver};
 use mydht::{Udp,Tcp};
 use mydht::dhtif::{Peer,PeerMgmtMeths};
 use mydht::{DHT,RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
-use mydht::{PeerPriority,StoragePriority,QueryChunk,QueryMode,QueryConf};
+use mydht::{PeerPriority,StoragePriority,QueryChunk,QueryMode,QueryConf,QueryID};
 use mydht::dhtif::KeyVal;
 use mydht::dhtif::FileKeyVal;
 use mydht::transportif::Transport;
@@ -74,7 +74,6 @@ use mydht::kvstoreif::{KVStoreMgmtMessage};
 use mydht::dhtimpl::{RSAPeer,PeerSign};
 use mydht::dhtimpl::{WotStore,WotKV,WotK,TrustRules,ClassicWotTrust};
 use rustc_serialize::hex::{ToHex,FromHex};
-//use mydht::kvstoreif::KVCache;
 use mydht::dhtif::{DHTRules};
 use mydht::msgencif::{MsgEnc};
 use mydht::{Attachment,SettableAttachment};
@@ -239,7 +238,7 @@ pub fn main() {
       type T = TmpTransportMacro;
       type E = TmpEncMacro;
     }
-
+    let randqueryid = dhtrules.randqueryid;
     //let rc : ArcRunningContext<RunningTypes<P = RSAPeer, V = MulKV, Q = dhtrules::DhtRulesImpl, T = TmpTransportMacro, E = TmpEncMacro, R = WotAccess>> = Arc::new(
     let rc : ArcRunningContext<RunningTypesImpl> = Arc::new(
     RunningContext::new (
@@ -252,8 +251,8 @@ pub fn main() {
 
 
 
-    let route = Inefficientmap::new();
-    let querycache = SimpleCacheQuery::new();
+    let route = move || Some(Inefficientmap::new());
+    let querycache = move || Some(SimpleCacheQuery::new(randqueryid));
     let pconf = PathBuf::from(&fsconf.storepath[..]);
     let pdbfile = pconf.join("./files.db");
     let pfiles = pconf.join("./files");
@@ -277,63 +276,62 @@ pub fn main() {
 
     let bootTrustedPeersSend  = bootTrustedPeers.clone();
     let meSend = rc.me.clone(); // should be arckv if bootserver took arckv as param TODO
-let mut multip_store = move || {
-    let mut storagequery = SimpleCache::new(Some(pqueries)); // TODO a path to serialize
-    let mut ca = SimpleCache::new(Some(pdbfile));// TODO a path to serialize
-    let filestore = {
-    // map filestore to set key of storagequery
-    let infn = &mut (|k : &ArcKV<FileKV> |{
-      let v = ArcKV::new(fskeyval::FileQuery{
-        query : k.name(),
-        result : vec![(k.name(),k.get_key())],
-      }); //warning erase existing val
-      storagequery.add_val(v,(true,None))
-    });
-    FileStore::new(pfiles, prdb, Box::new(ca), true,infn).unwrap() // TODO fstore in conf for tests!!!
-    };
+    let mut multip_store = move || {
+      let mut storagequery = SimpleCache::new(Some(pqueries)); // TODO a path to serialize
+      let mut ca = SimpleCache::new(Some(pdbfile));// TODO a path to serialize
+      let filestore = {
+        // map filestore to set key of storagequery
+        let infn = &mut (|k : &ArcKV<FileKV> |{
+          let v = ArcKV::new(fskeyval::FileQuery{
+            query : k.name(),
+            result : vec![(k.name(),k.get_key())],
+          }); //warning erase existing val
+          storagequery.add_val(v,(true,None))
+        });
+        FileStore::new(pfiles, prdb, Box::new(ca), true,infn).unwrap() // TODO fstore in conf for tests!!!
+      };
 
-    let fsstore = fskeyval::FSStore {
-      queries : Box::new(storagequery),
-      files   : Box::new(filestore),
-    };
-    let mut wotpeers = SimpleCache::new(Some(pwotpeers));
-    let mut wotrels  = SimpleCache::new(Some(pwotrels));
-    let mut wotsigns = SimpleCache::new(Some(pwotsigns));
-    let mut wotrusts = SimpleCache::new(Some(pwotrust));
-    let mut trustRul : TrustRules = vec![1,1,3,3,3];
-    let mut wotstore = WotStore::new(
-      wotpeers,
-      wotrels,
-      wotsigns,
-      wotrusts,
-      mynodewot,
-      // TODO this in param conf
-      100,
-      trustRul,
-    );
-    let mekey = meSend.get_key();
-    let ame = ArcKV(meSend);
-    for p in bootTrustedPeersSend.iter() {
-    // TODO add mechanism to sign only if needed (like param init sign or other)
-    // all boot peer are signed as level 1 peers
-    if mekey != p.get_key() {
-      let akp = ArcKV(p.clone());
-      // TODO Arc for derive KV do not work see add_val refactoring
-      wotstore.add_val (WotKV::Peer(akp.clone()), (true,None));
+      let fsstore = fskeyval::FSStore {
+        queries : Box::new(storagequery),
+        files   : Box::new(filestore),
+      };
+      let mut wotpeers = SimpleCache::new(Some(pwotpeers));
+      let mut wotrels  = SimpleCache::new(Some(pwotrels));
+      let mut wotsigns = SimpleCache::new(Some(pwotsigns));
+      let mut wotrusts = SimpleCache::new(Some(pwotrust));
+      let mut trustRul : TrustRules = vec![1,1,3,3,3];
+      let mut wotstore = WotStore::new(
+        wotpeers,
+        wotrels,
+        wotsigns,
+        wotrusts,
+        mynodewot,
+        // TODO this in param conf
+        100,
+        trustRul,
+      );
+      let mekey = meSend.get_key();
+      let ame = ArcKV(meSend);
+      for p in bootTrustedPeersSend.iter() {
+        // TODO add mechanism to sign only if needed (like param init sign or other)
+        // all boot peer are signed as level 1 peers
+        if mekey != p.get_key() {
+          let akp = ArcKV(p.clone());
+          // TODO Arc for derive KV do not work see add_val refactoring
+          wotstore.add_val (WotKV::Peer(akp.clone()), (true,None));
  
-      let ps : PeerSign<RSAPeer> = PeerSign::new(&ame, &(akp), 1, 0).unwrap();
-      // TODO add those only if needed
-      wotstore.add_val (WotKV::Sign(ps), (true,None));
-    }
-    }
+          let ps : PeerSign<RSAPeer> = PeerSign::new(&ame, &(akp), 1, 0).unwrap();
+          // TODO add those only if needed
+          wotstore.add_val (WotKV::Sign(ps), (true,None));
+        }
+      }
 
-    // TODO route possible errors to none
-    Some(MultiplStore {
-      fsstore : fsstore,
-      wotstore : wotstore,
-    })
- 
-};
+      // TODO route possible errors to none
+      Some(MultiplStore {
+        fsstore : fsstore,
+        wotstore : wotstore,
+      })
+    };
 
  
     let mut serv = DHT::<RunningTypesImpl>::boot_server(rc, route, querycache, multip_store, Vec::new(), bootTrustedPeers);
@@ -510,7 +508,7 @@ impl PeerMgmtMeths<RSAPeer, MulKV> for UnsignedOpenAccess {
   }
   fn checkmsg  (&self, n : &RSAPeer, chal : &String, sign : &String) -> bool{ true}
   fn accept<RT : RunningTypes<P=RSAPeer,V=MulKV>> (&self, n : &Arc<RSAPeer>, 
-  rp : &RunningProcesses<RSAPeer,MulKV>, 
+  rp : &RunningProcesses<RT>, 
   rc : &ArcRunningContext<RT>) 
   -> Option<PeerPriority> {
     // direct local query to kvstore process to know which trust we got for peer (trust is use as
@@ -519,7 +517,7 @@ impl PeerMgmtMeths<RSAPeer, MulKV> for UnsignedOpenAccess {
   }
   #[inline]
   fn for_accept_ping<RT : RunningTypes<P=RSAPeer,V=MulKV>>  (&self, n : &Arc<RSAPeer>, 
-  rp : &RunningProcesses<RSAPeer,MulKV>, 
+  rp : &RunningProcesses<RT>, 
   rc : &ArcRunningContext<RT>) 
   {
   }
@@ -535,7 +533,7 @@ struct WotAccess {
 
 impl WotAccess {
   fn accept_rec<RT : RunningTypes<P=RSAPeer, V=MulKV>> (&self, n : &Arc<RSAPeer>, 
-  rp : &RunningProcesses<RSAPeer,MulKV>, 
+  rp : &RunningProcesses<RT>, 
   rc : &ArcRunningContext<RT>,
   rec : bool) 
   -> Option<PeerPriority> {
@@ -662,13 +660,13 @@ impl PeerMgmtMeths<RSAPeer, MulKV> for WotAccess {
   }
   #[inline]
   fn accept<RT : RunningTypes<P = RSAPeer, V = MulKV>> (&self, n : &Arc<RSAPeer>, 
-  rp : &RunningProcesses<RSAPeer,MulKV>, 
+  rp : &RunningProcesses<RT>, 
   rc : &ArcRunningContext<RT>) 
   -> Option<PeerPriority> {
     self.accept_rec(n, rp, rc, true)
   }
   fn for_accept_ping<RT : RunningTypes<P = RSAPeer, V = MulKV>> (&self, n : &Arc<RSAPeer>, 
-  rp : &RunningProcesses<RSAPeer,MulKV>, 
+  rp : &RunningProcesses<RT>, 
   rc : &ArcRunningContext<RT>) 
   {
     // update peer in peer kv (for new peer associated info) - localonly
@@ -713,7 +711,6 @@ mod fskeyval {
   use std::fs::File;
   use mydht::kvstoreif::{KVStore};
   use mydht::dhtif::{FileKeyVal,KeyVal};
-//  use mydht::kvstoreif::{KVCache};
   use mydht::CachePolicy;
   use std::sync::Arc;
 
@@ -810,7 +807,7 @@ extern crate rustc_serialize;
 use mydht::{StoragePriority};
 use time::Duration;
 use mydht::{CachePolicy};
-use mydht::{QueryPriority};
+use mydht::{QueryPriority,QueryID};
 use mydht::dhtif;
 use mydht::{PeerPriority};
 use std::sync::Mutex;
@@ -849,16 +846,16 @@ impl dhtif::DHTRules for DhtRulesImpl {
   }
 
   // here both a static counter and a rand one just for show // TODO switch QueryID to BigInt
-  fn newid (&self) -> String {
+  fn newid (&self) -> QueryID {
     if self.1.randqueryid {
       let mut rng = thread_rng();
       // (eg database connection)
-      let s = rng.gen_range(0,65555);
-      s.to_string()
+      //rng.gen_range(0,65555)
+      rng.next_u64().to_usize().unwrap()
     } else {
       let mut i = self.0.lock().unwrap();
       *i += 1;
-      (*i).to_string()
+      *i
     }
   }
 

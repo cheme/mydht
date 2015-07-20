@@ -2,7 +2,7 @@
 //! Process storing keyvalue.
 //! It uses a `KVStore` object and reply to instruction given through a dedicated channel.
 use rustc_serialize::json;
-use procs::mesgs::{self,PeerMgmtMessage,ClientMessage,KVStoreMgmtMessage};
+use procs::mesgs::{self,PeerMgmtMessage,PeerMgmtInitMessage,QueryMgmtMessage,ClientMessage,KVStoreMgmtMessage};
 use peer::{PeerMgmtMeths, PeerPriority};
 use procs::{RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
 use std::sync::mpsc::{Sender,Receiver};
@@ -38,7 +38,7 @@ pub fn start
  (rc : ArcRunningContext<RT>, 
   mut storei : F, 
   r : &Receiver<KVStoreMgmtMessage<RT::P,RT::V>>,
-  rp : RunningProcesses<RT::P,RT::V>,
+  rp : RunningProcesses<RT>,
   sem : Arc<Semaphore>) {
   // actula store init - TODO better error management
   let mut store = storei().unwrap_or_else(||panic!("store initialization failed"));
@@ -101,7 +101,7 @@ pub fn start
         });
       },
       //asynch find
-      Ok(KVStoreMgmtMessage::KVFind(key, None, queryconf)) => {
+      Ok(KVStoreMgmtMessage::KVFind(key, None, queryconf,_)) => {
         match store.get_val(&key) {
           Some(val) => {
             rp.peers.send(PeerMgmtMessage::StoreKV(queryconf, Some(val.clone())));
@@ -117,7 +117,7 @@ pub fn start
           },
         };
       },
-      Ok(KVStoreMgmtMessage::KVFind(key, Some(query), queryconf)) => {
+      Ok(KVStoreMgmtMessage::KVFind(key, Some(query), queryconf, dostorequery)) => {
         let success = match store.get_val(&key) {
           Some(val) => {
             debug!("!!!KV Found match!!! no proxying");
@@ -138,7 +138,13 @@ pub fn start
         if !success {
           if queryconf.rem_hop > 0 {
             debug!("!!!KV not Found match or multiple result needed !!! proxying");
-            rp.peers.send(PeerMgmtMessage::KVFind(key, Some(query), queryconf));
+            // If dostorequery then send to query manager for new query
+            if dostorequery {
+              rp.queries.send(QueryMgmtMessage::NewQuery(query, PeerMgmtInitMessage::KVFind(key, queryconf)));
+            } else {
+              // else send directly to peers
+              rp.peers.send(PeerMgmtMessage::KVFind(key, Some(query), queryconf));
+            };
           } else {
              query.release_query(& rp.peers);
           };

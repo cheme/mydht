@@ -29,7 +29,7 @@ const BUFF_SIZE : usize = 10000; // use for attachment send/receive -- 21888 see
 
 /// Trait for message encoding between peers.
 /// It use bytes which will be used by transport.
-pub trait MsgEnc : Send + Sync + 'static {
+pub trait MsgEnc : Send + Sync {
   //fn encode<P : Peer, V : KeyVal>(&self, &ProtoMessage<P,V>) -> Option<Vec<u8>>;
   
   /// encode
@@ -47,15 +47,13 @@ pub trait MsgEnc : Send + Sync + 'static {
 pub enum ProtoMessage<P : Peer, V : KeyVal> {
   /// Our node pinging plus challenge and message signing
   PING(P,String, String), 
-  /// Ping reply with signature TODO add ourself in pong (in order to call for_accept_ping after
-  /// and obviously update peer content (if peer can change (less likely than in a ping))).
-  PONG(String),
-  /// Ping reply with signature and challenge (TODO currently no persistence of the ping so bypass
-  /// security)
-  APONG(P,String, String), // peer challenge, mess sig, signature
-  /// reply to query of propagate
+  /// Ping reply with signature with
+  ///  - emitter
+  ///  - signing of challenge
+  PONG(P,String),
+  /// reply to query of propagate, if no queryid is used it is a node propagate
   STORE_NODE(Option<QueryID>, Option<DistantEnc<P>>), // reply to synch or asynch query - note no mix in query mode -- no signature, since we go with a ping before adding a node (ping is signed) TODO allow a signing with primitive only for this ?? and possible not ping afterwad
-  /// reply to query of propagate
+  /// reply to query of propagate, if no queryid is used it is a node propagate
   STORE_VALUE(Option<QueryID>, Option<DistantEnc<V>>), // reply to synch or asynch query - note no mix in query mode
   /// reply to query of propagate
   STORE_VALUE_ATT(Option<QueryID>, Option<DistantEncAtt<V>>), // same as store value but use encoding distant with attachment

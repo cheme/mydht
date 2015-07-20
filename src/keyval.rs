@@ -35,9 +35,9 @@ impl<K : Encodable + Decodable + fmt::Debug + Eq + Clone> Key for K {
 
 /// KeyVal is the basis for DHT content, a value with key.
 // TODO rem 'static and add it only when needed (Arc) : method as_static??
-pub trait KeyVal : Encodable + Decodable + fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment + 'static {
+pub trait KeyVal : Encodable + Decodable + fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment {
   /// Key type of KeyVal
-  type Key : Key + Send + Sync + 'static; //aka key // Ord , Hash ... might be not mandatory but issue currently
+  type Key : Key + Send + Sync; //aka key // Ord , Hash ... might be not mandatory but issue currently
   /// getter for key value
   fn get_key(&self) -> Self::Key; // TODO change it to return &Key (lot of useless clone in impls
   /// optional attachment
@@ -95,28 +95,28 @@ pub trait SettableAttachment {
     false
   }
 }
-
+/*
 /// currently this could only be used for type ,
 /// If/when trait object could include associated type def, as_key_val_if should return &KeyVal,
 /// and this could be extend to derivation of enum (replacement for derive_keyval macro).
-pub trait AsKeyValIf : fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment + 'static {
+pub trait AsKeyValIf : fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment {
   type KV : KeyVal;
   type BP;
-  fn as_keyval_if(&self) -> &Self::KV;
+  fn as_keyval_if(& self) -> & Self::KV;
   fn build_from_keyval(Self::BP, Self::KV) -> Self;
   fn encode_bef<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> { Ok(()) }
   fn decode_bef<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<Self::BP, D::Error>;
 }
-
+*/
 /// Library adapter to convert AsRef
 pub struct AsRefSt<'a, KV : 'a> (&'a KV);
-
-impl<'a, KV : KeyVal, BP, AKV : AsKeyValIf<KV = KV, BP = BP>> AsRef<KV> for AsRefSt<'a, AKV> {
+/*
+impl<'a, KV : KeyVal, BP, AKV : AsKeyValIf< KV = KV, BP = BP>> AsRef<KV> for AsRefSt<'a, AKV> {
   fn as_ref (&self) -> &KV {
     self.0.as_keyval_if()
   }
 }
-
+*/
 /*
 impl<AKV : AsKeyValIf> Encodable for AKV {
   fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
@@ -131,8 +131,9 @@ impl<AKV : AsKeyValIf> Decodable for AKV {
   }
 }
 */
-
-impl<AKV : AsKeyValIf + Encodable + Decodable> KeyVal for AKV {
+/*
+impl<AKV : AsKeyValIf + Encodable + Decodable> KeyVal for AKV 
+{
   type Key = <<AKV as AsKeyValIf>::KV as KeyVal>::Key;
 
   #[inline]
@@ -141,7 +142,7 @@ impl<AKV : AsKeyValIf + Encodable + Decodable> KeyVal for AKV {
   }
   #[inline]
   fn get_attachment(&self) -> Option<&Attachment> {
-    self.as_keyval_if().get_attachment()
+    self.as_keyval_if().get_attachment() 
   }
   #[inline]
   fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> {
@@ -156,7 +157,7 @@ impl<AKV : AsKeyValIf + Encodable + Decodable> KeyVal for AKV {
 
 }
 
-
+*/
 /// Specialization of Keyval for FileStore
 pub trait FileKeyVal : KeyVal {
   /// initiate from a file (usefull for loading)

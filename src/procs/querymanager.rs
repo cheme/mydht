@@ -17,6 +17,8 @@ use peer::Peer;
 use keyval::{KeyVal};
 use kvstore::{StoragePriority};
 use utils::Either;
+use procs::RunningTypes;
+use transport::Transport;
 
 use procs::mesgs::{PeerMgmtMessage, KVStoreMgmtMessage, QueryMgmtMessage};
 
@@ -24,21 +26,23 @@ use procs::mesgs::{PeerMgmtMessage, KVStoreMgmtMessage, QueryMgmtMessage};
 
 /// Start and run the process
 pub fn start
- <P : Peer,
-  V : KeyVal,
-  CN : QueryCache<P,V>>
- (r : &Receiver<QueryMgmtMessage<P,V>>, 
-  s : &Sender<QueryMgmtMessage<P,V>>, 
-  p : &Sender<PeerMgmtMessage<P,V>>, 
-  k : &Sender<KVStoreMgmtMessage<P,V>>,
-  mut cn : CN, 
+ <RT : RunningTypes,
+  CN : QueryCache<RT::P,RT::V>,
+  F : FnOnce() -> Option<CN> + Send + 'static,
+  >
+ (r : &Receiver<QueryMgmtMessage<RT::P,RT::V>>, 
+  s : &Sender<QueryMgmtMessage<RT::P,RT::V>>, 
+  p : &Sender<PeerMgmtMessage<RT::P,RT::V,<RT::T as Transport>::ReadStream,<RT::T as Transport>::WriteStream>>, 
+  k : &Sender<KVStoreMgmtMessage<RT::P,RT::V>>,
+  mut cni : F, 
   cleanjobdelay : Option<Duration>) {
+  let mut cn = cni().unwrap_or_else(||panic!("query cache initialization failed"));
   // start clean job if needed
   match cleanjobdelay{
     Some(delay) => {
       let delaysp = delay.clone();
       let sp = s.clone();
-      thread::spawn(move || {
+      thread::scoped(move || {
         loop {
           thread::sleep_ms(delaysp.num_milliseconds().to_u32().unwrap());
           info!("running scheduled clean");
@@ -51,12 +55,16 @@ pub fn start
   // start
   loop {
     match r.recv() {
-      Ok(QueryMgmtMessage::NewQuery(qid,query, sem))  => {
-        debug!("adding query to cache {:?}", qid);
+      Ok(QueryMgmtMessage::NewQuery(query, mut msg))  => {
+  // store a new query, forward to peermanager
         // Add query to cache
-        cn.query_add(&qid, query);
+        let qid = cn.newid(); 
+        // update query with qid
+        msg.change_query_id(qid.clone());
+        debug!("adding query to cache with id {:?}", qid);
+        cn.query_add(qid, query.clone());
         // Unlock parent thread (we cannot send query if not in cache already) 
-        sem.release();
+        p.send(msg.to_peermsg(query));
       },
       Ok(QueryMgmtMessage::NewReply(qid, reply)) => {
         // get query if xisting

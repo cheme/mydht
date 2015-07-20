@@ -6,7 +6,8 @@ use std::time::Duration;
 use peer::Peer;
 use time;
 use keyval::{KeyVal,Key};
-use kvstore::{KVStoreCache,KVCache,KVStore,KVStore2,KVStoreRel};
+use kvstore::{KVStore,KVStoreRel};
+use kvcache::{KVCache,NoCache};
 use query::cache::CachePolicy;
 use std::sync::Arc;
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
@@ -15,9 +16,11 @@ use std::fs::{File};
 use std::fs::{copy,PathExt};
 use std::path::{Path,PathBuf};
 use utils::ArcKV;
-use std::marker::NoCopy;
+use std::marker::{NoCopy,PhantomData};
 use std::io::{SeekFrom,Write,Read,Seek};
 use std::fs::OpenOptions;
+use rand::{thread_rng,Rng};
+use num::traits::ToPrimitive;
 
 //TODO rewrite with parameterization ok!! (generic simplecache)
 
@@ -30,8 +33,21 @@ pub struct SimpleCache<V : KeyVal> where V::Key : Hash {
   _nocopy : NoCopy,
 }
 
+/*
+pub struct SimpleCache<'a, V : KeyVal, C : KVCache<<V as KeyVal>::Key, V>> where V::Key : Hash {
+  cache : C,
+  persi : Option<PathBuf>,
+  _nocopy : NoCopy,
+  _phdat : PhantomData<&'a V>
+}*/
+
+
 /// KVStoreRel implementation, slow, only for small size or testing.
-impl<K1 : Key + Hash, K2 : Key + Hash, V : KeyVal<Key=(K1,K2)>> KVStoreRel<K1, K2, V> for SimpleCache<V> {
+/// TODO rem static when new kvstore
+//impl<K1 : Key + Hash, K2 : Key + Hash, V : KeyVal<Key=(K1,K2)>> KVStoreRel<K1, K2, V> for SimpleCache<V> {
+//impl<'a, K1 : Key + Hash + 'a, K2 : Key + Hash + 'a, V : KeyVal<Key=(K1,K2)>, C : KVCache<'a,(K1,K2),V> + Send> KVStoreRel<K1, K2, V> for SimpleCache<'a,V,C>
+impl<K1 : Key + Hash, K2 : Key + Hash, V : KeyVal<Key=(K1,K2)>> KVStoreRel<K1, K2, V> for SimpleCache<V>
+ {
   fn get_vals_from_left(& self, k1 : &K1) -> Vec<V> {
     self.cache.iter().filter(|&(ref k,ref v)| k.0 == *k1).map(|(ref k, ref v)|(*v).clone()).collect()
   }
@@ -72,11 +88,10 @@ impl<T : KeyVal> KVCache<T::Key, Arc<T>> for SimpleCache<T> {
 
 
 /// KVStore implementation with serialization to json (best for testing experimenting) if needed.
+/// TODO rem static after kvstore new
 impl<T : KeyVal> KVStore<T> for SimpleCache<T> where T::Key : Hash {
-//impl<T : KeyVal> KVCache for SimpleCache<T> {
-//impl<T : KeyVal> KVCache<T::Key, Arc<T>> for SimpleCache<T> {
- // type K = T::Key;
-  //type KV = Arc<T>;
+//impl<'a, T : KeyVal, C : KVCache<'a, <T as KeyVal>::Key, T> + Send> KVStore<T> for SimpleCache<'a,T,C> 
+//  where T::Key : Hash , C : 'static, SimpleCache<T,C> : 'static {
   #[inline]
   fn add_val(& mut self,  v : T, (persistent, _) : (bool, Option<CachePolicy>)){
     // if cache we should consider caching priority and 
@@ -122,34 +137,12 @@ impl<T : KeyVal> KVStore<T> for SimpleCache<T> where T::Key : Hash {
 }
 
 
-/// KVStore implementation with serialization to json (best for testing experimenting) if needed.
-impl<T : KeyVal> KVStoreCache<T> for SimpleCache<ArcKV<T>> where T::Key : Hash  {
-  #[inline]
-  fn add_val_c(& mut self,  v : ArcKV<T>, st : (bool, Option<CachePolicy>)){
-    self.add_val(v,st)
-  }
-
-  #[inline]
-  fn get_val_c(& self, k : &T::Key) -> Option<ArcKV<T>>{
-    self.get_val(k)
-  }
-
-  #[inline]
-  fn remove_val_c(& mut self, k : &T::Key){
-    self.remove_val(k)
-  }
-
-  #[inline]
-  fn commit_store_c(& mut self) -> bool{
-    self.commit_store()
-  }
-}
-
-
+//impl<V : KeyVal> SimpleCache<V,HashMap<<V as KeyVal>::Key, V>> where V::Key : Hash {
 impl<V : KeyVal> SimpleCache<V> where V::Key : Hash {
   /// Optionaly specify a path for serialization and of course loading initial value.
   /// JSon is used, with some slow trade of due to issue when serializing hashmap with non string
   /// key.
+  /// Initialize a simplecache of HashMap.
   pub fn new (op : Option<PathBuf>) -> Self {
     let new = op.as_ref().map(|p|{
       let r = p.exists();
@@ -175,6 +168,7 @@ impl<V : KeyVal> SimpleCache<V> where V::Key : Hash {
       &mut None => HashMap::new(),
     };
     SimpleCache{cache : map, persi : op, _nocopy : NoCopy}
+    //SimpleCache{cache : map, persi : op, _nocopy : NoCopy, _phdat : PhantomData}
   }
 }
 /*
@@ -185,11 +179,14 @@ impl<V : KeyVal> KVStore2<V> for SimpleCache<V> {
 /// A simple implementation (basic hashmap) to store/cache query
 pub struct SimpleCacheQuery<P : Peer, V : KeyVal> {
   cache : HashMap<QueryID, Query<P,V>>,
+  /// use randow id, if false sequential ids will be used
+  randomids : bool,
+  lastid : QueryID,
 }
 
 impl<P : Peer, V : KeyVal> SimpleCacheQuery<P, V> {
-  pub fn new () -> Self{
-    SimpleCacheQuery{cache : HashMap::new()}
+  pub fn new (randid : bool) -> Self{
+    SimpleCacheQuery{cache : HashMap::new(),randomids : randid,lastid : 0}
   }
 }
 
@@ -200,17 +197,30 @@ impl<P : Peer, V : KeyVal> SimpleCacheQuery<P, V> {
 // not sure usefull -> more likely implement both when possible
 impl<P : Peer, V : KeyVal> QueryCache<P,V> for SimpleCacheQuery<P,V>  where P::Key : Send {
   #[inline]
-  fn query_add(& mut self, qid : &QueryID, query : Query<P,V>) {
-    self.cache.insert(qid.clone(), query);
+  fn query_add(&mut self, qid : QueryID, query : Query<P,V>) {
+    self.cache.insert(qid, query);
   }
   #[inline]
-  fn query_get(& mut self, qid : &QueryID) -> Option<&Query<P,V>> {
+  fn query_get(&mut self, qid : &QueryID) -> Option<&Query<P,V>> {
     self.cache.get(qid)
   }
   #[inline]
-  fn query_remove(& mut self, quid : &QueryID){
+  fn query_remove(&mut self, quid : &QueryID){
       self.cache.remove(quid);
   }
+  fn newid (&mut self) -> QueryID {
+    if self.randomids {
+      let mut rng = thread_rng();
+      // (eg database connection)
+      //rng.gen_range(0,65555)
+      rng.next_u64().to_usize().unwrap()
+    } else {
+      // TODO implement ID recycling!!! a stack (plug it in query rem)
+      self.lastid += 1;
+      self.lastid
+    }
+  }
+
 
 
   fn cache_clean_nodes(& mut self)-> Vec<Query<P,V>>{
@@ -239,5 +249,4 @@ impl<P : Peer, V : KeyVal> QueryCache<P,V> for SimpleCacheQuery<P,V>  where P::K
     remq
   }
 }
-
 
