@@ -175,6 +175,7 @@ mod test {
   use keyval::{FileKV,FileKeyVal,KeyVal};
   //use super::super::KVCache;
   use query::simplecache::SimpleCache;
+  use std::collections::HashMap;
   use std::sync::Arc;
   use std::path::Path;
   use std::path::PathBuf;
@@ -183,7 +184,7 @@ mod test {
   //#[test]
   fn init () {
     let ok = true;
-    let mut ca : SimpleCache<FileKV> = SimpleCache::new(None);
+    let mut ca : SimpleCache<FileKV,HashMap<<FileKV as KeyVal>::Key,FileKV>> = SimpleCache::new(None);
     // TODO set a path for serialize and redesign build fn to first check in simplecache
     // TODO mkdir in temp before + random size binary files in it -> util fn
     // + hash those plus get file after init by hash on ca then get file and cmp path.

@@ -4,6 +4,7 @@ extern crate num;
 use self::odht::KNodeTable;
 use self::odht::Peer as DhtPeer;
 use std::io::Result as IoResult;
+use mydhtresult::{ErrorKind,Error};
 
 use std::collections::{HashMap,BTreeSet,VecDeque};
 use peer::{Peer,PeerPriority};
@@ -17,6 +18,11 @@ use keyval::KeyVal;
 use keyval::{Attachment,SettableAttachment};
 use num::traits::ToPrimitive;
 use std::hash::Hash;
+use transport::Transport;
+use super::PeerInfo;
+use kvcache::KVCache;
+use std::marker::PhantomData;
+use super::{pi_remchan,pi_upprio};
 
 #[derive(Clone,Debug)]
 struct ArcP<P : DhtPeer>(Arc<P>);
@@ -26,9 +32,12 @@ struct ArcP<P : DhtPeer>(Arc<P>);
 /// In fact it need DhtKey for peer and value (converting key to bigint to be able to xor
 /// keys).
 /// This route need Peer implementing DhtPeer trait for interface with underlying library fork.
-pub struct BTKad<P : Peer + DhtPeer, V : KeyVal> where P::Key : Hash {
+pub struct BTKad<P : Peer + DhtPeer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> where P::Key : Hash {
+  // TODO switch to a table of key only : here P is already in cache!!!!
   kad : KNodeTable<ArcP<P>>,
-  peers : HashMap<P::Key, (Arc<P>, PeerPriority, Option<ClientChanel<P,V>>)>,
+//  peers : HashMap<P::Key, (Arc<P>, PeerPriority, Option<ClientChanel<P,V>>)>,
+  peers : C, //TODO maybe get node priority out of this container or do in place update
+  _phdat : PhantomData<(V,T)>,
 }
 
 
@@ -53,7 +62,7 @@ pub trait DhtKey<K : DhtPeer> {
 }
 
 // implementation of bt kademlia from rust-dht project
-impl<P : Peer + DhtPeer, V : KeyVal> Route<P,V> for BTKad<P,V> where P::Key : DhtKey<P> + Hash,  V::Key : DhtKey<P>  {
+impl<P : Peer + DhtPeer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> Route<P,V,T> for BTKad<P,V,T,C> where P::Key : DhtKey<P> + Hash,  V::Key : DhtKey<P>  {
   fn query_count_inc(& mut self, pnid : &P::Key){
     // Not used
   }
@@ -63,59 +72,41 @@ impl<P : Peer + DhtPeer, V : KeyVal> Route<P,V> for BTKad<P,V> where P::Key : Dh
   }
 
   fn add_node(& mut self, node : Arc<P>, chan : Option<ClientChanel<P,V>>) {
-    self.peers.insert(node.get_key(), (node,PeerPriority::Offline, chan));
+    self.peers.add_val_c(node.get_key(), (node,PeerPriority::Offline, chan, PhantomData));
+  }
+  fn remchan(& mut self, nodeid : &P::Key) where P::Key : Send {
+    // TODO result management
+    self.peers.update_val_c(nodeid,pi_remchan).unwrap();
   }
 
-  fn remchan(& mut self, nodeid : &P::Key) {
-    let mut peer = match self.peers.get(nodeid) {
-      Some(&(_,_, None)) => {None}, // TODO rewrite with in place write of hashmap (currently some issue with arc).
-      Some(&(ref ap,ref prio, ref s)) => {Some ((ap.clone(), prio.clone(), None))}, // TODO rewrite with in place write of hashmap (currently some issue with arc).
-      None => {None},
-    };
-    match peer {
-      Some(v) => {
-        self.peers.insert(nodeid.clone(),v);
-      },
-        None => (),
-    };
-  }
-
-
-  fn update_priority(& mut self, nodeid : &P::Key, prio : PeerPriority) {
+  fn update_priority(& mut self, nodeid : &P::Key, prio : PeerPriority) where P::Key : Send {
     let putinkad = prio != PeerPriority::Offline && prio != PeerPriority::Blocked;
     debug!("update prio of {:?} to {:?}",nodeid,prio);
-    let mut peer = match self.peers.get(nodeid) {
-      Some(&(ref ap,_, ref s)) => {Some ((ap.clone(), prio, s.clone()))}, // TODO rewrite with in place write of hashmap (currently some issue with arc).
-      None => {None},
-    };
-
-/*    match peer {
-      Some((_,_,None)) => println!("######## updating on no channel"),
-      None => println!("######### updating on no value"),
-       _ => println!("#### updating with xisting channel"),
-     };*/
-    match peer {
-      Some(v) => {
-        let tmp = v.0.clone();
-        self.peers.insert(nodeid.clone(),v);
-        if putinkad {
+    if let Ok(true) = self.peers.update_val_c(nodeid,|v|{
+      pi_upprio(v,prio)
+    }) {
+      if putinkad {
           // Note that update is done even if same status (it invole a kad position
           // update)
-          let updok = self.kad.update(&ArcP(tmp)); // TODO return possibly not added node
+          let tmp = self.peers.get_val_c(nodeid);
+          let updok = if tmp.is_some(){
+            self.kad.update(&ArcP(tmp.unwrap().0.clone())) // TODO return possibly not added node
+          }else{
+            false
+          };
           if !updok {
             debug!("Viable node not in possible closest due to full bucket");
           }
-        } else {
+      } else {
           //remove
           self.kad.remove(&nodeid.to_peer_key());
-        }
-      },
-      None => (),
+      }
+
     };
   }
 
-  fn get_node(& self, nid : &P::Key) -> Option<&(Arc<P>, PeerPriority, Option<ClientChanel<P,V>>)>  {
-    self.peers.get(nid)
+  fn get_node(& self, nid : &P::Key) -> Option<&PeerInfo<P,V,T>> {
+    self.peers.get_val_c(nid)
   }
 
   fn get_closest_for_node(& self, nnid : &P::Key, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {
@@ -133,11 +124,13 @@ impl<P : Peer + DhtPeer, V : KeyVal> Route<P,V> for BTKad<P,V> where P::Key : Dh
     let mut r = Vec::new();
     let mut i = 0;
     // here by closest but not necessary could be random (ping may define closest)
-    for p in self.peers.iter() {
+    self.peers.map_inplace_c(|p|{
+//    for p in self.peers.iter() {
       r.push((p.1).0.clone());
       i = i + 1;
-      if i == nbnode {break;}
-    };
+      if i == nbnode {Err(Error("".to_string(), ErrorKind::ExpectedError, None))} else {Ok(())}
+      
+    });
     r
   }
 
@@ -149,13 +142,21 @@ impl<P : Peer + DhtPeer, V : KeyVal> Route<P,V> for BTKad<P,V> where P::Key : Dh
 
 }
 
-impl<P:Peer + DhtPeer,V: KeyVal> BTKad<P,V> where P::Key : Hash {
+impl<P : Peer + DhtPeer, V : KeyVal, T : Transport> BTKad<P,V,T,HashMap<P::Key, PeerInfo<P,V,T>>> where P::Key : Hash {
+  #[inline]
+  pub fn new(k : P::Id) -> BTKad<P,V,T,HashMap<P::Key, PeerInfo<P,V,T>>> {
+    Self::new_with_cache(k, HashMap::new())
+  }
+}
+
+impl<P : Peer + DhtPeer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> BTKad<P,V,T,C> where P::Key : Hash {
     // TODO spawn a cleaner of the dht for poping oldest or pop in knodetable on update over full
     // TODO use with detail for right size of key (more in knodetable)
-    pub fn new(k : P::Id) -> BTKad<P,V> {
-        BTKad{ peers : HashMap::new(), kad : KNodeTable::new(k)}
-    }
+  pub fn new_with_cache(k : P::Id, c : C) -> BTKad<P,V,T,C> {
+    BTKad{ kad : KNodeTable::new(k), peers : c, _phdat : PhantomData}
+  }
 }
+
 
 
 
@@ -185,6 +186,7 @@ mod test {
   use std::net::{Ipv4Addr};
   use keyval::{Attachment,SettableAttachment};
   use std::str::FromStr;
+  use transport::tcp::Tcp;
 
 // TODO a clean nodeK, with better serialize (use as_vec) , but here good for testing as key is not
 // same type as id
@@ -282,7 +284,7 @@ fn initpeer() -> Arc<NodeK> {
 //#[test]
 fn test(){
   let myid = <NodeK as DhtPeer>::random_id(160); // TODO hash size in btkad params 
-  let mut route : BTKad<NodeK, NodeK> = BTKad::new(myid);
+  let mut route : BTKad<NodeK, NodeK,Tcp,_> = BTKad::new(myid);
     let nodes  = [
     initpeer(),
     initpeer(),

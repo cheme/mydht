@@ -15,6 +15,7 @@ pub mod tcp;
 pub mod udp;
 pub type Attachment = PathBuf;
 
+/// TODO Dummy TRansport imple for testing (currently tcp everywhere)
 
 /// Transport trait
 /// TODO a synch primitive to check if start in ok state (if needed (see tcp_loop where init

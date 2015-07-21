@@ -360,7 +360,7 @@ impl<RT : RunningTypes> DHT<RT> {
 
 /// Main function to start a DHT.
 pub fn boot_server
- <T : Route<RT::P,RT::V>, 
+ <T : Route<RT::P,RT::V,RT::T>, 
   QC : QueryCache<RT::P,RT::V>, 
   S : KVStore<RT::V>,
   F1 : FnOnce() -> Option<S> + Send + 'static,

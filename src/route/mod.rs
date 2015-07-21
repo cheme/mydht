@@ -8,10 +8,27 @@ use std::collections::VecDeque;
 use mydhtresult::Result as MydhtResult;
 use std::thread;
 use procs::RunningTypes;
+use transport::Transport;
+use std::marker::PhantomData;
 pub mod inefficientmap;
 
 #[cfg(feature="dht-route")]
 pub mod btkad;
+
+pub type PeerInfo<P,V,T> = (Arc<P>, PeerPriority, Option<ClientChanel<P,V>>,PhantomData<T>);
+
+
+/// fn for updates of cache
+pub fn pi_remchan<P : Peer,V : KeyVal,T : Transport> (pi : &mut PeerInfo<P,V,T>) -> MydhtResult<()> {
+  pi.2 = None;
+  Ok(())
+}
+/// fn for updates of cache
+pub fn pi_upprio<P : Peer,V : KeyVal,T : Transport> (pi : &mut PeerInfo<P,V,T>,pri : PeerPriority) -> MydhtResult<()> {
+  pi.1 = pri;
+  Ok(())
+}
+
 
 // TODO refactor to got explicit add and rem chan plus prio
 // eg : update with chan plus prio!!
@@ -29,7 +46,7 @@ pub mod btkad;
 /// TODO route to store enum over client chanel or direct writestream see clientinfo (will require
 /// get_mut for info (as write stream need to be mut(or refcell usage))
 /// TODO split route into composition of transient cache of ClientInfo and routing algo?? 
-pub trait Route<P:Peer,V:KeyVal> {
+pub trait Route<P:Peer,V:KeyVal,T:Transport> {
   /// count of running query (currently only updated in proxy mode)
   fn query_count_inc(& mut self, &P::Key);
   /// count of running query (currently only updated in proxy mode)
@@ -40,7 +57,7 @@ pub trait Route<P:Peer,V:KeyVal> {
   fn update_priority(& mut self, &P::Key, PeerPriority);
   // TODO change
   /// get a peer info (peer, priority (eg offline), and existing channel to client process) 
-  fn get_node(& self, &P::Key) -> Option<&(Arc<P>, PeerPriority, Option<ClientChanel<P,V>>)>;
+  fn get_node(& self, &P::Key) -> Option<&PeerInfo<P,V,T>>;
   // remove chan for node TODO refactor to two kind of status and auto rem when offline or blocked
   /// remove channel to process (use when a client process broke or normal shutdown).
   fn remchan(&mut self, &P::Key);
@@ -113,9 +130,10 @@ mod test {
   use super::Route;
   use keyval::KeyVal;
   use std::sync::{Arc};
+  use transport::Transport;
   use std::collections::VecDeque;
 use peer::{Peer, PeerPriority};
-  pub fn test_route<P:Peer,V:KeyVal,R:Route<P,V>> (peers : &[Arc<P>; 5], route : & mut R, valkey : V::Key) {
+  pub fn test_route<P:Peer,V:KeyVal,T:Transport,R:Route<P,V,T>> (peers : &[Arc<P>; 5], route : & mut R, valkey : V::Key) {
     let fpeer = peers[0].clone();
     let fkey = fpeer.get_key();
     assert!(route.get_node(&fkey).is_none());

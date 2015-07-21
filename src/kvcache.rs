@@ -10,99 +10,129 @@ use std::iter::Iterator;
 use std::iter::IntoIterator;
 use std::collections::hash_map::Iter as HMIter;
 use std::fmt::Debug;
+use mydhtresult::Result;
 
 /// cache base trait to use in storage (transient or persistant) relative implementations
-pub trait KVCache<'a,K, V> {
-  type I : 'a;
+pub trait KVCache<K, V> {
   /// Add value, pair is boolean for do persistent local store, and option for do cache value for
   /// CachePolicy duration TODO ref to key (key are clone)
   fn add_val_c(& mut self, K, V);
-  /// Get value
-  fn get_val_c(& self, &K) -> Option<V>;
+  /// Get value TODO ret ref
+  fn get_val_c<'a>(&'a self, &K) -> Option<&'a V>;
+  /// update value, possibly inplace (depending upon impl), return true if update effective
+  fn update_val_c<'a, F>(&'a mut self, &K, f : F) -> Result<bool> where F : FnOnce(&'a mut V) -> Result<()>;
+ 
   /// Remove value
   fn remove_val_c(& mut self, &K);
-  // TODO see if we can replace iter TODO use iterator 
-  fn iter_c(&'a self) -> Self::I;
-  fn it_next<'b>(&'b mut Self::I) -> Option<(&'b K,&'b V)>;
+
+  /// fold without closure over all content
+  fn strict_fold_c<'a, B, F>(&'a self, init: B, f: &F) -> B where F: Fn(B, (&'a K, &'a V)) -> B;
+  /// very permissive fold (allowing closure)
+  fn fold_c<'a, B, F>(&'a self, init: B, mut f: F) -> B where F: FnMut(B, (&'a K, &'a V)) -> B;
+
+  // TODO lightweigh map (more lightweight than  fold (no fn mut), find name where result is a
+  // Result () not a vec + default impl in trem of fold_c TODO a result for fail computation : work
+  // in Mdht result
+  /// map allowing closure, stop on first error, depending on sematic error may be used to end
+  /// computation (fold with early return).
+  fn map_inplace_c<'a,F>(&'a self, mut f: F) -> Result<()> where F: FnMut((&'a K, &'a V)) -> Result<()> {
+    self.fold_c(Ok(()),|err,kv|{if err.is_ok() {f(kv)} else {err}})
+  }
+
+  fn len_c (& self) -> usize;
+//  fn it_next<'b>(&'b mut Self::I) -> Option<(&'b K,&'b V)>;
   //fn iter_c<'a, I>(&'a self) -> I where I : Debug;
   fn new() -> Self;
 }
-/*
-impl<'a, K : 'a, V : 'a, I : Iterator<Item = (&'a K, &'a V)>> IntoIterator for &'a KVCache<K,V> {
-  type Item = (&'a K, &'a V);
-  type IntoIter = I;
-  fn into_iter(self) -> Self::IntoIter {
-    self.iter_c()
-  }
-} 
-*/
+
+
 
 pub struct NoCache<K, V>(PhantomData<(K, V)>);
-//pub struct NoIter<'a, K , V >(PhantomData<(&'a(),K, V)>);
-impl<K, V> NoCache<K,V> {
-  pub fn new() -> NoCache<K,V> {
-    NoCache(PhantomData)
-  }
-}
-/*impl<'a,K, V> NoIter<'a,K,V> {
-  pub fn new() -> NoIter<'a,K,V> {
-    NoIter(PhantomData)
-  }
-}*/
 
-/*
-impl<'a, K, V> Iterator for NoIter<'a,K,V> {
-  type Item = (&'a K, &'a V);
-  fn next(&mut self) -> Option<Self::Item> {
-    None
-  }
-}*/
-impl<'a,K, V> KVCache<'a,K,V> for NoCache<K,V> {
-  type I = ();
+impl<K , V > KVCache<K,V> for NoCache<K,V> {
+  //type I = ();
   fn add_val_c(& mut self, key : K, val : V) {
     ()
   }
-  fn get_val_c(& self, key : &K) -> Option<V> {
+  fn get_val_c<'a>(&'a self, key : &K) -> Option<&'a V> {
     None
+  }
+  fn update_val_c<'a, F>(&'a mut self, _ : &K, f : F) -> Result<bool> where F : FnOnce(&'a mut V) -> Result<()> {
+    Ok(false)
   }
   fn remove_val_c(& mut self, key : &K) {
     ()
   }
-
-  fn iter_c(&'a self) -> Self::I {
-    ()
+  fn strict_fold_c<'a, B, F>(&'a self, init: B, f: &F) -> B where F: Fn(B, (&'a K, &'a V)) -> B {
+    init
   }
-  fn it_next<'b>(_ : &'b mut Self::I) -> Option<(&'b K,&'b V)> {
+  fn fold_c<'a, B, F>(&'a self, init: B, mut f: F) -> B where F: FnMut(B, (&'a K, &'a V)) -> B {
+    init
+  }
+  fn len_c (& self) -> usize {
+    0
+  }
+/*  fn it_next<'b>(_ : &'b mut Self::I) -> Option<(&'b K,&'b V)> {
     None
-  }
+  }*/
   fn new() -> Self {
     NoCache::new()
   }
 }
 
-impl<'a, K: Hash + Eq + 'a, V : Clone + 'a> KVCache<'a,K,V> for HashMap<K,V> {
-  type I = HMIter<'a, K,V>;
+impl<K: Hash + Eq, V> KVCache<K,V> for HashMap<K,V> {
   fn add_val_c(& mut self, key : K, val : V) {
     self.insert(key, val);
   }
-  // TODO return a ref : here constraint on clone is bad -> remove clone constraint
-  fn get_val_c(& self, key : &K) -> Option<V> {
-    self.get(key).cloned()
+  
+  fn get_val_c<'a>(&'a self, key : &K) -> Option<&'a V> {
+    self.get(key)
 
+  }
+  fn update_val_c<'a, F>(&'a mut self, k : &K, f : F) -> Result<bool> where F : FnOnce(&'a mut V) -> Result<()> {
+    if let Some(x) = self.get_mut(k) {
+      try!(f(x));
+      Ok(true)
+    } else {
+      Ok(false)
+    }
   }
   fn remove_val_c(& mut self, key : &K) {
     self.remove(key);
-  }
-  fn iter_c(&'a self) -> Self::I {
-    self.iter()
-  }
-  fn it_next<'b>(it : &'b mut Self::I) -> Option<(&'b K, &'b V)> {
-    it.next()
   }
 
   fn new() -> Self {
     HashMap::new()
   }
 
-}
+  fn len_c (& self) -> usize {
+    self.len()
+  }
 
+  fn strict_fold_c<'a, B, F>(&'a self, init: B, f: &F) -> B where F: Fn(B, (&'a K, &'a V)) -> B {
+    let mut res = init;
+    for kv in self.iter(){
+      res = f(res,kv);
+    };
+    res
+  }
+  fn fold_c<'a, B, F>(&'a self, init: B, mut f: F) -> B where F: FnMut(B, (&'a K, &'a V)) -> B {
+    let mut res = init;
+    for kv in self.iter(){
+      res = f(res,kv);
+    };
+    res
+  }
+  fn map_inplace_c<'a,F>(&'a self, mut f: F) -> Result<()> where F: FnMut((&'a K, &'a V)) -> Result<()> {
+    for kv in self.iter(){
+      try!(f(kv));
+    };
+    Ok(())
+  }
+
+
+}
+fn tet<K, V, C : KVCache<K,V>>(ca : & mut C, k : K, v : V) {
+  ca.get_val_c(&k);
+  ca.add_val_c(k,v);
+}

@@ -355,6 +355,7 @@ pub enum ErrorKind {
   MissingFile,
   IOError,
   ByteOrderError,
+  ExpectedError,
 }
 
 /// Result type internal to mydht

@@ -8,8 +8,6 @@ use num::traits::{Bounded,ToPrimitive};
 use utils;
 #[cfg(test)]
 use std::net::Ipv4Addr; 
-#[cfg(test)]
-use query::simplecache::SimpleCache;
 
 
 #[cfg(test)]

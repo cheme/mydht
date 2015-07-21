@@ -20,7 +20,6 @@ use super::PeerInfoRel;
 use super::{TrustedPeer,Truster,TrustedVal,PeerTrustRel};
 use super::trustedpeer::PeerSign;
 //use std::iter::Iterator;
-use std::collections::HashMap;
 use std::collections::hash_map::Iter as HMIter;
 
 #[cfg(test)]
@@ -31,6 +30,8 @@ use super::classictrust::ClassicWotTrust;
 use super::classictrust::TrustRules;
 #[cfg(test)]
 use query::simplecache::SimpleCache;
+#[cfg(test)]
+use std::collections::HashMap;
 #[cfg(test)]
 #[cfg(feature="openssl-impl")]
 use super::rsa_openssl::RSAPeer;
@@ -564,7 +565,7 @@ where <T as Peer>::Address : 'static,
   let mut wotpeers = SimpleCache::new(None);
   let mut wotrels  = SimpleCache::new(None);
   let mut wotsigns = SimpleCache::new(None);
-  let mut wotrusts : SimpleCache<ClassicWotTrust<T>> = SimpleCache::new(None);
+  let mut wotrusts : SimpleCache<ClassicWotTrust<T>,HashMap<<ClassicWotTrust<T> as KeyVal>::Key, ClassicWotTrust<T>>> = SimpleCache::new(None);
   let mut trustRul : TrustRules = vec![1,1,2,2,2];
   let me = init("myname".to_string());
 

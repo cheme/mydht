@@ -22,11 +22,11 @@ use rules::DHTRules;
 
 /// TODO use it for storage in Route
 /// Stored info about client in peer management (in route transient cache).
-enum ClientInfo<RT : RunningTypes> {
+enum ClientInfo<P : Peer, V : KeyVal, T : Transport> {
   /// Stream is used locally
-  Local(<RT::T as Transport>::WriteStream),
+  Local(T::WriteStream),
   /// usize is only useful for client thread shared
-  Threaded(Sender<ClientMessage<RT::P,RT::V>>,usize),
+  Threaded(Sender<ClientMessage<P,V>>,usize),
 
 }
 
@@ -43,7 +43,7 @@ enum ServerInfo {
   Threaded(Arc<Mutex<bool>>),
 }
 
-type PeerInfo<RT> = (Option<ServerInfo>, Option<ClientInfo<RT>>);
+type PeerInfo<P : Peer, V : KeyVal, T : Transport> = (Option<ServerInfo>, Option<ClientInfo<P,V,T>>);
 
 
 // peermanager manage communication with the storage : add remove update. The storage is therefore
@@ -52,7 +52,7 @@ type PeerInfo<RT> = (Option<ServerInfo>, Option<ClientInfo<RT>>);
 /// TODO AKA cache over ping id token.
 /// Start a new peermanager process
 pub fn start<RT : RunningTypes, 
-  T : Route<RT::P,RT::V>,
+  T : Route<RT::P,RT::V,RT::T>,
   F : FnOnce() -> Option<T> + Send + 'static,
   >
  (rc : ArcRunningContext<RT>,
@@ -225,10 +225,10 @@ pub fn start<RT : RunningTypes,
         // parameter
         let proxyto = match route.get_node(&nid) {
           // no ping at this point : trust current status
-          Some(&(ref ap,PeerPriority::Normal, ref s)) | Some(&(ref ap,PeerPriority::Priority(_), ref s)) => Either::Left(Some((*ap).clone())),
+          Some(&(ref ap,PeerPriority::Normal, ref s,_)) | Some(&(ref ap,PeerPriority::Priority(_), ref s,_)) => Either::Left(Some((*ap).clone())),
           // blocked peer are also blocked for transmission (this is likely to make them
           // disapear) TODO might not be a nice idea
-          Some(&(ref ap,PeerPriority::Blocked, ref s)) => Either::Left(None),
+          Some(&(ref ap,PeerPriority::Blocked, ref s,_)) => Either::Left(None),
           // None or offline (offline may mean we need updated info for peer
           _ => {
             if remhop > 0 {
@@ -380,7 +380,7 @@ pub fn start<RT : RunningTypes,
 
 
 #[inline]
-fn send_nonconnected<RT : RunningTypes, T : Route<RT::P,RT::V>>
+fn send_nonconnected<RT : RunningTypes, T : Route<RT::P,RT::V,RT::T>>
  (p : & Arc<RT::P> , 
   rc : & ArcRunningContext<RT>, 
   route : & mut T , 
@@ -389,7 +389,7 @@ fn send_nonconnected<RT : RunningTypes, T : Route<RT::P,RT::V>>
  )
  ->  bool {
  match route.get_node(&p.get_key()) {
-  Some(&(_,PeerPriority::Blocked,_)) => {
+  Some(&(_,PeerPriority::Blocked,_,_)) => {
       // if existing consider ping true : normaly if offline or block , no channel
       info!("#####blocked : client do not send");
       false
@@ -405,7 +405,7 @@ fn send_nonconnected<RT : RunningTypes, T : Route<RT::P,RT::V>>
 }
 
 #[inline]
-fn send_nonconnected_ping<RT : RunningTypes, T : Route<RT::P,RT::V>>
+fn send_nonconnected_ping<RT : RunningTypes, T : Route<RT::P,RT::V,RT::T>>
  (p : & Arc<RT::P> , 
   rc : & ArcRunningContext<RT>, 
   route : & mut T , 
@@ -413,7 +413,7 @@ fn send_nonconnected_ping<RT : RunningTypes, T : Route<RT::P,RT::V>>
  )
  ->  bool {
  match route.get_node(&p.get_key()) {
-  Some(&(_,PeerPriority::Blocked,_)) => {
+  Some(&(_,PeerPriority::Blocked,_,_)) => {
       // if existing consider ping true : normaly if offline or block , no channel
       info!("#####blocked : client do not send");
 
@@ -431,7 +431,7 @@ fn send_nonconnected_ping<RT : RunningTypes, T : Route<RT::P,RT::V>>
 
 
 #[inline]
-fn get_or_init_client_connection<RT : RunningTypes, T : Route<RT::P,RT::V>>
+fn get_or_init_client_connection<RT : RunningTypes, T : Route<RT::P,RT::V,RT::T>>
  (p : & Arc<RT::P> , 
   rc : & ArcRunningContext<RT>, 
   route : & mut T , 
@@ -440,17 +440,17 @@ fn get_or_init_client_connection<RT : RunningTypes, T : Route<RT::P,RT::V>>
   pingres : Option<OneResult<bool>>) 
  ->  Sender<ClientMessage<RT::P,RT::V>> {
 let (upd, s) = match route.get_node(&p.get_key()) {
-  Some(&(_,PeerPriority::Blocked,_))| Some(&(_,PeerPriority::Offline,_)) => {
+  Some(&(_,PeerPriority::Blocked,_,_))| Some(&(_,PeerPriority::Offline,_,_)) => {
     // retry connecting & accept for block
     let (tcl,rcl) = channel();
     debug!("##pingtrue");
     (Some(rcl), tcl)
   },
-  Some(&(_,_, Some(ref s))) => {
+  Some(&(_,_, Some(ref s),_)) => {
      debug!("#####get or init find with chanel");
      (None, s.clone()) // TODO avoid this clone
   },
-  None | Some(&(_, _, None)) => {
+  None | Some(&(_, _, None,_)) => {
   let (tcl,rcl) = channel();
   (Some(rcl), tcl)
   },
