@@ -10,7 +10,7 @@ use rustc_serialize::json;
 use procs::mesgs::{PeerMgmtInitMessage,PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage,ServerPoolMessage};
 use msgenc::{ProtoMessage};
 use procs::{RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
-use peer::{Peer,PeerMgmtMeths,PeerPriority};
+use peer::{Peer,PeerMgmtMeths,PeerPriority,PeerState,PeerStateChange};
 use std::str::from_utf8;
 use transport::ReadTransportStream;
 use transport::WriteTransportStream;
@@ -33,6 +33,8 @@ use num::traits::ToPrimitive;
 use std::io::Result as IoResult;
 use procs::ServerMode;
 use procs::client::ClientHandle;
+use route::ServerInfo;
+
 /// either we created a permanent thread for server, or it is managed otherwhise (for instance udp
 /// single reception loop or tcp evented loop).
 pub enum ServerHandle<P : Peer, TR : ReadTransportStream> {
@@ -43,7 +45,13 @@ pub enum ServerHandle<P : Peer, TR : ReadTransportStream> {
   /// Local no loop nothing to do
   Local,
 }
-
+fn serverinfo_from_handle<P : Peer, TR : ReadTransportStream> (h : &ServerHandle<P,TR>) -> ServerInfo {
+  match *h {
+    ServerHandle::Local => ServerInfo::TransportManaged,
+    ServerHandle::ThreadedOne(ref amut) => ServerInfo::Threaded(amut.clone()),
+    ServerHandle::Mult(_,_) => panic!("multiplecx server not yet implemeted"),
+  }
+}
 // all update of query prio and nbquery and else are not done every where : it is a security issue
 /// all update of query conf when receiving something, this is a filter to avoid invalid or network
 /// dangerous queries (we apply local conf other requested conf)
@@ -79,7 +87,7 @@ fn new_query_mode<P : Peer> (qm : &QueryModeMsg<P>, me : &Arc<P>) -> QueryModeMs
 
 /// fn to define server mode depending on what transport allows and DHTRules
 #[inline]
-fn resolve_server_mode <RT : RunningTypes> (rc : &ArcRunningContext<RT>) -> ServerMode {
+pub fn resolve_server_mode <RT : RunningTypes> (rc : &ArcRunningContext<RT>) -> ServerMode {
   let (max, pool, timeoutmul, otimeout) = rc.rules.server_mode_conf();
   match rc.transport.do_spawn_rec() {
       // spawn and managed eg tcp
@@ -116,13 +124,16 @@ pub fn servloop <RT : RunningTypes>
   rp : RunningProcesses<RT>) {
 
     let servermode = resolve_server_mode (&rc); 
+ 
     let spserv = |s, ows| {
       match servermode {
         ServerMode::ThreadedOne(otimeout) => {
           let rp_thread = rp.clone();
           let rc_thread = rc.clone();
           thread::scoped (move || {
-            request_handler::<RT>(s, &rc_thread, &rp_thread, ows, true, otimeout,false)
+     let amut = Arc::new(Mutex::new(false));
+            request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::ThreadedOne(amut), otimeout,false)
+     
           });
         },
         ServerMode::Local(true) => {
@@ -131,12 +142,13 @@ pub fn servloop <RT : RunningTypes>
           thread::scoped (move || {
             let rcref = &rc_thread;
             let rpref = &rp_thread;
-            request_handler::<RT>(s, &rc_thread, &rp_thread, ows, false, None, false)
+            request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::Local, None, false)
+     
           });
         },
  
         ServerMode::Local(false) => {
-          request_handler::<RT>(s, &rc, &rp, ows, false, None, false);
+          request_handler::<RT>(s, &rc, &rp, ows, ServerHandle::Local, None, false);
         },
         _ => panic!("Server Mult mode are unimplemented!!!"),//TODO mult thread mgmt
       };
@@ -150,7 +162,7 @@ fn request_handler2 <RT : RunningTypes>
   rc : &ArcRunningContext<RT>, 
   rp : &RunningProcesses<RT>,
   mut ows : Option<<RT::T as Transport>::WriteStream>,
-  managed : bool,
+  shandle : ServerHandle<RT::P, <RT::T as Transport>::ReadStream>,
   otimeout : Option<Duration>,
   mult : bool,
  ) -> IoResult<()>  {
@@ -168,10 +180,16 @@ fn request_handler <RT : RunningTypes>
   rc : &ArcRunningContext<RT>, 
   rp : &RunningProcesses<RT>,
   mut ows : Option<<RT::T as Transport>::WriteStream>,
-  managed : bool,
+  shandle : ServerHandle<RT::P, <RT::T as Transport>::ReadStream>,
   otimeout : Option<Duration>,
   mult : bool,
  ) -> IoResult<()>  {
+
+  let managed = match shandle {
+    ServerHandle::ThreadedOne(_) => true,
+    // TODO mult
+    _ => false,
+  };
   // used to skip peermanager on established connections
   let mut clihandles : Vec<ClientHandle<RT::P,RT::V,<RT::T as Transport>::WriteStream>> = vec!();
   otimeout.map(|timeout| {
@@ -197,7 +215,9 @@ fn request_handler <RT : RunningTypes>
         info!("Serving connection lost or malformed message");
         op.as_ref().map(|p|{
           debug!("Sending remove message to peermgmt");
-          rp.peers.send(PeerMgmtMessage::PeerRemFromServer(p.clone(),PeerPriority::Offline))
+          // TODO on malformed message send blocked instead!!
+          //rp.peers.send(PeerMgmtMessage::PeerRemFromServer(p.clone(),PeerStateChange::Blocked));
+          rp.peers.send(PeerMgmtMessage::PeerRemFromServer(p.clone(),PeerStateChange::Offline))
         }).unwrap();
 
         // TODO different result : warn on malformed message 
@@ -211,24 +231,25 @@ fn request_handler <RT : RunningTypes>
         // check ping authenticity
         if rc.peerrules.checkmsg(&from,&chal,&sig) {
 
-          let afrom = Arc::new(from);
           // TODO move after accept TODO heavy
           let do_accept = !rc.rules.is_accept_heavy();
           let accept = if do_accept {
-            rc.peerrules.accept(&afrom, &rp, &rc)
+            rc.peerrules.accept(&from, &rp, &rc)
           } else {
             Some(PeerPriority::Unchecked)
           };
+          let afrom = Arc::new(from);
           match accept {
             None => {
               warn!("refused node {:?}",afrom);
-              rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(afrom, PeerPriority::Blocked));
+              rp.peers.send(PeerMgmtMessage::PeerRemFromServer(afrom, PeerStateChange::Refused));
+              break;
             },
             Some(pri)=> {
               // init clihandle
               if chandle.is_none() && managed {
                 let (tx,rx) = mpsc::sync_channel(1);
-                rp.peers.send(PeerMgmtMessage::PeerAddFromServer(afrom.clone(), pri, ows, tx));
+                rp.peers.send(PeerMgmtMessage::PeerAddFromServer(afrom.clone(), pri, ows, tx, serverinfo_from_handle(&shandle)));
                 ows = None; 
                 let ch = rx.recv().unwrap();
                 chandle = Some(ch);
@@ -262,7 +283,7 @@ fn request_handler <RT : RunningTypes>
           // TODO status change??
           op.map(|p|{
             debug!("Sending remove message to peermgmt");
-            rp.peers.send(PeerMgmtMessage::PeerRemFromServer(p,PeerPriority::Blocked))
+            rp.peers.send(PeerMgmtMessage::PeerRemFromServer(p,PeerStateChange::Blocked))
           }).unwrap();
 
           break;
@@ -277,7 +298,7 @@ fn request_handler <RT : RunningTypes>
           let p = op.unwrap();
           op = None;
           if p.get_key() != node.get_key() {
-            rp.peers.send(PeerMgmtMessage::PeerRemFromServer(p,PeerPriority::Blocked));
+            rp.peers.send(PeerMgmtMessage::PeerRemFromServer(p,PeerStateChange::Blocked));
             break;
           }
         };
@@ -403,6 +424,20 @@ fn request_handler <RT : RunningTypes>
     }
     if !managed {
       break;
+    } else {
+      // TODO not for all mult
+      match shandle {
+        ServerHandle::ThreadedOne(ref mutstop) => {
+          match mutstop.lock() {
+            Ok(res) => if *res == true {
+              break;
+            },
+            Err(m) => error!("poisoned mutex for ping result"),
+          };
+ 
+        },
+        _ => (),
+      }
     }
     // TODO if not oneonly (reader is managed and persistent) 
     // exit condition + exit mutex + send event to peermanager( subsequent close write ) +

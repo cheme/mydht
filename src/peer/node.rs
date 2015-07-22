@@ -22,9 +22,15 @@ pub type NodeID = String;
 
 impl KeyVal for Node {
   type Key = NodeID;
-  fn get_key(&self) -> NodeID {
+  #[inline]
+  fn get_key(& self) -> NodeID {
     self.nodeid.clone()
   }
+/* 
+  #[inline]
+  fn get_key_ref<'a>(&'a self) -> &'a NodeID {
+    &self.nodeid
+  }*/
   noattachment!();
 }
 

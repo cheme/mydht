@@ -19,7 +19,8 @@ pub trait KVCache<K, V> {
   fn add_val_c(& mut self, K, V);
   /// Get value TODO ret ref
   fn get_val_c<'a>(&'a self, &K) -> Option<&'a V>;
-  /// update value, possibly inplace (depending upon impl), return true if update effective
+  /// update value, possibly inplace (depending upon impl (some might just get value modify it and
+  /// set it again)), return true if update effective
   fn update_val_c<'a, F>(&'a mut self, &K, f : F) -> Result<bool> where F : FnOnce(&'a mut V) -> Result<()>;
  
   /// Remove value

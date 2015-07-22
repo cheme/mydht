@@ -39,7 +39,19 @@ pub trait KeyVal : Encodable + Decodable + fmt::Debug + Clone + Send + Sync + Eq
   /// Key type of KeyVal
   type Key : Key + Send + Sync; //aka key // Ord , Hash ... might be not mandatory but issue currently
   /// getter for key value
-  fn get_key(&self) -> Self::Key; // TODO change it to return &Key (lot of useless clone in impls
+  fn get_key(&self) -> Self::Key;
+  /* Get key ref usage is of for type like enum over multiple keyval or other key with calculated
+  // super type we need more generic way to derive and then keyref should be doable
+  // Other possible refactoring would be to add lifetime to KeyVal (then key should be either &'a
+  // actual val or Container<'a>(&'a subkey). TODO rethink it (even post a question for deriving
+  // strategie + askvif (limit )...
+  #[inline]
+  fn get_key(&self) -> Self::Key {
+    self.get_key_ref().clone()
+  }
+  /// getter for key value
+  fn get_key_ref<'a>(&'a self) -> &'a Self::Key;
+  */
   /// optional attachment
   fn get_attachment(&self) -> Option<&Attachment>;
 /*
@@ -319,9 +331,13 @@ impl FileKV {
 
 impl KeyVal for FileKV {
   type Key = Vec<u8>;
-  fn get_key(&self) -> Vec<u8> {
+  fn get_key(& self) -> Vec<u8> {
     self.hash.clone()
   }
+/* 
+  fn get_key_ref<'a>(&'a self) -> &'a Vec<u8> {
+    &self.hash
+  }*/
   fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> {
     if with_att {
   // encode with attachement in encoded content to be use with non filestore storage

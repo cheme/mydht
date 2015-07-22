@@ -46,9 +46,19 @@ use rustc_serialize::hex::{ToHex,FromHex};
 use std::ops::Deref;
 use mydhtresult::Result as MDHTResult;
 
+
+#[cfg(test)]
+use std::thread;
+
 pub static NULL_TIMESPEC : Timespec = Timespec{ sec : 0, nsec : 0};
 
-
+ 
+macro_rules! static_buff {
+  ($bname:ident, $bname_size:ident, $bsize:expr) => (
+    static $bname_size : usize = $bsize;
+    static $bname : &'static mut [u8; $bsize] = &mut [0u8; $bsize];
+  )
+}
 
 pub fn sa4(a: Ipv4Addr, p: u16) -> SocketAddr {
  SocketAddr::V4(SocketAddrV4::new(a, p))
@@ -106,8 +116,12 @@ impl<KV : KeyVal> KeyVal for ArcKV<KV> {
   type Key = <KV as KeyVal>::Key;
   #[inline]
   fn get_key(&self) -> <KV as KeyVal>::Key {
-        self.0.get_key()
-  }
+    self.0.get_key()
+  }/*
+  #[inline]
+  fn get_key_ref<'a>(&'a self) -> &'a <KV as KeyVal>::Key {
+    self.0.get_key_ref()
+  }*/
   #[inline]
   fn get_attachment(&self) -> Option<&Attachment> {
     self.0.get_attachment() 
@@ -271,22 +285,16 @@ pub struct TransientOption<V> (Option<V>);
 /// TODO refactor to a struct alias and do some xtensive testcases
 /// TODO struct with optional val : all oneresult<bool> may switch to oneresult<()>
 pub type OneResult<V> = Arc<(Mutex<V>,Condvar)>;
-
+ 
 #[inline]
 pub fn new_oneresult<V>(v : V) -> OneResult<V>  {
   Arc::new((Mutex::new(v),Condvar::new()))
-}
- 
-macro_rules! static_buff {
-  ($bname:ident, $bname_size:ident, $bsize:expr) => (
-    static $bname_size : usize = $bsize;
-    static $bname : &'static mut [u8; $bsize] = &mut [0u8; $bsize];
-  )
 }
 
 #[inline]
 // TODO test in tcp loop
 /// TODO return MyDHTResult!!
+/// Racy accessor to OneResult value
 pub fn one_result_val_clone<V : Clone + Send> (ores : &OneResult<V>) -> Option<V> {
   match ores.0.lock() {
     Ok(res) => Some(res.clone()),
@@ -295,12 +303,12 @@ pub fn one_result_val_clone<V : Clone + Send> (ores : &OneResult<V>) -> Option<V
       None
     },
   }
- 
 }
  
 
 #[inline]
 /// TODO return MyDHTResult!!
+/// One result value return
 pub fn ret_one_result<V : Send> (ores : &OneResult<V>, v : V) {
   match ores.0.lock() {
     Ok(mut res) => *res = v,
@@ -311,14 +319,20 @@ pub fn ret_one_result<V : Send> (ores : &OneResult<V>, v : V) {
 
 #[inline]
 /// TODO return MyDHTResult!!
+/// Racy change value of set result
 pub fn change_one_result<V : Send> (ores : &OneResult<V>, v : V) {
   match ores.0.lock() {
     Ok(mut res) => *res = v,
     Err(m) => error!("poisoned mutex for ping result"),
   }
 }
-
-
+/// Racy change value but with condition
+pub fn change_one_result_ifneq<V : Send + Eq> (ores : &OneResult<V>, neq : &V, v : V) {
+  match ores.0.lock() {
+    Ok(mut res) => if *res != *neq {*res = v},
+    Err(m) => error!("poisoned mutex for ping result"),
+  }
+}
 
 #[inline]
 /// use only for small clonable stuff or arc it TODO return MyDHTResult!!
@@ -340,9 +354,67 @@ pub fn clone_wait_one_result<V : Clone + Send> (ores : &OneResult<V>, newval : O
  };
  r
 }
+/// same as clone_wait_one_result but with condition, if condition is not reach value is returned
+/// (value will be neq value condition)
+pub fn clone_wait_one_result_ifneq<V : Clone + Send + Eq> (ores : &OneResult<V>, neqval : &V, newval : Option<V>) -> Option<V> {
+ let r = match ores.0.lock() {
+    Ok(mut guard) => {
+
+      if *guard != *neqval {
+      match ores.1.wait(guard) {
+        Ok(mut r) => {
+          let res = r.clone();
+          newval.map(|v| *r = v).is_some();
+//          Some(*r)
+          Some(res)
+        }
+        Err(_) => {error!("Condvar issue for return res"); None}, // TODO what to do??? panic?
+      }
+      } else {
+        let res = guard.clone();
+        newval.map(|v| *guard = v).is_some();
+        Some(res)
+      }
+    },
+    Err(poisoned) => {error!("poisonned mutex on one res"); None}, // not logic
+ };
+ r
+}
+
 #[inline]
-/// use only for small clonable stuff or arc it TODO return MyDHTResult!!
-/// Second parameter let you specify a new value.
+/// same as clone_wait_one_result
+pub fn clone_wait_one_result_ifneq_timeout_ms<V : Clone + Send + Eq> (ores : &OneResult<V>, neqval : &V, newval : Option<V>, to : u32) -> Option<V> {
+ let r = match ores.0.lock() {
+    Ok(mut guard) => {
+
+      if *guard != *neqval {
+      match ores.1.wait_timeout_ms(guard, to) {
+        Ok(mut r) => {
+          if !r.1 {
+            let res = r.0.clone();
+            newval.map(|v| *r.0 = v).is_some();
+            Some(res)
+          } else {
+            debug!("timeout waiting for oneresult");
+            None
+          }
+        }
+ 
+        Err(_) => {error!("Condvar issue for return res"); None}, // TODO what to do??? panic?
+      }
+      }else {
+        let res = guard.clone();
+        newval.map(|v| *guard = v).is_some();
+        Some(res)
+      }
+    },
+    Err(poisoned) => {error!("poisonned mutex on one res"); None}, // not logic
+ };
+ r
+}
+
+#[inline]
+/// same as clone_wait_one_result but with timeout, return None on timeout
 pub fn clone_wait_one_result_timeout_ms<V : Clone + Send> (ores : &OneResult<V>, newval : Option<V>, to : u32) -> Option<V> {
  let r = match ores.0.lock() {
     Ok(mut guard) => {
@@ -351,7 +423,6 @@ pub fn clone_wait_one_result_timeout_ms<V : Clone + Send> (ores : &OneResult<V>,
           if !r.1 {
             let res = r.0.clone();
             newval.map(|v| *r.0 = v).is_some();
-//          Some(*r)
             Some(res)
           } else {
             debug!("timeout waiting for oneresult");
@@ -364,6 +435,41 @@ pub fn clone_wait_one_result_timeout_ms<V : Clone + Send> (ores : &OneResult<V>,
     Err(poisoned) => {error!("poisonned mutex on one res"); None}, // not logic
  };
  r
+}
+
+#[test]
+pub fn test_oneresult () {
+  
+
+  let or = new_oneresult("testons");
+
+  assert!("testons" == one_result_val_clone (&or).unwrap());
+  change_one_result(&or, "testons2");
+  assert!("testons2" == one_result_val_clone (&or).unwrap());
+  assert!(None == clone_wait_one_result_timeout_ms(&or,Some("testons3"),500));
+  ret_one_result(&or, "testons2");
+  assert!(None == clone_wait_one_result_timeout_ms(&or,Some("testons3"),500));
+  assert!("testons2" == one_result_val_clone (&or).unwrap());
+  assert!(Some("testons2") == clone_wait_one_result_ifneq(&or,&"testons2",Some("testons3")));
+  assert!("testons3" == one_result_val_clone (&or).unwrap());
+  let or2 = or.clone();
+  thread::spawn(move || {
+    loop{
+      // Warning change_one_result need to check if not unlock in mutexguard because it would be
+      // racy otherwhise
+      change_one_result_ifneq(&or2,&"unlock", "testonsREP");
+    }
+  });
+//  assert!(None == clone_wait_one_result_timeout_ms(&or,Some("testons3"),1000));
+//  assert!("testonsREP" == one_result_val_clone (&or).unwrap());
+  let or3 = or.clone();
+  thread::spawn(move || {
+    change_one_result(&or3, "testonsREP");
+    ret_one_result(&or3, "unlock");
+    
+  });
+  assert!( Some("unlock") == clone_wait_one_result(&or,None));
+
 }
 
 

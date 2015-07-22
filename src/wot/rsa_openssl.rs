@@ -372,10 +372,17 @@ impl RSAPeer {
 
 impl KeyVal for RSAPeer {
   // not that good (pkey can contain private and lot a clone... TODO (for now easier this way)
-  type Key = Vec<u8>; 
+  type Key = Vec<u8>;
+
+  #[inline]
   fn get_key(&self) -> Vec<u8> {
     self.key.clone()
   }
+/*
+  #[inline]
+  fn get_key_ref<'a>(&'a self) -> &'a Vec<u8> {
+    &self.key
+  }*/
 
   #[inline]
   fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> {

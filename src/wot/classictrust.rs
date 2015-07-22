@@ -31,9 +31,16 @@ pub struct ClassicWotTrust<TP : KeyVal<Key=Vec<u8>>> {
 impl<TP : KeyVal<Key=Vec<u8>>> KeyVal for ClassicWotTrust<TP> {
   // not that good (pkey can contain private and lot a clone... TODO (for now easier this way)
   type Key = <TP as KeyVal>::Key;
+/*  #[inline]
+  fn get_key_ref<'a>(&'a self) -> &'a <TP as KeyVal>::Key {
+    &self.peerid
+  }*/
+ 
+  #[inline]
   fn get_key(&self) -> <TP as KeyVal>::Key {
     self.peerid.clone()
   }
+
   noattachment!();
 }
 impl<TP : KeyVal<Key=Vec<u8>>> SettableAttachment for ClassicWotTrust<TP> {}

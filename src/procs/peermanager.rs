@@ -1,7 +1,7 @@
 use rustc_serialize::json;
 use procs::mesgs::{self,PeerMgmtMessage,ClientMessage};
 use std::io::Result as IoResult;
-use peer::{PeerMgmtMeths, PeerPriority};
+use peer::{PeerMgmtMeths, PeerPriority,PeerState,PeerStateChange};
 use std::sync::mpsc::{Sender,Receiver};
 use std::str::from_utf8;
 use procs::{client,RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
@@ -19,37 +19,11 @@ use msgenc::{MsgEnc};
 use num::traits::ToPrimitive;
 use procs::ClientMode;
 use rules::DHTRules;
-
-/// TODO use it for storage in Route
-/// Stored info about client in peer management (in route transient cache).
-enum ClientInfo<P : Peer, V : KeyVal, T : Transport> {
-  /// Stream is used locally
-  Local(T::WriteStream),
-  /// usize is only useful for client thread shared
-  Threaded(Sender<ClientMessage<P,V>>,usize),
-
-}
-
-/// TODO change to JoinHandle?? (no way to drop thread could try to park and drop Thread handle : a
-/// park thread with no in scope handle should be swiped) TODO drop over unsafe mut cast of thread
-/// pb is stop thread will fail since blocked on transport receive -> TODO post how to on stack!!
-/// and for now just Arcmutex an exit bool
-enum ServerInfo {
-  /// transport manage the server, disconnection with transport primitive (calling remove on
-  /// transport with peer address (alwayse called).
-  TransportManaged,
-  /// a thread exists (instanciated from transport reception or from peermgmt on connect)
-  /// We keep a reference to end it on client side failure or simply peer removal.
-  Threaded(Arc<Mutex<bool>>),
-}
-
-type PeerInfo<P : Peer, V : KeyVal, T : Transport> = (Option<ServerInfo>, Option<ClientInfo<P,V,T>>);
-
+use route::{PeerInfo,ClientInfo,ServerInfo};
+use procs::server::resolve_server_mode;
 
 // peermanager manage communication with the storage : add remove update. The storage is therefore
 // not shared, we use message passing. 
-/// TODO need new storage for known client info but no Peer def yet (during ping) = not auth peer
-/// TODO AKA cache over ping id token.
 /// Start a new peermanager process
 pub fn start<RT : RunningTypes, 
   T : Route<RT::P,RT::V,RT::T>,
@@ -64,43 +38,105 @@ pub fn start<RT : RunningTypes,
   loop {
 
     let clientmode = rc.rules.client_mode();
-
+    let servermode = resolve_server_mode (&rc);
+    // TODO plug is auth false later (globally)
+    let isauth = rc.rules.is_authenticated();
+    let heavyaccept = rc.rules.is_accept_heavy();
+    let (peerheavy,queryheavy,poolheavy) = rc.rules.is_routing_heavy();
+ 
     let local = *clientmode == ClientMode::Local(true) || *clientmode == ClientMode::Local(false);
     match r.recv() {
       Ok(PeerMgmtMessage::PeerAuth(node,sign)) => {
-        // TODO check auth with peer challenge
-        // TODO spawn accept if it is heavy accept
-        // TODO transition to peer status on success, keep Ping status on fail (to avoid attacks)
-        ()
+        let k = node.get_key();
+        // pong received in server
+        let onenewprio = match route.get_node(&k) {
+          Some(ref p) => {
+            match p.1 {
+              PeerState::Ping(ref chal, ref prio) => {
+                // check auth with peer challenge
+                if rc.peerrules.checkmsg(&(*p.0),&chal,&sign) {
+                  if heavyaccept {
+                  // spawn accept if it is heavy accept to get prio (prio stored in ping is
+                  // unchecked)
+                    assert!(*prio == PeerPriority::Unchecked);
+                    let rcthread = rc.clone();
+                    let rpthread = rp.clone();
+                    thread::scoped(move ||{
+                      let oprio = rcthread.peerrules.accept(&node, &rpthread, &rcthread);
+                      match oprio {
+                        Some(prio) => {
+                          rpthread.peers.send(PeerMgmtMessage::PeerUpdatePrio(Arc::new(node),PeerState::Online(prio)));
+                        },
+                        None => {
+                          // from client & from server to close both TODO a message for both?? (or
+                          // shared message)
+                          let afrom = Arc::new(node);
+                          rpthread.peers.send(PeerMgmtMessage::PeerRemFromClient(afrom.clone(), PeerStateChange::Refused));
+                          rpthread.peers.send(PeerMgmtMessage::PeerRemFromServer(afrom, PeerStateChange::Refused));
+                        },
+                      }
+                    });
+                    None
+                  } else {
+                    Some((PeerState::Online(prio.clone()),false))
+                  }
+                } else {
+                  // wrong message : auth failure
+                  Some((PeerState::Blocked(prio.clone()),true))
+                }
+              },
+              _ => {
+                // bad peer state
+                warn!("receive pong for non stored ping, ignoring");
+                None
+              }
+            }
+          },
+          None => {
+            // no peer
+            warn!("receive pong for non existent peer, retrying ping");
+            rp.peers.send(PeerMgmtMessage::PeerPing(Arc::new(node),None));
+            None
+          },
+        };
+        onenewprio.map(|(prio, rm)|{
+          route.update_priority(&k,prio);
+          if rm {
+            // close connection
+            route.remchan(&k);
+          };
+        }).is_none();
       },
       Ok(PeerMgmtMessage::ClientMsg(msg, key)) => {
         // TODO get from route and send with client info (either direct or with channel)
       },
-      Ok(PeerMgmtMessage::PeerRemFromClient(p,prio))  => {
-        // TODO if needed close server (remchan : plus bool to close either both handle plus prio
+      Ok(PeerMgmtMessage::PeerRemFromClient(p,pschange))  => {
+        // TODO if needed close server (remchan : plus bool to close either both handle plus state
+        // to block if do block (instead of offline)
         // opt (none means remove totally))
         let nodeid = p.get_key().clone();
         route.remchan(&nodeid);
         // TODO update prio if blocked keep peer
       },
-      Ok(PeerMgmtMessage::PeerRemFromServer(p,prio))  => {
+      Ok(PeerMgmtMessage::PeerRemFromServer(p,pschange))  => {
         // TODO if needed close Clinet
         let nodeid = p.get_key().clone();
         route.remchan(&nodeid);
-        // TODO update prio
+        // TODO update prio to offline with old accept result or oprio
       },
  
       Ok(PeerMgmtMessage::PeerAddOffline(p,tryconnect)) => {
         info!("Adding offline peer : {:?}", p);
         let nodeid = p.get_key().clone(); // TODO to avoid this clone create a route.addnode which has optional priority
-        let hasnode = match route.get_node(&nodeid) { // TODO new function route.hasP
-          Some(_) => {true},
-          None => {false},
+        let (hasnode, pri) = match route.get_node(&nodeid) { // TODO new function route.hasP
+          Some(p) => {(true,p.1.get_priority())},
+          None => {(false,PeerPriority::Unchecked)},
         };
         if(!hasnode){
-          route.add_node(p,None);
+          route.add_node((p,PeerState::Offline(pri),None,None));
+        } else {
+          route.update_priority(&nodeid,PeerState::Offline(pri));
         }
-        route.update_priority(&nodeid,PeerPriority::Offline);
         if tryconnect {
           // TODO tryconnect by sending ping...
         };
@@ -110,10 +146,10 @@ pub fn start<RT : RunningTypes,
       Ok(PeerMgmtMessage::PeerPong(_,_,_))  => {
         //TODO!!!
       },
-      Ok(PeerMgmtMessage::PeerAddFromClient(p,prio,ors,ssend))  => {
+      Ok(PeerMgmtMessage::PeerAddFromClient(p,prio,ors))  => {
         //TODO!!!
       },
-      Ok(PeerMgmtMessage::PeerAddFromServer(p,prio,ows,ssend))  => {
+      Ok(PeerMgmtMessage::PeerAddFromServer(p,prio,ows,ssend,servinfo))  => {
         if(p.get_key() != rc.me.get_key()) {
         info!("Adding peer : {:?}, {:?} from {:?}", p, prio, rc.me);
           // TODO  when test writen (change of prio) try to change with get_mut
@@ -124,12 +160,21 @@ pub fn start<RT : RunningTypes,
             None => {false},
           };
           debug!("-Update peer prio : {:?}, {:?} from {:?}", p, prio, rc.me);
+          // TODO manage pri = unchecked meaning we got a ping from server but we are heavy accept
+          // so we may pong and so we p
+          let pstate = if prio == PeerPriority::Unchecked {
+            // TODO send peerping??? and put state ping instead
+            PeerState::Offline(prio)
+          } else {
+            PeerState::Online(prio)
+          };
           if(!hasnode){
             debug!("-init up");
-            route.add_node(p,None);
+            route.add_node((p,pstate,None,None));
+          } else {
+            debug!("-actual up");
+            route.update_priority(&nodeid,pstate);
           }
-          debug!("-actual up");
-          route.update_priority(&nodeid,prio);
         } else {
           error!("Trying to add ourselves as a peer");
         }
@@ -224,11 +269,11 @@ pub fn start<RT : RunningTypes,
         // status, proxyto is either right with destination or left with a possible result in
         // parameter
         let proxyto = match route.get_node(&nid) {
-          // no ping at this point : trust current status
-          Some(&(ref ap,PeerPriority::Normal, ref s,_)) | Some(&(ref ap,PeerPriority::Priority(_), ref s,_)) => Either::Left(Some((*ap).clone())),
           // blocked peer are also blocked for transmission (this is likely to make them
           // disapear) TODO might not be a nice idea
-          Some(&(ref ap,PeerPriority::Blocked, ref s,_)) => Either::Left(None),
+          Some(&(ref ap,PeerState::Blocked(_), ref s,_)) => Either::Left(None),
+          // no ping at this point : trust current status
+          Some(&(ref ap,PeerState::Online(_), ref s,_)) => Either::Left(Some((*ap).clone())),
           // None or offline (offline may mean we need updated info for peer
           _ => {
             if remhop > 0 {
@@ -389,7 +434,7 @@ fn send_nonconnected<RT : RunningTypes, T : Route<RT::P,RT::V,RT::T>>
  )
  ->  bool {
  match route.get_node(&p.get_key()) {
-  Some(&(_,PeerPriority::Blocked,_,_)) => {
+  Some(&(_,PeerState::Blocked(_),_,_)) => {
       // if existing consider ping true : normaly if offline or block , no channel
       info!("#####blocked : client do not send");
       false
@@ -413,7 +458,7 @@ fn send_nonconnected_ping<RT : RunningTypes, T : Route<RT::P,RT::V,RT::T>>
  )
  ->  bool {
  match route.get_node(&p.get_key()) {
-  Some(&(_,PeerPriority::Blocked,_,_)) => {
+  Some(&(_,PeerState::Blocked(_),_,_)) => {
       // if existing consider ping true : normaly if offline or block , no channel
       info!("#####blocked : client do not send");
 
@@ -439,27 +484,32 @@ fn get_or_init_client_connection<RT : RunningTypes, T : Route<RT::P,RT::V,RT::T>
   ping : bool, 
   pingres : Option<OneResult<bool>>) 
  ->  Sender<ClientMessage<RT::P,RT::V>> {
+   // TODO refactor : client info cannot be clone so we may update diferently
+   /*
 let (upd, s) = match route.get_node(&p.get_key()) {
   Some(&(_,PeerPriority::Blocked,_,_))| Some(&(_,PeerPriority::Offline,_,_)) => {
     // retry connecting & accept for block
     let (tcl,rcl) = channel();
     debug!("##pingtrue");
-    (Some(rcl), tcl)
+    (Some(rcl), ClientInfo::Threaded(tcl,0))
   },
-  Some(&(_,_, Some(ref s),_)) => {
+  // TODO new sendre of clinet
+  Some(&(_,_,_, Some(ref s))) => {
+    
      debug!("#####get or init find with chanel");
-     (None, s.clone()) // TODO avoid this clone
+     (None, (*s).clone()) // TODO avoid this clone
+    
   },
-  None | Some(&(_, _, None,_)) => {
+  None | Some(&(_, _, _,None)) => {
   let (tcl,rcl) = channel();
-  (Some(rcl), tcl)
+  (Some(rcl), ClientInfo::Threaded(tcl,0))
   },
  };
  match upd {
      Some(rcl) => {
 
      debug!("#####putting channel");
-     route.add_node(p.clone(), Some(s.clone()));
+     route.add_node((p.clone(),PeerPriority::Offline,None,Some(s.clone())));
 
 
   let tcl3 = s.clone();
@@ -481,6 +531,9 @@ let (upd, s) = match route.get_node(&p.get_key()) {
      },
  };
  s.clone()
+ */
+    let (tcl,rcl) = channel();
+    tcl
 }
 
 #[inline]

@@ -131,6 +131,13 @@ pub struct TrustQuery<TP : TrustedPeer> {
 
 impl<TP : TrustedPeer> KeyVal for TrustQuery<TP> {
   type Key = <TP as KeyVal>::Key;
+  /* 
+  #[inline]
+  fn get_key_ref<'a>(&'a self) -> &'a <TP as KeyVal>::Key {
+    &self.peerid
+  }*/
+  
+  #[inline]
   fn get_key(&self) -> <TP as KeyVal>::Key {
     self.peerid.clone()
   }
@@ -155,7 +162,7 @@ pub struct PromSigns<TP : TrustedPeer> {
 impl<TP : TrustedPeer> PromSigns<TP> {
   pub fn new(s : &PeerSign<TP>, ms : usize) -> PromSigns<TP> {
     PromSigns {
-      peer : s.about.clone(),
+      peer : s.about().clone(),
       signby : { 
         let mut sb = VecDeque::new();
         sb.push_front(s.get_key());
@@ -230,9 +237,16 @@ impl<TP : TrustedPeer> PromSigns<TP> {
 impl<TP : TrustedPeer> KeyVal for PromSigns<TP> {
   // not that good (pkey can contain private and lot a clone... TODO (for now easier this way)
   type Key = <TP as KeyVal>::Key;
+/*  #[inline]
+  fn get_key_ref<'a>(&'a self) -> &'a <TP as KeyVal>::Key {
+    &self.peer
+  }
+*/ 
+  #[inline]
   fn get_key(&self) -> <TP as KeyVal>::Key {
     self.peer.clone()
   }
+
   // TODO may be faster to have distant encoding embedding PeerSign info yet require reference to
   // other store in keyval for encoding.
   noattachment!();
@@ -288,8 +302,8 @@ impl<TP : TrustedPeer, T : WotTrust<TP>> WotStore<TP, T> {
   // currently update wot implementation must converge as we 
   // got no mechanism to avoid infinite recursion TODO max recursion depth???
   fn update_trust (&mut self, skv : &PeerSign<TP>) {
-    let otrust = self.wotstore.get_val(&skv.about).or_else(||{
-        match self.peerstore.get_val(&skv.about) {
+    let otrust = self.wotstore.get_val(skv.about()).or_else(||{
+        match self.peerstore.get_val(skv.about()) {
         None => {
         info!("trust about non known peer is ignored yet stored");
         None
@@ -309,7 +323,7 @@ impl<TP : TrustedPeer, T : WotTrust<TP>> WotStore<TP, T> {
     otrust.map(|trust|{
         // TODO in place update of kvstore to possibly avoid clone
         let mut newtrust = (trust).clone();
-        let from_trust = self.get_peer_trust(&skv.from);
+        let from_trust = self.get_peer_trust(skv.from());
         debug!("update with {:?}, {:?}, {:?}, {:?}", from_trust, trust.trust(), from_trust, skv.trust);
         let (upd, pro) = newtrust.update(from_trust, trust.trust(), from_trust, skv.trust, &self.rules);
         if upd {
@@ -366,7 +380,7 @@ impl<TP : TrustedPeer, T : WotTrust<TP>> KVStore<WotKV<TP>> for WotStore<TP, T> 
           };
         },
         WotKV::Sign(ref skv) => {
-          match self.peerstore.get_val(&skv.from) {
+          match self.peerstore.get_val(skv.from()) {
             None => (),
             Some(from) => {
 
@@ -385,7 +399,7 @@ impl<TP : TrustedPeer, T : WotTrust<TP>> KVStore<WotKV<TP>> for WotStore<TP, T> 
                   // Here validation of signature is done by underlyingstore
                   self.signstore.add_val(skv.clone(), stconf);
                   // TODO avoid doing a get val by returning something with add_val
-                  match self.promstore.get_val(&skv.about) {
+                  match self.promstore.get_val(skv.about()) {
                     None => {
                       debug!("add to promstore");
                       self.promstore.add_val(
@@ -478,7 +492,7 @@ fn remove_val(& mut self, k : &<WotKV<TP> as KeyVal>::Key) {
         match self.signstore.get_val(sk){
           None => (),
           Some (skval) => 
-            match self.promstore.get_val(&skval.about) {
+            match self.promstore.get_val(skval.about()) {
               None => (),
               Some (rel) => {
                 match rel.remove_sign(&(skval)) {

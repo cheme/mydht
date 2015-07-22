@@ -1,5 +1,5 @@
 use std::collections::{HashMap,BTreeSet,VecDeque};
-use peer::{Peer,PeerPriority};
+use peer::{Peer,PeerState,PeerPriority};
 use procs::{ClientChanel};
 use std::sync::{Arc};
 use std::sync::mpsc::{Sender,Receiver};
@@ -54,9 +54,9 @@ impl<P : Peer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> 
     };
   }
 
-  fn add_node(& mut self, node : Arc<P>, chan : Option<ClientChanel<P,V>>) {
-    self.peersNbQuery.insert((0,node.get_key()));
-    self.peers.add_val_c(node.get_key(), (node,PeerPriority::Offline, chan, PhantomData));
+  fn add_node(& mut self, pi : PeerInfo<P,V,T>) {
+    self.peersNbQuery.insert((0,pi.0.get_key()));
+    self.peers.add_val_c(pi.0.get_key(), pi);
   }
 
   fn remchan(& mut self, nodeid : &P::Key) where P::Key : Send {
@@ -64,7 +64,7 @@ impl<P : Peer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> 
     self.peers.update_val_c(nodeid,pi_remchan).unwrap();
   }
 
-  fn update_priority(& mut self, nodeid : &P::Key, prio : PeerPriority) where P::Key : Send {
+  fn update_priority(& mut self, nodeid : &P::Key, prio : PeerState) where P::Key : Send {
     debug!("update prio of {:?} to {:?}",nodeid,prio);
     self.peers.update_val_c(nodeid,|v|pi_upprio(v,prio)).unwrap();
   }
@@ -129,14 +129,14 @@ impl<P : Peer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> 
     for nid in self.peersNbQuery.iter() {
       debug!("!!!in closest node {:?}", nid);
       match self.peers.get_val_c(&nid.1) {
-        Some(&(ref ap,PeerPriority::Normal, ref s,_)) | Some(&(ref ap,PeerPriority::Priority(_), ref s,_)) => {
+        Some(&(ref ap,PeerState::Online(_), ref s,_)) => {
           debug!("found");
           if filter.iter().find(|r|**r == ap.get_key()) == None {
             r.push(ap.clone());
             i = i + 1;
           }
         },
-        Some(&(ref ap,PeerPriority::Offline, ref s,_)) => {
+        Some(&(ref ap,PeerState::Offline(_), ref s,_)) => {
           debug!("found offline");
           warn!("more prioritary node not send")
         },

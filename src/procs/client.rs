@@ -9,7 +9,7 @@ use procs::mesgs::{self,PeerMgmtMessage,ClientMessage};
 use msgenc::{ProtoMessage};
 use std::fs::File;
 use std::io::Result as IoResult;
-use peer::{PeerMgmtMeths, PeerPriority};
+use peer::{PeerMgmtMeths, PeerPriority,PeerStateChange,PeerState};
 use std::str::from_utf8;
 use procs::{peermanager,RunningContext,RunningProcesses,ArcRunningContext,RunningTypes};
 use time::Duration;
@@ -79,6 +79,7 @@ impl<P : Peer, V : KeyVal, TW : WriteTransportStream> ClientHandle<P,V,TW> {
 /// (connected transport). Always begin with an accept call (complex accept should only run in
 /// connected mode).
 /// TODO add param saying if we start receive trait!!!!
+/// TODO add current prio to avoid needless call to accept!!!!
 pub fn start <RT : RunningTypes>
  (p : Arc<RT::P>, 
   tcl : Option<Sender<ClientMessage<RT::P,RT::V>>>, 
@@ -91,10 +92,10 @@ pub fn start <RT : RunningTypes>
   connected : bool,
   ) {
   let mut ok = false;
-  match rc.peerrules.accept(&(p),&rp,&rc) {
+  match rc.peerrules.accept(&(*p),&rp,&rc) {
     None => {
       warn!("refused node {:?}",p);
-      rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), PeerPriority::Blocked));
+      rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), PeerState::Refused));
     },
     Some(pri)=> {
       // connect
@@ -103,7 +104,7 @@ pub fn start <RT : RunningTypes>
       match sc {
         Err(e) => {
           info!("Cannot connect");
-          rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), PeerPriority::Offline));
+          rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), PeerState::Offline(pri)));
         },
         Ok((mut s1,_)) => {
           // TODO if needed start receive and send handle to peermgmt!!!
@@ -127,17 +128,17 @@ pub fn start <RT : RunningTypes>
                 utils::ret_one_result(&ares, r)
               });
               if r {
-                rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), pri.clone()));
+                rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), PeerState::Online(pri.clone())));
                 true
               } else {
                 error!("Started unpingable client process");
-                rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), PeerPriority::Offline));
+                rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), PeerState::Offline(pri.clone())));
                 false
               }
             }
           } else {
             if connected {
-              rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), pri.clone()));
+              rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), PeerState::Online(pri.clone())));
             };
             true
           };
@@ -184,7 +185,8 @@ pub fn start <RT : RunningTypes>
     // remove channel
     // TODO unsafe race condition here (a new one could have been open in between)
     debug!("Query for remove channnel");
-    rp.peers.send(PeerMgmtMessage::PeerRemFromClient(p.clone(), PeerPriority::Offline));
+    // set to offline
+    rp.peers.send(PeerMgmtMessage::PeerRemFromClient(p.clone(), PeerStateChange::Offline));
 //    tcl.unwrap().drop();
   } 
   if !ok {
@@ -239,7 +241,8 @@ pub fn recv_match <RT : RunningTypes>
       });
     };
     if !ok {
-      rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), PeerPriority::Offline));
+      // TODO pass prio in parameter!!!!! (here useless call to accept on reconnect)
+      rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), PeerState::Offline(PeerPriority::Unchecked)));
     };
   }
   ));
@@ -248,7 +251,7 @@ pub fn recv_match <RT : RunningTypes>
     ClientMessage::PeerPong(_,_) => {
       // TODO !!!!
     },
-    ClientMessage::ShutDown => {
+    ClientMessage::ShutDown(ix) => {
       warn!("shuting client");
       ok = false;
     },
@@ -271,10 +274,10 @@ pub fn recv_match <RT : RunningTypes>
           // Add peer as lower priority and pending message and add its socket!!!
            debug!("Pong reply ok, adding or updating peer {:?}, {:?}", p.get_key(), pri);
            // add node as ok (with previous priority)
-           rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p, pri.clone()));
+           rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p, PeerState::Online(pri.clone())));
         } else {
           debug!("User seem offline");
-          rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p, PeerPriority::Offline));
+          rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p, PeerState::Offline(pri.clone())));
           ok = false;
         }
       };

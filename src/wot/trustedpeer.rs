@@ -55,10 +55,8 @@ pub struct SendablePeerDec {
 /// possible tag is not very practical
 #[derive(Debug, PartialEq, Eq, Clone,RustcEncodable,RustcDecodable)]
 pub struct PeerSign<TP : TrustedPeer> {
-  /// peer signing
-  pub from : <TP as KeyVal>::Key,
-  /// peer to sign
-  pub about : <TP as KeyVal>::Key,
+  /// (peer signing, peer to sign) aka (from, about)
+  key : (<TP as KeyVal>::Key, <TP as KeyVal>::Key),
   /// peer trust
   pub trust : u8,
   /// version to update/revoke...
@@ -68,6 +66,15 @@ pub struct PeerSign<TP : TrustedPeer> {
 }
 
 impl<TP : TrustedPeer> PeerSign<TP> {
+  #[inline]
+  pub fn from<'a>(&'a self) -> &'a <ArcKV<TP> as KeyVal>::Key {
+    &self.key.0
+  }
+  #[inline]
+  pub fn about<'a>(&'a self) -> &'a <ArcKV<TP> as KeyVal>::Key {
+    &self.key.1
+  }
+
 
   /// sign an new trust level, from peer must be a peer for whom we got the privatekey (ourselves
   /// for instance). TODO remove those ArcKV
@@ -93,8 +100,7 @@ impl<TP : TrustedPeer> PeerSign<TP> {
     } else {
       Some(
         PeerSign {
-          from  : from,
-          about : about,
+          key : (from, about), 
           trust : trust,
           tag   : tag,
           sign  : vsign,
@@ -106,9 +112,15 @@ impl<TP : TrustedPeer> PeerSign<TP> {
 impl<TP : TrustedPeer> KeyVal for PeerSign<TP> {
   // a pair of from and about ids
   type Key = (<TP as KeyVal>::Key, <TP as KeyVal>::Key);
+  #[inline]
   fn get_key(&self) -> (<TP as KeyVal>::Key, <TP as KeyVal>::Key) {
-    (self.from.clone(), self.about.clone())
+    self.key.clone()
   }
+ /* 
+  #[inline]
+  fn get_key_ref<'a>(&'a self) -> &'a (<TP as KeyVal>::Key, <TP as KeyVal>::Key) {
+    &self.key
+  }*/
   noattachment!();
 }
 
@@ -119,7 +131,7 @@ impl<'a, TP : TrustedPeer> TrustedVal<TP, PeerTrustRel> for PeerSign<TP> {
   //fn get_sign_content<'b> (&'b self) -> (&'b Vec<u8>, &'b Vec<u8>, u8, usize) {
   fn get_sign_content (& self) -> Vec<u8> {
    bincode::encode(
-     & (&self.from, &self.about, self.trust, self.tag)
+     & (self.from(), self.about(), self.trust, self.tag)
 , bincode::SizeLimit::Infinite).unwrap()
   }
   #[inline]
@@ -129,7 +141,7 @@ impl<'a, TP : TrustedPeer> TrustedVal<TP, PeerTrustRel> for PeerSign<TP> {
 
   #[inline]
   fn get_from<'b> (&'b self) -> &'b Vec<u8> {
-    &self.from
+    self.from()
   }
 
   #[inline]

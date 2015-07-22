@@ -50,6 +50,7 @@ pub enum ProtoMessage<P : Peer, V : KeyVal> {
   /// Ping reply with signature with
   ///  - emitter
   ///  - signing of challenge
+  ///  P is added for reping on lost PING, TODO could be remove and simply origin key in pong
   PONG(P,String),
   /// reply to query of propagate, if no queryid is used it is a node propagate
   STORE_NODE(Option<QueryID>, Option<DistantEnc<P>>), // reply to synch or asynch query - note no mix in query mode -- no signature, since we go with a ping before adding a node (ping is signed) TODO allow a signing with primitive only for this ?? and possible not ping afterwad

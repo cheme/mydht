@@ -103,6 +103,11 @@ impl StreamInfo {
 }
 
 #[derive(PartialEq,Eq,Clone)]
+/// TODO state must be simplier to avoid race over oneresult :
+/// just trigger between something and waiting and relase condvar on every something
+/// and primitive on read which block only if not Something (here primitive block anyway)
+/// that is for threaded : the condvar lock must be used the states are indicative (except
+/// Something when setting a condvar)
 pub enum ThreadState {
   // Handler not started
   Init,

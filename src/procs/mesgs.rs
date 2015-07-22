@@ -1,6 +1,6 @@
 //! Message used in channel between processes.
 
-use peer::{Peer,PeerPriority};
+use peer::{Peer,PeerPriority,PeerState,PeerStateChange};
 use query::{Query,QueryID,QueryPriority,QueryMsg,LastSent,QueryMode,QueryChunk};
 use std::sync::{Arc,Mutex,Condvar,Semaphore};
 use rustc_serialize::{Encodable,Decodable};
@@ -12,28 +12,30 @@ use procs::RunningTypes;
 use procs::client::ClientHandle;
 use procs::server::ServerHandle;
 use std::sync::mpsc::{SyncSender};
+use route::ServerInfo;
 
 /// message for peermanagement
 pub enum PeerMgmtMessage<P : Peer,V : KeyVal,TR : ReadTransportStream, TW : WriteTransportStream> {
-  /// update peer with priority (can be used to set a peer offline)
-  PeerUpdatePrio(Arc<P>, PeerPriority),
+  /// update peer with state (can be used to set a peer offline)
+  PeerUpdatePrio(Arc<P>, PeerState),
   /// update peer with priority (can be used to set a peer offline)
   /// with possibly an initial write stream : add to cache or start cli thread (or add to cli pool).
   /// with possibly an initial read stream : start or add to pool of server.
   /// Also Query for a client handle (from procs or other process to skip peermanagement process in
   /// later calls), a synchro is needed eitherway.
-  PeerAddFromServer(Arc<P>, PeerPriority, Option<TW>, SyncSender<ClientHandle<P,V,TW>>),
-  PeerAddFromClient(Arc<P>, PeerPriority, Option<TR>, SyncSender<ServerHandle<P,TR>>),
+  PeerAddFromServer(Arc<P>, PeerPriority, Option<TW>, SyncSender<ClientHandle<P,V,TW>>, ServerInfo),
+  PeerAddFromClient(Arc<P>, PeerPriority, Option<TR>),
   /// add an offline peer
   /// bool is wether we try to connect
   PeerAddOffline(Arc<P>,bool),
   /// remove a peer info and terminate possible server thread 
-  /// optional priority change
-  PeerRemFromClient(Arc<P>, PeerPriority),
-  /// remove a peer info and terminate possible client thread 
-  /// optional priority change
-  PeerRemFromServer(Arc<P>, PeerPriority),
+  /// State to change to
+  PeerRemFromClient(Arc<P>, PeerStateChange),
+  /// remove a peer info and terminate possible client thread
+  /// State to change to
+  PeerRemFromServer(Arc<P>, PeerStateChange),
   /// Ping a peer, calling process is possibly waiting for a result
+  /// Optionaly block and wait for a result.
   PeerPing(Arc<P>, Option<OneResult<bool>>), // optional mutex if we need reply
   /// Pong a peer
   /// String is signed challenge
@@ -157,7 +159,7 @@ pub enum ClientMessage<P : Peer, V : KeyVal> {
   /// multiplex peer add, token is managed by peermanager and put in param
 //  MultPeerAdd(Arc<P>, usize, T::WriteStream), // T is transport
   /// shutdown client process TODO replace by end
-  ShutDown, // when issue with receiving on channel or other, use this to drop your client
+  ShutDown(usize), // when issue with receiving on channel or other, use this to drop your client
 }
 
 pub enum ServerPoolMessage<P : Peer, TR : ReadTransportStream> {

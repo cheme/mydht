@@ -7,7 +7,7 @@ use std::io::Result as IoResult;
 use mydhtresult::{ErrorKind,Error};
 
 use std::collections::{HashMap,BTreeSet,VecDeque};
-use peer::{Peer,PeerPriority};
+use peer::{Peer,PeerPriority,PeerState};
 use procs::{ClientChanel};
 use std::sync::{Arc};
 use std::sync::mpsc::{Sender,Receiver};
@@ -70,17 +70,21 @@ impl<P : Peer + DhtPeer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo
   fn query_count_dec(& mut self, pnid : &P::Key){
     // Not used
   }
-
-  fn add_node(& mut self, node : Arc<P>, chan : Option<ClientChanel<P,V>>) {
-    self.peers.add_val_c(node.get_key(), (node,PeerPriority::Offline, chan, PhantomData));
+  fn add_node(& mut self, pi : PeerInfo<P,V,T>) {
+    self.peers.add_val_c(pi.0.get_key(), pi);
   }
+
   fn remchan(& mut self, nodeid : &P::Key) where P::Key : Send {
     // TODO result management
     self.peers.update_val_c(nodeid,pi_remchan).unwrap();
   }
 
-  fn update_priority(& mut self, nodeid : &P::Key, prio : PeerPriority) where P::Key : Send {
-    let putinkad = prio != PeerPriority::Offline && prio != PeerPriority::Blocked;
+  fn update_priority(& mut self, nodeid : &P::Key, prio : PeerState) where P::Key : Send {
+    let putinkad = match &prio {
+      &PeerState::Offline(_) => false,
+      &PeerState::Blocked(_) => false,
+      _ => true,
+    };
     debug!("update prio of {:?} to {:?}",nodeid,prio);
     if let Ok(true) = self.peers.update_val_c(nodeid,|v|{
       pi_upprio(v,prio)
@@ -195,6 +199,13 @@ pub struct NodeK(Node,BigUint);
 
 impl KeyVal for NodeK {
     type Key = NodeID;
+    /*
+    #[inline]
+    fn get_key_ref<'a>(&'a self) -> &'a NodeID {
+        self.0.get_key_ref()
+    }*/
+
+    #[inline]
     fn get_key(&self) -> NodeID {
         self.0.get_key()
     }

@@ -71,6 +71,15 @@ macro_rules! derive_enum_keyval(($kv:ident {$($para:ident => $tra:ident , )*}, $
        $( &$kv::$st(ref f)  => $k::$st(f.get_key()), )*
       }
     }
+    /*
+#[inline]
+    fn get_key_ref<'a>(&'a self) -> &'a $k {
+      match self {
+       $( &$kv::$st(ref f)  => $k::$st(f.get_key_ref()), )*
+      }
+    }
+    */
+
 
 #[inline]
     fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error>{
@@ -113,6 +122,15 @@ macro_rules! derive_enum_keyval_inner(($kvt:ty , $kv:ident, $kt:ty, $k:ident, {$
        $( &$kv::$st(ref f)  => $k::$st(f.get_key()), )*
       }
     }
+    /*
+#[inline]
+    fn get_key_ref<'a>(&'a self) -> &'a $kt {
+      match self {
+       $( &$kv::$st(ref f)  => $k::$st(f.get_key_ref()), )*
+      }
+    }
+*/
+
 #[inline]
     fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_path : bool) -> Result<(), S::Error>{
       match self {
@@ -209,7 +227,7 @@ pub mod utils;
 pub mod wot;
 
 // reexport
-pub use peer::{PeerPriority};
+pub use peer::{PeerPriority,PeerState};
 pub use procs::{DHT, RunningContext, RunningProcesses, ArcRunningContext, RunningTypes};
 pub use procs::{store_val, find_val, find_local_val};
 pub use query::{QueryConf,QueryPriority,QueryMode,QueryChunk,LastSentConf};
@@ -406,7 +424,8 @@ pub trait DHTRules : Sync + Send {
   /// Define if we require authentication, this way Ping/Pong challenge exchange could be skip and peers is
   /// immediatly stored.
   /// So if this function reply no, implementation of challenge, signmsg and checkmsg for
-  /// peermgmtrules is useless
+  /// peermgmtrules is useless.
+  /// Plus their will not be ping pong exchange in both way (no need to challenge twice).
   /// TODO not implemented (need to pass Peer info in each query)
   fn is_authenticated(&self) -> bool;
   // TODO option to do authentication on every message (with is_authenticated only adress is

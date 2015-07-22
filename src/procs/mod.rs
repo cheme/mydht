@@ -1,7 +1,7 @@
 use std::io::Result as IoResult;
 use std::sync::mpsc::{Receiver,Sender};
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
-use peer::{PeerMgmtMeths, PeerPriority};
+use peer::{PeerMgmtMeths, PeerPriority, PeerState};
 use query::{self,QueryConf,QueryPriority,QueryMode,QueryModeMsg,LastSent,QueryMsg,Query};
 use rules::DHTRules;
 use kvstore::{StoragePriority, KVStore};

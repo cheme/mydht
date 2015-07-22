@@ -59,7 +59,7 @@ use std::sync::mpsc::{Sender,Receiver};
 use mydht::{Udp,Tcp};
 use mydht::dhtif::{Peer,PeerMgmtMeths};
 use mydht::{DHT,RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
-use mydht::{PeerPriority,StoragePriority,QueryChunk,QueryMode,QueryConf,QueryID};
+use mydht::{PeerPriority,PeerState,StoragePriority,QueryChunk,QueryMode,QueryConf,QueryID};
 use mydht::dhtif::KeyVal;
 use mydht::dhtif::FileKeyVal;
 use mydht::transportif::Transport;
@@ -507,7 +507,7 @@ impl PeerMgmtMeths<RSAPeer, MulKV> for UnsignedOpenAccess {
     "".to_string()
   }
   fn checkmsg  (&self, n : &RSAPeer, chal : &String, sign : &String) -> bool{ true}
-  fn accept<RT : RunningTypes<P=RSAPeer,V=MulKV>> (&self, n : &Arc<RSAPeer>, 
+  fn accept<RT : RunningTypes<P=RSAPeer,V=MulKV>> (&self, n : &RSAPeer, 
   rp : &RunningProcesses<RT>, 
   rc : &ArcRunningContext<RT>) 
   -> Option<PeerPriority> {
@@ -532,7 +532,7 @@ struct WotAccess {
 }
 
 impl WotAccess {
-  fn accept_rec<RT : RunningTypes<P=RSAPeer, V=MulKV>> (&self, n : &Arc<RSAPeer>, 
+  fn accept_rec<RT : RunningTypes<P=RSAPeer, V=MulKV>> (&self, n : &RSAPeer, 
   rp : &RunningProcesses<RT>, 
   rc : &ArcRunningContext<RT>,
   rec : bool) 
@@ -587,7 +587,7 @@ impl WotAccess {
              // in query and include in wotkv impl : because sometime it is already here
              // (subsequent to findpeer), sometime not (direct reply in Asynch mode for
              // instance).
-             mydht::store_val(rp, rc, MulKV::Wot(WotKV::Peer(ArcKV(n.clone()))), &queryconf,1, StoragePriority::Local);
+             mydht::store_val(rp, rc, MulKV::Wot(WotKV::Peer(ArcKV::new(n.clone()))), &queryconf,1, StoragePriority::Local);
           };
 
           for promsign in promsigns.into_iter() {
@@ -659,7 +659,7 @@ impl PeerMgmtMeths<RSAPeer, MulKV> for WotAccess {
     }
   }
   #[inline]
-  fn accept<RT : RunningTypes<P = RSAPeer, V = MulKV>> (&self, n : &Arc<RSAPeer>, 
+  fn accept<RT : RunningTypes<P = RSAPeer, V = MulKV>> (&self, n : &RSAPeer, 
   rp : &RunningProcesses<RT>, 
   rc : &ArcRunningContext<RT>) 
   -> Option<PeerPriority> {

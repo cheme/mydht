@@ -253,7 +253,7 @@ impl PeerMgmtMeths<Node, DummyKeyVal> for DummyRules{
   // typically accept return either normal (no priority managed) or a int priority
  
   fn accept<RT : RunningTypes<P=Node,V=DummyKeyVal>>
-  (&self, n : &Arc<Node>, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
+  (&self, n : &Node, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
   -> Option<PeerPriority>
   {Some (PeerPriority::Priority(1))}
   #[inline]
@@ -279,7 +279,7 @@ impl PeerMgmtMeths<Node, DummyKeyVal> for DummyRules2 {
 
   // typically accept return either normal (no priority managed) or a int priority
   fn accept<RT : RunningTypes<P=Node,V=DummyKeyVal>>
-  (&self, n : &Arc<Node>, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
+  (&self, n : &Node, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
   -> Option<PeerPriority>
   {Some (PeerPriority::Priority(2))}
   #[inline]

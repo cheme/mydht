@@ -284,10 +284,16 @@ impl ECDSAPeer {
 // TODO factorize with RSAPeer (using a trustable peer or something).
 impl KeyVal for ECDSAPeer {
   type Key = Vec<u8>; 
+  #[inline]
   fn get_key(&self) -> Vec<u8> {
     self.key.clone()
   }
-
+/*
+  #[inline]
+  fn get_key_ref<'a>(&'a self) -> &'a Vec<u8> {
+    &self.key
+  }
+*/
   #[inline]
   fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> {
     if is_local {

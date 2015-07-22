@@ -57,6 +57,10 @@ mod test {
     fn get_key(&self) -> NodeID {
         self.1.clone()
     }
+/* 
+    fn get_key_ref<'a>(&'a self) -> &'a NodeID {
+        &self.1
+    }*/
     noattachment!();
   }
   impl SettableAttachment for NodeK2 { }
