@@ -138,7 +138,8 @@ impl <P : Peer, V : KeyVal> PeerMgmtInitMessage<P,V> {
 }
 
 
-pub type ClientMessageIx<P : Peer, V : KeyVal> = (ClientMessage<P,V>,usize);
+//pub type ClientMessageIx<P : Peer, V : KeyVal> = (ClientMessage<P,V>,usize);
+pub type ClientMessageIx<P, V> = (ClientMessage<P,V>,usize);
 
 /// message for client process
 pub enum ClientMessage<P : Peer, V : KeyVal> {

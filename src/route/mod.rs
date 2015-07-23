@@ -58,7 +58,8 @@ pub enum ServerInfo {
   // TODO add server pool messages
 }
 
-pub type PeerInfo<P : Peer, V : KeyVal, T : Transport> = (Arc<P>,PeerState,Option<ServerInfo>, Option<ClientInfo<P,V,T>>);
+//pub type PeerInfo<P : Peer, V : KeyVal, T : Transport> = (Arc<P>,PeerState,Option<ServerInfo>, Option<ClientInfo<P,V,T>>);
+pub type PeerInfo<P, V, T> = (Arc<P>,PeerState,Option<ServerInfo>, Option<ClientInfo<P,V,T>>);
 
 impl<P : Peer, V : KeyVal, T : Transport> ClientInfo<P,V,T> {
    pub fn send_msg_local(&mut self,  msg : ClientMessage<P,V>) -> MydhtResult<()> {

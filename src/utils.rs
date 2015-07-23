@@ -138,16 +138,14 @@ impl<KV : KeyVal> KeyVal for ArcKV<KV> {
 
 impl<KV : KeyVal> SettableAttachment for ArcKV<KV> {
   #[inline]
+  /// set attachment, 
   fn set_attachment(& mut self, fi:&Attachment) -> bool {
-    // TODO (need reconstruct Arc) redesign with functional style
-    // in fact this is only call when receiving a message (so arc never cloned)
-    // should be done in decode of protomessage : TODO implement KeyVal for (attachment, KVMut) 
-    // 
     // only solution : make unique and then new Arc : functional style : costy : a copy of every
     // keyval with an attachment not serialized in it.
     // Othewhise need a kvmut used for protomess only
-    // Unsafe use here because currently no use of weak pointer over our Arc
-    let kv = unsafe {self.0.make_unique()};
+    // currently no use of weak pointer over our Arc, so when used after receiving a message
+    // (unique arc) no clone may occurs (see fn doc).
+    let kv = Arc::make_unique(&mut self.0);
     kv.set_attachment(fi)
   }
 

@@ -41,19 +41,17 @@ use super::{Transport,ReadTransportStream,WriteTransportStream};
 use std::net::SocketAddr;
 use self::mio::tcp::TcpSocket;
 use self::mio::tcp::TcpListener;
-use self::mio::Socket;
+//use self::mio::Socket;
 use self::mio::tcp::TcpStream as MioTcpStream;
 use self::mio::tcp;
 use self::mio::Token;
 use self::mio::Timeout;
-use self::mio::ReadHint;
-use self::mio::NonBlock;
+use self::mio::EventSet;
 use self::mio::EventLoop;
 use self::mio::Sender;
 use self::mio::Handler;
-use self::mio::FromFd;
+use self::mio::tcp::Shutdown;
 use super::Attachment;
-use std::net::Shutdown;
 use num::traits::ToPrimitive;
 use std::collections::VecMap;
 use std::sync::Mutex;
@@ -63,6 +61,7 @@ use std::sync::PoisonError;
 use std::error::Error;
 use utils::{OneResult,ret_one_result,clone_wait_one_result,clone_wait_one_result_timeout_ms,one_result_val_clone,change_one_result};
 use std::os::unix::io::AsRawFd;
+use std::os::unix::io::FromRawFd;
 
 const CONN_REC : usize = 0;
 
@@ -122,8 +121,8 @@ pub enum ThreadState {
 }
 pub struct WriteTcpStream (MioTcpStream);
 pub enum ReadTcpStream {
-  Threaded(NonBlock<MioTcpStream>,Token, OneResult<ThreadState>,Sender<HandlerMessage>,u32),
-  CoRout(NonBlock<MioTcpStream>,Token,Sender<HandlerMessage>),
+  Threaded(MioTcpStream,Token, OneResult<ThreadState>,Sender<HandlerMessage>,u32),
+  CoRout(MioTcpStream,Token,Sender<HandlerMessage>),
 }
 
 struct MyHandler<C>
@@ -132,7 +131,7 @@ struct MyHandler<C>
   /// info about stream (for unlocking read)
   tokens : VecMap<StreamInfo>,
   timeout : u64,
-  listener : NonBlock<TcpListener>,
+  listener : TcpListener,
   readHandler : C,
 }
 
@@ -173,7 +172,8 @@ impl<C> Handler for MyHandler<C>
       HandlerMessage::NewConnTh(r, fd) => {
         let tok = self.new_token();
         let sync = Arc::new((Mutex::new(ThreadState::Init),Condvar::new()));
-        let mstream : NonBlock<MioTcpStream> = FromFd::from_fd(fd);
+        // TODO find something else than unsafe
+        let mstream : MioTcpStream = unsafe { FromRawFd::from_raw_fd(fd) };
         // TODO error management
         event_loop.register(&mstream, tok);
         let si = StreamInfo::Threaded(sync.clone());
@@ -244,7 +244,7 @@ impl<C> Handler for MyHandler<C>
   }
 
   /// on read get token and change its state to something to read, 
-  fn readable(&mut self, event_loop: &mut EventLoop<Self>, token: Token, _: ReadHint) {
+  fn ready(&mut self, event_loop: &mut EventLoop<Self>, token: Token, _: EventSet) {
     if token == Token(0) {
       // Incoming connection TODO !!!! (see tcp)
       loop {
@@ -312,7 +312,7 @@ pub enum HandlerMessage {
 }
 
 impl ReadTcpStream {
-  fn get_stream(&mut self) -> &mut NonBlock<MioTcpStream> {
+  fn get_stream(&mut self) -> &mut MioTcpStream {
     match self {
       &mut ReadTcpStream::Threaded(ref mut s,_,_,_,_) => s,
       &mut ReadTcpStream::CoRout(ref mut s,_,_) => s,
@@ -349,7 +349,7 @@ impl Transport for Tcp {
     try!(sock.set_keepalive (self.keepalive.map(|d|d.num_seconds().to_u32().unwrap())));
     // listen
     let tcplistener = try!(sock.listen(1024));*/
-    let tcplistener = try!(tcp::listen(p));
+    let tcplistener = try!(TcpListener::bind(p));
 //    tcplistener.0.set_write_timeout_ms(self.timeout.num_milliseconds());
 
 
@@ -371,10 +371,9 @@ impl Transport for Tcp {
   }
 
   fn connectwith(&self,  p : &SocketAddr, timeout : Duration) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
-    //let s = try!(TcpStream::connect(p));
-    let s = try!(tcp::connect(p));
-    try!(s.0.set_keepalive (self.keepalive.map(|d|d.num_seconds().to_u32().unwrap())));
-    let ws = try!(s.0.try_clone());
+    let s = try!(MioTcpStream::connect(p));
+    try!(s.set_keepalive (self.keepalive.map(|d|d.num_seconds().to_u32().unwrap())));
+    let ws = try!(s.try_clone());
 //    try!((s.0).0.set_write_timeout_ms(self.timeout.num_milliseconds().to_usize().unwrap()));
     //try!(s.0.set_read_timeout_ms(self.timeout.num_milliseconds().to_usize().unwrap()));
     
@@ -392,7 +391,7 @@ impl Transport for Tcp {
         Some(ref ch) => {
           if self.spawn {
             let sync = Arc::new((Mutex::new(None),Condvar::new()));
-            ch.send(HandlerMessage::NewConnTh(sync.clone(), s.0.as_raw_fd()));
+            ch.send(HandlerMessage::NewConnTh(sync.clone(), s.as_raw_fd()));
             (sync, ch.clone())
           } else {
             let sync = Arc::new((Mutex::new(None),Condvar::new()));
@@ -418,12 +417,12 @@ impl Transport for Tcp {
     match si.1 {
       StreamInfo::Threaded(state) => {
         Ok((WriteTcpStream(ws),
-          Some(ReadTcpStream::Threaded(s.0, tok, state,ch,self.timeout.num_milliseconds().to_u32().unwrap())
+          Some(ReadTcpStream::Threaded(s, tok, state,ch,self.timeout.num_milliseconds().to_u32().unwrap())
         )))
       },
       StreamInfo::CoRout(_,_) => {
         Ok((WriteTcpStream(ws),
-        Some(ReadTcpStream::CoRout(s.0,tok,ch))))
+        Some(ReadTcpStream::CoRout(s,tok,ch))))
       },
 
     }
