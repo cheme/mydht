@@ -7,7 +7,7 @@ use std::io::Result as IoResult;
 use mydhtresult::{ErrorKind,Error};
 
 use std::collections::{HashMap,BTreeSet,VecDeque};
-use peer::{Peer,PeerPriority,PeerState};
+use peer::{Peer,PeerPriority,PeerState,PeerStateChange};
 use procs::{ClientChanel};
 use std::sync::{Arc};
 use std::sync::mpsc::{Sender,Receiver};
@@ -18,11 +18,13 @@ use keyval::KeyVal;
 use keyval::{Attachment,SettableAttachment};
 use num::traits::ToPrimitive;
 use std::hash::Hash;
-use transport::Transport;
+use transport::{Transport,Address};
 use super::PeerInfo;
 use kvcache::KVCache;
 use std::marker::PhantomData;
 use super::{pi_remchan,pi_upprio};
+use procs::mesgs::{ClientMessage};
+use mydhtresult::Result as MydhtResult;
 
 #[derive(Clone,Debug)]
 struct ArcP<P : DhtPeer>(Arc<P>);
@@ -62,7 +64,7 @@ pub trait DhtKey<K : DhtPeer> {
 }
 
 // implementation of bt kademlia from rust-dht project
-impl<P : Peer + DhtPeer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> Route<P,V,T> for BTKad<P,V,T,C> where P::Key : DhtKey<P> + Hash,  V::Key : DhtKey<P>  {
+impl<A : Address, P : Peer<Address = A> + DhtPeer, V : KeyVal, T : Transport<Address = A>, C : KVCache<P::Key, PeerInfo<P,V,T>>> Route<A,P,V,T> for BTKad<P,V,T,C> where P::Key : DhtKey<P> + Hash,  V::Key : DhtKey<P>  {
   fn query_count_inc(& mut self, pnid : &P::Key){
     // Not used
   }
@@ -74,20 +76,42 @@ impl<P : Peer + DhtPeer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo
     self.peers.add_val_c(pi.0.get_key(), pi);
   }
 
-  fn remchan(& mut self, nodeid : &P::Key) where P::Key : Send {
+  fn remchan(& mut self, nodeid : &P::Key, t : & T) where P::Key : Send {
     // TODO result management
-    self.peers.update_val_c(nodeid,pi_remchan).unwrap();
+    self.peers.update_val_c(nodeid,|pi|pi_remchan(pi,t)).unwrap();
   }
 
-  fn update_priority(& mut self, nodeid : &P::Key, prio : PeerState) where P::Key : Send {
-    let putinkad = match &prio {
-      &PeerState::Offline(_) => false,
-      &PeerState::Blocked(_) => false,
-      _ => true,
+  fn local_send(&mut self, nodeid : &P::Key, msg : ClientMessage<P,V>) -> MydhtResult<bool> {
+    self.peers.update_val_c(nodeid,|ref mut pi|{
+      match pi.3 {
+        Some(ref mut ci) => ci.send_msg_local(msg),
+        None => {
+          error!("local send use on no local clinet info");
+          Ok(())
+        },
+      }
+    })
+  }
+
+
+
+  fn update_priority(& mut self, nodeid : &P::Key, opri : Option<PeerState>, och : Option<PeerStateChange>) where P::Key : Send {
+    debug!("update prio of {:?} to {:?} , {:?}",nodeid,opri,och);
+    let putinkad = match opri {
+      Some (ref pri) => {
+        match pri {
+          &PeerState::Offline(_) => false,
+          &PeerState::Blocked(_) => false,
+          _ => true,
+        }
+      },
+      None => match och {
+        Some(ref ch) => *ch != PeerStateChange::Offline && *ch != PeerStateChange::Blocked,
+        None => false,
+      }
     };
-    debug!("update prio of {:?} to {:?}",nodeid,prio);
     if let Ok(true) = self.peers.update_val_c(nodeid,|v|{
-      pi_upprio(v,prio)
+      pi_upprio(v,opri,och)
     }) {
       if putinkad {
           // Note that update is done even if same status (it invole a kad position
@@ -111,6 +135,9 @@ impl<P : Peer + DhtPeer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo
 
   fn get_node(& self, nid : &P::Key) -> Option<&PeerInfo<P,V,T>> {
     self.peers.get_val_c(nid)
+  }
+  fn has_node(& self, nid : &P::Key) -> bool {
+    self.peers.has_val_c(nid)
   }
 
   fn get_closest_for_node(& self, nnid : &P::Key, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {

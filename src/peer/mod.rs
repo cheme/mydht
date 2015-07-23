@@ -16,6 +16,7 @@ pub mod node;
 /// A peer is a special keyval with an attached address over the network
 pub trait Peer : KeyVal {
   type Address;
+  // TODO rename to get_address or get_address_clone, here name is realy bad
   fn to_address (&self) -> Self::Address;
 //  fn to_address (&self) -> SocketAddr;
 }
@@ -40,8 +41,9 @@ pub enum PeerStateChange {
   Refused,
   Blocked,
   Offline,
+  Online,
 }
- 
+
 #[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Clone)]
 /// State of a peer
 pub enum PeerState {
@@ -70,6 +72,15 @@ impl PeerState {
       &PeerState::Offline(ref p) => p.clone(),
       &PeerState::Ping(_,ref p) => p.clone(),
       &PeerState::Online(ref p) => p.clone(),
+    }
+  }
+  pub fn new_state(&self, change : PeerStateChange) -> PeerState {
+    let pri = self.get_priority();
+    match change {
+      PeerStateChange::Refused => PeerState::Refused,
+      PeerStateChange::Blocked => PeerState::Blocked(pri),
+      PeerStateChange::Offline => PeerState::Offline(pri),
+      PeerStateChange::Online  => PeerState::Online(pri), 
     }
   }
 }

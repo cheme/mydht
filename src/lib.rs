@@ -192,6 +192,14 @@ macro_rules! derive_kvstore(($kstore:ident, $kv:ident, $k:ident,
       }
     }
     #[inline]
+    fn has_val(& self, k : &$k) -> bool {
+      match k {
+        $( &$k::$st(ref sk) =>
+         self.$ksub.has_val(sk), )*
+      }
+    }
+    #[inline]
+ 
     fn get_val(& self, k : &$k) -> Option<$kv> {
       match k {
         $( &$k::$st(ref sk) =>
@@ -296,6 +304,8 @@ use std::fmt::{Display,Formatter};
 use std::error::Error as ErrorTrait;
 use std::io::Error as IOError;
 use byteorder::Error as BOError;
+use std::sync::mpsc::SendError;
+//use std::marker::Reflect;
 use bincode::EncodingError as BincError;
 use bincode::DecodingError as BindError;
 use std::result::Result as StdResult;
@@ -348,6 +358,23 @@ impl From<BOError> for Error {
     Error(e.description().to_string(), ErrorKind::ByteOrderError, Some(Box::new(e)))
   }
 }
+/* TODO when possible non conflicting imple
+impl<T: Send + Reflect> From<SendError<T>> for Error {
+  #[inline]
+  fn from(e : SendError<T>) -> Error {
+    Error(e.description().to_string(), ErrorKind::ChannelSendError, Some(Box::new(e)))
+  }
+}
+*/
+impl<T> From<SendError<T>> for Error {
+  #[inline]
+  fn from(e : SendError<T>) -> Error {
+    Error(e.to_string(), ErrorKind::ChannelSendError,None)
+  }
+}
+
+
+
 
 impl Display for Error {
 
@@ -374,6 +401,7 @@ pub enum ErrorKind {
   IOError,
   ByteOrderError,
   ExpectedError,
+  ChannelSendError,
 }
 
 /// Result type internal to mydht

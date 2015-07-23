@@ -126,6 +126,10 @@ impl<V : FileKeyVal> KVStore<V> for FileStore<V> {
   fn get_val(& self, k : &V::Key) -> Option<V> {
     self.data.get_val(k)
   }
+  fn has_val(& self, k : &V::Key) -> bool {
+    self.data.has_val(k)
+  }
+
 
   fn remove_val(& mut self, k : &V::Key) {
     let rem = match self.data.get_val(k) {

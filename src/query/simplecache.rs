@@ -105,9 +105,14 @@ impl<T : KeyVal, C : KVCache<<T as KeyVal>::Key, T>> KVStore<T> for SimpleCache<
   }
 
   #[inline]
-  fn get_val(& self, k : &T::Key) -> Option<T>{
+  fn get_val(& self, k : &T::Key) -> Option<T> {
     self.cache.get_val_c(k).cloned()
   }
+  #[inline]
+  fn has_val(& self, k : &T::Key) -> bool {
+    self.cache.has_val_c(k)
+  }
+
 
   #[inline]
   fn remove_val(& mut self, k : &T::Key){

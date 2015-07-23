@@ -86,6 +86,8 @@ pub trait KVStore<V : KeyVal> {
   }*/
   /// Get value
   fn get_val(& self, &V::Key) -> Option<V>;
+ 
+  fn has_val(& self, &V::Key) -> bool;
   /*  #[inline]
   fn get_val(& self, k : &V::Key) -> Option<Arc<V>>{
     self.c_get_val(k)

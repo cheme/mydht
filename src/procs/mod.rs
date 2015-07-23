@@ -122,7 +122,7 @@ impl<
   type T = T;
 }
 
-pub type ClientChanel<P, V> = Sender<mesgs::ClientMessage<P,V>>;
+pub type ClientChanel<P, V> = Sender<mesgs::ClientMessageIx<P,V>>;
 
 /// Running context contain all information needed, mainly configuration and calculation rules.
 pub struct RunningContext<RT : RunningTypes> {
@@ -360,7 +360,7 @@ impl<RT : RunningTypes> DHT<RT> {
 
 /// Main function to start a DHT.
 pub fn boot_server
- <T : Route<RT::P,RT::V,RT::T>, 
+ <T : Route<RT::A,RT::P,RT::V,RT::T>, 
   QC : QueryCache<RT::P,RT::V>, 
   S : KVStore<RT::V>,
   F1 : FnOnce() -> Option<S> + Send + 'static,
@@ -427,7 +427,7 @@ thread::scoped (move ||{
 // is slower as we need to clone nodes)
 info!("loading additional cached node {:?}", cachedNodes);
 for p in cachedNodes.iter() {
-  tpeer3.send(PeerMgmtMessage::PeerAddOffline(p.clone(),false));
+  tpeer3.send(PeerMgmtMessage::PeerAddOffline(p.clone()));
 }
 
 info!("bootstrapping with {:?}", bootNodes);

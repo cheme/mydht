@@ -5,7 +5,7 @@
 
 
 use rustc_serialize::json;
-use procs::mesgs::{self,PeerMgmtMessage,ClientMessage};
+use procs::mesgs::{self,PeerMgmtMessage,ClientMessage,ClientMessageIx};
 use msgenc::{ProtoMessage};
 use std::fs::File;
 use std::io::Result as IoResult;
@@ -32,7 +32,7 @@ use std::thread::Thread;
 /// Reference used to send Client Message.
 /// This could be used by any process to keep trace of a client process : 
 /// for instance from server client direct client query (without peermgmt)
-pub enum ClientHandle<P : Peer, V : KeyVal, TW : WriteTransportStream> {
+pub enum ClientHandle<P : Peer, V : KeyVal> {
 
   /// Uninitialised client or no handle from peermgmt
   /// First message is querying a handle from peermgmt (through OneResult), when in server.
@@ -41,22 +41,22 @@ pub enum ClientHandle<P : Peer, V : KeyVal, TW : WriteTransportStream> {
   /// - optional WriteStream, this is only in server context when transport has instantiate write
   /// stream on connect
   /// Result in communication with PeerMgmt Process
-  NotStarted(Option<TW>),
+  NoHandle,
 
   /// no new thread, the function is called, for DHT where there is not much client treatment
   /// (from peermanager thread). TODO plus all fields
   /// Result in communication with peermgmtprocess
   Local,
 
-  /// WriteTransportStream is runing (loop) in its own thread
-  Threaded(Sender<ClientMessage<P,V>>),
 
   /// thread do multiplexe some client : usize is client ix
-  ThreadedMult(Sender<ClientMessage<P,V>>, usize),
+  //ThreadedMult(Sender<ClientMessageIx<P,V>>, usize),
 
+  /// WriteTransportStream is runing (loop) in its own thread
+  Threaded(Sender<ClientMessageIx<P,V>>),
 }
 
-impl<P : Peer, V : KeyVal, TW : WriteTransportStream> ClientHandle<P,V,TW> {
+impl<P : Peer, V : KeyVal> ClientHandle<P,V> {
   
   /// either 
   pub fn send_msg(&self) {}
@@ -82,8 +82,8 @@ impl<P : Peer, V : KeyVal, TW : WriteTransportStream> ClientHandle<P,V,TW> {
 /// TODO add current prio to avoid needless call to accept!!!!
 pub fn start <RT : RunningTypes>
  (p : Arc<RT::P>, 
-  tcl : Option<Sender<ClientMessage<RT::P,RT::V>>>, 
-  orcl : Option<Receiver<ClientMessage<RT::P,RT::V>>>, 
+  tcl : Option<Sender<ClientMessage<RT::P,RT::V>>>, // TODO remove it
+  orcl : Option<Receiver<ClientMessageIx<RT::P,RT::V>>>, 
   rc : ArcRunningContext<RT>, 
   rp : RunningProcesses<RT>,
   withPing: bool, 
@@ -160,7 +160,7 @@ pub fn start <RT : RunningTypes>
                     error!("Client channel issue");
                     break;
                   },
-                  Ok(m) => {
+                  Ok((m,ix)) => {
                     let (okrecv, s) = recv_match(&p,&rc,&rp,m,true,&mut s1,&pri); 
                      match s {
                        // update of stream is for possible reconnect
@@ -196,7 +196,7 @@ pub fn start <RT : RunningTypes>
         // empty channel
         loop {
           match rcl.try_recv() {
-            Ok(ClientMessage::PeerFind(_,Some(query), _)) | Ok(ClientMessage::KVFind(_,Some(query), _)) => {
+            Ok((ClientMessage::PeerFind(_,Some(query), _),ix)) | Ok((ClientMessage::KVFind(_,Some(query), _),ix)) => {
               query.lessen_query(1, &rp.peers);
             },
             Err(e) => {
@@ -241,17 +241,16 @@ pub fn recv_match <RT : RunningTypes>
       });
     };
     if !ok {
-      // TODO pass prio in parameter!!!!! (here useless call to accept on reconnect)
-      rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p.clone(), PeerState::Offline(PeerPriority::Unchecked)));
+      rp.peers.send(PeerMgmtMessage::PeerChangeState(p.clone(), PeerStateChange::Offline));
     };
   }
   ));
 
   match m {
-    ClientMessage::PeerPong(_,_) => {
+    ClientMessage::PeerPong(_) => {
       // TODO !!!!
     },
-    ClientMessage::ShutDown(ix) => {
+    ClientMessage::ShutDown => {
       warn!("shuting client");
       ok = false;
     },
@@ -274,10 +273,10 @@ pub fn recv_match <RT : RunningTypes>
           // Add peer as lower priority and pending message and add its socket!!!
            debug!("Pong reply ok, adding or updating peer {:?}, {:?}", p.get_key(), pri);
            // add node as ok (with previous priority)
-           rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p, PeerState::Online(pri.clone())));
+           rp.peers.send(PeerMgmtMessage::PeerChangeState(p, PeerStateChange::Online));
         } else {
           debug!("User seem offline");
-          rp.peers.send(PeerMgmtMessage::PeerUpdatePrio(p, PeerState::Offline(pri.clone())));
+          rp.peers.send(PeerMgmtMessage::PeerChangeState(p, PeerStateChange::Offline));
           ok = false;
         }
       };

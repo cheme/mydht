@@ -191,7 +191,7 @@ fn request_handler <RT : RunningTypes>
     _ => false,
   };
   // used to skip peermanager on established connections
-  let mut clihandles : Vec<ClientHandle<RT::P,RT::V,<RT::T as Transport>::WriteStream>> = vec!();
+  let mut clihandles : Vec<ClientHandle<RT::P,RT::V>> = vec!();
   otimeout.map(|timeout| {
     error!("timeout in receiving thread is currently unimplemented");
     // TODO start thread with sleep over mutex to close !!!! 

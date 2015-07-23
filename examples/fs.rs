@@ -775,6 +775,15 @@ mod fskeyval {
       self.queries.get_val(&quer).map(|afqu| FSKV::Query((afqu).clone())),
       }
     }
+    fn has_val(& self, k : &FSK) -> bool {
+      match k {
+        &FSK::File(ref hash) =>
+      self.files.has_val(&hash),
+        &FSK::Query(ref quer) => 
+      self.queries.has_val(&quer),
+      }
+    }
+ 
     fn remove_val(& mut self, k : &FSK) {
       match k {
         &FSK::File(ref hash) =>

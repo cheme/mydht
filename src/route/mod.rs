@@ -1,8 +1,9 @@
 use procs::{ClientChanel};
 use std::sync::Mutex;
-use procs::mesgs::ClientMessage;
+use utils::send_msg;
+use procs::mesgs::{ClientMessage,ClientMessageIx};
 use std::sync::mpsc::{Sender};
-use peer::{Peer, PeerPriority,PeerState};
+use peer::{Peer, PeerPriority,PeerState,PeerStateChange};
 use keyval::KeyVal;
 use procs::RunningProcesses;
 use std::sync::Arc;
@@ -11,7 +12,7 @@ use std::collections::VecDeque;
 use mydhtresult::Result as MydhtResult;
 use std::thread;
 use procs::RunningTypes;
-use transport::Transport;
+use transport::{Address,Transport,WriteTransportStream};
 use std::marker::PhantomData;
 use std::ops::Drop;
 
@@ -26,7 +27,7 @@ pub enum ClientInfo<P : Peer, V : KeyVal, T : Transport> {
   /// Stream is used locally
   Local(T::WriteStream),
   /// usize is only useful for client thread shared
-  Threaded(Sender<ClientMessage<P,V>>,usize),
+  Threaded(Sender<ClientMessageIx<P,V>>,usize),
 
 }
 /// Drop implementation is really needed as it may close thread : part of the work of ending client
@@ -38,10 +39,11 @@ impl<P : Peer, V : KeyVal, T : Transport>  Drop for ClientInfo<P,V,T> {
         debug!("Drop of client info");
         match *self {
           ClientInfo::Local(_) => (),
-          ClientInfo::Threaded(ref s,ref ix) => {s.send(ClientMessage::ShutDown(*ix));()},
+          ClientInfo::Threaded(ref s,ref ix) => {s.send((ClientMessage::ShutDown,*ix));()},
         }
     }
 }
+
 /// TODO change to JoinHandle?? (no way to drop thread could try to park and drop Thread handle : a
 /// park thread with no in scope handle should be swiped) TODO drop over unsafe mut cast of thread
 /// pb is stop thread will fail since blocked on transport receive -> TODO post how to on stack!!
@@ -58,38 +60,89 @@ pub enum ServerInfo {
 
 pub type PeerInfo<P : Peer, V : KeyVal, T : Transport> = (Arc<P>,PeerState,Option<ServerInfo>, Option<ClientInfo<P,V,T>>);
 
+impl<P : Peer, V : KeyVal, T : Transport> ClientInfo<P,V,T> {
+   pub fn send_msg_local(&mut self,  msg : ClientMessage<P,V>) -> MydhtResult<()> {
+    match self {
+      &mut ClientInfo::Local(ref mut writer) => {
+        // TODO all needed to start client fn exec
+        Ok(())
 
-
-/// fn for updates of cache
-pub fn pi_remchan<P : Peer,V : KeyVal,T : Transport> (pi : &mut PeerInfo<P,V,T>) -> MydhtResult<()> {
-
-    match pi.2 {
-      None => (),
-      Some(ServerInfo::TransportManaged) => {
-        // TODO add transport ref in parameter and call transport primitive over it
-        // &rc.transport.
-  //fn disconnect(&self, &Self::Address) -> IoResult<bool> {Ok(false)}
-        
       },
-      Some(ServerInfo::Threaded(ref mutstop)) => {
-        // TODO when
+      &mut ClientInfo::Threaded(ref s,ref ix) => {
+        try!(s.send((msg,ix.clone())));
+        Ok(())
+      },
+
+    }
+  }
+ 
+  pub fn send_msg(&self,  msg : ClientMessage<P,V>) -> MydhtResult<()> {
+    match self {
+      &ClientInfo::Local(_) => {
+        panic!("Trying to send local message under a non local config");
+
+      },
+      &ClientInfo::Threaded(ref s,ref ix) => {
+        try!(s.send((msg,ix.clone())));
+        Ok(())
+      },
+
+    }
+  }
+}
+
+impl ServerInfo {
+
+  /// could be call on ended shutdown
+  fn shutdown<A : Address, T : Transport<Address = A>, P : Peer<Address = A>>(&self, t : & T, p : & P) -> MydhtResult<()> {
+    match self {
+      &ServerInfo::TransportManaged => {
+         try!(t.disconnect(&p.to_address()));
+  
+      },
+      &ServerInfo::Threaded(ref mutstop) => {
+        // TODO move that to drop implementation of serverInfo!!!
         match mutstop.lock() {
           Ok(mut res) => *res = true,
-          Err(m) => error!("poisoned mutex for ping result"),
+          Err(m) => error!("poisoned mutex on server shutdown"),
         };
       },
     };
+    Ok(())
 
-    pi.2 = None;
-  
+  }
+}
+
+/// fn for updates of cache
+/// remove both client and server info (including server shutdown), leading to drop (and associated
+/// clean operation (multiplexing management, thead shutdown...) of both
+pub fn pi_remchan<A : Address, T : Transport<Address = A>, P : Peer<Address = A>, V : KeyVal> (pi : &mut PeerInfo<P,V,T>, t : & T) -> MydhtResult<()> {
   pi.3 = None;
+  match &pi.2 {
+    &Some(ref si) => {
+      try!(si.shutdown(t,&(*pi.0)));
+    },
+    &None => (),
+  };
+
   // drop may not be call at this point (possibly in query or in server (ended just before))
- 
+  pi.2 = None;
+
   Ok(())
 }
 /// fn for updates of cache
-pub fn pi_upprio<P : Peer,V : KeyVal,T : Transport> (pi : &mut PeerInfo<P,V,T>,pri : PeerState) -> MydhtResult<()> {
-  pi.1 = pri;
+pub fn pi_upprio<P : Peer,V : KeyVal,T : Transport> (pi : &mut PeerInfo<P,V,T>,ostate : Option<PeerState>,och : Option<PeerStateChange>) -> MydhtResult<()> {
+  match ostate {
+    Some(newstate) => pi.1 = newstate,
+    None => {
+      match och {
+        Some(ch) => {
+          pi.1 = pi.1.new_state(ch);
+        },
+        None => (),
+      };
+    },
+  }
   Ok(())
 }
 
@@ -108,24 +161,41 @@ pub fn pi_upprio<P : Peer,V : KeyVal,T : Transport> (pi : &mut PeerInfo<P,V,T>,p
 /// and can be dropped. Therefore state (PeerPriority) update is a separate operation from peer consultation
 /// (might be doable to distinguish those case to do single operation in some cases).
 ///
+/// TODO consider parameterize type with RT : RunningType
 ///
-pub trait Route<P:Peer,V:KeyVal,T:Transport> {
+/// TODO Drop implemetation for Route : shutdown all info (only needed for receive threads) (no override so just an utility fn)
+///
+pub trait Route<A:Address,P:Peer<Address = A>,V:KeyVal,T:Transport<Address = A>> 
+
+  {
   /// count of running query (currently only updated in proxy mode)
   fn query_count_inc(& mut self, &P::Key);
   /// count of running query (currently only updated in proxy mode)
   fn query_count_dec(& mut self, &P::Key);
   /// add or update a peer
   fn add_node(& mut self, PeerInfo<P,V,T>);
-  /// change a peer prio (eg setting offline or normal...)
-  fn update_priority(& mut self, &P::Key, PeerState);
+  /// change a peer prio (eg setting offline or normal...), when peerprio is set to none, old
+  /// existing priority is used (or unknow) 
+  fn update_priority(& mut self, &P::Key, Option<PeerState>, Option<PeerStateChange>);
   // TODO change
   /// get a peer info (peer, priority (eg offline), and existing channel to client process) 
   fn get_node(& self, &P::Key) -> Option<&PeerInfo<P,V,T>>;
+  /// has node tells if there is node in route
+  fn has_node(& self, k : &P::Key) -> bool {
+    self.get_node(k).is_some()
+  }
  
   // remove chan for node TODO refactor to two kind of status and auto rem when offline or blocked
   /// remove channel to process (use when a client process broke or normal shutdown).
-  fn remchan(&mut self, &P::Key);
+  fn remchan(&mut self, &P::Key, &T);
 
+  /// function to send message, allowing local send (if there is client thread please prefer
+  /// sending from clientinfo).
+  /// This function use 
+  /// Some route implementation may panic on this (need a route cache where you can write mutable
+  /// transport stream)
+  /// return false if no peer
+  fn local_send(&mut self, &P::Key, ClientMessage<P,V>) -> MydhtResult<bool>;
   // TODO maybe return sender instead
   /// routing method to choose peer for a peer query (no offline or blocked peer)
   fn get_closest_for_node(& self, &P::Key, u8, &VecDeque<P::Key>) -> Vec<Arc<P>>;
@@ -194,10 +264,10 @@ mod test {
   use super::Route;
   use keyval::KeyVal;
   use std::sync::{Arc};
-  use transport::Transport;
+  use transport::{Transport,Address};
   use std::collections::VecDeque;
-use peer::{Peer, PeerPriority,PeerState};
-  pub fn test_route<P:Peer,V:KeyVal,T:Transport,R:Route<P,V,T>> (peers : &[Arc<P>; 5], route : & mut R, valkey : V::Key) {
+use peer::{Peer, PeerPriority,PeerState,PeerStateChange};
+  pub fn test_route<A:Address,P:Peer<Address = A>,V:KeyVal,T:Transport<Address = A>,R:Route<A,P,V,T>> (peers : &[Arc<P>; 5], route : & mut R, valkey : V::Key) {
     let fpeer = peers[0].clone();
     let fkey = fpeer.get_key();
     assert!(route.get_node(&fkey).is_none());
@@ -211,18 +281,18 @@ use peer::{Peer, PeerPriority,PeerState};
     assert!(route.get_closest_for_node(&fkey,1,&VecDeque::new()).len() == 0);
     assert!(route.get_closest_for_query(&valkey,1,&VecDeque::new()).len() == 0);
     for p in peers.iter(){
-      route.update_priority(&p.get_key(), PeerState::Online(PeerPriority::Normal));
+      route.update_priority(&p.get_key(), None, Some(PeerStateChange::Online));
     }
     assert!(route.get_closest_for_node(&fkey,1,&VecDeque::new()).len() == 1);
     assert!(route.get_closest_for_query(&valkey,1,&VecDeque::new()).len() == 1);
     for p in peers.iter(){
-      route.update_priority(&p.get_key(), PeerState::Online(PeerPriority::Priority(1)));
+      route.update_priority(&p.get_key(), Some(PeerState::Online(PeerPriority::Priority(1))),None);
     }
     let nb_fnode = route.get_closest_for_node(&fkey,10,&VecDeque::new()).len();
     assert!(nb_fnode > 0);
     assert!(nb_fnode < 6);
     for p in peers.iter(){
-      route.update_priority(&p.get_key(), PeerState::Blocked(PeerPriority::Normal));
+      route.update_priority(&p.get_key(), Some(PeerState::Blocked(PeerPriority::Normal)),None);
     }
     assert!(route.get_closest_for_node(&fkey,1,&VecDeque::new()).len() == 0);
     assert!(route.get_closest_for_query(&valkey,1,&VecDeque::new()).len() == 0);

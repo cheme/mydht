@@ -18,16 +18,18 @@ use route::ServerInfo;
 pub enum PeerMgmtMessage<P : Peer,V : KeyVal,TR : ReadTransportStream, TW : WriteTransportStream> {
   /// update peer with state (can be used to set a peer offline)
   PeerUpdatePrio(Arc<P>, PeerState),
+  /// update peer by changing state
+  PeerChangeState(Arc<P>, PeerStateChange),
   /// update peer with priority (can be used to set a peer offline)
   /// with possibly an initial write stream : add to cache or start cli thread (or add to cli pool).
   /// with possibly an initial read stream : start or add to pool of server.
   /// Also Query for a client handle (from procs or other process to skip peermanagement process in
   /// later calls), a synchro is needed eitherway.
-  PeerAddFromServer(Arc<P>, PeerPriority, Option<TW>, SyncSender<ClientHandle<P,V,TW>>, ServerInfo),
+  PeerAddFromServer(Arc<P>, PeerPriority, Option<TW>, SyncSender<ClientHandle<P,V>>, ServerInfo),
   PeerAddFromClient(Arc<P>, PeerPriority, Option<TR>),
   /// add an offline peer
-  /// bool is wether we try to connect
-  PeerAddOffline(Arc<P>,bool),
+  /// if you want to add and connect please use PeerPing instead
+  PeerAddOffline(Arc<P>),
   /// remove a peer info and terminate possible server thread 
   /// State to change to
   PeerRemFromClient(Arc<P>, PeerStateChange),
@@ -36,6 +38,8 @@ pub enum PeerMgmtMessage<P : Peer,V : KeyVal,TR : ReadTransportStream, TW : Writ
   PeerRemFromServer(Arc<P>, PeerStateChange),
   /// Ping a peer, calling process is possibly waiting for a result
   /// Optionaly block and wait for a result.
+  /// PeerPing is same as starting an auth, and therefore automatically add the peer (no need to
+  /// peer add before)
   PeerPing(Arc<P>, Option<OneResult<bool>>), // optional mutex if we need reply
   /// Pong a peer
   /// String is signed challenge
@@ -132,6 +136,10 @@ impl <P : Peer, V : KeyVal> PeerMgmtInitMessage<P,V> {
   }
   // TODO fn to create PeerMgmtMessage from init (consume it)
 }
+
+
+pub type ClientMessageIx<P : Peer, V : KeyVal> = (ClientMessage<P,V>,usize);
+
 /// message for client process
 pub enum ClientMessage<P : Peer, V : KeyVal> {
   /// Ping a peer (establishing connection and storing peer in peer manager
@@ -142,9 +150,8 @@ pub enum ClientMessage<P : Peer, V : KeyVal> {
   //PeerPing(usize,String,String),
   
   
-  // - first is token for multiplexed threads
-  // - second is signed challenge
-  PeerPong(usize,String),
+  // signed challenge
+  PeerPong(String),
   /// Find a peer, option on query depends on query mode and is used for error management (lessen
   /// or not the number of send query)
   PeerFind(P::Key, Option<Query<P,V>>, QueryMsg<P>),
@@ -159,7 +166,7 @@ pub enum ClientMessage<P : Peer, V : KeyVal> {
   /// multiplex peer add, token is managed by peermanager and put in param
 //  MultPeerAdd(Arc<P>, usize, T::WriteStream), // T is transport
   /// shutdown client process TODO replace by end
-  ShutDown(usize), // when issue with receiving on channel or other, use this to drop your client
+  ShutDown, // when issue with receiving on channel or other, use this to drop your client
 }
 
 pub enum ServerPoolMessage<P : Peer, TR : ReadTransportStream> {

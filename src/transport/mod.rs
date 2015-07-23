@@ -14,6 +14,8 @@ pub mod tcp_loop;
 pub mod tcp;
 pub mod udp;
 pub type Attachment = PathBuf;
+#[cfg(test)]
+pub mod local_managed_transport;
 
 /// TODO Dummy TRansport imple for testing (currently tcp everywhere)
 
@@ -51,6 +53,10 @@ pub trait Address : Sync + Send + Clone + Debug {}
 
 impl Address for SocketAddr {}
 
+/// transport must be sync (in running type), it implies that it is badly named as transport must
+/// only contain enough information to instantiate needed component (even not sync) in the start
+/// method (plus connect with required info). Some sync may still be needed for connect (sync with
+/// instanciated component in start).
 pub trait Transport : Send + Sync {
   type ReadStream : ReadTransportStream;
   type WriteStream : WriteTransportStream;
@@ -84,14 +90,14 @@ pub trait Transport : Send + Sync {
 }
 
 
-pub trait WriteTransportStream : Send + Sync + Write {
+pub trait WriteTransportStream : Send + Write {
   // most of the time unneeded
   /// simply result in check connectivity false
   fn disconnect(&mut self) -> IoResult<()>;
 //  fn checkconnectivity(&self) -> bool;
 }
 
-pub trait ReadTransportStream : Send + Sync + Read {
+pub trait ReadTransportStream : Send + Read {
   
   /// should end read loop
   fn disconnect(&mut self) -> IoResult<()>;

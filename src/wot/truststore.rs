@@ -437,7 +437,10 @@ impl<TP : TrustedPeer, T : WotTrust<TP>> KVStore<WotKV<TP>> for WotStore<TP, T> 
     };
   }
 
-
+  // TODO better implementation
+  fn has_val(& self, k : &<WotKV<TP> as KeyVal>::Key) -> bool {
+    self.get_val(k).is_some()
+  }
   fn get_val(& self, k : &<WotKV<TP> as KeyVal>::Key) -> Option<WotKV<TP>> {
     match k {
       &WotK::Peer(ref sk) => {

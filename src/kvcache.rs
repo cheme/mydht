@@ -19,6 +19,9 @@ pub trait KVCache<K, V> {
   fn add_val_c(& mut self, K, V);
   /// Get value TODO ret ref
   fn get_val_c<'a>(&'a self, &K) -> Option<&'a V>;
+  fn has_val_c<'a>(&'a self, k : &K) -> bool {
+    self.get_val_c(k).is_some()
+  }
   /// update value, possibly inplace (depending upon impl (some might just get value modify it and
   /// set it again)), return true if update effective
   fn update_val_c<'a, F>(&'a mut self, &K, f : F) -> Result<bool> where F : FnOnce(&'a mut V) -> Result<()>;
@@ -88,8 +91,12 @@ impl<K: Hash + Eq, V> KVCache<K,V> for HashMap<K,V> {
   
   fn get_val_c<'a>(&'a self, key : &K) -> Option<&'a V> {
     self.get(key)
-
   }
+
+  fn has_val_c<'a>(&'a self, key : &K) -> bool {
+    self.contains_key(key)
+  }
+
   fn update_val_c<'a, F>(&'a mut self, k : &K, f : F) -> Result<bool> where F : FnOnce(&'a mut V) -> Result<()> {
     if let Some(x) = self.get_mut(k) {
       try!(f(x));

@@ -1,5 +1,5 @@
 use std::collections::{HashMap,BTreeSet,VecDeque};
-use peer::{Peer,PeerState,PeerPriority};
+use peer::{Peer,PeerState,PeerStateChange,PeerPriority};
 use procs::{ClientChanel};
 use std::sync::{Arc};
 use std::sync::mpsc::{Sender,Receiver};
@@ -10,9 +10,11 @@ use keyval::KeyVal;
 use std::hash::Hash;
 use kvcache::KVCache;
 use std::marker::PhantomData;
-use transport::Transport;
+use transport::{Transport,Address};
 use super::PeerInfo;
 use super::{pi_remchan,pi_upprio};
+use procs::mesgs::{ClientMessage};
+use mydhtresult::Result as MydhtResult;
 
 
 /// Routing structure based on map plus count of query for proxy mode
@@ -25,7 +27,7 @@ pub struct Inefficientmap<P : Peer, V : KeyVal, T : Transport, C : KVCache<P::Ke
 }
 
 
-impl<P : Peer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> Route<P,V,T> for Inefficientmap<P,V,T,C> where P::Key : Ord + Hash {
+impl<A : Address, P : Peer<Address = A>, V : KeyVal, T : Transport<Address = A>, C : KVCache<P::Key, PeerInfo<P,V,T>>> Route<A,P,V,T> for Inefficientmap<P,V,T,C> where P::Key : Ord + Hash {
   fn query_count_inc(& mut self, pnid : &P::Key) {
     let val = match self.peersNbQuery.iter().filter(|&&(ref nb,ref nid)| (*pnid) == (*nid) ).next() {
       Some(inid) => Some(inid.clone()),
@@ -59,19 +61,36 @@ impl<P : Peer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> 
     self.peers.add_val_c(pi.0.get_key(), pi);
   }
 
-  fn remchan(& mut self, nodeid : &P::Key) where P::Key : Send {
+  fn remchan(& mut self, nodeid : &P::Key, t : & T) where P::Key : Send {
     // TODO result management
-    self.peers.update_val_c(nodeid,pi_remchan).unwrap();
+    self.peers.update_val_c(nodeid,|pi|pi_remchan(pi,t)).unwrap();
   }
 
-  fn update_priority(& mut self, nodeid : &P::Key, prio : PeerState) where P::Key : Send {
-    debug!("update prio of {:?} to {:?}",nodeid,prio);
-    self.peers.update_val_c(nodeid,|v|pi_upprio(v,prio)).unwrap();
+
+  fn update_priority(& mut self, nodeid : &P::Key, opri : Option<PeerState>, och : Option<PeerStateChange>) where P::Key : Send {
+    debug!("update prio of {:?} to {:?} , {:?}",nodeid,opri,och);
+    self.peers.update_val_c(nodeid,|v|pi_upprio(v,opri,och)).unwrap();
+  }
+
+  fn local_send(&mut self, nodeid : &P::Key, msg : ClientMessage<P,V>) -> MydhtResult<bool> {
+    self.peers.update_val_c(nodeid,|ref mut pi|{
+      match pi.3 {
+        Some(ref mut ci) => ci.send_msg_local(msg),
+        None => {
+          error!("local send use on no local clinet info");
+          Ok(())
+        },
+      }
+    })
   }
 
   fn get_node(& self, nid : &P::Key) -> Option<&PeerInfo<P,V,T>> {
     self.peers.get_val_c(nid)
   }
+  fn has_node(& self, nid : &P::Key) -> bool {
+    self.peers.has_val_c(nid)
+  }
+
 
   fn get_closest_for_query(& self, nnid : &V::Key, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {
     self.get_closest(nbnode, filter)
