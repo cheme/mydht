@@ -6,6 +6,7 @@ use super::MsgEnc;
 use keyval::{KeyVal,Attachment};
 use peer::{Peer};
 use super::ProtoMessage;
+use super::send_variant::ProtoMessage as ProtoMessageSend;
 use std::io::Write;
 use std::io::Read;
 use mydhtresult::Result as MDHTResult;
@@ -43,7 +44,11 @@ impl MsgEnc for Json {
     // TODO should not & on deref of cow...
     json::decode(&(*String::from_utf8_lossy(buff))).ok()
   }
-  fn encode_into<W : Write, P : Peer, V : KeyVal> (&self, w : &mut W, mesg : &ProtoMessage<P,V>) -> MDHTResult<()> {
+  fn encode_into<'a, W : Write, P : Peer + 'a, V : KeyVal + 'a> (&self, w : &mut W, mesg : &ProtoMessageSend<'a,P,V>) -> MDHTResult<()> 
+where <P as Peer>::Address : 'a,
+      <P as KeyVal>::Key : 'a,
+      <V as KeyVal>::Key : 'a {
+ 
     try!(json::encode(mesg).map(|st|{
       let bytes = st.into_bytes();
       try!(w.write_u64::<LittleEndian>(bytes.len().to_u64().unwrap()));

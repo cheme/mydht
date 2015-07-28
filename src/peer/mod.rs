@@ -10,6 +10,8 @@ use procs::{RunningProcesses,RunningContext,ArcRunningContext,RunningTypes};
 use msgenc::{MsgEnc};
 use transport::{Transport};
 use keyval::KeyVal;
+use utils::{OneResult,ret_one_result};
+use utils::TransientOption;
 
 pub mod node;
 
@@ -42,6 +44,7 @@ pub enum PeerStateChange {
   Blocked,
   Offline,
   Online,
+  Ping(String, TransientOption<OneResult<bool>>),
 }
 
 #[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Clone)]
@@ -59,10 +62,25 @@ pub enum PeerState {
  /// This priority is more an internal state and should not be return by accept.
   /// sending ping with given challenge string, a PeerPriority is set if accept has been run
   /// (lightweight accept) or Unchecked
-  Ping(String,PeerPriority),
+  Ping(String,TransientOption<OneResult<bool>>,PeerPriority),
   /// Online node
   Online(PeerPriority),
 }
+
+/// Ping ret one result return false as soon as we do not follow it anymore
+impl Drop for PeerState {
+    fn drop(&mut self) {
+        debug!("Drop of PeerState");
+        match self {
+          &mut PeerState::Ping(_,ref mut or,_) => {
+            or.0.as_ref().map(|r|ret_one_result(&r,false)).is_some();
+            ()
+          },
+          _ => (),
+        }
+    }
+}
+
 
 impl PeerState {
   pub fn get_priority(&self) -> PeerPriority {
@@ -70,7 +88,7 @@ impl PeerState {
       &PeerState::Refused => PeerPriority::Unchecked,
       &PeerState::Blocked(ref p) => p.clone(),
       &PeerState::Offline(ref p) => p.clone(),
-      &PeerState::Ping(_,ref p) => p.clone(),
+      &PeerState::Ping(_,_,ref p) => p.clone(),
       &PeerState::Online(ref p) => p.clone(),
     }
   }
@@ -81,6 +99,7 @@ impl PeerState {
       PeerStateChange::Blocked => PeerState::Blocked(pri),
       PeerStateChange::Offline => PeerState::Offline(pri),
       PeerStateChange::Online  => PeerState::Online(pri), 
+      PeerStateChange::Ping(chal,or)  => PeerState::Ping(chal,or,pri), 
     }
   }
 }

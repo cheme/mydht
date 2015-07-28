@@ -4,6 +4,8 @@
 //! TODO tcp mode where we open socket for every new transaction (no persistence in peermgmt of
 //! socket (only server thread)) : result in no shared and running server thread using direct client
 //! handle
+//! TODO bidirect tcp option : we do not multiplex frame : send on a port and receive on another
+//! one. (just dont return ows or ors).
 extern crate byteorder;
 use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::net::{TcpListener};

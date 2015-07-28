@@ -9,12 +9,14 @@ use utils::{OneResult};
 use query::cache::CachePolicy;
 use transport::{Transport,ReadTransportStream,WriteTransportStream};
 use procs::RunningTypes;
-use procs::client::ClientHandle;
+use procs::ClientHandle;
 use procs::server::ServerHandle;
 use std::sync::mpsc::{SyncSender};
 use route::ServerInfo;
+use std::marker::PhantomData;
 
-/// message for peermanagement
+/// message for peermanagement TODO remove TR when stable (currently unused phantomdata in
+/// PeerQueryMinus)
 pub enum PeerMgmtMessage<P : Peer,V : KeyVal,TR : ReadTransportStream, TW : WriteTransportStream> {
   /// update peer with state (can be used to set a peer offline)
   PeerUpdatePrio(Arc<P>, PeerState),
@@ -26,7 +28,8 @@ pub enum PeerMgmtMessage<P : Peer,V : KeyVal,TR : ReadTransportStream, TW : Writ
   /// Also Query for a client handle (from procs or other process to skip peermanagement process in
   /// later calls), a synchro is needed eitherway.
   PeerAddFromServer(Arc<P>, PeerPriority, Option<TW>, SyncSender<ClientHandle<P,V>>, ServerInfo),
-  PeerAddFromClient(Arc<P>, PeerPriority, Option<TR>),
+  /// TODO use key instead of P (peer handle already initialized)
+  ServerInfoFromClient(Arc<P>, ServerInfo),
   /// add an offline peer
   /// if you want to add and connect please use PeerPing instead
   PeerAddOffline(Arc<P>),
@@ -41,11 +44,15 @@ pub enum PeerMgmtMessage<P : Peer,V : KeyVal,TR : ReadTransportStream, TW : Writ
   /// PeerPing is same as starting an auth, and therefore automatically add the peer (no need to
   /// peer add before)
   PeerPing(Arc<P>, Option<OneResult<bool>>), // optional mutex if we need reply
-  /// Pong a peer
+  /// Pong a peer, this is emit after ping reception on server, client may not be initialized.
   /// String is signed challenge
-  /// lastly a possible write stream
-  PeerPong(Arc<P>, String, Option<TW>),
+  /// priority is for initialized of peers if not in peer manager (no update on xisting client)
+  /// optional write stream is for non managed server (no client handle get from a first peer add,
+  /// and a write stream to send)
+  PeerPong(Arc<P>, PeerPriority, String, Option<TW>),
   /// received pong need auth
+  /// first peer : TODO switch to key only
+  /// second received signed challenge
   PeerAuth(P, String),
   /// Find a peer by its key, (first local lookup, then depending on query conf propagate).
   ///  - first is key of peer to find
@@ -65,7 +72,7 @@ pub enum PeerMgmtMessage<P : Peer,V : KeyVal,TR : ReadTransportStream, TW : Writ
   /// where we should avoid peer with existing query (blocking)
   PeerQueryPlus(Arc<P>),
   /// Same as `PeerQueryPlus` but minus
-  PeerQueryMinus(Arc<P>),
+  PeerQueryMinus(Arc<P>, PhantomData<TR>),
   /// Store peer depending on queryconf (locally plus possibly propagate)
   StoreNode(QueryMsg<P>,Option<Arc<P>>), // destination storage node must be in query conf
   /// Store value depending on queryconf (locally plus possibly propagate)
@@ -144,7 +151,8 @@ pub type ClientMessageIx<P, V> = (ClientMessage<P,V>,usize);
 /// message for client process
 pub enum ClientMessage<P : Peer, V : KeyVal> {
   /// Ping a peer (establishing connection and storing peer in peer manager
-  PeerPing(Arc<P>),
+  /// parameter is challenge
+  PeerPing(Arc<P>, String),
   // - first is token for multiplexed threads
   // - second is challenge
   // - third is message signing
@@ -177,3 +185,4 @@ pub enum ServerPoolMessage<P : Peer, TR : ReadTransportStream> {
   End(usize), // when issue with receiving on channel or other, use this to drop your client
  
 }
+

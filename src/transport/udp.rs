@@ -7,6 +7,11 @@
 //! by keeping a map of read stream, and add content in them VecDeque (need a max size for security and a thread synch).
 //! This should be a transport variant.
 //! TODO reader is very inefficient due to current lack of init / pushback of vec in vecdeque
+//! TODO different from tcp_loop in sense that we need atomic messages -> define it ?? -> then
+//! client info do not require a mutex, or make it default and transport tcp_loop include a mutex
+//! by default and there is no need for ClientSender -> bad idea as we then got useless mutex in
+//! tcploop threaded (pool) client mode!!!.
+//!
 
 use super::{Transport,ReadTransportStream,WriteTransportStream};
 use super::{Attachment};

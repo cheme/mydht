@@ -89,7 +89,8 @@ pub trait Transport : Send + Sync {
   fn disconnect(&self, &Self::Address) -> IoResult<bool> {Ok(false)}
 }
 
-
+// TODO add clone constraint with possibility to panic!("clone is not allowed : local send
+// threads are not possible")
 pub trait WriteTransportStream : Send + Write {
   // most of the time unneeded
   /// simply result in check connectivity false

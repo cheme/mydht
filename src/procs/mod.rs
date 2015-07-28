@@ -9,7 +9,7 @@ use keyval::{KeyVal};
 use query::cache::QueryCache;
 use std::str::from_utf8;
 use rustc_serialize::json;
-use self::mesgs::{PeerMgmtMessage,PeerMgmtInitMessage,KVStoreMgmtMessage,QueryMgmtMessage};
+use self::mesgs::{PeerMgmtMessage,PeerMgmtInitMessage,KVStoreMgmtMessage,QueryMgmtMessage,ClientMessage,ClientMessageIx};
 use std::str::FromStr;
 use std::sync::{Arc,Semaphore,Mutex,Condvar};
 use std::sync::mpsc::channel;
@@ -58,6 +58,53 @@ pub enum ClientMode {
   /// n threads sharing all client
   ThreadPool(usize),
 }
+
+/// TODO replace client channel by that
+/// Reference used to send Client Message.
+/// This could be used by any process to keep trace of a client process : 
+/// for instance from server client direct client query (without peermgmt)
+pub enum ClientHandle<P : Peer, V : KeyVal> {
+
+  /// Uninitialised client or no handle from peermgmt
+  /// First message is querying a handle from peermgmt (through OneResult), when in server.
+  /// When in query no new handle are needed but next query created from server will certainly use
+  /// a faster handle.
+  /// - optional WriteStream, this is only in server context when transport has instantiate write
+  /// stream on connect
+  /// Result in communication with PeerMgmt Process
+  NoHandle,
+
+  /// no new thread, the function is called, for DHT where there is not much client treatment
+  /// (from peermanager thread). TODO plus all fields
+  /// Result in communication with peermgmtprocess
+  Local,
+
+
+  /// thread do multiplexe some client : usize is client ix
+  //ThreadedMult(Sender<ClientMessageIx<P,V>>, usize),
+
+  /// WriteTransportStream is runing (loop) in its own thread
+  Threaded(Sender<ClientMessageIx<P,V>>,usize),
+}
+
+impl<P : Peer, V : KeyVal> ClientHandle<P,V> {
+  
+  /// either 
+  pub fn send_msg(&self, mess : ClientMessage<P,V>) -> bool {
+    match self {
+      &ClientHandle::Threaded(ref clisend, ref ix) => {
+        let r = clisend.send((mess,*ix));
+        r.is_ok()
+      },
+      _ => false,
+    }
+    
+  }
+
+
+}
+
+
 
 #[derive(Debug,PartialEq,Eq)]
 pub enum ServerMode {

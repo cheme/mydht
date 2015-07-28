@@ -25,6 +25,7 @@ use std::marker::PhantomData;
 use super::{pi_remchan,pi_upprio};
 use procs::mesgs::{ClientMessage};
 use mydhtresult::Result as MydhtResult;
+use super::{ServerInfo,ClientInfo};
 
 #[derive(Clone,Debug)]
 struct ArcP<P : DhtPeer>(Arc<P>);
@@ -81,17 +82,12 @@ impl<A : Address, P : Peer<Address = A> + DhtPeer, V : KeyVal, T : Transport<Add
     self.peers.update_val_c(nodeid,|pi|pi_remchan(pi,t)).unwrap();
   }
 
-  fn local_send(&mut self, nodeid : &P::Key, msg : ClientMessage<P,V>) -> MydhtResult<bool> {
-    self.peers.update_val_c(nodeid,|ref mut pi|{
-      match pi.3 {
-        Some(ref mut ci) => ci.send_msg_local(msg),
-        None => {
-          error!("local send use on no local clinet info");
-          Ok(())
-        },
-      }
+  fn update_infos<'a, F>(&'a mut self, nodeid : &P::Key, f : F) -> MydhtResult<bool> where F : FnOnce(&'a mut (Option<ServerInfo>, Option<ClientInfo<P,V,T>>)) -> MydhtResult<()> {
+    self.peers.update_val_c(nodeid,|& mut (_,_,ref mut sici)|{
+      f(sici)
     })
   }
+
 
 
 

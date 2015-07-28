@@ -1,6 +1,5 @@
 use procs::{ClientChanel};
 use std::sync::Mutex;
-use utils::send_msg;
 use procs::mesgs::{ClientMessage,ClientMessageIx};
 use std::sync::mpsc::{Sender};
 use peer::{Peer, PeerPriority,PeerState,PeerStateChange};
@@ -15,6 +14,13 @@ use procs::RunningTypes;
 use transport::{Address,Transport,WriteTransportStream};
 use std::marker::PhantomData;
 use std::ops::Drop;
+use procs::ClientMode;
+use procs::ClientHandle;
+use utils;
+use msgenc::{MsgEnc};
+use keyval::{Attachment};
+use msgenc::{ProtoMessage};
+use msgenc::send_variant::ProtoMessage as ProtoMessageSend;
 
 pub mod inefficientmap;
 
@@ -25,11 +31,48 @@ pub mod btkad;
 /// Stored info about client in peer management (in route transient cache).
 pub enum ClientInfo<P : Peer, V : KeyVal, T : Transport> {
   /// Stream is used locally
-  Local(T::WriteStream),
+  Local(ClientSender<<T as Transport>::WriteStream>),
+  /// Stream is used locally, except for connection (need synchro), it run in a new transient thread : TODO should run in a coroutine as pool thread are overall better.
+  LocalSpawn(ClientSender<<T as Transport>::WriteStream>),
   /// usize is only useful for client thread shared
   Threaded(Sender<ClientMessageIx<P,V>>,usize),
 
 }
+/// sender to distant peer TODO maybe local spawn is useless (if we want to spawn a pool is better)
+pub enum ClientSender<TW : WriteTransportStream> {
+  // TODO rename because not only threaded : fuse
+  Threaded(TW),
+  Local(TW),
+  LocalSpawn(Arc<Mutex<TW>>),
+}
+
+// TODO replace send_msg by this
+pub fn send_msg<'a, P : Peer + 'a, V : KeyVal + 'a, T : WriteTransportStream, E : MsgEnc>(m : &ProtoMessageSend<'a,P,V>, a : Option<&Attachment>, t : &mut ClientSender<T>, e : &E) -> bool 
+where <P as Peer>::Address : 'a,
+      <P as KeyVal>::Key : 'a,
+      <V as KeyVal>::Key : 'a {
+ 
+  match t {
+    &mut ClientSender::Local(ref mut w) => {
+      utils::send_msg(m,a,w,e)
+    },
+    &mut ClientSender::Threaded(ref mut w) => {
+      utils::send_msg(m,a,w,e)
+    },
+    &mut ClientSender::LocalSpawn(ref mut amutt) => {
+      match amutt.lock() {
+        Ok(mut w) => utils::send_msg(m,a,&mut (*w),e),
+        Err(m) => {
+          error!("poisoned mutex for local client spawn send");
+          false
+        },
+      }
+    },
+  }
+}
+
+
+
 /// Drop implementation is really needed as it may close thread : part of the work of ending client
 /// info is done by fn close_client from peermanager or a client thread and part is done at drop:
 /// clientinfo may be shared in other process (when threaded not local of course) : in this case
@@ -38,8 +81,8 @@ impl<P : Peer, V : KeyVal, T : Transport>  Drop for ClientInfo<P,V,T> {
     fn drop(&mut self) {
         debug!("Drop of client info");
         match *self {
-          ClientInfo::Local(_) => (),
           ClientInfo::Threaded(ref s,ref ix) => {s.send((ClientMessage::ShutDown,*ix));()},
+          _ => (),
         }
     }
 }
@@ -48,6 +91,7 @@ impl<P : Peer, V : KeyVal, T : Transport>  Drop for ClientInfo<P,V,T> {
 /// park thread with no in scope handle should be swiped) TODO drop over unsafe mut cast of thread
 /// pb is stop thread will fail since blocked on transport receive -> TODO post how to on stack!!
 /// and for now just Arcmutex an exit bool
+#[derive(Clone)]
 pub enum ServerInfo {
   /// transport manage the server, disconnection with transport primitive (calling remove on
   /// transport with peer address (alwayse called).
@@ -59,15 +103,45 @@ pub enum ServerInfo {
 }
 
 //pub type PeerInfo<P : Peer, V : KeyVal, T : Transport> = (Arc<P>,PeerState,Option<ServerInfo>, Option<ClientInfo<P,V,T>>);
-pub type PeerInfo<P, V, T> = (Arc<P>,PeerState,Option<ServerInfo>, Option<ClientInfo<P,V,T>>);
+pub type PeerInfo<P, V, T> = (Arc<P>,PeerState,(Option<ServerInfo>, Option<ClientInfo<P,V,T>>));
 
 impl<P : Peer, V : KeyVal, T : Transport> ClientInfo<P,V,T> {
-   pub fn send_msg_local(&mut self,  msg : ClientMessage<P,V>) -> MydhtResult<()> {
+  pub fn get_clone_sender (&self) ->  Option<ClientSender<<T as Transport>::WriteStream>> {
+    if let &ClientInfo::LocalSpawn(ClientSender::LocalSpawn(ref ws)) = self {
+      Some(ClientSender::LocalSpawn(ws.clone()))
+    } else {
+      None
+    }
+  }
+  pub fn get_mut_sender<'a> (&'a mut self) -> Option<&'a mut ClientSender<<T as Transport>::WriteStream>> {
+    match self {
+      &mut ClientInfo::Local(ref mut writer) => {
+        Some(writer)
+      },
+      &mut ClientInfo::LocalSpawn(ref mut arcmutexwriter) => {
+        Some(arcmutexwriter)
+      },
+      &mut ClientInfo::Threaded(ref s,ref ix) => {
+        None
+      },
+
+    }
+ 
+  }
+ 
+  // TODO try unified send msg : 
+//   pub fn send_msg_local(&self, msg : ClientMessage<P,V>, ows : Option<&mut Wriststerma) -> MydhtResult<()> ;
+//   + trait get_mut local option writ
+   pub fn send_climsg_local(&mut self,  msg : ClientMessage<P,V>) -> MydhtResult<()> {
     match self {
       &mut ClientInfo::Local(ref mut writer) => {
         // TODO all needed to start client fn exec
         Ok(())
 
+      },
+      &mut ClientInfo::LocalSpawn(ref mut arcmutexwriter) => {
+        // TODO all needed to start client fn exec
+        Ok(())
       },
       &mut ClientInfo::Threaded(ref s,ref ix) => {
         try!(s.send((msg,ix.clone())));
@@ -76,10 +150,11 @@ impl<P : Peer, V : KeyVal, T : Transport> ClientInfo<P,V,T> {
 
     }
   }
- 
-  pub fn send_msg(&self,  msg : ClientMessage<P,V>) -> MydhtResult<()> {
+  /// Send ClientMessage to threaded client, panic on local client sending (even non managed)
+  /// : this is due to non mutable reference to cliinfo (local uses mutable reference for sending).
+  pub fn send_climsg(&self,  msg : ClientMessage<P,V>) -> MydhtResult<()> {
     match self {
-      &ClientInfo::Local(_) => {
+      &ClientInfo::Local(_) | &ClientInfo::LocalSpawn(_) => {
         panic!("Trying to send local message under a non local config");
 
       },
@@ -90,12 +165,22 @@ impl<P : Peer, V : KeyVal, T : Transport> ClientInfo<P,V,T> {
 
     }
   }
+  /// clone info for threaded
+  pub fn new_handle(&self) -> ClientHandle<P,V> {
+    match self {
+      &ClientInfo::Local(_) => ClientHandle::Local,
+      &ClientInfo::LocalSpawn(_) => ClientHandle::Local,
+      &ClientInfo::Threaded(ref s, ref ix) => ClientHandle::Threaded(s.clone(),ix.clone()),
+    }
+  }
+
+
 }
 
 impl ServerInfo {
 
   /// could be call on ended shutdown
-  fn shutdown<A : Address, T : Transport<Address = A>, P : Peer<Address = A>>(&self, t : & T, p : & P) -> MydhtResult<()> {
+  pub fn shutdown<A : Address, T : Transport<Address = A>, P : Peer<Address = A>>(&self, t : & T, p : & P) -> MydhtResult<()> {
     match self {
       &ServerInfo::TransportManaged => {
          try!(t.disconnect(&p.to_address()));
@@ -118,8 +203,9 @@ impl ServerInfo {
 /// remove both client and server info (including server shutdown), leading to drop (and associated
 /// clean operation (multiplexing management, thead shutdown...) of both
 pub fn pi_remchan<A : Address, T : Transport<Address = A>, P : Peer<Address = A>, V : KeyVal> (pi : &mut PeerInfo<P,V,T>, t : & T) -> MydhtResult<()> {
-  pi.3 = None;
-  match &pi.2 {
+  let sercli = &mut pi.2;
+  sercli.1 = None;
+  match &sercli.0 {
     &Some(ref si) => {
       try!(si.shutdown(t,&(*pi.0)));
     },
@@ -127,7 +213,7 @@ pub fn pi_remchan<A : Address, T : Transport<Address = A>, P : Peer<Address = A>
   };
 
   // drop may not be call at this point (possibly in query or in server (ended just before))
-  pi.2 = None;
+  sercli.0 = None;
 
   Ok(())
 }
@@ -178,6 +264,11 @@ pub trait Route<A:Address,P:Peer<Address = A>,V:KeyVal,T:Transport<Address = A>>
   /// change a peer prio (eg setting offline or normal...), when peerprio is set to none, old
   /// existing priority is used (or unknow) 
   fn update_priority(& mut self, &P::Key, Option<PeerState>, Option<PeerStateChange>);
+
+  /// update fields of not that can be modified in place (not priority or node because it could structure
+  /// route storage).
+  fn update_infos<'a, F>(&'a mut self, &P::Key, f : F) -> MydhtResult<bool> where F : FnOnce(&'a mut (Option<ServerInfo>, Option<ClientInfo<P,V,T>>)) -> MydhtResult<()>;
+
   // TODO change
   /// get a peer info (peer, priority (eg offline), and existing channel to client process) 
   fn get_node(& self, &P::Key) -> Option<&PeerInfo<P,V,T>>;
@@ -190,13 +281,6 @@ pub trait Route<A:Address,P:Peer<Address = A>,V:KeyVal,T:Transport<Address = A>>
   /// remove channel to process (use when a client process broke or normal shutdown).
   fn remchan(&mut self, &P::Key, &T);
 
-  /// function to send message, allowing local send (if there is client thread please prefer
-  /// sending from clientinfo).
-  /// This function use 
-  /// Some route implementation may panic on this (need a route cache where you can write mutable
-  /// transport stream)
-  /// return false if no peer
-  fn local_send(&mut self, &P::Key, ClientMessage<P,V>) -> MydhtResult<bool>;
   // TODO maybe return sender instead
   /// routing method to choose peer for a peer query (no offline or blocked peer)
   fn get_closest_for_node(& self, &P::Key, u8, &VecDeque<P::Key>) -> Vec<Arc<P>>;
@@ -272,10 +356,10 @@ use peer::{Peer, PeerPriority,PeerState,PeerStateChange};
     let fpeer = peers[0].clone();
     let fkey = fpeer.get_key();
     assert!(route.get_node(&fkey).is_none());
-    route.add_node((fpeer, PeerState::Offline(PeerPriority::Normal), None,None));
+    route.add_node((fpeer, PeerState::Offline(PeerPriority::Normal), (None,None)));
     assert!(route.get_node(&fkey).unwrap().0.get_key() == fkey);
     for p in peers.iter(){
-      route.add_node((p.clone(), PeerState::Offline(PeerPriority::Normal), None,None));
+      route.add_node((p.clone(), PeerState::Offline(PeerPriority::Normal), (None,None)));
     }
     assert!(route.get_node(&fkey).is_some());
     // all node are still off line

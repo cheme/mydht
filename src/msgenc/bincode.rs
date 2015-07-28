@@ -11,6 +11,7 @@ use super::write_attachment;
 use super::read_attachment;
 use mydhtresult::Result as MDHTResult;
 use mydhtresult::{Error,ErrorKind};
+use msgenc::send_variant::ProtoMessage as ProtoMessageSend;
 use bincode;
 
 // full bencode impl
@@ -30,7 +31,11 @@ impl MsgEnc for Bincode {
     bincode::decode(buff).ok()
   }
 
-  fn encode_into<W : Write, P : Peer, V : KeyVal> (&self, w : &mut W, mesg : &ProtoMessage<P,V>) -> MDHTResult<()> {
+  fn encode_into<'a,W : Write, P : Peer + 'a, V : KeyVal + 'a> (&self, w : &mut W, mesg : &ProtoMessageSend<'a,P,V>) -> MDHTResult<()>
+where <P as Peer>::Address : 'a,
+      <P as KeyVal>::Key : 'a,
+      <V as KeyVal>::Key : 'a {
+ 
      try!(bincode::encode_into(mesg, w, bincode::SizeLimit::Infinite));
      Ok(())
   }

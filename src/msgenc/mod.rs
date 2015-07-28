@@ -19,6 +19,7 @@ use std::io::{Seek,SeekFrom};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use num::traits::ToPrimitive;
 use utils;
+use self::send_variant::ProtoMessage as ProtoMessageSend;
 
 pub mod json;
 pub mod bincode;
@@ -33,7 +34,11 @@ pub trait MsgEnc : Send + Sync {
   //fn encode<P : Peer, V : KeyVal>(&self, &ProtoMessage<P,V>) -> Option<Vec<u8>>;
   
   /// encode
-  fn encode_into<W : Write, P : Peer, V : KeyVal> (&self, &mut W, &ProtoMessage<P,V>) -> MDHTResult<()>;
+  fn encode_into<'a,W : Write, P : Peer + 'a, V : KeyVal + 'a> (&self, w : &mut W, mesg : &ProtoMessageSend<'a,P,V>) -> MDHTResult<()>
+where <P as Peer>::Address : 'a,
+      <P as KeyVal>::Key : 'a,
+      <V as KeyVal>::Key : 'a ;
+ 
   fn attach_into<W : Write> (&self, &mut W, Option<&Attachment>) -> MDHTResult<()>;
   /// decode
   fn decode<P : Peer, V : KeyVal>(&self, &[u8]) -> Option<ProtoMessage<P,V>>;
@@ -41,9 +46,9 @@ pub trait MsgEnc : Send + Sync {
   fn attach_from<R : Read>(&self, &mut R) -> MDHTResult<Option<Attachment>>;
 }
 
-#[derive(RustcDecodable,RustcEncodable,Debug)]
+#[derive(RustcDecodable,Debug)]
 /// Messages between peers
-/// TODO ref variant for send
+/// TODO ref variant for send !!!!
 pub enum ProtoMessage<P : Peer, V : KeyVal> {
   /// Our node pinging plus challenge and message signing
   PING(P,String, String), 
@@ -63,15 +68,34 @@ pub enum ProtoMessage<P : Peer, V : KeyVal> {
   /// Query for Value
   FIND_VALUE(QueryMsg<P>, V::Key),
 }
+pub mod send_variant {
+use keyval::{KeyVal,Attachment};
+use peer::{Peer};
+use query::{QueryID,QueryMsg};
+use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
+use super::{DistantEnc,DistantEncAtt};
+use std::sync::Arc;
 
+#[derive(RustcEncodable,Debug)]
+pub enum ProtoMessage<'a,P : Peer + 'a, V : KeyVal + 'a> {
+  PING(&'a P,String, String), 
+  PONG(&'a P,String),
+  STORE_NODE(Option<QueryID>, Option<DistantEnc<&'a P>>),
+  STORE_VALUE(Option<QueryID>, Option<DistantEnc<&'a V>>),
+  STORE_VALUE_ATT(Option<QueryID>, Option<DistantEncAtt<&'a V>>),
+  FIND_NODE(QueryMsg<P>, P::Key),
+  FIND_VALUE(QueryMsg<P>, V::Key),
+}
+
+}
 #[derive(Debug)]
 /// Choice of an encoding without attachment
-pub struct DistantEnc<V : KeyVal> (pub V);
+pub struct DistantEnc<V> (pub V);
 #[derive(Debug)]
 /// Choice of an encoding with attachment
-pub struct DistantEncAtt<V : KeyVal> (pub V);
+pub struct DistantEncAtt<V> (pub V);
 
-impl<V : KeyVal> Encodable for DistantEnc<V>{
+impl<'a, V : KeyVal> Encodable for DistantEnc<&'a V>{
   fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
     // not local without attach
     self.0.encode_kv(s, false, false)
@@ -85,7 +109,7 @@ impl<V : KeyVal> Decodable for DistantEnc<V> {
   }
 }
 
-impl<V : KeyVal> Encodable for DistantEncAtt<V>{
+impl<'a, V : KeyVal> Encodable for DistantEncAtt<&'a V>{
   fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
     // not local with attach
         self.0.encode_kv(s, false, true)

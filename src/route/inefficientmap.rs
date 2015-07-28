@@ -15,7 +15,7 @@ use super::PeerInfo;
 use super::{pi_remchan,pi_upprio};
 use procs::mesgs::{ClientMessage};
 use mydhtresult::Result as MydhtResult;
-
+use super::{ServerInfo,ClientInfo};
 
 /// Routing structure based on map plus count of query for proxy mode
 /// May also be used for testing
@@ -72,15 +72,9 @@ impl<A : Address, P : Peer<Address = A>, V : KeyVal, T : Transport<Address = A>,
     self.peers.update_val_c(nodeid,|v|pi_upprio(v,opri,och)).unwrap();
   }
 
-  fn local_send(&mut self, nodeid : &P::Key, msg : ClientMessage<P,V>) -> MydhtResult<bool> {
-    self.peers.update_val_c(nodeid,|ref mut pi|{
-      match pi.3 {
-        Some(ref mut ci) => ci.send_msg_local(msg),
-        None => {
-          error!("local send use on no local clinet info");
-          Ok(())
-        },
-      }
+  fn update_infos<'a, F>(&'a mut self, nodeid : &P::Key, f : F) -> MydhtResult<bool> where F : FnOnce(&'a mut (Option<ServerInfo>, Option<ClientInfo<P,V,T>>)) -> MydhtResult<()> {
+    self.peers.update_val_c(nodeid,|& mut (_,_,ref mut sici)|{
+      f(sici)
     })
   }
 
@@ -108,7 +102,7 @@ impl<A : Address, P : Peer<Address = A>, V : KeyVal, T : Transport<Address = A>,
       match self.peers.get_val_c(&nid.1) {
         // no status check this method is usefull for refreshing or initiating
         // connections
-        Some(&(ref ap,ref prio, ref s,_)) => {
+        Some(&(ref ap,ref prio, _)) => {
           println!("found {:?}", prio);
           r.push(ap.clone());
           i = i + 1;
@@ -148,14 +142,14 @@ impl<P : Peer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> 
     for nid in self.peersNbQuery.iter() {
       debug!("!!!in closest node {:?}", nid);
       match self.peers.get_val_c(&nid.1) {
-        Some(&(ref ap,PeerState::Online(_), ref s,_)) => {
+        Some(&(ref ap,PeerState::Online(_),_)) => {
           debug!("found");
           if filter.iter().find(|r|**r == ap.get_key()) == None {
             r.push(ap.clone());
             i = i + 1;
           }
         },
-        Some(&(ref ap,PeerState::Offline(_), ref s,_)) => {
+        Some(&(ref ap,PeerState::Offline(_),_)) => {
           debug!("found offline");
           warn!("more prioritary node not send")
         },

@@ -15,7 +15,10 @@ use std::sync::{Arc,Mutex,Condvar};
 use transport::{ReadTransportStream,WriteTransportStream};
 use keyval::{Attachment,SettableAttachment};
 use msgenc::{MsgEnc,ProtoMessage};
+use msgenc::send_variant::ProtoMessage as ProtoMessageSend;
 use keyval::{KeyVal};
+use std::fmt::{Formatter,Debug};
+use std::fmt::Error as FmtError;
 //use keyval::{AsKeyValIf};
 use keyval::{FileKeyVal};
 use peer::{Peer};
@@ -45,7 +48,6 @@ use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 use rustc_serialize::hex::{ToHex,FromHex};
 use std::ops::Deref;
 use mydhtresult::Result as MDHTResult;
-
 
 #[cfg(test)]
 use std::thread;
@@ -270,10 +272,36 @@ pub fn random_bytes(size : usize) -> Vec<u8> {
 
 
 
-// TODO serializable option type for transient fields in struct : like option but serialize to none
-// allways!! aka transiant option
-#[derive(Debug,Eq,PartialEq)]
-pub struct TransientOption<V> (Option<V>);
+/// serializable option type for transient fields in struct : like option but do not serialize and
+/// deserialize to none.
+/// Futhermore implement Debug, Show, Eq by not displaying and being allways equal
+#[derive(Clone)]
+pub struct TransientOption<V> (pub Option<V>);
+impl<V> Debug for TransientOption<V> {
+  fn fmt (&self, f : &mut Formatter) -> Result<(),FmtError> {
+    write!(f, "Skipped transient option")
+  }
+}
+
+impl<V> Encodable for TransientOption<V> {
+  fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
+    Ok(())
+  }
+}
+
+impl<V> Decodable for TransientOption<V> {
+  fn decode<D:Decoder> (d : &mut D) -> Result<TransientOption<V>, D::Error> {
+    Ok(TransientOption(None))
+  }
+}
+
+impl<V> Eq for TransientOption<V> {}
+impl<V> PartialEq for TransientOption<V> {
+  #[inline]
+  fn eq(&self, _ : &Self) -> bool {
+    true
+  }
+}
 
 
 // TODO move to Mutex<Option<V>>?? (most of the time it is the sense : boolean, and easier init
@@ -471,19 +499,13 @@ pub fn test_oneresult () {
 }
 
 
-/*
-pub fn send_msg<P : Peer, V : KeyVal, T : TransportStream, E : MsgEnc>(m : &ProtoMessage<P,V>, a : Option<&Attachment>, t : &mut T, e : &E) -> bool {
-  let omess = e.encode(m);
-  debug!("sent {:?}",omess);
-  match omess {
-    Some(mess) => {
-      t.streamwrite(&mess[..], a).is_ok()
-    }
-    None => false,
-  }
-}*/
 // TODO return messg in result
-pub fn send_msg<P : Peer, V : KeyVal, T : WriteTransportStream, E : MsgEnc>(m : &ProtoMessage<P,V>, a : Option<&Attachment>, t : &mut T, e : &E) -> bool {
+#[inline]
+pub fn send_msg<'a,P : Peer + 'a, V : KeyVal + 'a, T : WriteTransportStream, E : MsgEnc>(m : &ProtoMessageSend<'a,P,V>, a : Option<&Attachment>, t : &mut T, e : &E) -> bool 
+where <P as Peer>::Address : 'a,
+      <P as KeyVal>::Key : 'a,
+      <V as KeyVal>::Key : 'a {
+ 
   let mut r = true;
   r = e.encode_into(t,m).is_ok();
   r = e.attach_into(t,a).is_ok();

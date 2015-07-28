@@ -3,11 +3,12 @@
 //! messages in `client` process and ping / pong).
 //! With connected transport, a thread is used to receive queries from peers, with non connected
 //! transport a thread receive globally spawning short lives process to run server job.
+//! TODO clienthandle should be more used, and especially added to query when possible
 
 
 
 use rustc_serialize::json;
-use procs::mesgs::{PeerMgmtInitMessage,PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage,ServerPoolMessage};
+use procs::mesgs::{PeerMgmtInitMessage,PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage,ServerPoolMessage,ClientMessage};
 use msgenc::{ProtoMessage};
 use procs::{RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
 use peer::{Peer,PeerMgmtMeths,PeerPriority,PeerState,PeerStateChange};
@@ -32,7 +33,7 @@ use utils::{send_msg,receive_msg};
 use num::traits::ToPrimitive;
 use std::io::Result as IoResult;
 use procs::ServerMode;
-use procs::client::ClientHandle;
+use procs::ClientHandle;
 use route::ServerInfo;
 
 /// either we created a permanent thread for server, or it is managed otherwhise (for instance udp
@@ -45,13 +46,23 @@ pub enum ServerHandle<P : Peer, TR : ReadTransportStream> {
   /// Local no loop nothing to do
   Local,
 }
-fn serverinfo_from_handle<P : Peer, TR : ReadTransportStream> (h : &ServerHandle<P,TR>) -> ServerInfo {
+impl<P : Peer, T : ReadTransportStream> Clone for ServerHandle<P,T> {
+  fn clone(&self) ->  ServerHandle<P,T> {
+    match self {
+     &ServerHandle::ThreadedOne(ref amut) => ServerHandle::ThreadedOne(amut.clone()),
+     &ServerHandle::Mult(ref ix, ref sndr) => ServerHandle::Mult(ix.clone(),sndr.clone()),
+     &ServerHandle::Local => ServerHandle::Local,
+    }
+  }
+}
+pub fn serverinfo_from_handle<P : Peer, TR : ReadTransportStream> (h : &ServerHandle<P,TR>) -> ServerInfo {
   match *h {
     ServerHandle::Local => ServerInfo::TransportManaged,
     ServerHandle::ThreadedOne(ref amut) => ServerInfo::Threaded(amut.clone()),
     ServerHandle::Mult(_,_) => panic!("multiplecx server not yet implemeted"),
   }
 }
+
 // all update of query prio and nbquery and else are not done every where : it is a security issue
 /// all update of query conf when receiving something, this is a filter to avoid invalid or network
 /// dangerous queries (we apply local conf other requested conf)
@@ -117,6 +128,34 @@ pub fn resolve_server_mode <RT : RunningTypes> (rc : &ArcRunningContext<RT>) -> 
       _ => panic!("Invalid transport definition"),
   }
 }
+// fn to start a server process out of transport reception (when connect with of transport return a
+// reader to.
+pub fn start_listener <RT : RunningTypes>
+ (mut s : <RT::T as Transport>::ReadStream, 
+  rc : &ArcRunningContext<RT>, 
+  rp : &RunningProcesses<RT>,
+ ) -> IoResult<ServerHandle<RT::P,<RT::T as Transport>::ReadStream>>  {
+  let servermode = resolve_server_mode (&rc); 
+  match servermode {
+    ServerMode::ThreadedOne(otimeout) => {
+      let rp_thread = rp.clone();
+      let rc_thread = rc.clone();
+      let amut = Arc::new(Mutex::new(false));
+      let sh = ServerHandle::ThreadedOne(amut);
+      let sh_thread = sh.clone();
+      thread::scoped (move || {
+        request_handler::<RT>(s, &rc_thread, &rp_thread, None, sh_thread, otimeout,false)
+      });
+      Ok(sh)
+    },
+    ServerMode::Local(_) => {
+      error!("Local server process start from something else than transport is a library bug or incoherent transport");
+      panic!("Local server process start from something else than transport is a library bug or incoherent transport");
+    },
+    _ => panic!("TODO impl mult"),
+  }
+}
+
 
 /// Server loop
 pub fn servloop <RT : RunningTypes>
@@ -146,7 +185,6 @@ pub fn servloop <RT : RunningTypes>
      
           });
         },
- 
         ServerMode::Local(false) => {
           request_handler::<RT>(s, &rc, &rp, ows, ServerHandle::Local, None, false);
         },
@@ -168,7 +206,10 @@ fn request_handler2 <RT : RunningTypes>
  ) -> IoResult<()>  {
    Ok(())
  }
- 
+
+
+
+
 /// Spawn thread either for one message (non connected) or for one connected peer (loop on stream
 /// receiver).
 ///
@@ -249,26 +290,31 @@ fn request_handler <RT : RunningTypes>
               // init clihandle
               if chandle.is_none() && managed {
                 let (tx,rx) = mpsc::sync_channel(1);
-                rp.peers.send(PeerMgmtMessage::PeerAddFromServer(afrom.clone(), pri, ows, tx, serverinfo_from_handle(&shandle)));
+                rp.peers.send(PeerMgmtMessage::PeerAddFromServer(afrom.clone(), pri.clone(), ows, tx, serverinfo_from_handle(&shandle)));
                 ows = None; 
                 let ch = rx.recv().unwrap();
                 chandle = Some(ch);
               };
 
-              if chandle.as_mut().map(|h| {
-                let repsig = rc.peerrules.signmsg(&(*rc.me), &chal);
-                // init for looping
-                if !mult {
-                  op = Some(afrom.clone());
-                } else {
-                  panic!("mult serv not imp");
-                };
-                // send pong
-                h.send_pong(repsig);
-              }).is_none() {
+              let sendinhandle = match chandle {
+                Some(ref h) => {
+                  let repsig = rc.peerrules.signmsg(&(*rc.me), &chal);
+                  // init for looping
+                  if !mult {
+                    op = Some(afrom.clone());
+                  } else {
+                    panic!("mult serv not imp");
+                  };
+                  // send pong
+                  let mess = ClientMessage::PeerPong(chal.clone());
+                  h.send_msg(mess)
+                },
+                None => false,
+              };
+              if !sendinhandle {
                 // chandle is none and not managed
                 let repsig = rc.peerrules.signmsg(&(*rc.me), &chal);
-                rp.peers.send(PeerMgmtMessage::PeerPong(afrom.clone(),repsig,ows));
+                rp.peers.send(PeerMgmtMessage::PeerPong(afrom.clone(),pri,repsig,ows));
                 ows = None;
               };
 
