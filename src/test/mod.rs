@@ -11,7 +11,8 @@ use std::hash::Hash;
 use query::simplecache::SimpleCache;
 use query::simplecache::SimpleCacheQuery;
 use route::inefficientmap::Inefficientmap;
-use transport::local_managed_transport::{TransportTest,LocalAdd};
+use transport::local_managed_transport::{TransportTest};
+use transport::{LocalAdd};
 use time::Duration;
 use rules::simplerules::{SimpleRules,DhtRules};
 use procs::{
@@ -29,6 +30,10 @@ use keyval::KeyVal;
 use rand::{thread_rng,Rng};
 use query::{QueryConf,QueryMode,QueryChunk};
 use msgenc::json::Json;
+
+
+#[cfg(feature="with-extra-test")]
+mod diag_tcp;
 
 const dhtrules_default : DhtRules = DhtRules {
   randqueryid : false,
@@ -92,7 +97,8 @@ fn asynchPeerDiscovery () {
 */ 
 type RunningTypes1 = RunningTypesImpl<LocalAdd, PeerTest, PeerTest, TestingRules, SimpleRules, Json, TransportTest>;
 fn runningcontext1 (nbpeer : usize, dhtrules : DhtRules) -> Vec<RunningContext<RunningTypes1>> {
-  let mut transports = TransportTest::create_transport(nbpeer);
+  // non duplex
+  let mut transports = TransportTest::create_transport(nbpeer,true);
   transports.reverse();
   let mut rcs = Vec::with_capacity(nbpeer);
   for i in 0 .. nbpeer {

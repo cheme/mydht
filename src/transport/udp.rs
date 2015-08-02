@@ -136,7 +136,7 @@ impl Transport for Udp {
     (self.spawn, false)
   }
 
-  fn start<C> (&self, p : &SocketAddr, readHandle : C) -> IoResult<()>
+  fn start<C> (&self, readHandle : C) -> IoResult<()>
     where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> IoResult<()> {
     let buffsize = self.buffsize;
     let mut tmpvec : Vec<u8> = vec![0; buffsize];

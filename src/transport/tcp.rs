@@ -35,19 +35,35 @@ pub struct Tcp {
   /// currently use for keep_alive, read and write timeout (api unstable so we do not care yet for
   /// distinction). When stable should become Option<Duration>.
   /// Currently only seconds are used (conversion over seconds!! waiting for api stabilize).
-  pub streamtimeout : Duration,
+  streamtimeout : Duration,
   /// courrently not used
-  pub connecttimeout : Duration,
+  connecttimeout : Duration,
+  /// either we reuse tcp socket for input / output or open another one (two unidirectional socket
+  /// being useless for tcp but still good for test/diagnostics or some special firewal settings
+  mult : bool,
+  listener : TcpListener,
+}
+
+impl Tcp {
+  pub fn new(  p: &SocketAddr, streamtimeout : Duration, connecttimeout : Duration, mult : bool) -> IoResult<Tcp> {
+    let listener = try!(TcpListener::bind(p));
+    Ok(Tcp {
+      streamtimeout : streamtimeout,
+      connecttimeout : connecttimeout,
+      mult : mult,
+      listener : listener,
+    })
+
+  }
 }
 
 impl Transport for Tcp {
   type ReadStream = TcpStream;
   type WriteStream = TcpStream;
   type Address = SocketAddr;
-  fn start<C> (&self, p: &SocketAddr, readHandler : C) -> IoResult<()>
+  fn start<C> (&self, readHandler : C) -> IoResult<()>
     where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> IoResult<()> {
-    let mut listener = TcpListener::bind(p).unwrap();
-    for socket in listener.incoming() {
+    for socket in self.listener.incoming() {
         match socket {
             Err(e) => {error!("Socket acceptor error : {:?}", e);}
             Ok(mut s)  => {
@@ -55,11 +71,16 @@ impl Transport for Tcp {
               debug!("  - From {:?}", s.local_addr());
               debug!("  - From {:?}", s.peer_addr());
               debug!("  - With {:?}", s.peer_addr());
-              s.set_keepalive (self.streamtimeout.num_seconds().to_u32());
-              s.set_read_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs));
-              s.set_write_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs));
-              let rs = try!(s.try_clone());
-              readHandler(rs,Some(s));
+              if self.mult {
+                s.set_keepalive (self.streamtimeout.num_seconds().to_u32());
+                s.set_read_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs));
+                s.set_write_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs));
+
+                let rs = try!(s.try_clone());
+                readHandler(rs,Some(s));
+              } else {
+                readHandler(s,None);
+              }
             }
         }
     };
@@ -70,8 +91,12 @@ impl Transport for Tcp {
     //let s = TcpStream::connect_timeout(p, self.connecttimeout);
     let s = try!(TcpStream::connect(p));
     try!(s.set_keepalive (self.streamtimeout.num_seconds().to_u32()));
-    let rs = try!(s.try_clone());
-    Ok((s,Some(rs)))
+    if self.mult {
+      let rs = try!(s.try_clone());
+      Ok((s,Some(rs)))
+    } else {
+      Ok((s,None))
+    }
   }
 }
 

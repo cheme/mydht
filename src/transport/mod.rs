@@ -7,7 +7,7 @@ use std::net::{SocketAddr};
 use std::path::PathBuf;
 use std::fmt::Debug;
 use mydhtresult::Result; 
-
+use utils::OneResult;
 
 #[cfg(feature="mio-impl")]
 pub mod tcp_loop;
@@ -21,9 +21,17 @@ pub mod test;
 
 
 
+
 pub trait Address : Sync + Send + Clone + Debug + 'static {}
 
 impl Address for SocketAddr {}
+
+/// for testing purpose
+#[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
+pub struct LocalAdd (pub usize);
+impl Address for LocalAdd{}
+
+
 
 /// transport must be sync (in running type), it implies that it is badly named as transport must
 /// only contain enough information to instantiate needed component (even not sync) in the start
@@ -45,8 +53,7 @@ pub trait Transport : Send + Sync + 'static {
   /// read/write).
   /// D fn will not start every time (only if WriteStream created), and is only to transmit stream
   /// to either peermanager or as query (waiting for auth).
-  /// TODO Remove second parameter (bind address should be in initialization of transport(see udp))
-  fn start<C> (&self, &Self::Address, C) -> IoResult<()>
+  fn start<C> (&self, C) -> IoResult<()>
     where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> IoResult<()>;
 
   /// Sometimes : for instance with tcp, the writestream is the same as the read stream,

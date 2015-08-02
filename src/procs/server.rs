@@ -193,7 +193,7 @@ pub fn servloop <RT : RunningTypes>
       Ok(())
     };
     // loop in transport receive function TODO if looping : start it from PeerManager thread
-    rc.transport.start(&rc.me.to_address(), spserv);
+    rc.transport.start(spserv);
 }
 fn request_handler2 <RT : RunningTypes>
  (mut s1 : <RT::T as Transport>::ReadStream, 

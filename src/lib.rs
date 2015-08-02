@@ -235,7 +235,7 @@ pub mod utils;
 pub mod rules;
 pub mod wot;
 #[cfg(test)]
-pub mod test;
+mod test;
 
 // reexport
 pub use peer::{PeerPriority,PeerState};
@@ -301,6 +301,17 @@ pub mod transportif{
 pub mod msgencif{
   pub use msgenc::{MsgEnc};
 }
+
+#[cfg(test)]
+pub mod testexp {
+  pub mod common {
+    pub use test::*;
+  }
+  pub mod transport {
+    pub use transport::test::*;
+  }
+}
+
 
 mod mydhtresult {
 

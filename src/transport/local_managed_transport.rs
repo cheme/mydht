@@ -15,9 +15,6 @@
 //! and multiple connections between peers are not supported. : the transport is not well suited
 //! for connectivity testing.
 //! 
-//! TODO bidire (no optional read) need to double space of cli sender with semantic like : addr
-//! conn = addr and addr recv = addr + nb peer if already one at addr (addr switch)
-//!
 
 use std::sync::mpsc::{Sender,Receiver};
 use std::sync::mpsc;
@@ -28,15 +25,14 @@ use std::io::ErrorKind as IoErrorKind;
 use std::io::{Read,Write};
 use time::Duration;
 use transport::{Transport,Address,ReadTransportStream,WriteTransportStream};
+use transport::LocalAdd;
 #[cfg(test)]
 use transport::test as ttest;
-
-#[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
-pub struct LocalAdd (pub usize);
 
 // note all mutex content is clone in receive loop and in connect_with (only here for init)
 // here as transport must be sync .
 pub struct TransportTest {
+  pub multiplex : bool,
   pub address : usize,
   /// directory with all sender of other peers
   /// Addresses are position in vec
@@ -53,7 +49,7 @@ pub struct TransportTest {
 impl TransportTest {
   /// initialize n transport which can communicate with each other, the address to use with
   /// transport is simple the index in the returning vec
-  pub fn create_transport (nb : usize) -> Vec<TransportTest> {
+  pub fn create_transport (nb : usize, multiplex : bool) -> Vec<TransportTest> {
     let mut res = Vec::with_capacity(nb);
     let mut vecsender = Vec::with_capacity(nb);
     let mut vecreceiver = Vec::with_capacity(nb);
@@ -69,6 +65,7 @@ impl TransportTest {
    
     for i in 0 .. nb {
       let tr = TransportTest {
+        multiplex : multiplex,
         address : i,
         dir : Mutex::new(vecsender.clone()),
         recv : Mutex::new(vecreceiver.pop().unwrap()),
@@ -111,7 +108,7 @@ impl Transport for TransportTest {
   type WriteStream = LocalWriteStream;
   /// index in transport dir
   type Address = LocalAdd;
-  fn start<C> (&self, address : &Self::Address, readhandler : C) -> IoResult<()>
+  fn start<C> (&self, readhandler : C) -> IoResult<()>
     where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> IoResult<()> {
       // lock mutex indefinitely but it is the only occurence
       let r = self.recv.lock().unwrap();
@@ -137,16 +134,18 @@ impl Transport for TransportTest {
               let (s,r) = mpsc::channel();
               
               let locread = LocalReadStream(r,Vec::new());
-// TODO conditionally send write stream !!!
-              let locwrite = {
-                let dest = self.dir.lock().unwrap().get(addr).unwrap().clone();
-                Some(LocalWriteStream(self.address, dest.clone()))
-              };
               {
                 let mut clis = self.cli.lock().unwrap();
                 let mut cur = clis.get_mut(addr).unwrap();
                 *cur = Some(s);
               }
+
+              let locwrite = if self.multiplex {
+                let dest = self.dir.lock().unwrap().get(addr).unwrap().clone();
+                Some(LocalWriteStream(self.address, dest.clone()))
+              } else {
+                None
+              };
               readhandler(locread,locwrite);
             }
           },
@@ -167,15 +166,18 @@ impl Transport for TransportTest {
  
     // TODO conditionally do that
     
-    let (s,r) = mpsc::channel();
     let us = self.dir.lock().unwrap().get(self.address).unwrap().clone();
-    let locread = Some(LocalReadStream(r,Vec::new()));
-    {
-      let mut clis = self.cli.lock().unwrap();
-      let mut cur = clis.get_mut(address.0).unwrap();
-      *cur = Some(s);
-    }
-
+    let locread = if self.multiplex {
+      let (s,r) = mpsc::channel();
+      {
+        let mut clis = self.cli.lock().unwrap();
+        let mut cur = clis.get_mut(address.0).unwrap();
+        *cur = Some(s);
+      }
+      Some(LocalReadStream(r,Vec::new()))
+    } else {
+      None
+    };
     // connect msg
     locwrite.1.send((locwrite.0, Arc::new(Vec::new())));
 
@@ -186,7 +188,6 @@ impl Transport for TransportTest {
  
 }
 
-impl Address for LocalAdd{}
 impl Write for LocalWriteStream {
     fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
       let len = buf.len();
@@ -233,11 +234,23 @@ impl Read for LocalReadStream {
 
 #[test]
 fn test_connect_rw () {
+  let multiplex = true;
  let a1 = &LocalAdd(0);
  let a2 = &LocalAdd(1);
- let mut trs = TransportTest::create_transport (2);
+ let mut trs = TransportTest::create_transport (2,multiplex);
  let t2 = trs.pop().unwrap();
  let t1 = trs.pop().unwrap();
 
- ttest::connect_rw_with_optional (t1 , t2 , a1 , a2, true); 
+ ttest::connect_rw_with_optional (t1 , t2 , a1 , a2, multiplex); 
+}
+#[test]
+fn test_connect_rw_dup () {
+  let multiplex = false;
+ let a1 = &LocalAdd(0);
+ let a2 = &LocalAdd(1);
+ let mut trs = TransportTest::create_transport (2,multiplex);
+ let t2 = trs.pop().unwrap();
+ let t1 = trs.pop().unwrap();
+
+ ttest::connect_rw_with_optional (t1 , t2 , a1 , a2, multiplex); 
 }

@@ -17,7 +17,7 @@ use keyval::{KeyVal};
 use keyval::{Attachment,SettableAttachment};
 use peer::PeerPriority;
 use utils;
-use transport::local_managed_transport::LocalAdd;
+use transport::LocalAdd;
 
 
 

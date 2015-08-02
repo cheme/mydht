@@ -76,8 +76,26 @@ pub struct Tcp {
   // thread for further processing (heavy validation or other but short message reading).
   
   // usage of mutex is not so good yet it is only used on connection init
+  // TODO may be able to remove option (new init)
   channel : Mutex<Option<Sender<HandlerMessage>>>,
-  
+  listener : TcpListener,
+}
+
+
+impl Tcp {
+  /// constructor.
+  pub fn new (p : &SocketAddr,  keepalive : Option<Duration>, timeout : Duration, spawn : bool) -> IoResult<Tcp> {
+
+    let tcplistener = try!(TcpListener::bind(p));
+
+    Ok(Tcp {
+      keepalive : keepalive,
+      timeout : timeout,
+      spawn : spawn,
+      channel : Mutex::new(None),
+      listener : tcplistener,
+    })
+  }
 }
 
 #[derive(Clone)]
@@ -125,17 +143,17 @@ pub enum ReadTcpStream {
   CoRout(MioTcpStream,Token,Sender<HandlerMessage>),
 }
 
-struct MyHandler<C>
+struct MyHandler<'a, C>
     where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> IoResult<()> {
 
   /// info about stream (for unlocking read)
   tokens : VecMap<StreamInfo>,
   timeout : u64,
-  listener : TcpListener,
+  listener : &'a TcpListener,
   readHandler : C,
 }
 
-impl<C> MyHandler<C>
+impl<'a,C> MyHandler<'a,C>
     where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> IoResult<()> {
 
 
@@ -160,7 +178,7 @@ impl<C> MyHandler<C>
   }
 }
 
-impl<C> Handler for MyHandler<C>
+impl<'a,C> Handler for MyHandler<'a,C>
     where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> IoResult<()> {
   type Timeout = Token;
   type Message = HandlerMessage;
@@ -320,23 +338,11 @@ impl ReadTcpStream {
   }
 }
 
-impl Tcp {
-  /// constructor.
-  pub fn new (keepalive : Option<Duration>, timeout : Duration, spawn : bool) -> Tcp {
-    Tcp {
-      keepalive : keepalive,
-      timeout : timeout,
-      spawn : spawn,
-      channel : Mutex::new(None),
-    }
-  }
-}
-
 impl Transport for Tcp {
   type ReadStream = ReadTcpStream;
   type WriteStream = WriteTcpStream;
   type Address = SocketAddr;
-  fn start<C> (&self, p: &SocketAddr, readHandler : C) -> IoResult<()>
+  fn start<C> (&self, readHandler : C) -> IoResult<()>
     where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> IoResult<()> {
     /*let sock : TcpSocket = try!(tcp:match *p {
       SocketAddr::V4(..) => TcpSocket::v4(),
@@ -349,7 +355,6 @@ impl Transport for Tcp {
     try!(sock.set_keepalive (self.keepalive.map(|d|d.num_seconds().to_u32().unwrap())));
     // listen
     let tcplistener = try!(sock.listen(1024));*/
-    let tcplistener = try!(TcpListener::bind(p));
 //    tcplistener.0.set_write_timeout_ms(self.timeout.num_milliseconds());
 
 
@@ -361,11 +366,11 @@ impl Transport for Tcp {
       let mut mchannel = self.channel.lock().unwrap(); // TODO unsafe
       *mchannel = Some(sender);
     }
-    try!(eventloop.register(&tcplistener, Token(CONN_REC)));
+    try!(eventloop.register(&self.listener, Token(CONN_REC)));
     eventloop.run(&mut MyHandler{
       tokens : VecMap::new(),
       timeout : self.timeout.num_milliseconds().to_u64().unwrap(),
-      listener : tcplistener,
+      listener : &self.listener,
       readHandler : readHandler,
       })
   }
