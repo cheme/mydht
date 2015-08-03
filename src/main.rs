@@ -86,8 +86,8 @@ fn main() {
 
     info!("using conf file : {:?}" , confPath);
     info!("using boot file : {:?}" , bootPath);
-
-    let initNode = Node {nodeid: "dummyID1".to_string(), address : SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), 0))}; // default port to 0 (a port will be assigned by system)
+    let initaddress = SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), 0));
+    let initNode = Node {nodeid: "dummyID1".to_string(), address : initaddress}; // default port to 0 (a port will be assigned by system)
 
 //    let confFile = File::open(&Path::new(confPath));
 //    let mut confFile = File::create(&Path::new(confPath));
@@ -97,12 +97,15 @@ fn main() {
     let mut jsonCont = String::new();
     File::open(&Path::new(&confPath[..])).unwrap().read_to_string(&mut jsonCont).unwrap(); 
     let mynode : Node = json::decode(&jsonCont[..]).unwrap();
+    let myadd = mynode.to_address();
 
 
-    let tcp_transport : Tcp = Tcp {
-      streamtimeout : Duration::seconds(5),
-      connecttimeout :  Duration::seconds(5),
-    };
+    let tcp_transport = Tcp::new(
+      &myadd,
+      Duration::seconds(5), // timeout
+      Duration::seconds(5), // conn timeout
+      true,//mult
+    ).unwrap();
 
 
     info!("my node is : {:?}" , mynode);
@@ -446,10 +449,14 @@ fn initpeers<M : PeerMgmtMeths<Node, DummyKeyVal> + Clone> (startPort : u16, nbp
         let bpeers = map[i].iter().map(|j| nodes2.get(*j-1).unwrap().clone()).map(|p|Arc::new(p)).collect();
         i += 1;
         let nsp = Arc::new(n.clone());
-let tcp_transport : Tcp = Tcp {
-  streamtimeout : Duration::seconds(5),
-  connecttimeout :  Duration::seconds(5),
-};
+    let tcp_transport = Tcp::new(
+      &(nsp.to_address()),
+      Duration::seconds(5), // timeout
+      Duration::seconds(5), // conn timeout
+      true,//mult
+    ).unwrap();
+
+
         // add node without ping
         //(n.clone(), DHT::boot_server(Arc:: new((nsp,rules.clone(), DummyQueryRules{idcnt:Mutex::new(0)},Json,tcp_transport)), Inefficientmap::new(), SimpleCacheQuery::new(), SimpleCache::new(), bpeers, Vec::new()))
         (n.clone(), DHT::boot_server(Arc:: new(
@@ -502,10 +509,13 @@ fn initpeers_udp<M : PeerMgmtMeths<Node,DummyKeyVal> + Clone> (startPort : u16, 
         let bpeers = map[i].iter().map(|j| nodes2.get(*j-1).unwrap().clone()).map(|p|Arc::new(p)).collect();
         i += 1;
         let nsp = Arc::new(n.clone());
-let tcp_transport : Tcp = Tcp {
-  streamtimeout : Duration::seconds(5),
-  connecttimeout :  Duration::seconds(5),
-};
+    let tcp_transport = Tcp::new(
+      &(nsp.to_address()),
+      Duration::seconds(5), // timeout
+      Duration::seconds(5), // conn timeout
+      true,//mult
+    ).unwrap();
+
 
 
         // add node without ping

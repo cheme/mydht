@@ -132,6 +132,8 @@ pub enum MsgEncDef {
 macro_rules! expand_transport_def(($t:ident, $p:ident, $add:expr, $ftn:expr ) => (
       match $t {
       &TransportDef::Tcp(stimeout,ctimeout) => {
+      let $p = Tcp::new(
+      $add,
       let $p = Tcp {
 streamtimeout : Duration::seconds(stimeout),
 connecttimeout : Duration::seconds(ctimeout),
