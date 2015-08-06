@@ -16,40 +16,12 @@ pub mod udp;
 pub type Attachment = PathBuf;
 #[cfg(test)]
 pub mod local_managed_transport;
+#[cfg(test)]
+pub mod test;
 
-/// TODO Dummy TRansport imple for testing (currently tcp everywhere)
 
-/// Transport trait
-/// TODO a synch primitive to check if start in ok state (if needed (see tcp_loop where init
-/// eventloop)).
-pub trait Transport_old : Send + Sync + 'static {
 
-  /// Transport stream
-  type Stream : TransportStream;
-  /// Address type
-//  type Address = SocketAddr;
-  /// Is transport connected
-  fn is_connected() -> bool;
- 
-  /// Start and run transport reception loop (Should only return at the end of the DHT).
-  /// Optional function parameter is a handler for the message, two cases :
-  ///   - reception loop is into the handler function, and we loop on every TransportStream (in its
-  ///   own thread) for message reception, in this case the second parameter of the handler is None
-  ///   and the handler will use IO::Read over the TransportStream.
-  ///   - server thread will loop over Transport `receive` and use send result to the handler through
-  ///   optional second parameter (TransportStream Read does not need to be implemented (it should
-  ///   panic since right code will never call it). The loop reception loop should be in Transport
-  ///   `receive` implementation.
-  //fn receive<C> (&self, &Self::Address, C) where C : Fn(Self::Stream, Option<(Vec<u8>, Option<Attachment>)>) -> ();
-  fn start<C> (&self, &SocketAddr, C) -> IoResult<()>  where C : Fn(Self::Stream, Option<(Vec<u8>, Option<Attachment>)>) -> IoResult<()>;
-
-  /// Transport initialisation for sending
-  //fn connectwith(&self, &Self::Address, Duration) -> IoResult<Self::Stream>;
-  fn connectwith(&self, &SocketAddr, Duration) -> IoResult<Self::Stream>;
-
-}
-
-pub trait Address : Sync + Send + Clone + Debug {}
+pub trait Address : Sync + Send + Clone + Debug + 'static {}
 
 impl Address for SocketAddr {}
 
@@ -57,7 +29,7 @@ impl Address for SocketAddr {}
 /// only contain enough information to instantiate needed component (even not sync) in the start
 /// method (plus connect with required info). Some sync may still be needed for connect (sync with
 /// instanciated component in start).
-pub trait Transport : Send + Sync {
+pub trait Transport : Send + Sync + 'static {
   type ReadStream : ReadTransportStream;
   type WriteStream : WriteTransportStream;
   type Address : Address;
@@ -91,14 +63,14 @@ pub trait Transport : Send + Sync {
 
 // TODO add clone constraint with possibility to panic!("clone is not allowed : local send
 // threads are not possible")
-pub trait WriteTransportStream : Send + Write {
+pub trait WriteTransportStream : Send + Write + 'static {
   // most of the time unneeded
   /// simply result in check connectivity false
   fn disconnect(&mut self) -> IoResult<()>;
 //  fn checkconnectivity(&self) -> bool;
 }
 
-pub trait ReadTransportStream : Send + Read {
+pub trait ReadTransportStream : Send + Read + 'static {
   
   /// should end read loop
   fn disconnect(&mut self) -> IoResult<()>;

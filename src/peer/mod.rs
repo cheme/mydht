@@ -8,17 +8,21 @@ use std::string::String;
 use std::str::FromStr;
 use procs::{RunningProcesses,RunningContext,ArcRunningContext,RunningTypes};
 use msgenc::{MsgEnc};
-use transport::{Transport};
+use transport::{Transport,Address};
 use keyval::KeyVal;
 use utils::{OneResult,ret_one_result};
 use utils::TransientOption;
 
 pub mod node;
+#[cfg(test)]
+pub mod test;
 
 /// A peer is a special keyval with an attached address over the network
-pub trait Peer : KeyVal {
-  type Address;
+pub trait Peer : KeyVal + 'static {
+  type Address : Address;
   // TODO rename to get_address or get_address_clone, here name is realy bad
+  // + see if a ref returned would not be best (same limitation as get_key for composing types in
+  // multi transport)
   fn to_address (&self) -> Self::Address;
 //  fn to_address (&self) -> SocketAddr;
 }
@@ -104,13 +108,14 @@ impl PeerState {
   }
 }
 /// Rules for peers. Usefull for web of trust for instance, or just to block some peers.
-pub trait PeerMgmtMeths<P : Peer, V : KeyVal> : Send + Sync {
+/// TODO refactor : replace String by bytes array and Vec<u8>!! (+ &String makes no sense)
+pub trait PeerMgmtMeths<P : Peer, V : KeyVal> : Send + Sync + 'static {
   /// get challenge for a node, most of the time a random value to avoid replay attack
   fn challenge (&self, &P) -> String; 
-  /// sign a message. Node and challenge.
-  fn signmsg   (&self, &P, &String) -> String; // node for signing and challenge if private key usage, pk is define in function
+  /// sign a message. Node and challenge. Node in parameter is ourselve.
+  fn signmsg (&self, &P, &String) -> String; // node for signing and challenge if private key usage, pk is define in function
   /// check a message. Peer, challenge and signature.
-  fn checkmsg  (&self, &P, &String, &String) -> bool; // node, challenge and signature
+  fn checkmsg (&self, &P, &String, &String) -> bool; // node, challenge and signature
   /// accept a peer? (reference to running process and running context could be use to query
   /// ourself
   fn accept<RT : RunningTypes<P=P,V=V>> (&self, &P, &RunningProcesses<RT>, &ArcRunningContext<RT>) -> Option<PeerPriority>;

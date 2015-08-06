@@ -37,7 +37,7 @@ use msgenc::send_variant::ProtoMessage;
 use std::borrow::Borrow;
 
 pub fn start<RT : RunningTypes>
- (p : Arc<RT::P>,
+ (p : &Arc<RT::P>,
   orcl : Option<Receiver<ClientMessageIx<RT::P,RT::V>>>,
   rc : ArcRunningContext<RT>,
   rp : RunningProcesses<RT>,
@@ -45,7 +45,7 @@ pub fn start<RT : RunningTypes>
   mut osend : Option<ClientSender<<RT::T as Transport>::WriteStream>>,
   managed : bool,
   ) -> bool {
-  match start_local(&p,orcl,&rc,&rp,omessage,osend.as_mut(),managed) {
+  match start_local(p,orcl,&rc,&rp,omessage,osend.as_mut(),managed) {
     Ok(r) => r,
     Err(e) => {
       // peerremfromclient send from client_match directly (no need to try reconnect

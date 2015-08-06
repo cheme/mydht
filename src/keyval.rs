@@ -23,11 +23,21 @@ pub type Attachment = PathBuf; // TODO change to Path !!! to allow copy ....
 
 
 //pub trait Key : fmt::Debug + Hash + Eq + Clone + Send + Sync + Ord + 'static{}
-pub trait Key : Encodable + Decodable + fmt::Debug + Eq + Clone {
+pub trait Key : Encodable + Decodable + fmt::Debug + Eq + Clone + 'static {
 //  fn key_encode(&self) -> MDHTResult<Vec<u8>>;
+// TODO 
+//fn as_ref<KR : KeyRef<Key = Self>>(&'a self) -> KR;
 }
 
-impl<K : Encodable + Decodable + fmt::Debug + Eq + Clone> Key for K {
+// TODO get keyref in keyval as parametric function (keyref could not be associated type as not
+// 'static).
+pub trait KeyRef : Encodable + fmt::Debug + Eq + Clone {
+  type Key : Key;
+  fn newKey(&self) -> Self::Key;
+}
+
+// TODO remove for 'as_key_ref'
+impl<K : Encodable + Decodable + fmt::Debug + Eq + Clone + 'static> Key for K {
  /* fn key_encode(&self) -> MDHTResult<Vec<u8>> {
     Ok(try!(bincode::encode(self, bincode::SizeLimit::Infinite)))
   }*/
@@ -35,7 +45,7 @@ impl<K : Encodable + Decodable + fmt::Debug + Eq + Clone> Key for K {
 
 /// KeyVal is the basis for DHT content, a value with key.
 // TODO rem 'static and add it only when needed (Arc) : method as_static??
-pub trait KeyVal : Encodable + Decodable + fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment {
+pub trait KeyVal : Encodable + Decodable + fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment + 'static {
   /// Key type of KeyVal
   type Key : Key + Send + Sync; //aka key // Ord , Hash ... might be not mandatory but issue currently
   /// getter for key value

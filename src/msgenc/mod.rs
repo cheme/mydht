@@ -30,7 +30,7 @@ const BUFF_SIZE : usize = 10000; // use for attachment send/receive -- 21888 see
 
 /// Trait for message encoding between peers.
 /// It use bytes which will be used by transport.
-pub trait MsgEnc : Send + Sync {
+pub trait MsgEnc : Send + Sync + 'static {
   //fn encode<P : Peer, V : KeyVal>(&self, &ProtoMessage<P,V>) -> Option<Vec<u8>>;
   
   /// encode

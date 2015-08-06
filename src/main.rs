@@ -12,6 +12,8 @@
 #![feature(alloc)]
 #![feature(thread_sleep)]
 
+fn main() {
+}/*
 
 // :nn <F2> :w<cr>:!cargo run --verbose -- -C node2.conf
 extern crate rustc_serialize;
@@ -97,10 +99,10 @@ fn main() {
     let mynode : Node = json::decode(&jsonCont[..]).unwrap();
 
 
-let tcp_transport : Tcp = Tcp {
-  streamtimeout : Duration::seconds(5),
-  connecttimeout :  Duration::seconds(5),
-};
+    let tcp_transport : Tcp = Tcp {
+      streamtimeout : Duration::seconds(5),
+      connecttimeout :  Duration::seconds(5),
+    };
 
 
     info!("my node is : {:?}" , mynode);
@@ -152,89 +154,6 @@ impl KeyVal for DummyKeyValIn {
 impl SettableAttachment for DummyKeyValIn {
 }
 
-
-
-//#[test]
-fn aproxyPeerDiscovery () {
-  let qconf = QueryConf {
-    mode : QueryMode::AProxy,
-    chunk : QueryChunk::None,
-    hop_hist : Some((4,false)),
-  };
-  peerConnectScenario(&qconf, 40534, 5, 2)
-}
-
-//#[test]
-fn amixProxyPeerDiscovery () {
-  let qconf = QueryConf {
-    mode : QueryMode::AMix(9),
-    chunk : QueryChunk::None,
-    hop_hist : None,
-  };
-  peerConnectScenario(&qconf, 40534, 5, 2)
-}
-
-//#[test]
-fn asynchPeerDiscovery () {
-  let qconf = QueryConf {
-    mode : QueryMode::Asynch,
-    chunk : QueryChunk::None,
-    hop_hist : Some((3,true)),
-  };
-  peerConnectScenario(&qconf, 41534, 5, 2)
-}
-
-
-fn peerConnectScenario (queryconf : &QueryConf, startPort: u16, nbpeer : u16, knownratio : u16){
-
-    let mut r : Vec<u16> = (startPort .. startPort+nbpeer).collect();
-    let nodes : Vec<Node> = r.iter().map(
-      |i| Node {nodeid: "dummyID".to_string() + (&i.to_string()[..]), address : SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), *i))}
-    ).collect();
-    let mut rng = thread_rng();
-    let procs : Vec<DHT<RunningTypesImpl<DummyRules,Tcp, Json>>> = nodes.iter().map(|n|{
-        info!("node : {:?}", n);
-let tcp_transport : Tcp = Tcp {
-  streamtimeout : Duration::seconds(5),
-  connecttimeout :  Duration::seconds(5),
-};
-
-
-//        rng.shuffle(noderng);
-        let bpeers = nodes.clone().into_iter().filter(|i| (*i != *n && rng.gen_range(0,knownratio) == 0) ).map(|p|Arc::new(p)).collect();
-//        let mut noderng : &mut [Node] = bpeers.as_slice();
-        let nsp = Arc::new(n.clone());
-        DHT::boot_server(Arc:: new(
-        RunningContext::new(
-          nsp,
-          DummyRules,
-          DummyQueryRules{idcnt:Mutex::new(0)},
-          Json,
-          tcp_transport,
-        )), move || Some(Inefficientmap::new()), move || Some(SimpleCacheQuery::new(false)), move || Some(SimpleCache::new(None)), Vec::new(), bpeers)
-    }).collect();
-
-    thread::sleep_ms(2000);
-    // find all node from the first node first node
-    let ref fprocs = procs[0];
-
-    let mut itern = nodes.iter();
-    itern.next();
-    for n in itern{
-        let fpeer = fprocs.find_peer(n.nodeid.clone(), queryconf, 1); // TODO put in future first then match result (simultaneous search)
-        let matched = match fpeer {
-            Some(v) => *v == *n,
-            _ => false,
-        };
-        assert!(matched, "Peer not found {:?}", n);
-    }
-
-    for p in procs.iter(){p.shutdown()}
-//    procs.iter().map(|p|{p.shutdown()}); // no cause lazy
-
-//    for mut p in procs.iter(){p.block()}
-//    assert_eq!(1i,1i);
-}
 
 
 #[derive(Debug,Clone)]
@@ -291,7 +210,7 @@ impl PeerMgmtMeths<Node, DummyKeyVal> for DummyRules2 {
 }
 
 
-struct DummyQueryRules{
+struct DummyQueryRules {
     idcnt : Mutex<usize>,
 }
 
@@ -688,4 +607,4 @@ fn testPeer2hopstoreval (){
     let res = peers.get(1).unwrap().1.find_val(val.get_key().clone(), &queryconf, 10,StoragePriority::NoStore, 1).pop().unwrap_or(None);
     assert!(!(res == Some(val.clone())));
 }
-
+*/

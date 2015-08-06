@@ -574,9 +574,7 @@ fn test_wot_rsa() {
   test_wot_gen(&initRSAPeer)
 }
 #[cfg(test)]
-fn test_wot_gen<T : TrustedPeer + 'static, F : Fn(String) -> ArcKV<T>>(init : &F) 
-where <T as Peer>::Address : 'static,
-      <T as Truster>::Internal : 'static,
+fn test_wot_gen<T : TrustedPeer, F : Fn(String) -> ArcKV<T>>(init : &F) 
  {
   // initiate with simple cache map
   let mut wotpeers = SimpleCache::new(None);

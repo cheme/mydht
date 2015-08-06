@@ -85,7 +85,7 @@ pub fn start<RT : RunningTypes,
                     let rcthread = rc.clone();
                     let rpthread = rp.clone();
                     let oresthred = ores.clone();
-                    thread::scoped(move ||{
+                    thread::spawn(move ||{
                       let oprio = rcthread.peerrules.accept(&node, &rpthread, &rcthread);
                       let afrom = Arc::new(node);
                       match oprio {
@@ -439,7 +439,7 @@ pub fn start<RT : RunningTypes,
                 let ssp = rp.peers.clone();
                 let srp = rp.store.clone();
                 // TODO remove this spawn even if dealing with mutex (too costy?? )
-                thread::scoped(move || {
+                thread::spawn(move || {
                   println!("!!!!found not sent unlock semaphore");
                   if (r != None) {
                     if querysp.set_query_result(Either::Left(r),&srp) {
@@ -615,11 +615,11 @@ fn send_local<RT : RunningTypes, T : Route<RT::A,RT::P,RT::V,RT::T>>
        let rcsp = rc.clone();
        let psp = p.clone();
        let mpsp = p.clone();
-       thread::scoped (move || {
-         let erpeer = rpsp.peers.clone();
-         if ! client::start::<RT>(psp, None, rcsp, rpsp, Some(mess),mutws,false) {
+       let erpeer = rpsp.peers.clone();
+       thread::spawn (move || {
+         if ! client::start::<RT>(&psp, None, rcsp, rpsp, Some(mess),mutws,false) {
            // TODO try reconnect or add it to client directly
-           erpeer.send(PeerMgmtMessage::PeerRemFromClient(p.clone(), PeerStateChange::Offline));
+           erpeer.send(PeerMgmtMessage::PeerRemFromClient(psp, PeerStateChange::Offline));
          }
        });
        (false,false)
@@ -741,7 +741,7 @@ fn init_client_info<'a, RT : RunningTypes>
       let rcsp = rc.clone();
       let rpsp = rp.clone();
 
-      thread::scoped (move || {client::start::<RT>(psp, Some(rcl), rcsp, rpsp, None, ows.map(|ws|ClientSender::Threaded(ws)), true)});
+      thread::spawn (move || {client::start::<RT>(&psp, Some(rcl), rcsp, rpsp, None, ows.map(|ws|ClientSender::Threaded(ws)), true)});
       Ok((ci,None))
     },
     _ => {panic!("TODO implement cli pools")},
@@ -811,7 +811,7 @@ let (upd, s) = match route.get_node(&p.get_key()) {
   //when tcl store later
   let rcsp = rc.clone();
   let psp = p.clone();
-  thread::scoped (move || {client::start::<RT>(psp,Some(tcl3), Some(rcl), rcsp, rpsp, ping, pingres, None, true)});
+  thread::spawn (move || {client::start::<RT>(psp,Some(tcl3), Some(rcl), rcsp, rpsp, ping, pingres, None, true)});
      },
      None => {
        // we found an existing channel with seemlessly open connection

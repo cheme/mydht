@@ -143,8 +143,8 @@ pub fn start_listener <RT : RunningTypes>
       let amut = Arc::new(Mutex::new(false));
       let sh = ServerHandle::ThreadedOne(amut);
       let sh_thread = sh.clone();
-      thread::scoped (move || {
-        request_handler::<RT>(s, &rc_thread, &rp_thread, None, sh_thread, otimeout,false)
+      thread::spawn (move || {
+        request_handler::<RT> (s, &rc_thread, &rp_thread, None, sh_thread, otimeout,false)
       });
       Ok(sh)
     },
@@ -169,8 +169,8 @@ pub fn servloop <RT : RunningTypes>
         ServerMode::ThreadedOne(otimeout) => {
           let rp_thread = rp.clone();
           let rc_thread = rc.clone();
-          thread::scoped (move || {
-     let amut = Arc::new(Mutex::new(false));
+          thread::spawn (move || {
+            let amut = Arc::new(Mutex::new(false));
             request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::ThreadedOne(amut), otimeout,false)
      
           });
@@ -178,7 +178,7 @@ pub fn servloop <RT : RunningTypes>
         ServerMode::Local(true) => {
           let rp_thread = rp.clone();
           let rc_thread = rc.clone();
-          thread::scoped (move || {
+          thread::spawn (move || {
             let rcref = &rc_thread;
             let rpref = &rp_thread;
             request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::Local, None, false)

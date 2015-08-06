@@ -4,20 +4,20 @@ name = "mydht"
 version = "0.0.1"
 authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
-[[bin]]
-name = 'dhtmain'
-doc = false
+#[[bin]]
+#name = 'dhtmain'
+#doc = false
 
-[[example]]
-name='fileshare'
-path = "examples/fs.rs"
+#[[example]]
+#name='fileshare'
+#path = "examples/fs.rs"
 
 
 
 
 [features]
-default = ["striple-impl","openssl-impl","rust-crypto-impl","dht-route","mio-impl"]
-#default = ["striple-impl","rust-crypto-impl"]
+#default = ["striple-impl","openssl-impl","rust-crypto-impl","dht-route","mio-impl"]
+default = ["striple-impl","rust-crypto-impl"]
 striple-impl = ["striple"]
 openssl-impl = ["openssl"]
 rust-crypto-impl = ["rust-crypto"]

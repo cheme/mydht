@@ -42,11 +42,17 @@ pub fn start
     Some(delay) => {
       let delaysp = delay.clone();
       let sp = s.clone();
-      thread::scoped(move || {
+      thread::spawn(move || {
         loop {
           thread::sleep_ms(delaysp.num_milliseconds().to_u32().unwrap());
           info!("running scheduled clean");
-          sp.send(QueryMgmtMessage::PerformClean);
+          match sp.send(QueryMgmtMessage::PerformClean) {
+            Ok(()) => (),
+            Err(e) => {
+              warn!("ending querymanager clean timer, the associated querymanager is not accessible");
+              break;
+            },
+          }
         }
       });
     },

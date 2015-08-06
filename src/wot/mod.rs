@@ -77,7 +77,7 @@ pub trait TrustedVal<T : Truster, R : TrustRel> : KeyVal {
 // TODO if needed parameterized over a TrustedVal to allow multiple sign or check
 /// a content which can sign and check other content, a trust provider
 pub trait Truster : KeyVal<Key = Vec<u8>> {
-  type Internal;
+  type Internal : 'static;
   fn content_sign (&self, to_sign : &[u8]) -> Vec<u8>;
   fn init_content_sign (&Self::Internal, to_sign : &[u8]) -> Vec<u8>;
   fn content_check (&self, tocheckenc : &[u8], sign : &[u8]) -> bool;

@@ -34,7 +34,8 @@ mod querymanager;
 
 /// utility trait to avoid lot of parameters in each struct / fn
 /// kinda aliasing
-pub trait RunningTypes : Send + Sync {
+pub trait RunningTypes : Send + Sync + 'static
+{
   type A : Address;
   type P : Peer<Address = Self::A>;
   type V : KeyVal;
@@ -43,6 +44,21 @@ pub trait RunningTypes : Send + Sync {
   type E : MsgEnc;
   type T : Transport<Address = Self::A>;
 }
+/*pub trait RunningTypes : Send + Sync + 'static 
+ where 
+ <Self::V as KeyVal>::Key : 'static,
+ <Self::P as KeyVal>::Key : 'static,
+ <Self::T as Transport>::ReadStream : 'static,
+ <Self::T as Transport>::WriteStream : 'static,
+{
+  type A : 'static + Address;
+  type P : 'static + Peer<Address = Self::A>;
+  type V : 'static + KeyVal;
+  type M : 'static + PeerMgmtMeths<Self::P, Self::V>;
+  type R : 'static + DHTRules;
+  type E : 'static + MsgEnc;
+  type T : 'static + Transport<Address = Self::A>;
+}*/
 
 // TODO implement : client mode in rules!!
 #[derive(Debug,PartialEq,Eq)]
@@ -141,7 +157,7 @@ pub enum ServerMode {
 /// example/fs.rs).
 /// This kind of struct is never use, it is just to a type instead of a
 /// trait in generic parameters.
-struct RunningTypesImpl<
+pub struct RunningTypesImpl<
   A : Address,
   P : Peer<Address = A>,
   V : KeyVal,
@@ -149,8 +165,24 @@ struct RunningTypesImpl<
   R : DHTRules,
   E : MsgEnc, 
   T : Transport<Address = A>>
-  (PhantomData<A>,PhantomData<R>,PhantomData<P>,PhantomData<V>,PhantomData<M>,PhantomData<T>, PhantomData<E>);
-
+  (PhantomData<(A,R,P,V,M,T,E)>);
+/*
+impl<
+  A : 'static + Address,
+  P : 'static + Peer<Address = A>,
+  V : 'static + KeyVal,
+  M : 'static + PeerMgmtMeths<P, V>, 
+  R : 'static + DHTRules,
+  E : 'static + MsgEnc, 
+  T : 'static + Transport<Address = A>>
+     RunningTypes for RunningTypesImpl<A, P, V, M, R, E, T> 
+      where 
+ <V as KeyVal>::Key : 'static,
+ <P as KeyVal>::Key : 'static,
+ <T as Transport>::ReadStream : 'static,
+ <T as Transport>::WriteStream : 'static,
+     {
+*/
 impl<
   A : Address,
   P : Peer<Address = A>,
@@ -159,7 +191,8 @@ impl<
   R : DHTRules,
   E : MsgEnc, 
   T : Transport<Address = A>>
-     RunningTypes for RunningTypesImpl<A, P, V, M, R, E, T> {
+     RunningTypes for RunningTypesImpl<A, P, V, M, R, E, T> 
+     {
   type A = A;
   type P = P;
   type V = V;
@@ -434,7 +467,7 @@ let cleantkstor = tkvstore.clone();
 
 // Query manager is allways start TODO a parameter for not starting it (if running dht in full
 // proxy mode for instance)
-thread::scoped (move ||{
+thread::spawn (move ||{
   querymanager::start::<RT,_,_>(&rquery, &cleantquery, &cleantpeer, &cleantkstor, querycache, cleandelay);
 });
 let sem = Arc::new(Semaphore::new(-1)); // wait end of two process from shutdown TODO replace that by joinhandle wait!!!
@@ -449,7 +482,7 @@ let tpeer3 = tpeer.clone();
 let rcsp = rc.clone();
 let rpsp = rp.clone();
 let semsp = sem.clone();
-thread::scoped (move ||{
+thread::spawn (move ||{
   peermanager::start (rcsp, route, &rpeer,rpsp, semsp)
 });
 
@@ -457,7 +490,7 @@ thread::scoped (move ||{
 let rcst = rc.clone();
 let rpst = rp.clone();
 let semsp2 = sem.clone();
-thread::scoped (move ||{
+thread::spawn (move ||{
   kvmanager::start (rcst, kvst, &rkvstore,rpst, semsp2);
 });
 
@@ -466,7 +499,7 @@ let tpeer2 = tpeer3.clone();
 let tpeer4 = tpeer3.clone();
 let rcsp2 = rc.clone();
 let rpsp2 = rp.clone();
-thread::scoped (move ||{
+thread::spawn (move ||{
   server::servloop(rcsp2, rpsp2)
 });
 
@@ -482,7 +515,7 @@ for p in bootNodes.iter() {
   tpeer3.send(PeerMgmtMessage::PeerPing(p.clone(),None)); // TODO avoid cloning node... eg try maping to collection of arc
 }
 
-DHT{
+DHT {
   rp : RunningProcesses {
     peers : tpeer4,
     queries : resulttquery,
