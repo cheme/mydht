@@ -31,10 +31,31 @@ pub trait Key : Encodable + Decodable + fmt::Debug + Eq + Clone + 'static {
 
 // TODO get keyref in keyval as parametric function (keyref could not be associated type as not
 // 'static).
+// TODO without associated lifetime, passing lifetime to all keyval is to heavy and conversion
+// trait is to hacky
 pub trait KeyRef : Encodable + fmt::Debug + Eq + Clone {
-  type Key : Key;
-  fn newKey(&self) -> Self::Key;
 }
+
+impl<'a> KeyRef for &'a [u8] {
+}
+
+impl<'a> KeyRef for &'a str {
+}
+
+impl<'a, K : Key> KeyRef for &'a K {
+}
+
+impl<'a, K1 : KeyRef, K2 : KeyRef> KeyRef for (K1,K2) {
+}
+
+/*
+impl<'a, K : Key> AsKeyRef<'a> for &'a K {
+  type KeyRef = Self;
+  fn as_keyref(&'a self) -> Self::KeyRef {
+    self
+  }
+}
+*/
 
 // TODO remove for 'as_key_ref'
 impl<K : Encodable + Decodable + fmt::Debug + Eq + Clone + 'static> Key for K {

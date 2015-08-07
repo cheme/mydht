@@ -2,15 +2,17 @@
 //! In this model only one thread read (on receive connection)
 //! ping is not use to establish connection (in disconnected when receiving ping user is online and
 //! we send back ping if we didn't know him (eg find_value on ourself for bt proto)
-//! Do not allow attachment.
-//! TODO A mode to manage bigger message (in more than one buff) could be added 
-//! by keeping a map of read stream, and add content in them VecDeque (need a max size for security and a thread synch).
-//! This should be a transport variant.
-//! TODO reader is very inefficient due to current lack of init / pushback of vec in vecdeque
-//! TODO different from tcp_loop in sense that we need atomic messages -> define it ?? -> then
-//! client info do not require a mutex, or make it default and transport tcp_loop include a mutex
-//! by default and there is no need for ClientSender -> bad idea as we then got useless mutex in
-//! tcploop threaded (pool) client mode!!!.
+//! Do not allow attachment (or at least not big attachment).
+//!
+//! Message is send/receive as a whole and they should be small enough.
+//!
+//! TODO A mode to manage bigger message (in more than one buff) could be added, it requires
+//! synchronisation : ensure that not two sender to same peer send on the socket.
+//! That should hold (only one sender with a peer as design). But we would need a reader adapter on
+//! stream reception (reader on some channel same kind of synch as for tcp_loop but with a reader
+//! adapter). TODO this should be another transport since reader should be connected (could loop on
+//! it (default do_spawn_rec)).
+//!
 //!
 
 use super::{Transport,ReadTransportStream,WriteTransportStream};
@@ -34,7 +36,9 @@ use std::slice::bytes::copy_memory;
 pub struct Udp {
   // TODO there need to be a way to avoid this Mutex!!! (especially since we read at a single
   // location TODO even consider unsafe solutions
+  /// actual socket for reception
   sock : UdpSocket,  // reference socket the only one to do receive
+  /// size of buff for msg reception (and maxsize for sending to) 
   buffsize : usize,
   spawn : bool,
 }
@@ -43,7 +47,6 @@ impl Udp {
   /// warning bind on initialize
   pub fn new (p : &SocketAddr, s : usize, spawn : bool) -> IoResult<Udp> {
     let mut socket = try!(UdpSocket::bind(p));
- 
     Ok(Udp {
       sock : socket,
       buffsize : s,
@@ -60,12 +63,20 @@ struct UdpStream {
   with : SocketAddr, // old io could be clone , with new io manage protection ourselve
   //if define we can send overwhise it is send in server : panic!
   buf : Vec<u8>,
+  maxsize : usize,
 }
 
 // TODO set buff in  stream for attachment, large frame... (requires ordering header...)
 impl Write for UdpStream {
     fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
-      self.buf.write(buf)
+      if self.buf.len() + buf.len() > self.maxsize {
+        Err(IoError::new (
+          IoErrorKind::Other,
+          "Udp writer buffer full",
+        ))
+      } else {
+        self.buf.write(buf)
+      }
     }
     fn flush(&mut self) -> IoResult<()> {
       try!(self.sock.send_to(&self.buf[..], self.with));
@@ -150,10 +161,7 @@ impl Transport for Udp {
             let r = unsafe {
               slice::from_raw_parts(buf.as_ptr(), size).to_vec()
             };
-            // TODO new interface : buf in udpstream so read ok
-            let writesock = try!(self.sock.try_clone());
-            let wh = Some(UdpStream{with : from, sock : writesock,buf : Vec::new()});
-            readHandle(ReadUdpStream(r), wh);
+            readHandle(ReadUdpStream(r), None);
           }else{
             error!("Datagram on udp transport with size {:?} over buff {:?}, lost datagram", size, buffsize);
           }
@@ -170,7 +178,12 @@ impl Transport for Udp {
   fn connectwith(&self, p : &SocketAddr, _ : Duration) -> IoResult<(UdpStream, Option<ReadUdpStream>)> {
     let readso = try!(self.sock.try_clone());
     // get socket (non connected cannot timeout)
-    Ok((UdpStream{sock : readso, with : p.clone(), buf: Vec::new()},None))
+    Ok((UdpStream {
+      sock : readso,
+      with : p.clone(),
+      buf: Vec::new(),
+      maxsize : self.buffsize,
+    },None))
   }
 
 }

@@ -518,6 +518,7 @@ where <P as Peer>::Address : 'a,
 pub fn receive_msg_tmp<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc>(t : &mut T, e : &E) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
     let m = try!(e.decode_from(t));
     let oa = try!(e.attach_from(t));
+    t.end_read_msg();
     Ok((m,oa))
 }
 

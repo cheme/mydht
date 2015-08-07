@@ -15,7 +15,7 @@ pub mod tcp;
 pub mod udp;
 pub type Attachment = PathBuf;
 #[cfg(test)]
-pub mod local_managed_transport;
+pub mod local_transport;
 #[cfg(test)]
 pub mod test;
 
@@ -94,6 +94,11 @@ pub trait ReadTransportStream : Send + Read + 'static {
   /// Could only be used to run action post receive.
   fn rec_end_condition(&self) -> bool;
 
+
+  /// Call after each msg successfull reading : usefull for some transport
+  /// (non managed so we can start another server fn (if first was spawn))
+  #[inline]
+  fn end_read_msg(&mut self) -> () {()}
 
 }
 
