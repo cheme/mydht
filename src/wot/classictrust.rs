@@ -5,8 +5,10 @@ use utils::NULL_TIMESPEC;
 use super::WotTrust;
 use num::traits::{Bounded,ToPrimitive};
 #[cfg(test)]
+#[cfg(feature="openssl-impl")]
 use utils;
 #[cfg(test)]
+#[cfg(feature="openssl-impl")]
 use std::net::Ipv4Addr; 
 
 
@@ -211,7 +213,7 @@ impl<TP : KeyVal<Key=Vec<u8>>> WotTrust<TP> for ClassicWotTrust<TP> {
       let mut nbtrust : Vec<usize> = vec![0usize; rules.len()];
       // first updates
       if from_old_trust < nblevel
-          && from_old_trust >= 0
+          //&& from_old_trust >= 0
           && cap_from_old_sig >= from_old_trust 
           && cap_from_old_sig < nblevel {
         let ix1 = from_old_trust.to_usize().unwrap();

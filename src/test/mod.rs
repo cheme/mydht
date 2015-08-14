@@ -3,7 +3,6 @@
 
 use std::sync::{
   Arc,
-  Mutex,
 };
 use std::thread;
 use DHT;
@@ -13,12 +12,9 @@ use query::simplecache::SimpleCacheQuery;
 use route::inefficientmap::Inefficientmap;
 use transport::local_transport::{TransportTest};
 use transport::{LocalAdd};
-use time::Duration;
 use rules::simplerules::{SimpleRules,DhtRules};
 use procs::{
   RunningContext, 
-  RunningProcesses, 
-  ArcRunningContext, 
   RunningTypes,
   RunningTypesImpl,
 };
@@ -38,7 +34,7 @@ mod diag_tcp;
 mod diag_udp;
 
 
-const dhtrules_default : DhtRules = DhtRules {
+const DHTRULES_DEFAULT : DhtRules = DhtRules {
   randqueryid : false,
   // nbhop = prio * fact
   nbhopfact : 1,
@@ -57,37 +53,37 @@ const dhtrules_default : DhtRules = DhtRules {
 
 
 
-//#[test]
-fn aproxyPeerDiscovery () {
-  let rcs = runningcontext1(5,dhtrules_default.clone());
+#[test]
+fn aproxy_peer_discovery () {
+  let rcs = runningcontext1(5,DHTRULES_DEFAULT.clone());
   let qconf = QueryConf {
     mode : QueryMode::AProxy,
     chunk : QueryChunk::None,
     hop_hist : Some((4,false)),
   };
-  peerConnectScenario(&qconf, 2, rcs)
+  peerconnect_scenario(&qconf, 2, rcs)
 }
 
-//#[test]
-fn amixProxyPeerDiscovery () {
-  let rcs = runningcontext1(5,dhtrules_default.clone());
+#[test]
+fn amix_proxy_peer_discovery () {
+  let rcs = runningcontext1(5,DHTRULES_DEFAULT.clone());
   let qconf = QueryConf {
     mode : QueryMode::AMix(9),
     chunk : QueryChunk::None,
     hop_hist : None,
   };
-  peerConnectScenario(&qconf, 2, rcs)
+  peerconnect_scenario(&qconf, 2, rcs)
 }
 
-//#[test]
-fn asynchPeerDiscovery () {
-  let rcs = runningcontext1(5,dhtrules_default.clone());
+#[test]
+fn asynch_peer_discovery () {
+  let rcs = runningcontext1(5,DHTRULES_DEFAULT.clone());
   let qconf = QueryConf {
     mode : QueryMode::Asynch,
     chunk : QueryChunk::None,
     hop_hist : Some((3,true)),
   };
-  peerConnectScenario(&qconf, 2, rcs)
+  peerconnect_scenario(&qconf, 2, rcs)
 }
 /*struct RunningTypesImpl<
   A : Address,
@@ -123,7 +119,7 @@ fn runningcontext1 (nbpeer : usize, dhtrules : DhtRules) -> Vec<RunningContext<R
 }
 
 /// ration is 1 for all 2 for half and so on.
-fn peerConnectScenario<RT : RunningTypes> (queryconf : &QueryConf, knownratio : usize, contexts : Vec<RunningContext<RT>>) 
+fn peerconnect_scenario<RT : RunningTypes> (queryconf : &QueryConf, knownratio : usize, contexts : Vec<RunningContext<RT>>) 
 where <RT:: P as KeyVal>::Key : Ord + Hash,
       <RT:: V as KeyVal>::Key : Hash
 {
@@ -150,7 +146,7 @@ where <RT:: P as KeyVal>::Key : Ord + Hash,
 
     let mut itern = nodes.iter();
     itern.next();
-    for n in itern{
+    for n in itern {
         // local find 
         let fpeer = fprocs.find_peer(n.get_key(), queryconf, 1); // TODO put in future first then match result (simultaneous search)
         let matched = match fpeer {

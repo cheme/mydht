@@ -145,4 +145,8 @@ pub enum StoragePriority {
   All,
 }
 
+/// A boxed store
+pub type BoxedStore<V> = Box<KVStore<V>>;
 
+/// A boxed store for relations
+pub type BoxedStoreRel<K1,K2,V> = Box<KVStoreRel<K1,K2,V>>;

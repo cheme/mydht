@@ -29,8 +29,12 @@ pub struct Json;
 
 /// a technical limit to protomessage length TODO make it dynamic ( strored in Json struct)
 const MAX_BUFF : usize = 10000000; // use for attachment send/receive -- 21888 seems to be maxsize
-#[derive(RustcDecodable,RustcEncodable)]
-struct has_attachment(bool);
+
+const BUFF_TRUE : [u8; 1] = [1];
+const BUFF_FALSE : [u8; 1] = [0];
+
+//#[derive(RustcDecodable,RustcEncodable)]
+//struct has_attachment(bool);
 
 unsafe impl Send for Json {
 }
@@ -60,10 +64,12 @@ where <P as Peer>::Address : 'a,
   /// attach into will simply add bytes afterward json cont (no hex or base64 costly enc otherwhise
   /// it would be into message)
   fn attach_into<W : Write> (&self, w : &mut W, a : Option<&Attachment>) -> MDHTResult<()> {
-    // TODO static bytes of encoded has some true and same for has some false
-    let has_at = has_attachment(a.is_some());
-    let bytes = json::encode(&has_at).unwrap().into_bytes();
-    try!(w.write_all(&bytes[..]));
+    let has_at = if a.is_some() {
+      BUFF_TRUE
+    } else {
+      BUFF_FALSE
+    };
+    try!(w.write_all(&has_at));
 
     write_attachment(w,a)
   }

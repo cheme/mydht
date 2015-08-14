@@ -27,6 +27,7 @@ use route::{ClientSender};
 use procs::{ClientHandle};
 use procs::server::start_listener;
 use utils::TransientOption;
+use mydhtresult::{Error,ErrorKind};
 
 /// TODO expect problem if pool of server managed by peermgmt & client local to peermgmt : client
 /// create will wait for a reply by its same thread : Pool of server handle is needed in start
@@ -191,7 +192,7 @@ pub fn start<RT : RunningTypes,
           route.update_priority(&nodeid,None,Some(PeerStateChange::Offline));
         };
       },
-      Ok(PeerMgmtMessage::PeerPong(p,prio,sigchal,ows))  => {
+      Ok(PeerMgmtMessage::PeerPong(p,prio,chal,ows))  => {
         if(p.get_key() != rc.me.get_key()) {
           // a ping has been received we need to reply with pong : this may also init the peer
           let nodeid = p.get_key().clone();
@@ -204,28 +205,38 @@ pub fn start<RT : RunningTypes,
           if upd {
             // no need for server info otherwhise server should have run PeerAddFromServer
             let chal = rc.peerrules.challenge(&(*p));
+            // just for distant error handling state : bad
+            let cprio = prio.clone();
             let pstate = PeerState::Ping(chal.clone(),TransientOption(None),prio);
             let mess = ClientMessage::PeerPing(p.clone(), chal);
-            let cliinfo = init_local(&clientmode, ows);
-            route.add_node((p.clone(),pstate,(None,cliinfo)));
-            if(!local) {
-              let cliinfo = get_or_init_client_info::<RT, T>(&p,&rc,& mut route,&rp);
-              cliinfo.send_climsg(mess);
-            } else {
+            if local {
+              let cliinfo = init_local(&clientmode,ows);
+              route.add_node((p.clone(),pstate,(None,cliinfo)));
               if !send_local::<RT,T>(&p,&rc,& mut route,&rp,mess,localspawn) {
                 error!("send_local_ping failure in received ping from server");
+                route.remchan(&nodeid,&rc.transport);
+                route.update_priority(&nodeid,None,Some(PeerStateChange::Offline));
               };
+            } else {
+              init_client_info(&p,&rc,&rp,ows,&clientmode).and_then(|ci|{
+                let r = ci.0.send_climsg(mess);
+                if r.is_ok() {
+                  route.add_node((p.clone(),pstate,(ci.1,Some(ci.0))));
+                } else {
+                  route.add_node((p.clone(),PeerState::Offline(cprio),(None,None)));
+                };
+                r
+              });
             };
- 
             rp.peers.send(PeerMgmtMessage::PeerPing(p.clone(),None));
           } else {
             debug!("Reping no status updates");
           };
           // send pong to cli
-          let mess = ClientMessage::PeerPong(sigchal);
-          if(!local) {
-            let cliinfo = get_or_init_client_info::<RT, T>(&p,&rc,& mut route,&rp);
-            cliinfo.send_climsg(mess);
+          let mess = ClientMessage::PeerPong(chal);
+          if !local {
+            route.get_client_info(&p).and_then(|ci|
+              ci.send_climsg(mess));
           } else {
             if !send_local::<RT,T>(&p,&rc,& mut route,&rp,mess,localspawn) {
               error!("send_local_pong_reply failure from peerman");
@@ -236,30 +247,30 @@ pub fn start<RT : RunningTypes,
         }
       },
       Ok(PeerMgmtMessage::PeerAddFromServer(p,prio,ows,ssend,servinfo))  => {
-        if(p.get_key() != rc.me.get_key()) {
+        if p.get_key() != rc.me.get_key() {
           info!("Adding peer : {:?}, {:?} from {:?}", p, prio, rc.me);
           let nodeid = p.get_key().clone();
           let hasnode = route.has_node(&nodeid);
           debug!("-Update peer prio : {:?}, {:?} from {:?}", p, prio, rc.me);
-          if(!hasnode){
+          if !hasnode {
             debug!("-init up");
             // TODO send peerping??? and put state ping instead plus get client handle for add_node
             let pstate = PeerState::Offline(prio);
-            let (cliinfo,serinfo) = if local || localspawn {
+            let (ocliinfo,serinfo) = if local || localspawn {
               // No init of local since their is no added value to establish connection before
               // sending first frame (return clihandle does not shortcut peermanager).
               // paninc on none (but test avoid it)
-              (init_local(&clientmode, ows).unwrap(),None)
+              (init_local(&clientmode, ows),None)
             } else {
               match init_client_info(&p,&rc,&rp,ows,&clientmode) {
-                Ok(r) => r,
+                Ok(r) => (Some(r.0),r.1),
                 Err(e) => {
                   error!("cannot connect client connection (a server connection was connected but without send handle, putting peer offline");
                   route.remchan(&nodeid,&rc.transport);
                   // update prio
                   route.update_priority(&nodeid,None,Some(PeerStateChange::Offline));
  
-                  break;
+                  (None,None)
                 },
 
               }
@@ -269,14 +280,16 @@ pub fn start<RT : RunningTypes,
             if !serinfo.is_none() {
               panic!("inconsistent transport stream and client mode configuration : a reading stream was created with write stream but another reading stream was created before withou a write stream");
             };
-            let clihandler = cliinfo.new_handle();
-            route.add_node((p,pstate,(Some(servinfo),Some(cliinfo))));
-            // ssend current cliinfo !!! (server is blocked from it)
-            ssend.send(clihandler);
+            ocliinfo.map(|cliinfo|{
+              let clihandler = cliinfo.new_handle();
+              route.add_node((p,pstate,(Some(servinfo),Some(cliinfo))));
+              // ssend current cliinfo !!! (server is blocked from it)
+              ssend.send(clihandler);
+            });
           } else {
             // else do nothing, accept value is not updated and state not updated to
             // TODO change prio to online?? pb skip block...
-            debug!("Reping no status updates");
+            debug!("Readdnode nothing done");
             // TODO ssend current cliinfo
           };
         } else {
@@ -320,18 +333,57 @@ pub fn start<RT : RunningTypes,
         route.query_count_dec(&p.get_key());
       },
       Ok(PeerMgmtMessage::PeerPing(p, ores)) => {
-        if(p.get_key() != rc.me.get_key()) {
-          debug!("Pinging peer : {:?}", p);
-          if(!local) {
-            let chal = rc.peerrules.challenge(&(*p));
-            route.update_priority(&p.get_key(),None,Some(PeerStateChange::Ping(chal.clone(),TransientOption(ores))));
-            let cliinfo = get_or_init_client_info::<RT, T>(&p, & rc , & mut route, & rp);
-            cliinfo.send_climsg(ClientMessage::PeerPing(p,chal)); // TODO error mgmt
+        // TODO some code to share with ping pong (duplicate actually : reform for fn with returned
+        // Result)
+        let nodeid = p.get_key();
+        if nodeid != rc.me.get_key() {
+        let acc = if !route.has_node(&nodeid) {
+          let mut acc = true;
+          // add node
+          let prio = if !heavyaccept {
+            match rc.peerrules.accept(&p, &rp, &rc) {
+              Some(p) => p,
+              None => { 
+                acc = false;
+                PeerPriority::Unchecked
+              },
+            }
           } else {
-            if !send_local_ping::<RT, T>(&p, & rc , & mut route, & rp,localspawn,ores) {
-              error!("send_local_ping failure TODO get error");
-            };
+            PeerPriority::Unchecked
           };
+          if acc {
+            route.add_node((p.clone(),PeerState::Offline(prio),(None,None)));
+          } else {
+            route.add_node((p.clone(),PeerState::Refused,(None,None)));
+          };
+          acc
+        } else {
+          true
+        };
+        // TODO add Blocked??
+        let (toinit, notref) = match route.get_node(&nodeid) {
+          Some(&(_,PeerState::Offline(ref pri), _)) => {
+            (Some(pri.clone()),true)
+          },
+          Some(&(_,PeerState::Refused, _)) => (None,false),
+          _ => (None,true)
+        };
+        let ok = acc && notref && toinit.map_or(true,|pri|{
+          init_client_info(&p,&rc,&rp,None,&clientmode).map(|ci|{
+            route.add_node((p.clone(),PeerState::Offline(pri),(ci.1,Some(ci.0))));
+          }).is_ok()
+        });
+        debug!("Pinging peer : {:?}", p);
+        if ok && !local {
+          let chal = rc.peerrules.challenge(&(*p));
+          route.update_priority(&nodeid,None,Some(PeerStateChange::Ping(chal.clone(),TransientOption(ores))));
+          route.get_client_info(&p).and_then(|ci|
+            ci.send_climsg(ClientMessage::PeerPing(p,chal))); // TODO error mgmt
+        } else if ok {
+          if !send_local_ping::<RT, T>(&p, & rc , & mut route, & rp,localspawn,ores) {
+            error!("send_local_ping failure TODO get error");
+          };
+        };
         } else {
           error!("Trying to ping ourselves");
         }
@@ -381,10 +433,9 @@ pub fn start<RT : RunningTypes,
           for p in peers.iter(){
             let mess =  ClientMessage::KVFind(key.clone(),oquery.clone(), newqueryconf.clone()); // TODO queryconf arc?? + remove newqueryconf.clone() already cloned why the second (bug or the fact that we send)
             if(!local) {
-              // get connection
-              let s = get_or_init_client_info::<RT, T>(p, & rc , & mut route, & rp);
+              route.get_client_info(p).and_then(|ci|
+                ci.send_climsg(mess));
               // TODO mult ix
-              s.send_climsg(mess);
             } else {
               send_local::<RT, T> (p, & rc , & mut route, & rp, mess, localspawn);
             };
@@ -440,7 +491,7 @@ pub fn start<RT : RunningTypes,
                 let srp = rp.store.clone();
                 // TODO remove this spawn even if dealing with mutex (too costy?? )
                 thread::spawn(move || {
-                  println!("!!!!found not sent unlock semaphore");
+                  debug!("!!!!found not sent unlock semaphore");
                   if (r != None) {
                     if querysp.set_query_result(Either::Left(r),&srp) {
                       querysp.release_query(& ssp);
@@ -457,10 +508,10 @@ pub fn start<RT : RunningTypes,
                 match queryconf.modeinfo.get_rec_node().map(|r|r.clone()) {
                   Some (ref recnode) => {
                     let mess = ClientMessage::StoreNode(queryconf.modeinfo.to_qid(), r);
-                    if (!local){
+                    if !local {
                       // send result directly
-                      let s = get_or_init_client_info::<RT, T>(&recnode.clone(), & rc , & mut route, & rp);
-                      s.send_climsg(mess);
+                      route.get_client_info(&recnode.clone()).and_then(|ci|
+                        ci.send_climsg(mess));
                     } else {
                        send_local::<RT, T> (recnode, & rc , & mut route, & rp, mess, localspawn);
                     };
@@ -482,10 +533,10 @@ pub fn start<RT : RunningTypes,
              };
              for p in peers.iter() {
                let mess = ClientMessage::PeerFind(nid.clone(),oquery.clone(), newqueryconf.clone()); // TODO queryconf arc??
-               if (!local) {
+               if !local {
                  // get connection
-                 let s = get_or_init_client_info::<RT, T>(p, & rc , & mut route, & rp);
-                 s.send_climsg(mess);
+                 route.get_client_info(p).and_then(|ci|
+                   ci.send_climsg(mess));
                } else {
                  send_local::<RT, T> (p, & rc , & mut route, & rp, mess, localspawn);
                };
@@ -514,9 +565,9 @@ pub fn start<RT : RunningTypes,
            Some (rec)  => {
              if rec.get_key() != rc.me.get_key() { 
                let mess = ClientMessage::StoreNode(qconf.modeinfo.to_qid(), result);
-               if(!local){
-                 let s = get_or_init_client_info::<RT, T>(& rec, & rc , & mut route, & rp); // TODO do something for not having to create an arc here eg arc in qconf + previous qconf clone
-                 s.send_climsg(mess);
+               if !local {
+                 route.get_client_info(& rec).and_then(|ci|
+                   ci.send_climsg(mess)); // TODO do something for not having to create an arc here eg arc in qconf + previous qconf clone
                } else {
                  send_local::<RT, T> (&rec, & rc , & mut route, & rp, mess, localspawn);
                };
@@ -536,9 +587,9 @@ pub fn start<RT : RunningTypes,
            Some (rec) => {
              if rec.get_key() != rc.me.get_key() {
                let mess = ClientMessage::StoreKV(qconf.modeinfo.to_qid(), qconf.chunk, result);
-               if (!local) {
-                 let s = get_or_init_client_info::<RT, T>(& rec, & rc , & mut route, & rp);
-                 s.send_climsg(mess);
+               if !local {
+                 route.get_client_info(& rec).and_then(|ci|
+                   ci.send_climsg(mess));
                } else {
                  send_local::<RT, T> (& rec, & rc , & mut route, & rp, mess, localspawn);
                };
@@ -592,11 +643,14 @@ fn send_local<RT : RunningTypes, T : Route<RT::A,RT::P,RT::V,RT::T>>
  
  let key = p.get_key();
  let (olspawn, res) = match route.get_node(&key) {
+   Some(&(_,PeerState::Refused,_)) => {
+      info!("#####refused : client do not send");
+      (None,false)
+   },
    Some(&(_,PeerState::Blocked(_),_)) => {
       // if existing consider ping true : normaly if offline or block , no channel
       info!("#####blocked : client do not send");
-
-      (None,false) // TODO avoid this clone
+      (None,false)
    },
    Some(&(_,_,ref secli)) => {
      if localspawn {
@@ -748,84 +802,6 @@ fn init_client_info<'a, RT : RunningTypes>
   }
 }
  
-#[inline]
-// TODO replace to get 
-fn get_or_init_client_info<'a, RT : RunningTypes, T : Route<RT::A,RT::P,RT::V,RT::T>>
- (p : & Arc<RT::P> , 
-  rc : & ArcRunningContext<RT>, 
-  route : &'a mut T , 
-  rp : & RunningProcesses<RT>,
- ) -> &'a ClientInfo<RT::P,RT::V,RT::T> {
-    let (newci,newpeer) : (Option<ClientInfo<RT::P,RT::V,RT::T>>,Option<RT::P>) = match route.get_node(&p.get_key()) {
-      Some(&(_,_,(_,Some(ref ci)))) => {
-        return ci;
-      },
-      Some(&(_,_,(_,None))) => {
-        // TODO create client info
-        panic!("todo");
-      },
-      None => {
-        // TODO create client info
-        panic!("todo");
-      },
-    };
-    // TODO  if newpeer add peer to route, if only newci : add new ci to route
-
-    // TODO get ref from route
-
-        panic!("todo");
-    }
- /* 
-    Some(&(_,PeerPriority::Blocked,_,_))| Some(&(_,PeerPriority::Offline,_,_)) => {
-   // TODO refactor : client info cannot be clone so we may update diferently
-let (upd, s) = match route.get_node(&p.get_key()) {
-  Some(&(_,PeerPriority::Blocked,_,_))| Some(&(_,PeerPriority::Offline,_,_)) => {
-    // retry connecting & accept for block
-    let (tcl,rcl) = channel();
-    debug!("##pingtrue");
-    (Some(rcl), ClientInfo::Threaded(tcl,0))
-  },
-  // TODO new sendre of clinet
-  Some(&(_,_,_, Some(ref s))) => {
-    
-     debug!("#####get or init find with chanel");
-     (None, (*s).clone()) // TODO avoid this clone
-    
-  },
-  None | Some(&(_, _, _,None)) => {
-  let (tcl,rcl) = channel();
-  (Some(rcl), ClientInfo::Threaded(tcl,0))
-  },
- };
- match upd {
-     Some(rcl) => {
-
-     debug!("#####putting channel);
-     route.add_node((p.clone(),PeerPriority::Offline,None,Some(s.clone())));
-
-
-  let tcl3 = s.clone();
-
-  // dup value for spawn TODO switch to arc!!!
-  let rpsp = rp.clone();
-  //when tcl store later
-  let rcsp = rc.clone();
-  let psp = p.clone();
-  thread::spawn (move || {client::start::<RT>(psp,Some(tcl3), Some(rcl), rcsp, rpsp, ping, pingres, None, true)});
-     },
-     None => {
-       // we found an existing channel with seemlessly open connection
-      pingres.map(|ares|{
-              utils::ret_one_result(&ares, true)
-      });
-
-     },
- };
- s.clone()
-    let (tcl,rcl) = channel();
-    tcl
-}
-*/
 
 #[inline]
 fn update_lastsent_conf<P : Peer> ( queryconf : &QueryMsg<P>,  peers : &Vec<Arc<P>>, nbquery : u8) -> QueryMsg<P> {
@@ -860,6 +836,7 @@ fn update_lastsent_conf<P : Peer> ( queryconf : &QueryMsg<P>,  peers : &Vec<Arc<
   };
   newqueryconf
 }
+
 #[inline]
 pub fn init_local<P : Peer, V : KeyVal, T : Transport> (cm : &ClientMode, ows : Option<T::WriteStream>) -> Option<ClientInfo<P,V,T>> {
   match cm {

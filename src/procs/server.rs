@@ -259,7 +259,7 @@ fn request_handler <RT : RunningTypes>
           // TODO on malformed message send blocked instead!!
           //rp.peers.send(PeerMgmtMessage::PeerRemFromServer(p.clone(),PeerStateChange::Blocked));
           rp.peers.send(PeerMgmtMessage::PeerRemFromServer(p.clone(),PeerStateChange::Offline))
-        }).unwrap();
+        }).is_none();
 
         // TODO different result : warn on malformed message 
         break;
@@ -292,8 +292,14 @@ fn request_handler <RT : RunningTypes>
                 let (tx,rx) = mpsc::sync_channel(1);
                 rp.peers.send(PeerMgmtMessage::PeerAddFromServer(afrom.clone(), pri.clone(), ows, tx, serverinfo_from_handle(&shandle)));
                 ows = None; 
-                let ch = rx.recv().unwrap();
-                chandle = Some(ch);
+                chandle = match rx.recv(){
+                  Ok(ch) => Some(ch),
+                  Err(_) => {
+                    // error in cli then drop of sender
+                    warn!("No cli handle for ping in server");
+                    None
+                  },
+                };
               };
 
               let sendinhandle = match chandle {
@@ -313,8 +319,7 @@ fn request_handler <RT : RunningTypes>
               };
               if !sendinhandle {
                 // chandle is none and not managed
-                let repsig = rc.peerrules.signmsg(&(*rc.me), &chal);
-                rp.peers.send(PeerMgmtMessage::PeerPong(afrom.clone(),pri,repsig,ows));
+                rp.peers.send(PeerMgmtMessage::PeerPong(afrom.clone(),pri,chal,ows));
                 ows = None;
               };
 
@@ -330,7 +335,7 @@ fn request_handler <RT : RunningTypes>
           op.map(|p|{
             debug!("Sending remove message to peermgmt");
             rp.peers.send(PeerMgmtMessage::PeerRemFromServer(p,PeerStateChange::Blocked))
-          }).unwrap();
+          }).is_none();
 
           break;
         }

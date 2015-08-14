@@ -315,7 +315,7 @@ let mut wotstore = WotStore::new(
     mynodewot,
     // TODO this in param conf
     100,
-    trustRul,
+trust_rules,
     );
 let mekey = meSend.get_key();
 let ame = ArcKV(meSend);

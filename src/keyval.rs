@@ -1,6 +1,5 @@
 //! KeyVal common traits
-use bincode;
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 use rustc_serialize::hex::ToHex;
 use utils;
@@ -9,7 +8,6 @@ use std::io::Write;
 use std::io::Read;
 use std::hash::Hash;
 use std::fmt;
-use mydhtresult::Result as MDHTResult;
 use num::traits::ToPrimitive;
 
 /// Non serialize binary attached content.
@@ -99,11 +97,18 @@ pub trait KeyVal : Encodable + Decodable + fmt::Debug + Clone + Send + Sync + Eq
   /// default to nothing specific (reuse of serialize implementation)
   /// When specific treatment, serialize implementation should reuse this with local and no
   /// attachment.
-  ///
-  fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, is_with_att : bool) -> Result<(), S::Error> {
+  /// First boolean indicates if the encoding is locally used (not send to other peers).
+  /// Second boolean indicates if attachment must be added in the encoding (or just a reference
+  /// kept).
+  /// Default implementation encode through encode trait.
+  fn encode_kv<S:Encoder> (&self, s: &mut S, _ : bool, _ : bool) -> Result<(), S::Error> {
     self.encode(s)
   }
-  fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, is_with_att : bool) -> Result<Self, D::Error> {
+  /// First boolean indicates if the encoding is locally used (not send to other peers).
+  /// Second boolean indicates if attachment must be added in the encoding (or just a reference
+  /// kept).
+  /// Default implementation decode through encode trait.
+  fn decode_kv<D:Decoder> (d : &mut D, _ : bool, _ : bool) -> Result<Self, D::Error> {
     Self::decode(d)
   }
 }
@@ -151,8 +156,8 @@ pub trait AsKeyValIf : fmt::Debug + Clone + Send + Sync + Eq + SettableAttachmen
   fn decode_bef<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<Self::BP, D::Error>;
 }
 */
-/// Library adapter to convert AsRef
-pub struct AsRefSt<'a, KV : 'a> (&'a KV);
+// Library adapter to convert AsRef
+//pub struct AsRefSt<'a, KV : 'a> (&'a KV);
 /*
 impl<'a, KV : KeyVal, BP, AKV : AsKeyValIf< KV = KV, BP = BP>> AsRef<KV> for AsRefSt<'a, AKV> {
   fn as_ref (&self) -> &KV {
@@ -254,9 +259,9 @@ impl FileKV {
 
   fn encode_distant<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
     s.emit_struct("FileKV",2, |s| {
-      s.emit_struct_field("hash", 0, |s|{
+      try!(s.emit_struct_field("hash", 0, |s|{
         Encodable::encode(&self.hash, s)
-      });
+      }));
       s.emit_struct_field("name", 1, |s|{
         s.emit_str(&self.name[..])
       })
@@ -277,14 +282,14 @@ impl FileKV {
 
   fn encode_with_file<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
     debug!("encode with file");
-    s.emit_struct("filekv",2, |s| {
-      s.emit_struct_field("hash", 0, |s|{
+    try!(s.emit_struct("filekv",2, |s| {
+      try!(s.emit_struct_field("hash", 0, |s|{
         Encodable::encode(&self.hash, s)
-      });
+      }));
       s.emit_struct_field("name", 1, |s|{
         s.emit_str(&self.name[..])
       })
-    });
+    }));
     match self.get_attachment(){
       Some(path) => {
         let mut f = File::open(path).unwrap();
@@ -307,7 +312,7 @@ impl FileKV {
                       vbuf.truncate(i);
                       Encodable::encode(&vbuf, s)
                     },
-                    Err(e) => panic!("Miscalculated nb of frame on file read issue"),
+                    Err(e) => panic!("Miscalculated nb of frame on file read issue : {:?}", e),
                   }
 
                 }));
@@ -343,7 +348,7 @@ impl FileKV {
             let chunk : Vec<u8> = try!(Decodable::decode(d));
             match file.write_all(&chunk[..]) {
               Ok(_) => Ok(()),
-              Err(e) => Err(d.error("Could not write chunk in dest tmp file")),
+              Err(e) => Err(d.error(format!("Could not write chunk in dest tmp file {}", e).as_str())),
             }
             }));
           };
@@ -351,9 +356,11 @@ impl FileKV {
         })
       }));
 
+      match file.flush() {
+        Ok(_) => (),
+        Err(e) => return Err(d.error(format!("Could flush file in dest tmp : {}", e).as_str())),
+      }
  
-      file.flush();
-
       debug!("File added to tmp {:?}", fp);
       name.and_then(move |n| hash.map (move |h| FileKV{hash : h, name : n, file : fp}))
     })

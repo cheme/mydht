@@ -4,7 +4,7 @@
 use transport::tcp::Tcp;
 use utils::SocketAddrExt;
 use utils;
-use std::net::{Ipv4Addr,SocketAddr};
+use std::net::{Ipv4Addr};
 #[cfg(test)]
 use transport::test::connect_rw_with_optional;
 use time::Duration;

@@ -1,13 +1,14 @@
 use keyval::{KeyVal,Key,Attachment,SettableAttachment};
 use rustc_serialize::{Encodable, Encoder, Decoder};
-use std::iter;
 use utils::TimeSpecExt;
 use utils::NULL_TIMESPEC;
 use super::WotTrust;
 use num::traits::{Bounded,ToPrimitive};
 #[cfg(test)]
+#[cfg(feature="openssl-impl")]
 use utils;
 #[cfg(test)]
+#[cfg(feature="openssl-impl")]
 use std::net::Ipv4Addr; 
 
 #[cfg(test)]

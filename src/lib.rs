@@ -1,18 +1,9 @@
-#![feature(int_uint)]
 #![feature(custom_derive)]
 #![feature(core)]
-#![feature(io)]
-#![feature(collections)]
-#![feature(std_misc)]
-#![feature(file_path)]
 #![feature(fs_walk)]
 #![feature(path_ext)]
-#![feature(net)]
-#![feature(os)]
 #![feature(tcp)]
 #![feature(convert)]
-#![feature(alloc)]
-#![feature(thread_sleep)]
 #![feature(semaphore)]
 #![feature(duration)]
 #![feature(arc_unique)]
@@ -21,7 +12,6 @@
 #![feature(vecmap)] // in tcp_loop
 #![feature(slice_bytes)] // in tcp_loop
 #![feature(split_off)] // in tcp_loop
-#![feature(scoped)] // to avoid static lifetime
 
 #[macro_use] extern crate log;
 extern crate rustc_serialize;
@@ -329,10 +319,9 @@ use std::result::Result as StdResult;
 #[derive(Debug)]
 pub struct Error(pub String, pub ErrorKind, pub Option<Box<ErrorTrait>>);
 
-#[inline]
-pub fn from_io_error<T>(r : StdResult<T, IOError>) -> Result<T> {
+/*pub fn from_io_error<T>(r : StdResult<T, IOError>) -> Result<T> {
   r.map_err(|e| From::from(e))
-}
+}*/
 
 
 impl ErrorTrait for Error {
@@ -418,6 +407,7 @@ pub enum ErrorKind {
   ByteOrderError,
   ExpectedError,
   ChannelSendError,
+  RouteError,
 }
 
 /// Result type internal to mydht

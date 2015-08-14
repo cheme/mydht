@@ -161,7 +161,7 @@ pub fn start_local <RT : RunningTypes>
       },
       Some(r) => {
         let cr : CleanableReceiver<RT> = CleanableReceiver(r,&rp.peers);
-        loop{
+        loop {
           match cr.0.recv() {
             Err(_) => {
               error!("Client channel issue");
@@ -227,8 +227,9 @@ pub fn client_match <RT : RunningTypes>
   ));
 
   match m {
-    ClientMessage::PeerPong(sigchal) => {
-      let mess : ProtoMessage<RT::P,RT::V> = ProtoMessage::PONG(rc.me.borrow(),sigchal);
+    ClientMessage::PeerPong(chal) => {
+      let sign = rc.peerrules.signmsg(&(*rc.me), &chal);
+      let mess : ProtoMessage<RT::P,RT::V> = ProtoMessage::PONG(rc.me.borrow(),sign);
       // simply send
       sendorconnect!(&mess,None);
     },

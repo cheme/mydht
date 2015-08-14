@@ -8,37 +8,20 @@ use num::traits::Bounded;
 use std::collections::VecDeque;
 
 use keyval::{Key,KeyVal,Attachment,SettableAttachment};
-use kvstore::{KVStore,KVStoreRel};
+use kvstore::{KVStore,KVStoreRel,BoxedStore,BoxedStoreRel};
 use kvcache::{KVCache,NoCache};
 use query::cache::CachePolicy;
 use utils::ArcKV;
 use utils::TimeSpecExt;
 use time::Timespec;
 
+use mydhtresult::Result as MDHTResult;
 use super::WotTrust;
 use super::PeerInfoRel;
 use super::{TrustedPeer,Truster,TrustedVal,PeerTrustRel};
 use super::trustedpeer::PeerSign;
 //use std::iter::Iterator;
 use std::collections::hash_map::Iter as HMIter;
-
-#[cfg(test)]
-use utils;
-#[cfg(test)]
-use super::classictrust::ClassicWotTrust;
-#[cfg(test)]
-use super::classictrust::TrustRules;
-#[cfg(test)]
-use query::simplecache::SimpleCache;
-#[cfg(test)]
-use std::collections::HashMap;
-#[cfg(test)]
-#[cfg(feature="openssl-impl")]
-use super::rsa_openssl::RSAPeer;
-#[cfg(test)]
-use std::net::Ipv4Addr; 
-#[cfg(test)]
-use peer::Peer; 
 
 
 
@@ -85,10 +68,6 @@ impl<TP : TrustedPeer> SettableAttachment for WotKV<TP> {
 }
 
 
-//type BoxedStore<V> = Box<KVStore<V, Cache = KVCache<K = <V as KeyVal>::Key, V = V>>>;
-type BoxedStore<V> = Box<KVStore<V>>;
-//type BoxedStoreRel<K1,K2,V> = Box<KVStoreRel<K1,K2,V, Cache = KVCache<K = <V as KeyVal>::Key, V = V>>>;
-type BoxedStoreRel<K1,K2,V> = Box<KVStoreRel<K1,K2,V>>;
 
 /// Storage of Wot info, here we use three substore. The one with relationship,
 /// should be a trensiant internal implementation loaded at start or bd
@@ -539,7 +518,40 @@ fn commit_store(& mut self) -> bool{
 }
 }
 
+
+
 #[cfg(test)]
+#[cfg(feature="openssl-impl")]
+pub mod test {
+  use utils;
+  use num::traits::Bounded;
+  use super::super::classictrust::ClassicWotTrust;
+  use super::super::classictrust::TrustRules;
+  use query::simplecache::SimpleCache;
+  use std::collections::HashMap;
+  use super::super::rsa_openssl::RSAPeer;
+  use std::net::Ipv4Addr; 
+  use peer::Peer;
+  use super::super::WotTrust;
+  use super::super::PeerInfoRel;
+  use super::super::{TrustedPeer,Truster,TrustedVal,PeerTrustRel};
+  use super::super::trustedpeer::PeerSign;
+  use utils::ArcKV;
+  use keyval::{
+    KeyVal,
+    Key,
+  };
+  use super::{
+    WotStore,
+    WotKV,
+    WotK,
+  };
+  use kvstore::{
+    KVStore,
+    KVStoreRel,
+  };
+
+
 fn addpeer_test<TP : TrustedPeer, T : WotTrust<TP>, F : Fn(String) -> ArcKV<TP>> (wotstore : &mut WotStore<TP, T>, name : String, init : &F)-> ArcKV<TP> {
   let stconf = (true,None);
   let pe = init(name);
@@ -551,7 +563,8 @@ fn addpeer_test<TP : TrustedPeer, T : WotTrust<TP>, F : Fn(String) -> ArcKV<TP>>
   pe
 }
 
-#[cfg(test)]
+
+
 fn addpeer_trust<TP : TrustedPeer, T : WotTrust<TP>> (by : &ArcKV<TP>, about : &ArcKV<TP>, wotstore : &mut WotStore<TP, T>, trust : u8, testtrust : u8, tag : Option<usize>) {
   let tagv = tag.unwrap_or(0);
 
@@ -567,21 +580,22 @@ fn addpeer_trust<TP : TrustedPeer, T : WotTrust<TP>> (by : &ArcKV<TP>, about : &
   assert_eq!(testtrust, metrus);
 }
 
-#[test]
-#[cfg(feature="openssl-impl")]
+
+
 fn test_wot_rsa() {
-  let initRSAPeer = |name| ArcKV::new(RSAPeer::new (name, None, utils::sa4(Ipv4Addr::new(127,0,0,1), 8080)));
-  test_wot_gen(&initRSAPeer)
+  let init_rsa_peer = |name| ArcKV::new(RSAPeer::new (name, None, utils::sa4(Ipv4Addr::new(127,0,0,1), 8080)));
+  test_wot_gen(&init_rsa_peer)
 }
-#[cfg(test)]
-fn test_wot_gen<T : TrustedPeer, F : Fn(String) -> ArcKV<T>>(init : &F) 
- {
+
+
+  fn test_wot_gen<T : TrustedPeer, F : Fn(String) -> ArcKV<T>>(init : &F) 
+  {
   // initiate with simple cache map
-  let mut wotpeers = SimpleCache::new(None);
-  let mut wotrels  = SimpleCache::new(None);
-  let mut wotsigns = SimpleCache::new(None);
-  let mut wotrusts : SimpleCache<ClassicWotTrust<T>,HashMap<<ClassicWotTrust<T> as KeyVal>::Key, ClassicWotTrust<T>>> = SimpleCache::new(None);
-  let mut trustRul : TrustRules = vec![1,1,2,2,2];
+  let wotpeers = SimpleCache::new(None);
+  let wotrels  = SimpleCache::new(None);
+  let wotsigns = SimpleCache::new(None);
+  let wotrusts : SimpleCache<ClassicWotTrust<T>,HashMap<<ClassicWotTrust<T> as KeyVal>::Key, ClassicWotTrust<T>>> = SimpleCache::new(None);
+  let trust_rules : TrustRules = vec![1,1,2,2,2];
   let me = init("myname".to_string());
 
 //  let me = ArcKV::new(RSAPeer::new ("myname".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 8080) ));
@@ -592,7 +606,7 @@ fn test_wot_gen<T : TrustedPeer, F : Fn(String) -> ArcKV<T>>(init : &F)
       wotrusts,
       me.clone(),
       100,
-      trustRul,
+      trust_rules,
       );
 
 
@@ -669,10 +683,6 @@ fn test_wot_gen<T : TrustedPeer, F : Fn(String) -> ArcKV<T>>(init : &F)
   // test all other trust TODO does it impact existing (it should but in long term distributed
   // not here) or TODO redesign trust storage to keep trace of its calculus also true for any
   // update
-
-
-
+  }
 
 }
-
-

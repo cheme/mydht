@@ -6,6 +6,7 @@ extern crate openssl;
 extern crate time;
 extern crate bincode;
 
+use mydhtresult::Result as MDHTResult;
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 use rustc_serialize::hex::{ToHex,FromHex};
 use std::io::Result as IoResult;

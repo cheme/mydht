@@ -21,6 +21,9 @@ use msgenc::{MsgEnc};
 use keyval::{Attachment};
 use msgenc::{ProtoMessage};
 use msgenc::send_variant::ProtoMessage as ProtoMessageSend;
+use mydhtresult::Error;
+use mydhtresult::ErrorKind;
+
 
 pub mod inefficientmap;
 
@@ -341,6 +344,24 @@ pub trait Route<A:Address,P:Peer<Address = A>,V:KeyVal,T:Transport<Address = A>>
 
   /// Possible Serialize on quit
   fn commit_store(& mut self) -> bool;
+
+  #[inline]
+  fn get_client_info<'a> (&'a self, p : & Arc<P>) -> MydhtResult<&'a ClientInfo<P,V,T>> {
+
+    match self.get_node(&p.get_key()) {
+      Some(&(_,_,(_,Some(ref ci)))) => {
+        Ok(ci)
+      },
+      Some(&(_,_,(_,None))) => {
+        Err(Error("Error on updating a client in route, no client info".to_string(), ErrorKind::RouteError, None))
+      },
+      None => {
+        Err(Error("Error on updating a client in route, no client".to_string(), ErrorKind::RouteError, None))
+      }
+    }
+}
+
+
 }
 
 // offlines, get_pool_nodes returningoffline if needed.

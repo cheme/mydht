@@ -23,9 +23,9 @@ use query::cache::CachePolicy;
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::path::PathBuf;
+use kvstore::BoxedStore;
 
-//type BoxedStore<V> = Box<KVStore<V, Cache = KVCache<K = <V as KeyVal>::Key, V = V> >>;
-pub type BoxedStore<V> = Box<KVStore<V>>;
+
 /// File system based storage, it is hash related and need a supporting keystore to run (to manage
 /// hash - path association).
 /// This is an example of a storage with attachment.

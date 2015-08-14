@@ -3,14 +3,13 @@
 
 extern crate bincode;
 
-use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
+use rustc_serialize::{Encoder,Encodable,Decoder};
 use keyval::{KeyVal};
 use utils::ArcKV;
 use utils::SocketAddrExt;
 use utils::{TimeSpecExt};
 use keyval::{Attachment,SettableAttachment};
-use super::{TrustedPeer,Truster,TrustedVal,PeerTrustRel};
-use peer::Peer;
+use super::{TrustedPeer,TrustedVal,PeerTrustRel};
 
 
 #[derive(RustcEncodable,Debug)]
