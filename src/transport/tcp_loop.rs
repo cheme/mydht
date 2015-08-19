@@ -69,7 +69,7 @@ use std::sync::Arc;
 use std::sync::Condvar;
 use std::sync::PoisonError;
 use std::error::Error;
-use utils::{OneResult,new_oneresult,ret_one_result,clone_wait_one_result,clone_wait_one_result_ifneq_timeout_ms,clone_wait_one_result_timeout_ms,one_result_val_clone,change_one_result};
+use utils::{OneResult,new_oneresult,ret_one_result,clone_wait_one_result,clone_wait_one_result_ifneq_timeout_ms,clone_wait_one_result_timeout_ms,one_result_val_clone,change_one_result,one_result_spurious};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::io::FromRawFd;
 #[cfg(feature="with-extra-test")]
@@ -137,8 +137,8 @@ impl StreamInfo {
 }
 
 
-/// tread state : true if something to read
-pub type ThreadState = bool;
+/// tread state : true if something to read (true of spurious wakeout)
+pub type ThreadState = ();
 /*
 #[derive(PartialEq,Eq,Clone)]
 /// TODO state must be simplier to avoid race over oneresult :
@@ -239,7 +239,7 @@ impl<'a,C> Handler for MyHandler<'a,C>
       HandlerMessage::EndRead(tok, rs) => {
         match self.tokens.get(&tok.0) {
           Some(&StreamInfo::Threaded(ref state)) => {
-            let cont = one_result_val_clone(state);
+            let cont = one_result_spurious(state);
             if cont.unwrap() {
               (self.readhandler)(rs, None);
             } else {
@@ -254,8 +254,8 @@ impl<'a,C> Handler for MyHandler<'a,C>
       },
       HandlerMessage::NewConnTh(r, readst) => {
         let tok = self.new_token();
-        //let sync = Arc::new((Mutex::new(ThreadState::Init),Condvar::new()));
-        let sync = Arc::new((Mutex::new(false),Condvar::new()));
+        // we use only spurious wakeout bool
+        let sync = new_oneresult(());
         // TODO error management
         event_loop.register_opt(&readst, tok, EventSet::readable(), PollOpt::edge());
         let si = StreamInfo::Threaded(sync.clone());
@@ -348,7 +348,7 @@ impl<'a,C> Handler for MyHandler<'a,C>
               debug!("  - With {:?}", s.peer_addr());
               let tok = self.new_token();
               //let sync = Arc::new((Mutex::new(ThreadState::Init),Condvar::new()));
-              let state = Arc::new((Mutex::new(false),Condvar::new()));
+              let state = new_oneresult(());
               // TODO error management
               match event_loop.register_opt(&s, tok, EventSet::readable(), PollOpt::edge()) {
                 Err(e) => {
@@ -386,7 +386,7 @@ impl<'a,C> Handler for MyHandler<'a,C>
             (self.readhandler)(rs, None);
           },
           None => {
-            ret_one_result(state, true);
+            ret_one_result(state, ());
           },
         };
       },
@@ -458,24 +458,35 @@ impl Transport for Tcp {
    let ch = {
     let r = match self.channel.0.lock() {
       Ok(mut guard) => {
-        if guard.is_none() {
-          match self.channel.1.wait(guard) {
-            Ok(mut r) => {
-              r
-            },
-            Err(_) => {error!("Condvar issue for return res"); 
-             return Err(IoError::new(IoErrorKind::Other, "condvar issue in connect"));
-            },
-          }
+        if guard.0.is_none() {
+          let mut rguard = guard;
+          loop {
+            match self.channel.1.wait(rguard) {
+              Ok(mut r) => {
+                if r.1 {
+                  r.1 = false;
+                  rguard = r;
+                  break;
+                } else {
+                  debug!("spurious wakeout");
+                  rguard = r;
+                };
+              },
+              Err(_) => {error!("Condvar issue for return res"); 
+                return Err(IoError::new(IoErrorKind::Other, "condvar issue in connect"));
+              },
+            }
+          };
+          rguard
         } else {
           guard
         }
       },
       Err(poisoned) => {error!("poisonned mutex on one res");
-             return Err(IoError::new(IoErrorKind::Other, "condvar issue in connect"));
+        return Err(IoError::new(IoErrorKind::Other, "condvar issue in connect"));
       },
    };
-   match *r {
+   match r.0 {
         None => {
           // not initialized event loop,
           let msg = "Event loop of tcp loop not initialized, server process may not have start properly";
@@ -487,7 +498,7 @@ impl Transport for Tcp {
             ch.send(HandlerMessage::NewConnTh(sch, s));
             ch.clone()
           } else {
-            let sync = Arc::new((Mutex::new(None),Condvar::new()));
+            let sync = new_oneresult(None);
             ch.send(HandlerMessage::NewConnCo(sync.clone()));
             ch.clone()
           }
@@ -553,13 +564,26 @@ impl ReadTcpStream {
         },
       };
       if nb == 0 {
-         match or.1.wait_timeout_ms(guard, *to) {
-           Ok(mut r) => {
-             *r.0 = false;
-             (r.1,0)
-           },
-           Err(_) => {error!("Condvar issue for return res"); (false,0)}, 
-         }
+        let mut res = (false,0);
+        loop {
+          guard = match or.1.wait_timeout_ms(guard, *to) {
+            Ok(mut r) => {
+              if (r.0).1 {
+                (r.0).1 = false;
+                res = (r.1,0);
+                break;
+              } else {
+                debug!("spurious wakeout");
+              };
+              r.0
+            },
+            Err(_) => {
+              error!("Condvar issue for return res"); 
+              break;
+            },
+          };
+        };
+        res
       } else {
         (false,nb)
       }

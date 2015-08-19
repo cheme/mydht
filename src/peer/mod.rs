@@ -1,16 +1,10 @@
-use std::io::Result as IoResult;
 use std::sync::Arc;
-use std::sync::mpsc::{Sender,Receiver};
-use std::net::{ToSocketAddrs, SocketAddr};
-use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
-use procs::mesgs::{PeerMgmtMessage,KVStoreMgmtMessage};
+use rustc_serialize::{Encoder,Encodable,Decoder};
 use std::string::String;
-use std::str::FromStr;
-use procs::{RunningProcesses,RunningContext,ArcRunningContext,RunningTypes};
-use msgenc::{MsgEnc};
-use transport::{Transport,Address};
+use procs::{RunningProcesses,ArcRunningContext,RunningTypes};
+use transport::{Address};
 use keyval::KeyVal;
-use utils::{OneResult,ret_one_result};
+use utils::{OneResult,ret_one_result,unlock_one_result};
 use utils::TransientOption;
 
 pub mod node;
@@ -77,7 +71,7 @@ impl Drop for PeerState {
         debug!("Drop of PeerState");
         match self {
           &mut PeerState::Ping(_,ref mut or,_) => {
-            or.0.as_ref().map(|r|ret_one_result(&r,false)).is_some();
+            or.0.as_ref().map(|r|unlock_one_result(&r,false)).is_some();
             ()
           },
           _ => (),

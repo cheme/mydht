@@ -1,13 +1,43 @@
 //! Run existing mydht Tests over a udp transport (with true sockets)
 //!
-
+use msgenc::bincode::Bincode;
+use msgenc::MsgEnc;
+use transport::Transport;
 use transport::udp::Udp;
 use utils::SocketAddrExt;
 use utils;
-use std::net::{Ipv4Addr};
+use keyval::KeyVal;
+use std::net::{SocketAddr,Ipv4Addr};
+use kvstore::StoragePriority;
+use query::{QueryConf,QueryMode,QueryChunk,QueryPriority};
+use super::{
+  initpeers,
+  ALLTESTMODE,
+  DHTRULES_DEFAULT,
+};
+use peer::test::TestingRules;
+use peer::node::Node;
+use DHT;
+use peer::PeerMgmtMeths;
+use procs::RunningTypes;
+use std::marker::PhantomData;
+use rules::simplerules::SimpleRules;
+use num::traits::ToPrimitive;
+
 #[cfg(test)]
 use transport::test::connect_rw_with_optional_non_managed;
 
+struct RunningTypesImpl<M : PeerMgmtMeths<Node, Node>, T : Transport, E : MsgEnc> (PhantomData<(M,T,E)>);
+
+impl<M : PeerMgmtMeths<Node, Node>, T : Transport<Address=SocketAddr>, E : MsgEnc> RunningTypes for RunningTypesImpl<M, T, E> {
+  type A = SocketAddr;
+  type P = Node;
+  type V = Node;
+  type M = M;
+  type R = SimpleRules;
+  type E = E;
+  type T = T;
+}
 
 #[test]
 fn connect_rw () {
@@ -31,5 +61,45 @@ fn connect_rw_nospawn () {
   let tcp_transport_2 : Udp = Udp::new (&a2, 500, false).unwrap();
 
   connect_rw_with_optional_non_managed(tcp_transport_1,tcp_transport_2,&a1,&a2,false);
+}
+
+fn initpeers_udp<M : PeerMgmtMeths<Node, Node> + Clone> (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : M) -> Vec<(Node, DHT<RunningTypesImpl<M,Udp,Bincode>>)>{
+  let mut nodes = Vec::new();
+  let mut transports = Vec::new();
+
+  for i in 0 .. nbpeer {
+    let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), start_port + i.to_u16().unwrap());
+    let udp_transport = Udp::new(&addr,2048,true).unwrap(); // here udp with a json encoding with last sed over a few hop : we need a big buffer
+    transports.push(udp_transport);
+    nodes.push(Node {nodeid: "NodeID".to_string() + &(i + 1).to_string()[..], address : SocketAddrExt(addr)});
+  };
+  initpeers(nodes, transports, map, meths, DHTRULES_DEFAULT.clone(),Bincode,false)
+}
+
+#[test]
+fn testPeer2hopfindval_udp () {
+    let nbpeer = 4;
+    // addr dummy (used as keyval so no ping validation)
+    let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), 999);
+    let val = Node {nodeid: "to_find".to_string(), address : SocketAddrExt(addr)};
+
+
+
+    let map : &[&[usize]] = &[&[],&[1,3],&[],&[3]];
+
+    let mut startport = 73440;
+    let prio = 1;
+    let peers = initpeers_udp(startport,nbpeer, map, TestingRules::new_no_delay());
+    let ref dest = peers.get(nbpeer -1).unwrap().1;
+    for conf in ALLTESTMODE.iter(){
+      let queryconf = QueryConf {
+        mode : conf.clone(), 
+        chunk : QueryChunk::None, 
+        hop_hist : Some((7,false))
+      };
+      assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
+      let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), &queryconf, prio,StoragePriority::NoStore, 1).pop().unwrap_or(None);
+      assert_eq!(res, Some(val.clone()));
+    }
 }
 

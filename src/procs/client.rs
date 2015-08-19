@@ -4,35 +4,24 @@
 
 
 
-use rustc_serialize::json;
 use procs::mesgs::{self,PeerMgmtMessage,ClientMessage,ClientMessageIx};
-use std::fs::File;
-use std::io::Result as IoResult;
 use mydhtresult::Result as MydhtResult;
-use peer::{PeerMgmtMeths, PeerPriority,PeerStateChange,PeerState};
-use std::str::from_utf8;
-use procs::{peermanager,RunningContext,RunningProcesses,ArcRunningContext,RunningTypes};
+use peer::{PeerMgmtMeths,PeerStateChange};
+use procs::{RunningProcesses,ArcRunningContext,RunningTypes};
 use time::Duration;
-use std::sync::{Arc,Semaphore,Condvar,Mutex};
-use transport::TransportStream;
-use transport::WriteTransportStream;
+use std::sync::{Arc};
 use transport::Transport;
-use keyval::{Attachment,SettableAttachment};
+//use keyval::{Attachment,SettableAttachment};
 use std::sync::mpsc::{Sender,Receiver};
-use query::{self,QueryMode,QueryChunk,QueryModeMsg};
+//use query::{self,QueryMode,QueryChunk,QueryModeMsg};
+use query::QueryChunk;
 use peer::Peer;
 use keyval::KeyVal;
-use utils::{self,OneResult,receive_msg,Either};
-use std::net::{SocketAddr};
 use msgenc::{MsgEnc,DistantEncAtt,DistantEnc};
-use procs::server;
-use std::thread::Thread;
-use route::ClientInfo;
 use procs::server::start_listener;
 use procs::server::{serverinfo_from_handle};
 use route::{ClientSender};
 use route::send_msg;
-use utils::ArcKV;
 use msgenc::send_variant::ProtoMessage;
 use std::borrow::Borrow;
 

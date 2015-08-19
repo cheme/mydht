@@ -7,29 +7,26 @@
 
 
 
-use rustc_serialize::json;
 use procs::mesgs::{PeerMgmtInitMessage,PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage,ServerPoolMessage,ClientMessage};
 use msgenc::{ProtoMessage};
-use procs::{RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
-use peer::{Peer,PeerMgmtMeths,PeerPriority,PeerState,PeerStateChange};
-use std::str::from_utf8;
+use procs::{ArcRunningContext,RunningProcesses,RunningTypes};
+use peer::{Peer,PeerMgmtMeths,PeerPriority,PeerStateChange};
 use transport::ReadTransportStream;
-use transport::WriteTransportStream;
 use transport::Transport;
-use std::sync::{Mutex,Semaphore,Arc,Condvar};
-use std::sync::mpsc::{SyncSender,Sender,Receiver};
+use std::sync::{Mutex,Arc};
+use std::sync::mpsc::{Sender};
 use std::sync::mpsc;
 use std::thread;
-use query::{QueryMsg, QueryMode, QueryPriority, QueryChunk, QueryModeMsg};
+use query::{QueryMsg,QueryModeMsg};
 use rules::DHTRules;
 use time::Duration;
 use query;
-use query::{QueryID};
-use utils;
-use keyval::{Attachment,SettableAttachment};
+//use query::{QueryID};
+//use utils;
+use keyval::{SettableAttachment};
+//use keyval::{Attachment,SettableAttachment};
 use keyval::{KeyVal};
-use msgenc::{MsgEnc,DistantEncAtt,DistantEnc};
-use utils::{send_msg,receive_msg};
+use utils::{receive_msg};
 use num::traits::ToPrimitive;
 use std::io::Result as IoResult;
 use procs::ServerMode;
@@ -179,8 +176,6 @@ pub fn servloop <RT : RunningTypes>
           let rp_thread = rp.clone();
           let rc_thread = rc.clone();
           thread::spawn (move || {
-            let rcref = &rc_thread;
-            let rpref = &rp_thread;
             request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::Local, None, false)
      
           });
@@ -195,19 +190,6 @@ pub fn servloop <RT : RunningTypes>
     // loop in transport receive function TODO if looping : start it from PeerManager thread
     rc.transport.start(spserv);
 }
-fn request_handler2 <RT : RunningTypes>
- (mut s1 : <RT::T as Transport>::ReadStream, 
-  rc : &ArcRunningContext<RT>, 
-  rp : &RunningProcesses<RT>,
-  mut ows : Option<<RT::T as Transport>::WriteStream>,
-  shandle : ServerHandle<RT::P, <RT::T as Transport>::ReadStream>,
-  otimeout : Option<Duration>,
-  mult : bool,
- ) -> IoResult<()>  {
-   Ok(())
- }
-
-
 
 
 /// Spawn thread either for one message (non connected) or for one connected peer (loop on stream
@@ -287,12 +269,13 @@ fn request_handler <RT : RunningTypes>
               break;
             },
             Some(pri)=> {
+              let mut newhandle = false;
               // init clihandle
               if chandle.is_none() && managed {
                 let (tx,rx) = mpsc::sync_channel(1);
                 rp.peers.send(PeerMgmtMessage::PeerAddFromServer(afrom.clone(), pri.clone(), ows, tx, serverinfo_from_handle(&shandle)));
                 ows = None; 
-                chandle = match rx.recv(){
+                chandle = match rx.recv(){ // TODO !!! asynch chandle reception (message order ensure add is done where peerpong)
                   Ok(ch) => Some(ch),
                   Err(_) => {
                     // error in cli then drop of sender
@@ -313,7 +296,7 @@ fn request_handler <RT : RunningTypes>
                   };
                   // send pong
                   let mess = ClientMessage::PeerPong(chal.clone());
-                  h.send_msg(mess)
+                  h.send_msg(mess).unwrap_or(false)
                 },
                 None => false,
               };

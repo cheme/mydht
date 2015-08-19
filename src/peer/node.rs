@@ -1,12 +1,7 @@
 use std::net::{SocketAddr};
 use std::io::Result as IoResult;
-use std::sync::Arc;
-use std::sync::mpsc::{Sender,Receiver};
-use std::net::{ToSocketAddrs};
-use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
-use procs::mesgs::{PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage};
+use rustc_serialize::{Encoder,Encodable,Decoder};
 use std::string::String;
-use std::str::FromStr;
 use peer::Peer;
 use keyval::{KeyVal};
 use keyval::{Attachment,SettableAttachment};

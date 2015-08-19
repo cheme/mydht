@@ -13,21 +13,15 @@ use rustc_serialize::json;
 use rustc_serialize::{Encoder,Encodable,Decoder};
 
 use std::marker::PhantomData;
-#[test]
-use std::thread;
 use std::fs::{File};
 use std::path::Path;
 use std::io::Read;
 use time::Duration;
 use std::env;
-#[test]
-use std::net::{Ipv4Addr};
 use std::net::{SocketAddr};
 use std::sync::Arc;
 use std::sync::Mutex;
 //use self::rand::{thread_rng};
-#[test]
-use num::traits::{ToPrimitive};
 use mydht::{StoragePriority};
 use mydht::dhtif::KeyVal;
 use mydht::{DHT,RunningContext,RunningProcesses,ArcRunningContext,RunningTypes};
@@ -35,13 +29,7 @@ use mydht::{QueryPriority,QueryID};
 use mydht::{CachePolicy};
 use mydht::dhtif;
 use mydht::Json;
-#[test]
-use mydht::Bincode;
 use mydht::Tcp;
-#[test]
-use mydht::Bincode;
-#[test]
-use mydht::Udp;
 use mydht::{Attachment,SettableAttachment};
 use mydht::{PeerPriority};
 use mydht::dhtif::{Peer,PeerMgmtMeths};
@@ -51,10 +39,6 @@ use mydht::dhtif::{DHTRules};
 use mydht::transportif::Transport;
 use mydht::msgencif::{MsgEnc};
 use mydht::utils::ArcKV;
-#[test]
-use mydht::utils::SocketAddrExt;
-#[test]
-use mydht::utils;
 
 fn main() {
     env_logger::init().unwrap();
@@ -329,90 +313,6 @@ impl dhtif::DHTRules for DummyQueryRules {
 
 }
 static CMODE : dhtif::ClientMode = dhtif::ClientMode::ThreadedOne;
-#[test]
-static ALLTESTMODE : [QueryMode; 1] = [
-//                   QueryMode::Proxy,
-//                   QueryMode::Proxy,
-                     QueryMode::Asynch,
-       //            QueryMode::AProxy,
-    //               QueryMode::AMix(1),
-    //               QueryMode::AMix(2),
-     //              QueryMode::AMix(3)
-                   ];
-
-#[test]
-fn testPeer2hopget (){
-    let n = 4;
-    let map : &[&[usize]] = &[&[2],&[3],&[],&[3]];
-    finddistantpeer(45450,n,QueryMode::Asynch,DummyRules,1,map,true); 
-    finddistantpeer(45460,n,QueryMode::AProxy,DummyRules,1,map,true); 
-    finddistantpeer(45470,n,QueryMode::AMix(1),DummyRules,1,map,true); 
-    finddistantpeer(45480,n,QueryMode::AMix(2),DummyRules,1,map,true); 
-    finddistantpeer(45490,n,QueryMode::AMix(3),DummyRules,1,map,true); 
-}
-
-#[test]
-fn testPeermultipeersnoresult (){
-    let n = 6;
-    let map : &[&[usize]] = &[&[2,3,4],&[3,5],&[1],&[4],&[1],&[]];
-    finddistantpeer(45550,n,QueryMode::Asynch,DummyRules,1,map,false); 
-    finddistantpeer(45560,n,QueryMode::AProxy,DummyRules,1,map,false); 
-    finddistantpeer(45570,n,QueryMode::AMix(1),DummyRules,1,map,false); 
-    finddistantpeer(45580,n,QueryMode::AMix(2),DummyRules,1,map,false); 
-    finddistantpeer(45590,n,QueryMode::AMix(3),DummyRules,1,map,false); 
-}
-
-
-#[test]
-fn testPeer4hopget (){
-    let n = 6;
-    let map : &[&[usize]] = &[&[2],&[3],&[4],&[5],&[6],&[]];
-    finddistantpeer(46450,n,QueryMode::Asynch,DummyRules,1,map,true); 
-    finddistantpeer(46460,n,QueryMode::AProxy,DummyRules,1,map,true); 
-    finddistantpeer(46470,n,QueryMode::AMix(2),DummyRules,1,map,true); 
-    finddistantpeer(46480,n,QueryMode::AMix(4),DummyRules,1,map,true); 
-    finddistantpeer(46490,n,QueryMode::AMix(5),DummyRules,1,map,true);
-    // prio 2 max nb hop is 3 
-    finddistantpeer(46510,n,QueryMode::Asynch,DummyRules,2,map,false); 
-    finddistantpeer(46520,n,QueryMode::AProxy,DummyRules,2,map,false); 
-    finddistantpeer(46530,n,QueryMode::AMix(1),DummyRules,2,map,false); 
-    finddistantpeer(46540,n,QueryMode::AMix(3),DummyRules,2,map,false); 
-}
-
-#[test]
-fn testloopget (){ // TODO this only test loop over our node TODO circuit loop test
-    let n = 4;
-    // closest used are two first nodes (first being ourselves
-    let map : &[&[usize]] = &[&[1,2],&[2,3],&[3,4],&[4]];
-    //let map : &[&[usize]] = &[&[1,2],&[2,1,3],&[3,4],&[4]];
-    finddistantpeer(55450,n,QueryMode::Asynch,DummyRules,1,map,true); 
-    finddistantpeer(55460,n,QueryMode::AProxy,DummyRules,1,map,true); 
-    finddistantpeer(55470,n,QueryMode::AMix(1),DummyRules,1,map,true); 
-    finddistantpeer(55480,n,QueryMode::AMix(2),DummyRules,1,map,true); 
-    finddistantpeer(55490,n,QueryMode::AMix(3),DummyRules,1,map,true);
-}
-
-
-#[test]
-fn finddistantpeer<M : PeerMgmtMeths<Node, DummyKeyVal> + Clone>  (startport : u16,nbpeer : usize, qm : QueryMode, meths : M, prio : QueryPriority, map : &[&[usize]], find : bool) {
-    let peers = initpeers(startport,nbpeer, map, meths);
-    let queryconf = QueryConf {
-      mode : qm.clone(), 
-      chunk : QueryChunk::None, 
-      hop_hist : Some((3,true))
-    }; // note that we only unloop to 3 hop 
-    let dest = peers.get(nbpeer -1).unwrap().0.clone();
-    let fpeer = peers.get(0).unwrap().1.find_peer(dest.nodeid.clone(), &queryconf, prio);
-    let matched = match fpeer {
-       Some(ref v) => **v == dest,
-       _ => false,
-    };
-    if(find){
-    assert!(matched, "Peer not found {:?} , {:?}", fpeer, qm);
-    }else{
-    assert!(!matched, "Peer found {:?} , {:?}", fpeer, qm);
-    }
-}
 
 struct RunningTypesImpl<M : PeerMgmtMeths<Node, DummyKeyVal>, T : Transport, E : MsgEnc> (PhantomData<M>,PhantomData<T>, PhantomData<E>);
 
@@ -426,178 +326,4 @@ impl<M : PeerMgmtMeths<Node, DummyKeyVal>, T : Transport<Address=SocketAddr>, E 
   type T = T;
 }
 
-#[test]
-fn initpeers<M : PeerMgmtMeths<Node, DummyKeyVal> + Clone> (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : M) -> Vec<(Node, DHT<RunningTypesImpl<M,Tcp,Json>>)>{
-
-
-    let r : Vec<usize> = (0..nbpeer).collect();
-    let nodes : Vec<Node> = r.iter().map(
-      |j| {
-          Node {nodeid: "NodeID".to_string() + &(*j + 1).to_string()[..], address : SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port + (*j).to_u16().unwrap()))}
-          }
-    ).collect();
-    let nodes2 = nodes.clone(); // not efficient but for test
-    let mut i = 0;// TODO redesign with zip of map and nodes iter
-    let result :  Vec<(Node, DHT<RunningTypesImpl<M,Tcp,Json>>)> = nodes.iter().map(|n|{
-        info!("node : {:?}", n);
-        println!("{:?}",map[i]);
-        let bpeers = map[i].iter().map(|j| nodes2.get(*j-1).unwrap().clone()).map(|p|Arc::new(p)).collect();
-        i += 1;
-        let nsp = Arc::new(n.clone());
-    let tcp_transport = Tcp::new(
-      &(nsp.to_address()),
-      Duration::seconds(5), // timeout
-      Duration::seconds(5), // conn timeout
-      true,//mult
-    ).unwrap();
-
-
-        // add node without ping
-        //(n.clone(), DHT::boot_server(Arc:: new((nsp,rules.clone(), DummyQueryRules{idcnt:Mutex::new(0)},Json,tcp_transport)), Inefficientmap::new(), SimpleCacheQuery::new(), SimpleCache::new(), bpeers, Vec::new()))
-        (n.clone(), DHT::boot_server(Arc:: new(
-        RunningContext::new( 
-          nsp,
-          meths.clone(),
-          DummyQueryRules{idcnt:Mutex::new(0)},
-          Json,
-          tcp_transport,
-        )
-        ), 
-        move || Some(Inefficientmap::new()), 
-        move || Some(SimpleCacheQuery::new(false)), 
-        move || Some(SimpleCache::new(None)), 
-        bpeers, Vec::new()))
- }).collect();
-
-    // all has started
-    for n in result.iter(){
-      thread::sleep_ms(100); // local get easily stuck
-      n.1.refresh_closest_peers(1000); // Warn hard coded value.
-    };
-    // ping established
-    //timer.sleep(Duration::seconds(1));
-    result
-}
-
-
-
-
-
-#[test]
-fn initpeers_udp<M : PeerMgmtMeths<Node,DummyKeyVal> + Clone> (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : M) -> Vec<(Node, DHT<RunningTypesImpl<M,Udp,Bincode>>)> {
-
-
-    let mut r : Vec<usize> = (0..nbpeer).collect();
-    let nodes : Vec<Node> = r.iter().map(
-      |j| {
-          Node {nodeid: "NodeID".to_string() + &(*j + 1).to_string()[..], address : SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port + (*j).to_u16().unwrap()))}
-          }
-    ).collect();
-    let nodes2 = nodes.clone(); // not efficient but for test
-    let mut i = 0;// TODO redesign with zip of map and nodes iter
-    let result :  Vec<(Node, DHT<RunningTypesImpl<M,Udp,Bincode>>)> = nodes.iter().map(|n|{
-        info!("node : {:?}", n);
-        println!("{:?}",map[i]);
-        let bpeers = map[i].iter().map(|j| nodes2.get(*j-1).unwrap().clone()).map(|p|Arc::new(p)).collect();
-        i += 1;
-        let nsp = Arc::new(n.clone());
-
-
-        // add node without ping
-        let tran = Udp::new(&n.to_address(),2048,true).unwrap(); // here udp with a json encoding with last sed over a few hop : we need a big buffer
-        (n.clone(), DHT::boot_server(Arc:: new(
-        RunningContext::new (
-          nsp,
-          meths.clone(),
-          DummyQueryRules{idcnt:Mutex::new(0)},
-          Bincode,
-          tran,
-        )
-        ), 
-        move || Some(Inefficientmap::new()),
-        move || Some(SimpleCacheQuery::new(false)),
-        move || Some(SimpleCache::new(None)),
-        bpeers, Vec::new()))
- }).collect();
-
-    // all has started
-    for n in result.iter(){
-      thread::sleep_ms(100); // local get easily stuck
-      n.1.refresh_closest_peers(1000); // Warn hard coded value.
-    };
-    // ping established
-    //timer.sleep(Duration::seconds(1));
-    result
-}
-
-#[test]
-fn testPeer2hopfindval_udp (){
-    let nbpeer = 4;
-    let val = ArcKV::new(DummyKeyValIn{id:"value to find ky".to_string()});
-    let map : &[&[usize]] = &[&[],&[1,3],&[],&[3]];
-
-    let mut startport = 73440;
-    let prio = 1;
-    let peers = initpeers_udp(startport,nbpeer, map, DummyRules);
-    let ref dest = peers.get(nbpeer -1).unwrap().1;
-    for conf in ALLTESTMODE.iter(){
-    let queryconf = QueryConf {
-      mode : conf.clone(), 
-      chunk : QueryChunk::None, 
-      hop_hist : Some((7,false))
-    };
-    assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
-    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), &queryconf, prio,StoragePriority::NoStore, 1).pop().unwrap_or(None);
-    assert_eq!(res, Some(val.clone()));
-    }
-}
-
-
-
-#[test]
-fn testPeer2hopfindval (){
-    let nbpeer = 4;
-    let val = ArcKV::new(DummyKeyValIn{id:"value to find ky".to_string()});
-    let map : &[&[usize]] = &[&[],&[1,3],&[],&[3]];
-
-    let mut startport = 73440;
-    let prio = 1;
-    let peers = initpeers(startport,nbpeer, map, DummyRules);
-    let ref dest = peers.get(nbpeer -1).unwrap().1;
-    for conf in ALLTESTMODE.iter(){
-    let queryconf = QueryConf {
-      mode : conf.clone(), 
-      chunk : QueryChunk::None, 
-      hop_hist : Some((7,false))
-    };
-    assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
-    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), &queryconf, prio,StoragePriority::NoStore, 1).pop().unwrap_or(None);
-    assert_eq!(res, Some(val.clone()));
-    }
-}
-
-#[test]
-fn testPeer2hopstoreval (){
-    let nbpeer = 4;
-    let val = ArcKV::new(DummyKeyValIn{id:"value to find ky".to_string()});
-    let map : &[&[usize]] = &[&[],&[1,3],&[],&[3]];
-    let mut startport = 73440;
-    let prio = 1;
-    let peers = initpeers(startport,nbpeer, map, DummyRules);
-    let ref dest = peers.get(nbpeer -1).unwrap().1;
-    let conf = ALLTESTMODE.get(0).unwrap();
-    let queryconf = QueryConf {
-      mode : conf.clone(), 
-      chunk : QueryChunk::None, 
-      hop_hist : Some((4,true))
-    };
-    assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
-    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), &queryconf, prio,StoragePriority::Local, 1).pop().unwrap_or(None);
-    assert_eq!(res, Some(val.clone()));
-    // prio 10 is nohop (we see if localy store)
-    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), &queryconf, 10,StoragePriority::NoStore, 1).pop().unwrap_or(None);
-    assert_eq!(res, Some(val.clone()));
-    let res = peers.get(1).unwrap().1.find_val(val.get_key().clone(), &queryconf, 10,StoragePriority::NoStore, 1).pop().unwrap_or(None);
-    assert!(!(res == Some(val.clone())));
-}
 

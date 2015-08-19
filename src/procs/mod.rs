@@ -1,29 +1,24 @@
-use std::io::Result as IoResult;
-use std::sync::mpsc::{Receiver,Sender};
-use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
-use peer::{PeerMgmtMeths, PeerPriority, PeerState};
+use std::sync::mpsc::{Sender};
+use peer::{PeerMgmtMeths};
 use query::{self,QueryConf,QueryPriority,QueryMode,QueryModeMsg,LastSent,QueryMsg,Query};
 use rules::DHTRules;
 use kvstore::{StoragePriority, KVStore};
 use keyval::{KeyVal};
 use query::cache::QueryCache;
-use std::str::from_utf8;
-use rustc_serialize::json;
 use self::mesgs::{PeerMgmtMessage,PeerMgmtInitMessage,KVStoreMgmtMessage,QueryMgmtMessage,ClientMessage,ClientMessageIx};
-use std::str::FromStr;
 use std::sync::{Arc,Semaphore,Mutex,Condvar};
 use std::sync::mpsc::channel;
-use std::thread::{JoinGuard};
 use std::thread;
 use route::Route;
 use peer::Peer;
-use transport::{Transport,ReadTransportStream,WriteTransportStream,Address};
+use transport::{Transport,Address};
 use time::Duration;
-use utils::{self,OneResult};
+use utils::{self};
 use msgenc::MsgEnc;
 use num;
 use num::traits::ToPrimitive;
 use std::marker::PhantomData;
+use mydhtresult::Result as MDHTResult;
 
 pub mod mesgs;
 mod server;
@@ -105,14 +100,15 @@ pub enum ClientHandle<P : Peer, V : KeyVal> {
 
 impl<P : Peer, V : KeyVal> ClientHandle<P,V> {
   
-  /// either 
-  pub fn send_msg(&self, mess : ClientMessage<P,V>) -> bool {
+  /// send message with the handle if the handle allows it otherwhise return false.
+  /// If an error is returned consider either the handle died (ask for new) or something else. 
+  pub fn send_msg(&self, mess : ClientMessage<P,V>) -> MDHTResult<bool> {
     match self {
       &ClientHandle::Threaded(ref clisend, ref ix) => {
-        let r = clisend.send((mess,*ix));
-        r.is_ok()
+        try!(clisend.send((mess,*ix)));
+        Ok(true)
       },
-      _ => false,
+      _ => Ok(false),
     }
     
   }
@@ -274,7 +270,7 @@ pub struct DHT<RT : RunningTypes> {
 /// Find a value by key. Specifying our queryconf, and priorities.
 pub fn find_local_val<RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcRunningContext<RT>, nid : <RT::V as KeyVal>::Key ) -> Option<RT::V> {
   debug!("Finding KeyVal locally {:?}", nid);
-  let sync = Arc::new((Mutex::new(None),Condvar::new()));
+  let sync = utils::new_oneresult(None);
   // local query replyto set to None
   rp.store.send(KVStoreMgmtMessage::KVFindLocally(nid, Some(sync.clone())));
   // block until result
@@ -301,7 +297,7 @@ pub fn store_val <RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcRunni
     nb_forw : nbquer,
     prio : prio,
     nb_res : 1};
-  let sync = Arc::new((Mutex::new(false),Condvar::new()));
+  let sync = utils::new_oneresult(false);
   // for propagate 
   rp.store.send(KVStoreMgmtMessage::KVAddPropagate(val,Some(sync.clone()),queryconf));
   // TODO wait for propagate result...??? plus new message cause storekv is
@@ -381,6 +377,14 @@ impl<RT : RunningTypes> DHT<RT> {
   #[inline]
   fn init_qmode(&self, qm : &QueryMode) -> QueryModeMsg <RT::P>{
     init_qmode(&self.rp, &self.rc, qm)
+  }
+
+  pub fn ping_peer (&self, peer : Arc<RT::P>) -> bool {
+    let res = utils::new_oneresult(false);
+    let ores = Some(res.clone());
+    self.rp.peers.send(PeerMgmtMessage::PeerPing(peer,ores));
+    // TODO timeout
+    utils::clone_wait_one_result(&res,None).unwrap_or(false)
   }
 
   pub fn find_peer (&self, nid : <RT::P as KeyVal>::Key, qconf : &QueryConf, prio : QueryPriority ) -> Option<Arc<RT::P>>  {

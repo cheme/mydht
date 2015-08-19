@@ -1,16 +1,16 @@
 //! Message used in channel between processes.
 
 use peer::{Peer,PeerPriority,PeerState,PeerStateChange};
-use query::{Query,QueryID,QueryPriority,QueryMsg,LastSent,QueryMode,QueryChunk};
-use std::sync::{Arc,Mutex,Condvar,Semaphore};
-use rustc_serialize::{Encodable,Decodable};
+use query::{Query,QueryID,QueryPriority,QueryMsg,QueryMode,QueryChunk};
+use std::sync::{Arc};
+//use rustc_serialize::{Encodable,Decodable};
 use keyval::KeyVal;
 use utils::{OneResult};
 use query::cache::CachePolicy;
-use transport::{Transport,ReadTransportStream,WriteTransportStream};
-use procs::RunningTypes;
+use transport::{ReadTransportStream,WriteTransportStream};
+//use procs::RunningTypes;
 use procs::ClientHandle;
-use procs::server::ServerHandle;
+//use procs::server::ServerHandle;
 use std::sync::mpsc::{SyncSender};
 use route::ServerInfo;
 use std::marker::PhantomData;

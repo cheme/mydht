@@ -308,13 +308,13 @@ impl<V> PartialEq for TransientOption<V> {
 // when complex value : default at start to none. TODO init function
 /// for receiving one result only from other processes
 //pub type OneResult<V : Send> = Arc<(Mutex<V>,Condvar)>;
-/// TODO refactor to a struct alias and do some xtensive testcases
 /// TODO struct with optional val : all oneresult<bool> may switch to oneresult<()>
-pub type OneResult<V> = Arc<(Mutex<V>,Condvar)>;
+/// the bool is for spurious wakeup management (is true if it is not a spurious wakeup)
+pub type OneResult<V> = Arc<(Mutex<(V,bool)>,Condvar)>;
  
 #[inline]
 pub fn new_oneresult<V>(v : V) -> OneResult<V>  {
-  Arc::new((Mutex::new(v),Condvar::new()))
+  Arc::new((Mutex::new((v,false)),Condvar::new()))
 }
 
 #[inline]
@@ -323,7 +323,18 @@ pub fn new_oneresult<V>(v : V) -> OneResult<V>  {
 /// Racy accessor to OneResult value
 pub fn one_result_val_clone<V : Clone + Send> (ores : &OneResult<V>) -> Option<V> {
   match ores.0.lock() {
-    Ok(res) => Some(res.clone()),
+    Ok(res) => Some(res.0.clone()),
+    Err(m) => {
+      error!("poisoned mutex for ping result");
+      None
+    },
+  }
+}
+
+#[inline]
+pub fn one_result_spurious<V> (ores : &OneResult<V>) -> Option<bool> {
+  match ores.0.lock() {
+    Ok(res) => Some(res.1),
     Err(m) => {
       error!("poisoned mutex for ping result");
       None
@@ -337,25 +348,41 @@ pub fn one_result_val_clone<V : Clone + Send> (ores : &OneResult<V>) -> Option<V
 /// One result value return
 pub fn ret_one_result<V : Send> (ores : &OneResult<V>, v : V) {
   match ores.0.lock() {
-    Ok(mut res) => *res = v,
+    Ok(mut res) => {
+      res.1 = true;
+      res.0 = v
+    },
     Err(m) => error!("poisoned mutex for ping result"),
   }
   ores.1.notify_all();
 }
+
+/// unlocke
+pub fn unlock_one_result<V : Send> (ores : &OneResult<V>, v : V) {
+  match ores.0.lock() {
+    Ok(mut res) => {
+      res.1 = true;
+    },
+    Err(m) => error!("poisoned mutex for ping result"),
+  }
+  ores.1.notify_all();
+}
+
 
 #[inline]
 /// TODO return MyDHTResult!!
 /// Racy change value of set result
 pub fn change_one_result<V : Send> (ores : &OneResult<V>, v : V) {
   match ores.0.lock() {
-    Ok(mut res) => *res = v,
+    Ok(mut res) => res.0 = v,
     Err(m) => error!("poisoned mutex for ping result"),
   }
 }
+
 /// Racy change value but with condition
 pub fn change_one_result_ifneq<V : Send + Eq> (ores : &OneResult<V>, neq : &V, v : V) {
   match ores.0.lock() {
-    Ok(mut res) => if *res != *neq {*res = v},
+    Ok(mut res) => if res.0 != *neq {res.0 = v},
     Err(m) => error!("poisoned mutex for ping result"),
   }
 }
@@ -366,18 +393,37 @@ pub fn change_one_result_ifneq<V : Send + Eq> (ores : &OneResult<V>, neq : &V, v
 pub fn clone_wait_one_result<V : Clone + Send> (ores : &OneResult<V>, newval : Option<V>) -> Option<V> {
  let r = match ores.0.lock() {
     Ok(mut guard) => {
-      match ores.1.wait(guard) {
-        Ok(mut r) => {
-          let res = r.clone();
-          newval.map(|v| *r = v).is_some();
+      let mut res = None;
+      loop {
+        match ores.1.wait(guard) {
+          Ok(mut r) => {
+            if r.1 {
+              r.1 = false;
+              let rv = r.0.clone();
+              newval.map(|v| r.0 = v).is_some();
 //          Some(*r)
-          Some(res)
+              res = Some(rv);
+              break;
+            } else {
+              debug!("spurious wait");
+              guard = r;
+            };
+          },
+          Err(_) => {
+            error!("Condvar issue for return res");
+            break;
+          }, // TODO what to do??? panic?
         }
-        Err(_) => {error!("Condvar issue for return res"); None}, // TODO what to do??? panic?
-      }
+      };
+      res
     },
-    Err(poisoned) => {error!("poisonned mutex on one res"); None}, // not logic
+    Err(poisoned) => {
+      error!("poisonned mutex on one res");
+      None
+    }, // not logic
  };
+ let is = r.is_some();
+ println!("ttrt {}",is);
  r
 }
 /// same as clone_wait_one_result but with condition, if condition is not reach value is returned
@@ -386,19 +432,31 @@ pub fn clone_wait_one_result_ifneq<V : Clone + Send + Eq> (ores : &OneResult<V>,
  let r = match ores.0.lock() {
     Ok(mut guard) => {
 
-      if *guard != *neqval {
-      match ores.1.wait(guard) {
-        Ok(mut r) => {
-          let res = r.clone();
-          newval.map(|v| *r = v).is_some();
+      if guard.0 != *neqval {
+        let mut ret = None;
+        loop {
+        match ores.1.wait(guard) {
+          Ok(mut r) => {
+            if r.1 {
+              r.1 = false;
+              let res = r.0.clone();
+              newval.map(|v| r.0 = v).is_some();
 //          Some(*r)
-          Some(res)
+              ret = Some(res);
+              break;
+            } else {
+              debug!("spurious wait");
+              guard = r;
+            }
+          }
+          Err(_) => {
+            error!("Condvar issue for return res"); break;}, // TODO what to do??? panic?
         }
-        Err(_) => {error!("Condvar issue for return res"); None}, // TODO what to do??? panic?
-      }
+        };
+        ret
       } else {
-        let res = guard.clone();
-        newval.map(|v| *guard = v).is_some();
+        let res = guard.0.clone();
+        newval.map(|v| guard.0 = v).is_some();
         Some(res)
       }
     },
@@ -413,24 +471,36 @@ pub fn clone_wait_one_result_ifneq_timeout_ms<V : Clone + Send + Eq> (ores : &On
  let r = match ores.0.lock() {
     Ok(mut guard) => {
 
-      if *guard != *neqval {
+      if guard.0 != *neqval {
+      let mut ret = None;
+      loop {
       match ores.1.wait_timeout_ms(guard, to) {
+        
         Ok(mut r) => {
           if !r.1 {
-            let res = r.0.clone();
-            newval.map(|v| *r.0 = v).is_some();
-            Some(res)
+            if (r.0).1 {
+              (r.0).1  = false;
+              let res = (r.0).0.clone();
+              newval.map(|v| (r.0).0 = v).is_some();
+              ret = Some(res);
+              break;
+            } else {
+              debug!("spurious waitout");
+              guard = r.0;
+            }
           } else {
             debug!("timeout waiting for oneresult");
-            None
+            break;
           }
         }
  
-        Err(_) => {error!("Condvar issue for return res"); None}, // TODO what to do??? panic?
+        Err(_) => {error!("Condvar issue for return res"); break}, // TODO what to do??? panic?
       }
+      };
+      ret
       }else {
-        let res = guard.clone();
-        newval.map(|v| *guard = v).is_some();
+        let res = guard.0.clone();
+        newval.map(|v| guard.0 = v).is_some();
         Some(res)
       }
     },
@@ -444,19 +514,30 @@ pub fn clone_wait_one_result_ifneq_timeout_ms<V : Clone + Send + Eq> (ores : &On
 pub fn clone_wait_one_result_timeout_ms<V : Clone + Send> (ores : &OneResult<V>, newval : Option<V>, to : u32) -> Option<V> {
  let r = match ores.0.lock() {
     Ok(mut guard) => {
+      let mut ret = None;
+      loop {
       match ores.1.wait_timeout_ms(guard, to) {
         Ok(mut r) => {
           if !r.1 {
-            let res = r.0.clone();
-            newval.map(|v| *r.0 = v).is_some();
-            Some(res)
+            if (r.0).1 {
+              (r.0).1  = false;
+              let res = (r.0).0.clone();
+              newval.map(|v| (r.0).0 = v).is_some();
+              ret = Some(res);
+              break;
+            } else {
+              debug!("spurious waitout");
+              guard = r.0;
+            }
           } else {
             debug!("timeout waiting for oneresult");
-            None
+            break;
           }
         }
-        Err(_) => {error!("Condvar issue for return res"); None}, // TODO what to do??? panic?
+        Err(_) => {error!("Condvar issue for return res"); break}, // TODO what to do??? panic?
       }
+      };
+      ret
     },
     Err(poisoned) => {error!("poisonned mutex on one res"); None}, // not logic
  };

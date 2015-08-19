@@ -1,15 +1,9 @@
 //! KVCache interface for implementation of storage with possible cache : Route, QueryStore,
 //! KVStore.
 //!
-use mydhtresult::Result as MDHTResult;
-use num::traits::ToPrimitive;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::hash::Hash;
-use std::iter::Iterator;
-use std::iter::IntoIterator;
-use std::collections::hash_map::Iter as HMIter;
-use std::fmt::Debug;
 use mydhtresult::Result;
 
 /// cache base trait to use in storage (transient or persistant) relative implementations
@@ -55,22 +49,22 @@ pub struct NoCache<K, V>(PhantomData<(K, V)>);
 
 impl<K , V > KVCache<K,V> for NoCache<K,V> {
   //type I = ();
-  fn add_val_c(& mut self, key : K, val : V) {
+  fn add_val_c(& mut self, _ : K, _ : V) {
     ()
   }
-  fn get_val_c<'a>(&'a self, key : &K) -> Option<&'a V> {
+  fn get_val_c<'a>(&'a self, _ : &K) -> Option<&'a V> {
     None
   }
-  fn update_val_c<'a, F>(&'a mut self, _ : &K, f : F) -> Result<bool> where F : FnOnce(&'a mut V) -> Result<()> {
+  fn update_val_c<'a, F>(&'a mut self, _ : &K, _ : F) -> Result<bool> where F : FnOnce(&'a mut V) -> Result<()> {
     Ok(false)
   }
-  fn remove_val_c(& mut self, key : &K) {
+  fn remove_val_c(& mut self, _ : &K) {
     ()
   }
-  fn strict_fold_c<'a, B, F>(&'a self, init: B, f: &F) -> B where F: Fn(B, (&'a K, &'a V)) -> B {
+  fn strict_fold_c<'a, B, F>(&'a self, init: B, _: &F) -> B where F: Fn(B, (&'a K, &'a V)) -> B {
     init
   }
-  fn fold_c<'a, B, F>(&'a self, init: B, mut f: F) -> B where F: FnMut(B, (&'a K, &'a V)) -> B {
+  fn fold_c<'a, B, F>(&'a self, init: B, _ : F) -> B where F: FnMut(B, (&'a K, &'a V)) -> B {
     init
   }
   fn len_c (& self) -> usize {
@@ -140,7 +134,8 @@ impl<K: Hash + Eq, V> KVCache<K,V> for HashMap<K,V> {
 
 
 }
-fn tet<K, V, C : KVCache<K,V>>(ca : & mut C, k : K, v : V) {
+/*
+fn type_test<K, V, C : KVCache<K,V>>(ca : & mut C, k : K, v : V) {
   ca.get_val_c(&k);
   ca.add_val_c(k,v);
-}
+}*/

@@ -408,6 +408,7 @@ pub enum ErrorKind {
   ExpectedError,
   ChannelSendError,
   RouteError,
+  PingError,
 }
 
 /// Result type internal to mydht
