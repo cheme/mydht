@@ -422,8 +422,6 @@ pub fn clone_wait_one_result<V : Clone + Send> (ores : &OneResult<V>, newval : O
       None
     }, // not logic
  };
- let is = r.is_some();
- println!("ttrt {}",is);
  r
 }
 /// same as clone_wait_one_result but with condition, if condition is not reach value is returned

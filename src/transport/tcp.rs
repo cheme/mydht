@@ -11,6 +11,7 @@ use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::net::{TcpListener};
 use std::net::{TcpStream};
 use std::io::Result as IoResult;
+use mydhtresult::Result;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
 use std::net::{SocketAddr};
@@ -61,8 +62,8 @@ impl Transport for Tcp {
   type ReadStream = TcpStream;
   type WriteStream = TcpStream;
   type Address = SocketAddr;
-  fn start<C> (&self, readHandler : C) -> IoResult<()>
-    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> IoResult<()> {
+  fn start<C> (&self, readHandler : C) -> Result<()>
+    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<()> {
     for socket in self.listener.incoming() {
         match socket {
             Err(e) => {error!("Socket acceptor error : {:?}", e);}

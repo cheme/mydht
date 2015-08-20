@@ -6,7 +6,7 @@ use kvstore::{StoragePriority, KVStore};
 use keyval::{KeyVal};
 use query::cache::QueryCache;
 use self::mesgs::{PeerMgmtMessage,PeerMgmtInitMessage,KVStoreMgmtMessage,QueryMgmtMessage,ClientMessage,ClientMessageIx};
-use std::sync::{Arc,Semaphore,Mutex,Condvar};
+use std::sync::{Arc,Semaphore};
 use std::sync::mpsc::channel;
 use std::thread;
 use route::Route;
@@ -387,16 +387,12 @@ impl<RT : RunningTypes> DHT<RT> {
     utils::clone_wait_one_result(&res,None).unwrap_or(false)
   }
 
-  pub fn find_peer (&self, nid : <RT::P as KeyVal>::Key, qconf : &QueryConf, prio : QueryPriority ) -> Option<Arc<RT::P>>  {
+  pub fn find_peer (&self, nid : <RT::P as KeyVal>::Key, qconf : &QueryConf, prio : QueryPriority ) -> Option<Arc<RT::P>> {
     debug!("Finding peer {:?}", nid);
     let maxhop = self.rc.rules.nbhop(prio);
     println!("!!!!!!!!!!!!!!!!!!! maxhop : {}, prio : {}", maxhop, prio);
     let nbquer = self.rc.rules.nbquery(prio);
-    let semsize = match qconf.mode {
-      QueryMode::Asynch => num::pow(nbquer.to_usize().unwrap(), maxhop.to_usize().unwrap()),
-      // general case we wait reply in each client query
-      _ => nbquer.to_usize().unwrap(),
-    };
+    let semsize = self.rc.rules.notfoundtreshold(nbquer,maxhop,&qconf.mode);
     let msgqmode = self.init_qmode(&qconf.mode);
     let lifetime = self.rc.rules.lifetime(prio);
     let lastsent = qconf.hop_hist.map(|(n,ishop)| if ishop 
@@ -504,7 +500,7 @@ let tpeer4 = tpeer3.clone();
 let rcsp2 = rc.clone();
 let rpsp2 = rp.clone();
 thread::spawn (move ||{
-  server::servloop(rcsp2, rpsp2)
+  server::servloop(rcsp2, rpsp2);
 });
 
 // Typically those cached node are more likely to be initialized with the routing backend (here it

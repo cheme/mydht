@@ -1,5 +1,4 @@
 use std::net::{SocketAddr};
-use std::io::Result as IoResult;
 use rustc_serialize::{Encoder,Encodable,Decoder};
 use std::string::String;
 use peer::Peer;

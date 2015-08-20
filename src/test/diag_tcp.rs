@@ -15,7 +15,9 @@ use super::{
   initpeers,
   DHTRULES_DEFAULT,
   ALLTESTMODE,
+  finddistantpeer,
 };
+use rules::simplerules::{DhtRules};
 use peer::node::Node;
 
 use peer::test::TestingRules;
@@ -39,28 +41,9 @@ impl<M : PeerMgmtMeths<Node, Node>, T : Transport<Address=SocketAddr>, E : MsgEn
   type T = T;
 }
 
-fn finddistantpeer<M : PeerMgmtMeths<Node, Node> + Clone>  (startport : u16,nbpeer : usize, qm : QueryMode, meths : M, prio : QueryPriority, map : &[&[usize]], find : bool) {
-    let peers = initpeers_tcp(startport,nbpeer, map, meths);
-    let queryconf = QueryConf {
-      mode : qm.clone(), 
-      chunk : QueryChunk::None, 
-      hop_hist : Some((3,true))
-    }; // note that we only unloop to 3 hop 
-    let dest = peers.get(nbpeer -1).unwrap().0.clone();
-    let fpeer = peers.get(0).unwrap().1.find_peer(dest.nodeid.clone(), &queryconf, prio);
-    let matched = match fpeer {
-       Some(ref v) => **v == dest,
-       _ => false,
-    };
-    if(find){
-    assert!(matched, "Peer not found {:?} , {:?}", fpeer, qm);
-    }else{
-    assert!(!matched, "Peer found {:?} , {:?}", fpeer, qm);
-    }
-}
 
 
-fn initpeers_tcp<M : PeerMgmtMeths<Node, Node> + Clone> (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : M) -> Vec<(Node, DHT<RunningTypesImpl<M,Tcp,Json>>)> {
+fn initpeers_tcp<M : PeerMgmtMeths<Node, Node> + Clone> (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : M, rules : DhtRules, sim : Option<u32>) -> Vec<(Node, DHT<RunningTypesImpl<M,Tcp,Json>>)> {
   let mut nodes = Vec::new();
   let mut transports = Vec::new();
 
@@ -75,10 +58,7 @@ fn initpeers_tcp<M : PeerMgmtMeths<Node, Node> + Clone> (start_port : u16, nbpee
     transports.push(tcp_transport);
     nodes.push(Node {nodeid: "NodeID".to_string() + &(i + 1).to_string()[..], address : SocketAddrExt(addr)});
   };
-  let mut rules = DHTRULES_DEFAULT.clone();
-  // 9 hop
-  rules.nbhopfact = 9;
-  initpeers(nodes, transports, map, meths, rules,Json,false)
+  initpeers(nodes, transports, map, meths, rules,Json,sim)
 }
 
 #[test]
@@ -106,18 +86,32 @@ fn connect_rw_dup () {
 }
 
 #[test]
-fn testPeer4hopget (){
+fn testpeer4hopget (){
     let n = 6;
+    let nbport = n.to_u16().unwrap();
     let map : &[&[usize]] = &[&[2],&[3],&[4],&[5],&[6],&[]];
     let mut startport = 46450;
+    // prio 2 with rules multiplying by 3 give 6 hops
     for m in ALLTESTMODE.iter() {
-      finddistantpeer(startport,n,(*m).clone(),TestingRules::new_no_delay(),1,map,true);
-      startport += 10;
-    }
-    // prio 2 max nb hop is 3  TODO now it is 2 * 9
+      let mut rules = DHTRULES_DEFAULT.clone();
+      rules.nbhopfact = 3;
+      let peers = initpeers_tcp(startport,n, map, TestingRules::new_no_delay(), rules, None);
+      finddistantpeer(peers,n,(*m).clone(),2,map,true);
+      startport = startport + nbport;
+    };
+   
+    // prio 1 max nb hop is 3
     for m in ALLTESTMODE.iter() {
-      finddistantpeer(startport,n,(*m).clone(),TestingRules::new_no_delay(),2,map,false);
-      startport += 10;
-    }
+      let mut rules = DHTRULES_DEFAULT.clone();
+      rules.nbhopfact = 3;
+      // for asynch we need only one nbquer (expected to many none otherwhise)
+      if let &QueryMode::Asynch = m {
+        rules.nbqueryfact = 0.0; // nb query is 1 + prio * nbqfact
+      };
+      let peers = initpeers_tcp(startport,n, map, TestingRules::new_no_delay(), rules, None);
+      finddistantpeer(peers,n,(*m).clone(),1,map,false);
+      startport = startport + nbport;
+    };
 }
+
 

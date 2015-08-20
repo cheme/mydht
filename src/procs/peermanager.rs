@@ -455,7 +455,7 @@ pub fn start<RT : RunningTypes,
                     if ok && !local {
                       // send result directly
                       route.get_client_info(&recnode.clone()).and_then(|ci|
-                        ci.send_climsg(mess));
+                        ci.send_climsg(mess)); // TODO borderline as no auth : just proxy (a ping has been send but without checking of pong : we need to trust query from : implement a condition to send message on peerauth (add msg to peerping state)
                     } else if ok {
                        send_local::<RT, T> (recnode, & rc , & mut route, & rp, mess, localspawn);
                     };

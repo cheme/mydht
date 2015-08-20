@@ -53,8 +53,8 @@ pub trait Transport : Send + Sync + 'static {
   /// read/write).
   /// D fn will not start every time (only if WriteStream created), and is only to transmit stream
   /// to either peermanager or as query (waiting for auth).
-  fn start<C> (&self, C) -> IoResult<()>
-    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> IoResult<()>;
+  fn start<C> (&self, C) -> Result<()>
+    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<()>;
 
   /// Sometimes : for instance with tcp, the writestream is the same as the read stream,
   /// if we expect to use the same (and not open two socket), receive watching process should be

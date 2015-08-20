@@ -4,7 +4,8 @@ use std::string::String;
 use procs::{RunningProcesses,ArcRunningContext,RunningTypes};
 use transport::{Address};
 use keyval::KeyVal;
-use utils::{OneResult,ret_one_result,unlock_one_result};
+use utils::{OneResult,unlock_one_result};
+//use utils::{ret_one_result};
 use utils::TransientOption;
 
 pub mod node;

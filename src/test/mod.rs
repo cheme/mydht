@@ -30,7 +30,7 @@ use msgenc::json::Json;
 use utils::ArcKV;
 use peer::PeerMgmtMeths;
 use msgenc::MsgEnc;
-
+use num::traits::ToPrimitive;
 #[cfg(feature="with-extra-test")]
 mod diag_tcp;
 #[cfg(feature="with-extra-test")]
@@ -55,8 +55,13 @@ const DHTRULES_DEFAULT : DhtRules = DhtRules {
 };
 
 
+#[cfg(feature="with-extra-test")]
+#[test]
 fn simu_aproxy_peer_discovery () {
-  let rcs = runningcontext1(5,DHTRULES_DEFAULT.clone());
+  let nbpeer = 5;
+  let mut rules = DHTRULES_DEFAULT.clone();
+  rules.nbhopfact = nbpeer - 1;
+  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::AProxy,
     chunk : QueryChunk::None,
@@ -65,8 +70,13 @@ fn simu_aproxy_peer_discovery () {
   peerconnect_scenario(&qconf, 2, rcs)
 }
 
+#[cfg(feature="with-extra-test")]
+#[test]
 fn simu_amix_proxy_peer_discovery () {
-  let rcs = runningcontext1(5,DHTRULES_DEFAULT.clone());
+  let nbpeer = 5;
+  let mut rules = DHTRULES_DEFAULT.clone();
+  rules.nbhopfact = nbpeer - 1;
+  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::AMix(9),
     chunk : QueryChunk::None,
@@ -75,8 +85,13 @@ fn simu_amix_proxy_peer_discovery () {
   peerconnect_scenario(&qconf, 2, rcs)
 }
 
+#[cfg(feature="with-extra-test")]
+#[test]
 fn simu_asynch_peer_discovery () {
-  let rcs = runningcontext1(5,DHTRULES_DEFAULT.clone());
+  let nbpeer = 5;
+  let mut rules = DHTRULES_DEFAULT.clone();
+  rules.nbhopfact = nbpeer - 1;
+  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::Asynch,
     chunk : QueryChunk::None,
@@ -89,7 +104,9 @@ fn simu_asynch_peer_discovery () {
 #[test]
 fn aproxy_peer_discovery () {
   let nbpeer = 5;
-  let rcs = runningcontext1(nbpeer,DHTRULES_DEFAULT.clone());
+  let mut rules = DHTRULES_DEFAULT.clone();
+  rules.nbhopfact = nbpeer - 1;
+  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::AProxy,
     chunk : QueryChunk::None,
@@ -101,7 +118,9 @@ fn aproxy_peer_discovery () {
 #[test]
 fn amix_proxy_peer_discovery () {
   let nbpeer = 6;
-  let rcs = runningcontext1(nbpeer,DHTRULES_DEFAULT.clone());
+  let mut rules = DHTRULES_DEFAULT.clone();
+  rules.nbhopfact = nbpeer - 1;
+  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::AMix(9),
     chunk : QueryChunk::None,
@@ -114,8 +133,8 @@ fn amix_proxy_peer_discovery () {
 fn asynch_peer_discovery () {
   let nbpeer = 9;
   let mut rules = DHTRULES_DEFAULT.clone();
-  rules.nbhopfact = 8;
-  let rcs = runningcontext1(nbpeer,rules);
+  rules.nbhopfact = nbpeer - 1;
+  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::Asynch,
     chunk : QueryChunk::None,
@@ -244,7 +263,7 @@ where <RT:: P as KeyVal>::Key : Ord + Hash,
         bpeers)
   }).collect();
 
-  thread::sleep_ms(2000); // TODO remove this
+  thread::sleep_ms(1000); // TODO remove this (might miss unidir in center)
   // find all node from the first node first node
   let ref fprocs = procs[0];
 
@@ -274,45 +293,68 @@ static ALLTESTMODE : [QueryMode; 1] = [
      //              QueryMode::AMix(3)
                    ];
 
+#[cfg(feature="with-extra-test")]
 #[test]
-fn simPeer2hopget (){
+fn simpeer2hopget (){
     let n = 4;
+
     let map : &[&[usize]] = &[&[2],&[3],&[],&[3]];
     for m in ALLTESTMODE.iter() {
-      finddistantpeer(n,(*m).clone(),TestingRules::new_no_delay(),1,map,true,true);
+      let mut rules = DHTRULES_DEFAULT.clone();
+      rules.nbhopfact = 3;
+      let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, DEF_SIM);
+      finddistantpeer(peers,n,(*m).clone(),1,map,true);
     }
 }
 
 #[test]
-fn testPeer2hopget (){
+fn testpeer2hopget (){
     let n = 4;
     let map : &[&[usize]] = &[&[2],&[3],&[4],&[]];
     for m in ALLTESTMODE.iter() {
-      finddistantpeer(n,(*m).clone(),TestingRules::new_no_delay(),1,map,true,false); 
+      let mut rules = DHTRULES_DEFAULT.clone();
+      rules.nbhopfact = 3;
+      let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, None);
+      finddistantpeer(peers,n,(*m).clone(),1,map,true); 
     }
 }
 
+#[cfg(feature="with-extra-test")]
 #[test]
-fn simPeermultipeersnoresult (){
+fn simpeermultipeersnoresult (){
     let n = 6;
     let map : &[&[usize]] = &[&[2,3,4],&[3,5],&[1],&[4],&[1],&[]];
     for m in ALLTESTMODE.iter() {
-      finddistantpeer(n,(*m).clone(),TestingRules::new_no_delay(),1,map,false,true);
+      let mut rules = DHTRULES_DEFAULT.clone();
+      rules.nbhopfact = 3;
+      let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, DEF_SIM);
+      finddistantpeer(peers,n,(*m).clone(),1,map,false);
     }
 }
 
 
 #[test]
-fn testPeer4hopget (){
+fn testpeer4hopget (){
     let n = 6;
     let map : &[&[usize]] = &[&[2],&[3],&[4],&[5],&[6],&[]];
+    // prio 2 with rules multiplying by 3 give 6 hops
     for m in ALLTESTMODE.iter() {
-      finddistantpeer(n,(*m).clone(),TestingRules::new_no_delay(),1,map,true,false);
+      let mut rules = DHTRULES_DEFAULT.clone();
+      rules.nbhopfact = 3;
+      let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, None);
+      finddistantpeer(peers,n,(*m).clone(),2,map,true);
     };
    
-    // prio 2 max nb hop is 3 TODO : for now prio 2 max np is 2 * 9
+    // prio 1 max nb hop is 3
     for m in ALLTESTMODE.iter() {
-      finddistantpeer(n,(*m).clone(),TestingRules::new_no_delay(),2,map,false,false);
+      let mut rules = DHTRULES_DEFAULT.clone();
+      rules.nbhopfact = 3;
+      // for asynch we need only one nbquer (expected to many none otherwhise)
+      if let &QueryMode::Asynch = m {
+        rules.nbqueryfact = 0.0; // nb query is 1 + prio * nbqfact
+      };
+      let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, None);
+      finddistantpeer(peers,n,(*m).clone(),1,map,false);
     };
 }
 
@@ -323,33 +365,35 @@ fn simloopget (){ // TODO this only test loop over our node TODO circuit loop t
     let map : &[&[usize]] = &[&[1,2],&[2,3],&[3,4],&[4]];
     //let map : &[&[usize]] = &[&[1,2],&[2,1,3],&[3,4],&[4]];
     for m in ALLTESTMODE.iter() {
-      finddistantpeer(n,(*m).clone(),TestingRules::new_no_delay(),1,map,true,true);
+      let mut rules = DHTRULES_DEFAULT.clone();
+      rules.nbhopfact = 3;
+      let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, DEF_SIM);
+      finddistantpeer(peers,n,(*m).clone(),1,map,true);
     };
 }
 
 /// sim indicate if the read map need to wait for the ping back, in this case using sim = true add
 /// some delay to test (more a simulation).
-fn finddistantpeer (nbpeer : usize, qm : QueryMode, meths : TestingRules, prio : QueryPriority, map : &[&[usize]], find : bool, sim : bool) {
-    let peers = initpeers_test(nbpeer, map, meths, sim);
+fn finddistantpeer<RT : RunningTypes> (peers : Vec<(RT::P,DHT<RT>)>, nbpeer : usize, qm : QueryMode, prio : QueryPriority, map : &[&[usize]], find : bool) {
     let queryconf = QueryConf {
       mode : qm.clone(), 
       chunk : QueryChunk::None, 
       hop_hist : Some((3,true))
     }; // note that we only unloop to 3 hop 
     let dest = peers.get(nbpeer -1).unwrap().0.clone();
-    let fpeer = peers.get(0).unwrap().1.find_peer(dest.nodeid.clone(), &queryconf, prio);
+    let fpeer = peers.get(0).unwrap().1.find_peer(dest.get_key(), &queryconf, prio);
     let matched = match fpeer {
        Some(ref v) => **v == dest,
        _ => false,
     };
     if(find){
-    assert!(matched, "Peer not found {:?} , {:?}", fpeer, qm);
+      assert!(matched, "Peer not found {:?} , {:?}", fpeer, qm);
     }else{
-    assert!(!matched, "Peer found {:?} , {:?}", fpeer, qm);
+      assert!(!matched, "Peer found {:?} , {:?}", fpeer, qm);
     }
 }
 
-fn initpeers<E : MsgEnc + Clone, RT : RunningTypes<R = SimpleRules, E = E>> (nodes : Vec<RT::P>, transports : Vec<RT::T>, map : &[&[usize]], meths : RT::M, dhtrules : DhtRules, enc : RT::E, sim : bool) -> Vec<(RT::P, DHT<RT>)> 
+fn initpeers<E : MsgEnc + Clone, RT : RunningTypes<R = SimpleRules, E = E>> (nodes : Vec<RT::P>, transports : Vec<RT::T>, map : &[&[usize]], meths : RT::M, dhtrules : DhtRules, enc : RT::E, sim : Option<u32>) -> Vec<(RT::P, DHT<RT>)> 
 where <RT as RunningTypes>::M : Clone,
       <<RT as RunningTypes>::P as KeyVal>::Key : Hash + Ord,
       <<RT as RunningTypes>::V as KeyVal>::Key : Hash,
@@ -379,14 +423,14 @@ where <RT as RunningTypes>::M : Clone,
      bpeers
      )
    }).collect();
-   if sim {
+   if sim.is_some() {
      // all has started
      for n in result.iter(){
        thread::sleep_ms(100); // local get easily stuck
        n.1.refresh_closest_peers(1000); // Warn hard coded value.
      };
      // ping established
-     thread::sleep_ms(2000);
+     thread::sleep_ms(sim.unwrap());
    } else {
      //establish connection by peerping of bpeers and wait result : no need to sleep
      for n in result.iter(){
@@ -401,7 +445,11 @@ where <RT as RunningTypes>::M : Clone,
    result.into_iter().map(|n|(n.0,n.1)).collect()
 }
 
-fn initpeers_test (nbpeer : usize, map : &[&[usize]], meths : TestingRules, sim : bool) -> Vec<(PeerTest, DHT<RunningTypes1>)> {
+// local transport usage is faster than actual transports
+// Yet default to one second
+static DEF_SIM : Option<u32> = Some(1000);
+
+fn initpeers_test (nbpeer : usize, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u32>) -> Vec<(PeerTest, DHT<RunningTypes1>)> {
   let transports = TransportTest::create_transport(nbpeer,true,true);
   let mut nodes = Vec::new();
   for i in 0 .. nbpeer {
@@ -411,24 +459,24 @@ fn initpeers_test (nbpeer : usize, map : &[&[usize]], meths : TestingRules, sim 
     };
     nodes.push(peer);
   };
-  let mut rules = DHTRULES_DEFAULT.clone();
-  // 9 hop
-  rules.nbhopfact = 9;
-  initpeers(nodes, transports, map, meths, rules,Json,sim)
+  initpeers(nodes, transports, map, meths, rules, Json, sim)
 }
 
+#[cfg(feature="with-extra-test")]
 #[test]
-fn testPeer2hopfindval () {
+fn simpeer2hopfindval () {
     let nbpeer = 4;
     let val = PeerTest {
          nodeid: "to_find".to_string(),
          address : LocalAdd(999),
     };
 
+    let mut rules = DHTRULES_DEFAULT.clone();
+    rules.nbhopfact = 3;
     let map : &[&[usize]] = &[&[],&[1,3],&[],&[3]];
 
     let prio = 1;
-    let peers = initpeers_test(nbpeer, map, TestingRules::new_no_delay(), true);
+    let peers = initpeers_test(nbpeer, map, TestingRules::new_no_delay(), rules, DEF_SIM);
     let ref dest = peers.get(nbpeer -1).unwrap().1;
     for conf in ALLTESTMODE.iter(){
     let queryconf = QueryConf {
@@ -442,16 +490,21 @@ fn testPeer2hopfindval () {
     }
 }
 
+
+#[cfg(feature="with-extra-test")]
 #[test]
-fn testPeer2hopstoreval () {
+fn simpeer2hopstoreval () {
     let nbpeer = 4;
     let val = PeerTest {
          nodeid: "to_find".to_string(),
          address : LocalAdd(999),
     };
     let map : &[&[usize]] = &[&[],&[1,3],&[],&[3]];
-    let prio = 1;
-    let peers = initpeers_test(nbpeer, map, TestingRules::new_no_delay(), true);
+
+    let mut rules = DHTRULES_DEFAULT.clone();
+    rules.nbhopfact = 1;
+    let prio = 3;
+    let peers = initpeers_test(nbpeer, map, TestingRules::new_no_delay(), rules, DEF_SIM);
     let ref dest = peers.get(nbpeer -1).unwrap().1;
     let conf = ALLTESTMODE.get(0).unwrap();
     let queryconf = QueryConf {
@@ -460,12 +513,44 @@ fn testPeer2hopstoreval () {
       hop_hist : Some((4,true))
     };
     assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
+    // prio 3 so 3 * 1 = 0
     let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), &queryconf, prio,StoragePriority::Local, 1).pop().unwrap_or(None);
     assert_eq!(res, Some(val.clone()));
-    // prio 10 is nohop (we see if localy store)
-    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), &queryconf, 10,StoragePriority::NoStore, 1).pop().unwrap_or(None);
+    // prio 0 is nohop (we see if localy store)
+    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), &queryconf, 0,StoragePriority::NoStore, 1).pop().unwrap_or(None);
     assert_eq!(res, Some(val.clone()));
-    let res = peers.get(1).unwrap().1.find_val(val.get_key().clone(), &queryconf, 10,StoragePriority::NoStore, 1).pop().unwrap_or(None);
+    let res = peers.get(1).unwrap().1.find_val(val.get_key().clone(), &queryconf, 0,StoragePriority::NoStore, 1).pop().unwrap_or(None);
+    assert!(!(res == Some(val.clone())));
+}
+
+#[test]
+fn testpeer2hopstoreval () {
+    let nbpeer = 4;
+    let val = PeerTest {
+         nodeid: "to_find".to_string(),
+         address : LocalAdd(999),
+    };
+    let map : &[&[usize]] = &[&[2],&[3],&[4],&[]];
+
+    let mut rules = DHTRULES_DEFAULT.clone();
+    rules.nbhopfact = 1;
+    let prio = 3;
+    let peers = initpeers_test(nbpeer, map, TestingRules::new_no_delay(), rules, None);
+    let ref dest = peers.get(nbpeer -1).unwrap().1;
+    let conf = ALLTESTMODE.get(0).unwrap();
+    let queryconf = QueryConf {
+      mode : conf.clone(), 
+      chunk : QueryChunk::None, 
+      hop_hist : Some((4,true))
+    };
+    assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
+    // prio 3 so 3 * 1 = 0
+    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), &queryconf, prio,StoragePriority::Local, 1).pop().unwrap_or(None);
+    assert_eq!(res, Some(val.clone()));
+    // prio 0 is nohop (we see if localy store)
+    let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), &queryconf, 0,StoragePriority::NoStore, 1).pop().unwrap_or(None);
+    assert_eq!(res, Some(val.clone()));
+    let res = peers.get(1).unwrap().1.find_val(val.get_key().clone(), &queryconf, 0,StoragePriority::NoStore, 1).pop().unwrap_or(None);
     assert!(!(res == Some(val.clone())));
 }
 

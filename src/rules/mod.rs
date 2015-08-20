@@ -1,12 +1,14 @@
 use time::Duration;
 use query::QueryID;
 use query::QueryPriority;
+use query::QueryMode;
 use kvstore::StoragePriority;
 use query::cache::CachePolicy;
 use transport::Transport;
 use procs::ClientMode;
 use procs::ServerMode;
-
+use num;
+use num::traits::ToPrimitive;
 
 pub mod simplerules;
 
@@ -24,6 +26,24 @@ pub trait DHTRules : Sync + Send + 'static {
   fn nbhop (&self, QueryPriority) -> u8;
   /// Number of peers to transmit to at each hop, the method is currently called in main peermgmt process, therefore it must be fast (a mapping not a db access).
   fn nbquery (&self, QueryPriority) -> u8;
+  /// Number of no reply requires to consider no result, default implementation is suitable for
+  /// many transports, but some may require some tunning depending on network to avoid timeout (for
+  /// exemple asynch that is here by default (depth ^ nb_proxy) * 2 / 3 (2 / 3 is a lot it should
+  /// be log of depth).
+  /// both u8 are result of nbhop and nbquery from rules.
+  fn notfoundtreshold (&self, nbquer : u8, maxhop : u8, mode : &QueryMode) -> usize {
+    match mode {
+      &QueryMode::AProxy => {
+        let max = num::pow(nbquer.to_usize().unwrap(), maxhop.to_usize().unwrap());
+        if max > 2 {
+          (max / 3) * 2
+        } else {
+          max
+        }
+      },
+      _ => nbquer.to_usize().unwrap(),
+    }
+  }
   /// delay between to cleaning of cache query
   fn asynch_clean(&self) -> Option<Duration>; 
   /// get the lifetime of a query (before clean and possibly no results).

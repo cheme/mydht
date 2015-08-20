@@ -41,6 +41,7 @@ use std::thread;
 use std::mem;
 use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::Result as IoResult;
+use mydhtresult::Result;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
 use std::io::Write;
@@ -189,7 +190,7 @@ impl ReadTcpStream {
 }
 
 struct MyHandler<'a, C>
-    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> IoResult<()> {
+    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> Result<()> {
 
   keepalive : Option<u32>,
   /// info about stream (for unlocking read)
@@ -203,7 +204,7 @@ struct MyHandler<'a, C>
 }
 
 impl<'a,C> MyHandler<'a,C>
-    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> IoResult<()> {
+    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> Result<()> {
 
 
   // TODO maybe map token on RawFd of socket values (no need for tokens persistence for
@@ -228,7 +229,7 @@ impl<'a,C> MyHandler<'a,C>
 }
 
 impl<'a,C> Handler for MyHandler<'a,C>
-    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> IoResult<()> {
+    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> Result<()> {
   type Timeout = Token;
   type Message = HandlerMessage;
 
@@ -424,8 +425,8 @@ impl Transport for Tcp {
   type ReadStream = ReadTcpStream;
   type WriteStream = WriteTcpStream;
   type Address = SocketAddr;
-  fn start<C> (&self, readhandler : C) -> IoResult<()>
-    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> IoResult<()> {
+  fn start<C> (&self, readhandler : C) -> Result<()>
+    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<()> {
 //    tcplistener.0.set_write_timeout_ms(self.timeout.num_milliseconds());
 
 
@@ -435,7 +436,7 @@ impl Transport for Tcp {
     let sender = eventloop.channel();
     ret_one_result(&self.channel, Some(sender.clone()));
     try!(eventloop.register(&self.listener, Token(CONN_REC)));
-    eventloop.run(&mut MyHandler{
+    try!(eventloop.run(&mut MyHandler {
       keepalive : self.keepalive.map(|d|d.num_seconds().to_u32().unwrap()),
       tokens : VecMap::new(),
       socks : VecMap::new(),
@@ -443,7 +444,8 @@ impl Transport for Tcp {
       listener : &self.listener,
       sender : sender, 
       readhandler : readhandler,
-      })
+      }));
+    Ok(())
   }
 
   fn connectwith(&self,  p : &SocketAddr, timeout : Duration) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {

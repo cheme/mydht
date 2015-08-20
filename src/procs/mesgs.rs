@@ -1,7 +1,7 @@
 //! Message used in channel between processes.
 
 use peer::{Peer,PeerPriority,PeerState,PeerStateChange};
-use query::{Query,QueryID,QueryPriority,QueryMsg,QueryMode,QueryChunk};
+use query::{Query,QueryID,QueryMsg,QueryChunk};
 use std::sync::{Arc};
 //use rustc_serialize::{Encodable,Decodable};
 use keyval::KeyVal;

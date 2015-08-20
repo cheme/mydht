@@ -20,6 +20,7 @@ use super::{Attachment};
 use std::io::Result as IoResult;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
+use mydhtresult::Result;
 use std::net::SocketAddr;
 use time::Duration;
 use peer::Peer;
@@ -147,8 +148,8 @@ impl Transport for Udp {
     (self.spawn, false)
   }
 
-  fn start<C> (&self, readHandle : C) -> IoResult<()>
-    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> IoResult<()> {
+  fn start<C> (&self, readHandle : C) -> Result<()>
+    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<()> {
     let buffsize = self.buffsize;
     let mut tmpvec : Vec<u8> = vec![0; buffsize];
     let buf = tmpvec.as_mut_slice();

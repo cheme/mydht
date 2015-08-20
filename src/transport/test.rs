@@ -7,6 +7,7 @@ use std::thread;
 use std::sync::mpsc;
 use transport::{Transport,Address};
 use std::io::Result as IoResult;
+use mydhtresult::Result;
 use std::io::Read;
 use std::io::Write;
 use time::Duration;
@@ -87,8 +88,8 @@ pub fn connect_rw_with_optional<A : Address, T : Transport<Address=A>> (t1 : T, 
   let at2 = Arc::new(t2);
   let at2c = at2.clone();
 
-  let g = thread::spawn(move|| at1c.start(readhandler));
-  let g2 = thread::spawn(move|| at2c.start(readhandler2));
+  let g = thread::spawn(move|| {at1c.start(readhandler);});
+  let g2 = thread::spawn(move|| {at2c.start(readhandler2);});
 //  thread::sleep_ms(3000);
   let cres = at2.connectwith(a1, Duration::milliseconds(300));
   assert!(cres.as_ref().is_ok(),"{:?}", cres.as_ref().err());
@@ -202,8 +203,8 @@ pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A
   let at2 = Arc::new(t2);
   let at2c = at2.clone();
 
-  let g = thread::spawn(move|| at1c.start(readhandler));
-  let g2 = thread::spawn(move|| at2c.start(readhandler2));
+  let g = thread::spawn(move|| {at1c.start(readhandler);});
+  let g2 = thread::spawn(move|| {at2c.start(readhandler2);});
 //  thread::sleep_ms(3000);
   let cres = at2.connectwith(a1, Duration::milliseconds(300));
   assert!(cres.as_ref().is_ok(),"{:?}", cres.as_ref().err());
