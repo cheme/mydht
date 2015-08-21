@@ -316,11 +316,7 @@ pub fn find_val<RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcRunning
   // TODO factorize code with find peer and/or specialize rules( some for peer some for kv) ??
   let maxhop = rc.rules.nbhop(prio);
   let nbquer = rc.rules.nbquery(prio);
-  let semsize = match qconf.mode {
-    QueryMode::Asynch => num::pow(nbquer.to_usize().unwrap(), maxhop.to_usize().unwrap()),
-    // general case we wait reply in each client query
-    _ => nbquer.to_usize().unwrap(),
-  };
+  let semsize = rc.rules.notfoundtreshold(nbquer,maxhop,&qconf.mode);
   let msgqmode = init_qmode(rp, rc, &qconf.mode);
   let lifetime = rc.rules.lifetime(prio);
   let lastsent = qconf.hop_hist.map(|(n,ishop)| if ishop 

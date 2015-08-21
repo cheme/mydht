@@ -33,7 +33,7 @@ pub trait DHTRules : Sync + Send + 'static {
   /// both u8 are result of nbhop and nbquery from rules.
   fn notfoundtreshold (&self, nbquer : u8, maxhop : u8, mode : &QueryMode) -> usize {
     match mode {
-      &QueryMode::AProxy => {
+      &QueryMode::Asynch => {
         let max = num::pow(nbquer.to_usize().unwrap(), maxhop.to_usize().unwrap());
         if max > 2 {
           (max / 3) * 2

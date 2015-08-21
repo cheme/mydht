@@ -251,7 +251,7 @@ pub fn set_query_result (&self, r: Either<Option<Arc<P>>,Option<V>>,
 
 #[inline]
 // TODO try remove pair result when all is stable + closure to avoid dup code
-///  for local query, blocking wait for a result (either peer or keyval).
+///  for local query, blocking wait for a result (either peer or keyval). // TODO timeout on wait   with returning content as in return result (plus spurious evo : see onersult)
 pub fn wait_query_result (&self) -> Either<Option<Arc<P>>,Vec<Option<V>>> { // TODO switch to two function set_qu_res_peer and val
   match self {
     &Query::PeerQuery(ref s) => {
@@ -262,7 +262,7 @@ pub fn wait_query_result (&self) -> Either<Option<Arc<P>>,Vec<Option<V>>> { // T
           debug!("Query l is {:?}", l.1);
           while l.1 > 0 {
             debug!("Query l is {:?}", l.1);
-            l = cv.wait(l).unwrap();
+            l = cv.wait(l).unwrap();// TODO spurious catch with condition over either None and 0 waiting or not none
           }
           debug!("Query Wait finished");
           l.0.clone()
@@ -282,7 +282,7 @@ pub fn wait_query_result (&self) -> Either<Option<Arc<P>>,Vec<Option<V>>> { // T
         debug!("Query l is {:?}", l.1);
         while l.1 > 0 {
           debug!("Query l is {:?}", l.1);
-          l = cv.wait(l).unwrap();
+          l = cv.wait(l).unwrap();// TODO spurious catch with condition over either None and 0 waiting or not none
         }
         debug!("Query Wait finished");
         l.0.clone()
@@ -325,7 +325,7 @@ pub fn set_expire(&mut self, expire : Timespec) {
 /// rename to send_for_query,  rp to param, managed is bool, qid calculated here with update of
 /// QueryMsg,  + add peermgmt msg 
 pub fn init_query<P : Peer, V : KeyVal> 
- (semsize : usize,
+ (nbquer : usize,
  nbresp   : usize,
  lifetime : Duration, 
  replyto : Option<QueryMsg<P>>, 
@@ -338,18 +338,18 @@ pub fn init_query<P : Peer, V : KeyVal>
     None => {
       let query = match replyto {
         Some(qconf) => 
-          Arc::new((QReply::Dist(qconf), Mutex::new((None, semsize)),Some(expire))),
+          Arc::new((QReply::Dist(qconf), Mutex::new((None, nbquer)),Some(expire))),
         None =>
-          Arc::new((QReply::Local(Condvar::new()),Mutex::new((None, semsize)),Some(expire))),
+          Arc::new((QReply::Local(Condvar::new()),Mutex::new((None, nbquer)),Some(expire))),
        };
        Query::PeerQuery(query)
     },
     Some(storeconf) => {
       let query = match replyto {
         Some(node) => 
-          Arc::new((QReply::Dist(node), Mutex::new((vec!(), semsize)),Some(expire),storeconf, nbresp)),
+          Arc::new((QReply::Dist(node), Mutex::new((vec!(), nbquer)),Some(expire),storeconf, nbresp)),
         None =>
-          Arc::new((QReply::Local(Condvar::new()),Mutex::new((vec!(), semsize)),Some(expire),storeconf,nbresp)),
+          Arc::new((QReply::Local(Condvar::new()),Mutex::new((vec!(), nbquer)),Some(expire),storeconf,nbresp)),
         };
         Query::KVQuery(query)
     },
@@ -405,6 +405,15 @@ pub enum QueryModeMsg<P : Peer> {
 
 /// Query mode utilities
 impl<P : Peer> QueryModeMsg<P> {
+  /// get corresponding querymode
+  pub fn get_mode (&self) -> QueryMode {
+    match self {
+      &QueryModeMsg::AProxy (_, _) => QueryMode::AProxy,
+      &QueryModeMsg::Asynch (_, _) => QueryMode::Asynch,
+      &QueryModeMsg::AMix (h,_, _) => QueryMode::AMix(h),
+    }
+   
+  }
     /// Get peers to reply to if the mode allows it.
     pub fn get_rec_node(&self) -> Option<&Arc<P>> {
         match self {

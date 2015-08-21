@@ -285,17 +285,18 @@ where <RT:: P as KeyVal>::Key : Ord + Hash,
 }
 
 #[cfg(test)]
-static ALLTESTMODE : [QueryMode; 1] = [
+static ALLTESTMODE : [QueryMode; 6] = [
                      QueryMode::Asynch,
-       //            QueryMode::AProxy,
-    //               QueryMode::AMix(1),
-    //               QueryMode::AMix(2),
-     //              QueryMode::AMix(3)
+                     QueryMode::AProxy,
+                     QueryMode::AMix(0),
+                     QueryMode::AMix(1),
+                     QueryMode::AMix(2),
+                     QueryMode::AMix(3),
                    ];
 
 #[cfg(feature="with-extra-test")]
 #[test]
-fn simpeer2hopget (){
+fn simpeer2hopget () {
     let n = 4;
 
     let map : &[&[usize]] = &[&[2],&[3],&[],&[3]];
@@ -327,6 +328,10 @@ fn simpeermultipeersnoresult (){
     for m in ALLTESTMODE.iter() {
       let mut rules = DHTRULES_DEFAULT.clone();
       rules.nbhopfact = 3;
+      // for asynch we need only one nbquer (expected to many none otherwhise)
+      if let &QueryMode::Asynch = m {
+        rules.nbqueryfact = 0.0; // nb query is 1 + prio * nbqfact
+      };
       let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, DEF_SIM);
       finddistantpeer(peers,n,(*m).clone(),1,map,false);
     }
@@ -386,8 +391,8 @@ fn finddistantpeer<RT : RunningTypes> (peers : Vec<(RT::P,DHT<RT>)>, nbpeer : us
        Some(ref v) => **v == dest,
        _ => false,
     };
-    if(find){
-      assert!(matched, "Peer not found {:?} , {:?}", fpeer, qm);
+    if find {
+      assert!(matched, "Peer not found {:?} , {:?}", dest, qm);
     }else{
       assert!(!matched, "Peer found {:?} , {:?}", fpeer, qm);
     }

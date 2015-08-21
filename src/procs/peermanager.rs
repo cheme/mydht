@@ -332,13 +332,12 @@ pub fn start<RT : RunningTypes,
           let mut newqueryconf = update_lastsent_conf ( &queryconf , &peers , nbquery);
           let rsize = peers.len();
           // update number of result to expect for each proxyied request
-          let nbqus = rsize.to_usize().unwrap();
           let rnbres = newqueryconf.nb_res;
-          let newrnbres = if nbqus == 0 {
+          let newrnbres = if rsize == 0 {
             rnbres
           } else {
-            let newrnbres_round = rnbres / nbqus;
-            if (newrnbres_round * nbqus) < rnbres {
+            let newrnbres_round = rnbres / rsize;
+            if (newrnbres_round * rsize) < rnbres {
               // we prefer to send to much query than the other way (could be a lot more)
               newrnbres_round + 1
             } else {
@@ -349,7 +348,9 @@ pub fn start<RT : RunningTypes,
           match oquery {
             Some(ref query) => {
               // adjust nb request
-              query.lessen_query((nbquery.to_usize().unwrap() - rsize.to_usize().unwrap()),&rp.peers);
+              let nftresh = rc.rules.notfoundtreshold(nbquery, remhop, &newqueryconf.modeinfo.get_mode());
+              let nbless = calc_adj(nbquery, rsize, nftresh);
+              query.lessen_query(nbless,&rp.peers);
             },
             None => {
               if rsize == 0 {
@@ -469,9 +470,11 @@ pub fn start<RT : RunningTypes,
             match oquery {
               Some(ref query) => {
                 let rsize = peers.len();
-                 // adjust nb request
-                 // Note that it doesnot prevent unresponsive client
-                 query.lessen_query((nbquery.to_usize().unwrap() - rsize.to_usize().unwrap()),&rp.peers);
+                // TODO nf treashold in queryconf??
+                let nftresh = rc.rules.notfoundtreshold(nbquery, remhop, &newqueryconf.modeinfo.get_mode());
+                let nbless = calc_adj(nbquery, rsize, nftresh);
+                // Note that it doesnot prevent unresponsive client
+                query.lessen_query(nbless,&rp.peers);
                },
                _ => (), 
              };
@@ -889,3 +892,16 @@ pub fn peer_ping <RT : RunningTypes,
     Err(Error("Trying to ping ourselves".to_string(), ErrorKind::PingError,None))
   }
 }
+
+#[inline]
+fn calc_adj(nbquery : u8, rsize : usize, nftresh : usize) -> usize {
+  let unbq = nbquery.to_usize().unwrap();
+  // adjust nb request
+  let adj = unbq - rsize;
+  if nftresh == unbq {
+    adj
+  } else {
+    adj * nftresh / unbq
+  }
+}
+
