@@ -194,6 +194,10 @@ pub fn start<RT : RunningTypes,
         };
       },
       Ok(PeerMgmtMessage::PeerPong(p,prio,chal,ows))  => {
+        if ows.is_some() {
+          // add it to peer or init peer with it (this should be an asym transport
+          panic!("write stream on pong not implemented (very special transport case)");
+        };
         if(p.get_key() != rc.me.get_key()) {
           // a ping has been received we need to reply with pong : this may also init the peer
           let nodeid = p.get_key().clone();

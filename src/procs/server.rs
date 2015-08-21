@@ -128,6 +128,14 @@ pub fn resolve_server_mode <RT : RunningTypes> (rc : &ArcRunningContext<RT>) -> 
       _ => panic!("Invalid transport definition"),
   }
 }
+
+/// manage result of a spawned handler
+fn sphandler_res (res : MDHTResult<()>) {
+  match res {
+    Ok(()) => debug!("spawned result returned gracefully"),
+    Err(e) => error!("Server thread exit due to error : {:?}",e),
+  }
+}
 // fn to start a server process out of transport reception (when connect with of transport return a
 // reader to.
 pub fn start_listener <RT : RunningTypes>
@@ -144,7 +152,7 @@ pub fn start_listener <RT : RunningTypes>
       let sh = ServerHandle::ThreadedOne(amut);
       let sh_thread = sh.clone();
       thread::spawn (move || {
-        request_handler::<RT> (s, &rc_thread, &rp_thread, None, sh_thread, otimeout,false);
+        sphandler_res(request_handler::<RT> (s, &rc_thread, &rp_thread, None, sh_thread, otimeout,false));
       });
       Ok(sh)
     },
@@ -172,14 +180,14 @@ pub fn servloop <RT : RunningTypes>
           let rc_thread = rc.clone();
           thread::spawn (move || {
             let amut = Arc::new(Mutex::new(false));
-            request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::ThreadedOne(amut), otimeout,false);
+            sphandler_res(request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::ThreadedOne(amut), otimeout,false));
           });
         },
         ServerMode::Local(true) => {
           let rp_thread = rp.clone();
           let rc_thread = rc.clone();
           thread::spawn (move || {
-            request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::Local, None, false);
+            sphandler_res(request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::Local, None, false));
           });
         },
         ServerMode::Local(false) => {
@@ -250,7 +258,9 @@ fn request_handler <RT : RunningTypes>
       },
       Some(r) => r,
     };
-    doloop = request_handler_internal(rc,rp,ows,&shandle,r,oa,&mut op, &mut chandle,managed).unwrap_or(false);
+    doloop = request_handler_internal(rc,rp,ows,&shandle,r,oa,&mut op, &mut chandle,managed).unwrap_or_else(|e|{
+      error!("Request handler failure : {:?}",e);
+      false});
     ows = None;
 
     if !managed {
@@ -319,7 +329,7 @@ fn request_handler_internal <RT : RunningTypes>
             // init clihandle
             if chandle.is_none() && managed {
               let (tx,rx) = mpsc::sync_channel(1);
-              rp.peers.send(PeerMgmtMessage::PeerAddFromServer(afrom.clone(), pri.clone(), ows, tx, serverinfo_from_handle(shandle)));
+              try!(rp.peers.send(PeerMgmtMessage::PeerAddFromServer(afrom.clone(), pri.clone(), ows, tx, serverinfo_from_handle(shandle))));
               ows = None; 
               *chandle = match rx.recv(){ // TODO !!! asynch chandle reception (message order ensure add is done where peerpong)
                 Ok(ch) => {
@@ -350,8 +360,7 @@ fn request_handler_internal <RT : RunningTypes>
             };
             if !sendinhandle {
               // chandle is none and not managed
-              rp.peers.send(PeerMgmtMessage::PeerPong(afrom.clone(),pri,chal,ows));
-              ows = None;
+              try!(rp.peers.send(PeerMgmtMessage::PeerPong(afrom.clone(),pri,chal,ows)));
             };
 
             // hook
@@ -365,7 +374,7 @@ fn request_handler_internal <RT : RunningTypes>
         // TODO status change??
         if let Some(p) = (*op).as_ref() {
           debug!("Sending remove message to peermgmt");
-          rp.peers.send(PeerMgmtMessage::PeerRemFromServer((*p).clone(),PeerStateChange::Blocked));
+          try!(rp.peers.send(PeerMgmtMessage::PeerRemFromServer((*p).clone(),PeerStateChange::Blocked)));
         };
 
         return Ok(false);
@@ -377,7 +386,7 @@ fn request_handler_internal <RT : RunningTypes>
       if let Some(p) = (*op).as_ref() {
         debug!("checking pong node");
         if p.get_key() != node.get_key() {
-          rp.peers.send(PeerMgmtMessage::PeerRemFromServer(p.clone(),PeerStateChange::Blocked));
+          try!(rp.peers.send(PeerMgmtMessage::PeerRemFromServer(p.clone(),PeerStateChange::Blocked)));
           return Ok(false);
         }
       };
@@ -391,13 +400,13 @@ fn request_handler_internal <RT : RunningTypes>
       // when this one should override previous connection for ping TODO check in server to
       // change state of connection and for heavy accept run a oneresult (state of serv is either
       // one result plus stack of waiting msg (in transport) or bool ...
-      rp.peers.send(PeerMgmtMessage::PeerAuth(node,sign));
+      try!(rp.peers.send(PeerMgmtMessage::PeerAuth(node,sign)));
     },
     // asynch mode we do not need to keep trace of the query
     ProtoMessage::FIND_NODE(mut qconf@QueryMsg{ modeinfo : QueryModeMsg::Asynch(..),..}, nid) => {
       update_query_conf (&mut qconf ,&rc.rules);
       debug!("Asynch Find peer {:?}", nid);
-      rp.peers.send(PeerMgmtMessage::PeerFind(nid,None,qconf));
+      try!(rp.peers.send(PeerMgmtMessage::PeerFind(nid,None,qconf)));
     },
     // general case as asynch waiting for reply
     ProtoMessage::FIND_NODE(mut qconf, nid) => {
@@ -416,17 +425,17 @@ fn request_handler_internal <RT : RunningTypes>
         debug!("Asynch Find peer {:?}", nid);
         // warn here is new qmode
         // it is managed : send to querycache (qid (init here to 0) and query cache)
-        rp.queries.send(QueryMgmtMessage::NewQuery(query, PeerMgmtInitMessage::PeerFind(nid, qconf)));
+        try!(rp.queries.send(QueryMgmtMessage::NewQuery(query, PeerMgmtInitMessage::PeerFind(nid, qconf))));
       } else {
         debug!("Last hop Find peer {:?}", nid);
-        rp.peers.send(PeerMgmtMessage::PeerFind(nid,None,qconf));
+        try!(rp.peers.send(PeerMgmtMessage::PeerFind(nid,None,qconf)));
       }
     },
     // particular case for asynch where we skip node during reply process
     ProtoMessage::FIND_VALUE(mut qconf@QueryMsg{ modeinfo : QueryModeMsg::Asynch(..), ..}, nid) => {
       update_query_conf (&mut qconf ,&rc.rules);
       debug!("Asynch Find val {:?}", nid);
-      rp.store.send(KVStoreMgmtMessage::KVFind(nid,None,qconf,false));
+      try!(rp.store.send(KVStoreMgmtMessage::KVFind(nid,None,qconf,false)));
     },
     // general case as asynch waiting for reply
     ProtoMessage::FIND_VALUE(mut queryconf, nid) => {
@@ -449,10 +458,10 @@ fn request_handler_internal <RT : RunningTypes>
         // Warning here is old qmode stored in conf; new mode is for proxied query
         let query : query::Query<RT::P,RT::V> = query::init_query(nbfrep, nb_req, lifetime, Some(old_qconf), Some(store));
         debug!("Asynch Find val {:?}", nid);
-        rp.store.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()),queryconf,true));
+        try!(rp.store.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()),queryconf,true)));
       } else {
         debug!("Last hop Find val {:?}", nid);
-        rp.store.send(KVStoreMgmtMessage::KVFind(nid,None,queryconf,false));
+        try!(rp.store.send(KVStoreMgmtMessage::KVFind(nid,None,queryconf,false)));
       };
     },
     // store node receive by server is asynch reply
@@ -466,7 +475,7 @@ fn request_handler_internal <RT : RunningTypes>
             
             // TODO optional ping before query by sending queryid to peermanager to and peerman
             // send it back to query on pong
-        rp.queries.send(QueryMgmtMessage::NewReply(qid, (res,None)));
+        try!(rp.queries.send(QueryMgmtMessage::NewReply(qid, (res,None))));
       },
       None => {
         // TODO implement propagate!!
@@ -477,7 +486,7 @@ fn request_handler_internal <RT : RunningTypes>
       Some(qid) => {
         let res = sre.map(|r|r.0);
         debug!("node store {:?} for {:?}", res, qid);
-        rp.queries.send(QueryMgmtMessage::NewReply(qid, (None,res)));
+        try!(rp.queries.send(QueryMgmtMessage::NewReply(qid, (None,res))));
       },
       None => {
         // TODO implement propagate!!
@@ -507,7 +516,7 @@ fn request_handler_internal <RT : RunningTypes>
             None
           },
         };
-        rp.queries.send(QueryMgmtMessage::NewReply(qid, (None,res)));
+        try!(rp.queries.send(QueryMgmtMessage::NewReply(qid, (None,res))));
       },
       None => {
         // TODO implement propagate!!

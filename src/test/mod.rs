@@ -52,6 +52,8 @@ const DHTRULES_DEFAULT : DhtRules = DhtRules {
   cacheproxied : false, // do you cache proxied result
   storelocal : true, // is result stored locally
   storeproxied : None, // store only if less than nbhop
+  heavyaccept : false,
+
 };
 
 
@@ -285,6 +287,13 @@ where <RT:: P as KeyVal>::Key : Ord + Hash,
 }
 
 #[cfg(test)]
+static FEWTESTMODE : [QueryMode; 2] = [
+                     QueryMode::Asynch,
+                     QueryMode::AProxy,
+                   ];
+
+
+#[cfg(test)]
 static ALLTESTMODE : [QueryMode; 6] = [
                      QueryMode::Asynch,
                      QueryMode::AProxy,
@@ -310,31 +319,62 @@ fn simpeer2hopget () {
 
 #[test]
 fn testpeer2hopget (){
-    let n = 4;
-    let map : &[&[usize]] = &[&[2],&[3],&[4],&[]];
-    for m in ALLTESTMODE.iter() {
-      let mut rules = DHTRULES_DEFAULT.clone();
-      rules.nbhopfact = 3;
-      let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, None);
-      finddistantpeer(peers,n,(*m).clone(),1,map,true); 
-    }
+  let n = 4;
+  let map : &[&[usize]] = &[&[2],&[3],&[4],&[]];
+  for m in ALLTESTMODE.iter() {
+    let mut rules = DHTRULES_DEFAULT.clone();
+    rules.nbhopfact = 3;
+    let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, None);
+    finddistantpeer(peers,n,(*m).clone(),1,map,true); 
+  }
+}
+
+#[test]
+fn testpeer2hopgetheavy (){
+  let n = 4;
+  let map : &[&[usize]] = &[&[2],&[3],&[4],&[]];
+  for m in FEWTESTMODE.iter() {
+    let mut rules = DHTRULES_DEFAULT.clone();
+    rules.nbhopfact = 3;
+    rules.heavyaccept = true;
+    let peers = initpeers_test(n, map, TestingRules::new_small_delay_heavy_accept(Some(100)), rules, None);
+    finddistantpeer(peers,n,(*m).clone(),1,map,true); 
+  }
 }
 
 #[cfg(feature="with-extra-test")]
 #[test]
+fn simpeer2hopgetheavy (){
+  let n = 4;
+  let map : &[&[usize]] = &[&[2],&[3],&[],&[3]];
+  for m in FEWTESTMODE.iter() {
+    let mut rules = DHTRULES_DEFAULT.clone();
+    rules.nbhopfact = 3;
+    rules.heavyaccept = true;
+    let peers = initpeers_test(n, map, TestingRules::new_small_delay_heavy_accept(None), rules, DEF_SIM);
+    // delay of one sec per accept : we need lot of time
+    thread::sleep_ms(10000); // local get easily stuck
+    finddistantpeer(peers,n,(*m).clone(),1,map,true); 
+  }
+}
+
+
+
+#[cfg(feature="with-extra-test")]
+#[test]
 fn simpeermultipeersnoresult (){
-    let n = 6;
-    let map : &[&[usize]] = &[&[2,3,4],&[3,5],&[1],&[4],&[1],&[]];
-    for m in ALLTESTMODE.iter() {
-      let mut rules = DHTRULES_DEFAULT.clone();
-      rules.nbhopfact = 3;
-      // for asynch we need only one nbquer (expected to many none otherwhise)
-      if let &QueryMode::Asynch = m {
-        rules.nbqueryfact = 0.0; // nb query is 1 + prio * nbqfact
-      };
-      let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, DEF_SIM);
-      finddistantpeer(peers,n,(*m).clone(),1,map,false);
-    }
+  let n = 6;
+  let map : &[&[usize]] = &[&[2,3,4],&[3,5],&[1],&[4],&[1],&[]];
+  for m in ALLTESTMODE.iter() {
+    let mut rules = DHTRULES_DEFAULT.clone();
+    rules.nbhopfact = 3;
+    // for asynch we need only one nbquer (expected to many none otherwhise)
+    if let &QueryMode::Asynch = m {
+      rules.nbqueryfact = 0.0; // nb query is 1 + prio * nbqfact
+    };
+    let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, DEF_SIM);
+    finddistantpeer(peers,n,(*m).clone(),1,map,false);
+  }
 }
 
 
@@ -362,6 +402,35 @@ fn testpeer4hopget (){
       finddistantpeer(peers,n,(*m).clone(),1,map,false);
     };
 }
+
+#[test]
+fn testpeer4hopgetheavy (){
+    let n = 6;
+    let map : &[&[usize]] = &[&[2],&[3],&[4],&[5],&[6],&[]];
+    // prio 2 with rules multiplying by 3 give 6 hops
+    for m in ALLTESTMODE.iter() {
+      let mut rules = DHTRULES_DEFAULT.clone();
+      rules.nbhopfact = 3;
+      rules.heavyaccept = true;
+      let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, None);
+      finddistantpeer(peers,n,(*m).clone(),2,map,true);
+    };
+   
+    // prio 1 max nb hop is 3
+    for m in ALLTESTMODE.iter() {
+      let mut rules = DHTRULES_DEFAULT.clone();
+      rules.nbhopfact = 3;
+      rules.heavyaccept = true;
+      // for asynch we need only one nbquer (expected to many none otherwhise)
+      if let &QueryMode::Asynch = m {
+        rules.nbqueryfact = 0.0; // nb query is 1 + prio * nbqfact
+      };
+      let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, None);
+      finddistantpeer(peers,n,(*m).clone(),1,map,false);
+    };
+}
+
+
 
 #[test]
 fn simloopget (){ // TODO this only test loop over our node TODO circuit loop test

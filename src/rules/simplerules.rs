@@ -30,6 +30,7 @@ pub struct DhtRules {
   pub cacheproxied : bool, // do you cache proxied result
   pub storelocal : bool, // is result stored locally
   pub storeproxied : Option<usize>, // store only if less than nbhop // TODO implement other alternative (see comment)
+  pub heavyaccept : bool,
   // TODO further params : clientmode, heavy...
 }
 
@@ -118,7 +119,7 @@ impl DHTRulesIf for SimpleRules {
   
   #[inline]
   fn is_accept_heavy(&self) -> bool {
-    false
+    self.1.heavyaccept
   }
 
   #[inline]

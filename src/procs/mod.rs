@@ -15,7 +15,6 @@ use transport::{Transport,Address};
 use time::Duration;
 use utils::{self};
 use msgenc::MsgEnc;
-use num;
 use num::traits::ToPrimitive;
 use std::marker::PhantomData;
 use mydhtresult::Result as MDHTResult;

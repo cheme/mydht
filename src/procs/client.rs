@@ -17,7 +17,7 @@ use std::sync::mpsc::{Sender,Receiver};
 use query::QueryChunk;
 use peer::Peer;
 use keyval::KeyVal;
-use msgenc::{MsgEnc,DistantEncAtt,DistantEnc};
+use msgenc::{DistantEncAtt,DistantEnc};
 use procs::server::start_listener;
 use procs::server::{serverinfo_from_handle};
 use route::{ClientSender};
@@ -69,6 +69,9 @@ where RT::A : 'a,
     loop {
       match self.0.try_recv() {
         Ok((ClientMessage::PeerFind(_,Some(query), _),ix)) | Ok((ClientMessage::KVFind(_,Some(query), _),ix)) => {
+          if ix != 0 {
+            panic!("TODO implement mult");
+          };
           debug!("- emptying channel found query");
           query.lessen_query(1, self.1);
         },
@@ -109,7 +112,7 @@ pub fn start_local <RT : RunningTypes>
           Some(rs) => {
             let sh = try!(start_listener(rs,&rc,&rp));
             // send si to peermanager
-            rp.peers.send(PeerMgmtMessage::ServerInfoFromClient(p.clone(), serverinfo_from_handle(&sh)));
+            try!(rp.peers.send(PeerMgmtMessage::ServerInfoFromClient(p.clone(), serverinfo_from_handle(&sh))));
           },
         };
         Some(ClientSender::Threaded(ws))
@@ -127,7 +130,7 @@ pub fn start_local <RT : RunningTypes>
       &mut None => {
         debug!("cannot connect with peer returning false");
         info!("Cannot connect");
-        rp.peers.send(PeerMgmtMessage::PeerRemFromClient(p.clone(), PeerStateChange::Offline));
+        try!(rp.peers.send(PeerMgmtMessage::PeerRemFromClient(p.clone(), PeerStateChange::Offline)));
         // send no connection possible : 
         return Ok(false);
       },
@@ -137,18 +140,21 @@ pub fn start_local <RT : RunningTypes>
   };
   // TODO if needed start receive and send handle to peermgmt!!!
   // closure to send message with one reconnect try on error
-  if managed {
+  if managed { // TODO useless test orcl is none otherwhise
     // loop on rcl
     match orcl {
       None => match omessage {
         None =>  {
-          error!("Unexpected client process without channel or message")
+          error!("Unexpected client process without channel or message");
+          return Ok(false);
         },
         Some(m) => {
           let (okrecv, _) = try!(client_match(p,&rc,&rp,m,false, sc));
+          ok = okrecv;
         },
       },
       Some(r) => {
+        assert!(omessage.is_none());
         let cr : CleanableReceiver<RT> = CleanableReceiver(r,&rp.peers);
         loop {
           match cr.0.recv() {
@@ -157,6 +163,9 @@ pub fn start_local <RT : RunningTypes>
               break;
             },
             Ok((m,ix)) => {
+              if ix != 0 {
+                panic!("TODO multi client");
+              };
               let (okrecv, s) = try!(client_match(p,&rc,&rp,m,true, sc)); 
               match s {
                 // update of stream is for possible reconnect
@@ -166,7 +175,7 @@ pub fn start_local <RT : RunningTypes>
               };
               if !okrecv {
                 ok = false;
-                break;
+                break
               };
             },
           };
@@ -191,26 +200,31 @@ pub fn client_match <RT : RunningTypes>
   managed : bool,
   s : &mut ClientSender<<RT::T as Transport>::WriteStream>,
   ) -> MydhtResult<(bool, Option<ClientSender<<RT::T as Transport>::WriteStream>>)> {
-  let mut ok = true;
+  let mut ok;
   let mut newcon = None;
   macro_rules! sendorconnect(($mess:expr,$oa:expr) => (
   {
     ok = send_msg($mess,$oa,s,&rc.msgenc);
     if !ok && managed {
       debug!("trying reconnection");
-      rc.transport.connectwith(&p.to_address(), Duration::seconds(2)).map(|(mut n,_)|{
-        // TODO if receive stream restart its server and shut xistring
-        debug!("reconnection in client process ok");
-        // for now reconnect is only for threaded : see start_local TODO local spawn could use this
-        let mut cn = ClientSender::Threaded(n);
-        // TODO send to peermgmet optional writeTransportStream
-        ok = send_msg($mess, $oa,&mut cn,&rc.msgenc);
-        if ok {
-          newcon = Some(cn);
-        } else {
-          rp.peers.send(PeerMgmtMessage::PeerRemFromClient(p.clone(), PeerStateChange::Offline));
-        };
-      });
+      match rc.transport.connectwith(&p.to_address(), Duration::seconds(2)){
+        Ok((n,_)) => {
+          // TODO if receive stream restart its server and shut xisting !!!
+          debug!("reconnection in client process ok");
+          // for now reconnect is only for threaded : see start_local TODO local spawn could use this
+          let mut cn = ClientSender::Threaded(n);
+          // TODO send to peermgmet optional readTransportStream
+          ok = send_msg($mess, $oa,&mut cn,&rc.msgenc);
+          if ok {
+            newcon = Some(cn);
+          } else {
+            try!(rp.peers.send(PeerMgmtMessage::PeerRemFromClient(p.clone(), PeerStateChange::Offline)));
+          };
+        },
+        Err(e) => {
+          warn!("Reconnect attempt failure {}",e);
+        },
+      };
     };
   }
   ));
@@ -253,7 +267,7 @@ pub fn client_match <RT : RunningTypes>
       let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_VALUE(queryconf, nid);
       sendorconnect!(&mess,None);
       if !ok {
-        // lessen TODO asynch is pow...
+        // lessen TODO asynch is pow... cf lessen of peermanager
         oquery.map(|query|query.lessen_query(1, &rp.peers));
       }
     },
