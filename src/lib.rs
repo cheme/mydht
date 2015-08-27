@@ -11,7 +11,6 @@
 #![feature(socket_timeout)]
 #![feature(vecmap)] // in tcp_loop
 #![feature(slice_bytes)] // in tcp_loop
-#![feature(split_off)] // in tcp_loop
 
 #[macro_use] extern crate log;
 extern crate rustc_serialize;
@@ -310,7 +309,10 @@ use std::fmt::{Display,Formatter};
 use std::error::Error as ErrorTrait;
 use std::io::Error as IOError;
 use byteorder::Error as BOError;
+use std::sync::PoisonError;
 use std::sync::mpsc::SendError;
+use std::sync::mpsc::RecvError;
+
 //use std::marker::Reflect;
 use bincode::EncodingError as BincError;
 use bincode::DecodingError as BindError;
@@ -323,6 +325,18 @@ pub struct Error(pub String, pub ErrorKind, pub Option<Box<ErrorTrait>>);
   r.map_err(|e| From::from(e))
 }*/
 
+impl Error {
+  // TODO may be useless and costy
+  pub fn new_from<E : ErrorTrait + 'static> (msg : String, kind : ErrorKind, orig : Option<E>) -> Error {
+    match orig {
+      Some (e) => {
+    Error(msg, kind, Some(Box::new(e)))
+      },
+      None => 
+    Error(msg, kind, None),
+    }
+  }
+}
 
 impl ErrorTrait for Error {
   
@@ -363,6 +377,14 @@ impl From<BOError> for Error {
     Error(e.description().to_string(), ErrorKind::ByteOrderError, Some(Box::new(e)))
   }
 }
+impl<T> From<PoisonError<T>> for Error {
+  #[inline]
+  fn from(e : PoisonError<T>) -> Error {
+    let msg = format!("Poison Error on a mutex {}", e);
+    Error(msg, ErrorKind::MutexError, None)
+  }
+}
+
 /* TODO when possible non conflicting imple
 impl<T: Send + Reflect> From<SendError<T>> for Error {
   #[inline]
@@ -377,6 +399,13 @@ impl<T> From<SendError<T>> for Error {
     Error(e.to_string(), ErrorKind::ChannelSendError,None)
   }
 }
+impl From<RecvError> for Error {
+  #[inline]
+  fn from(e : RecvError) -> Error {
+    Error(e.to_string(), ErrorKind::ChannelRecvError,None)
+  }
+}
+
 
 
 
@@ -407,10 +436,27 @@ pub enum ErrorKind {
   ByteOrderError,
   ExpectedError,
   ChannelSendError,
+  ChannelRecvError,
   RouteError,
   PingError,
+  StoreError,
+  MutexError,
 }
 
+#[derive(Debug)]
+/// Level of error criticity, to manage errors impact.
+/// Most of the time default to higher criticity and could manually be changed.
+pub enum ErrorCrit {
+  /// result in all programm failing, (or at least thread)
+  /// that is the case for channel error of running processes
+  /// Impact similar to panic but with expected close program
+  /// process (store finalize...)
+  Dead,
+  /// Expected error, for example disconnect, need to be processed accordingly (for example try to
+  /// reconnect and/or pout offline in route).
+  Alive,
+}
+ 
 /// Result type internal to mydht
 pub type Result<R> = StdResult<R,Error>;
 

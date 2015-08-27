@@ -17,11 +17,11 @@ use std::fs::PathExt;
 use utils;
 use keyval::{FileKeyVal,KeyVal};
 use kvstore::KVStore;
-use kvcache::{KVCache,NoCache};
-use std::sync::Arc;
+//use kvcache::{KVCache,NoCache};
+//use std::sync::Arc;
 use query::cache::CachePolicy;
 use std::collections::BTreeSet;
-use std::path::Path;
+//use std::path::Path;
 use std::path::PathBuf;
 use kvstore::BoxedStore;
 
@@ -58,17 +58,17 @@ impl<V : FileKeyVal> FileStore<V> {
     }
 
     let mut fpaths = try!(File::open(&pstore));
-    let mut jsonCont = Vec::new();
-    fpaths.read_to_end(&mut jsonCont);
+    let mut jsoncont = Vec::new();
+    try!(fpaths.read_to_end(&mut jsoncont));
     // if fail to load : just reset (currently only use to fasten init)
-    let mut bpath : BTreeSet<PathBuf> = bincode::decode(&jsonCont[..]).unwrap_or(BTreeSet::new()); 
+    let mut bpath : BTreeSet<PathBuf> = bincode::decode(&jsoncont[..]).unwrap_or(BTreeSet::new()); 
 
     // add ref to KVStore
-    if (fillref) {
+    if fillref {
       info!("Filestore initiating from local path");
       for e in walk_dir(&rep).unwrap() {
         let p = e.unwrap().path();
-        if (p.is_file() && !bpath.contains(&p)) {
+        if p.is_file() && !bpath.contains(&p) {
          
           info!("  initiating {:?}", p);
           let kv = <V as FileKeyVal>::from_path(p.to_path_buf());
@@ -100,19 +100,36 @@ impl<V : FileKeyVal> KVStore<V> for FileStore<V> {
       if utils::is_in_tmp_dir(&(*path)) {
         let newpath = self.repo.join(&v.name()[..]);
         debug!("Moving file {:?} into filestore : {:?}", &path, newpath);
-        let r = hard_link(&path, &newpath);
-        let r2 = match r {
+        let r = match hard_link(&path, &newpath) {
           Err(_) => copy(&path, &newpath),
             _ => Ok(0),
         };
-        let ur = remove_file(&path);
+        match r {
+          Err(e) => {
+            error!("Cannot move keyval file to file store, keyval is not added : {:?}", e);
+            return
+          },
+          _ => (),
+        };
+        match remove_file(&path) {
+          Err(e) => {
+            error!("Cannot remove old file, some temporary files may remain : {:?} , cause : {:?}", &path, e);
+          },
+          _ => (),
+        };
         let kv = <V as FileKeyVal>::from_path(newpath.to_path_buf()).unwrap();
-        if(kv.get_key() == v.get_key()) {
+        if kv.get_key() == v.get_key() {
           self.data.add_val(kv,(local,cp));
           self.paths.insert(newpath);
         } else {
           error!( "invalid FileKeyVal hash receive for {:?}", kv.name());
-          remove_file(&newpath);
+          match remove_file(&newpath) {
+            Err(e) => {
+              error!("Cannot remove invalid file, some extra files in store : {:?}, error : {:?}", &newpath, e);
+            },
+            _ => (),
+          };
+
         };
         // TODO do something on failure
       } else {
@@ -136,7 +153,13 @@ impl<V : FileKeyVal> KVStore<V> for FileStore<V> {
       Some(kv) => {
         kv.get_attachment().map(|path|{
           // remove file 
-          remove_file(&path);
+          match remove_file(&path) {
+            Err(e) => {
+              error!("Cannot remove file of removed keyval, some extra files in store : {:?}, cause : {:?}", &path, e);
+            },
+            _ => (),
+          };
+
           self.paths.remove(path)
         });
         true
@@ -154,14 +177,14 @@ impl<V : FileKeyVal> KVStore<V> for FileStore<V> {
     let confpath = &self.pstore;
     let bupath = confpath.with_extension("_bu");
     let r = if copy(confpath, &bupath).is_ok() {
-      OpenOptions::new().read(true).write(true).open(&confpath).map(|mut confFile|{
+      OpenOptions::new().read(true).write(true).open(&confpath).map(|mut conffile|{
         let mut ior = true;
-        ior && confFile.seek(SeekFrom::Start(0)).is_ok();
+        ior = ior && conffile.seek(SeekFrom::Start(0)).is_ok();
         // remove content
-        ior && confFile.set_len(0).is_ok();
+        ior = ior && conffile.set_len(0).is_ok();
         info!("writing paths cache for filestore : {:?}", self.paths);
         // write new content
-        ior && confFile.write_all(&bincode::encode(&self.paths, bincode::SizeLimit::Infinite).unwrap()[..]).is_ok();
+        ior = ior && conffile.write_all(&bincode::encode(&self.paths, bincode::SizeLimit::Infinite).unwrap()[..]).is_ok();
         ior
       }).unwrap_or(false)
     } else {

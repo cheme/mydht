@@ -1,7 +1,7 @@
 use rustc_serialize::json;
 use rustc_serialize::json::EncoderError as JSonEncError;
 use rustc_serialize::json::DecoderError as JSonDecError;
-use rustc_serialize::{Encodable,Decodable};
+//use rustc_serialize::{Encodable,Decodable};
 use super::MsgEnc;
 use keyval::{KeyVal,Attachment};
 use peer::{Peer};
@@ -57,8 +57,7 @@ where <P as Peer>::Address : 'a,
       let bytes = st.into_bytes();
       try!(w.write_u64::<LittleEndian>(bytes.len().to_u64().unwrap()));
       w.write_all(&bytes[..])
-    }));
-    Ok(())
+    })).map_err(|e|e.into())
   }
 
   /// attach into will simply add bytes afterward json cont (no hex or base64 costly enc otherwhise

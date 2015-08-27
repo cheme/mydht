@@ -2,9 +2,9 @@
 extern crate bincode;
 
 
-use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
-use std::path::{Path,PathBuf};
-use keyval::{Key,KeyVal};
+//use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
+//use std::path::{Path,PathBuf};
+use keyval::{KeyVal};
 use peer::Peer;
 use utils::ArcKV;
 use utils::TimeSpecExt;

@@ -15,9 +15,10 @@ use transport::{Transport,Address};
 use time::Duration;
 use utils::{self};
 use msgenc::MsgEnc;
-use num::traits::ToPrimitive;
+//use num::traits::ToPrimitive;
 use std::marker::PhantomData;
 use mydhtresult::Result as MDHTResult;
+use std::fmt::{Debug,Display};
 
 pub mod mesgs;
 mod server;
@@ -267,11 +268,15 @@ pub struct DHT<RT : RunningTypes> {
 
 
 /// Find a value by key. Specifying our queryconf, and priorities.
-pub fn find_local_val<RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcRunningContext<RT>, nid : <RT::V as KeyVal>::Key ) -> Option<RT::V> {
+pub fn find_local_val<RT : RunningTypes> (rp : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>, nid : <RT::V as KeyVal>::Key ) -> Option<RT::V> {
   debug!("Finding KeyVal locally {:?}", nid);
   let sync = utils::new_oneresult(None);
   // local query replyto set to None
-  rp.store.send(KVStoreMgmtMessage::KVFindLocally(nid, Some(sync.clone())));
+  if rp.store.send(KVStoreMgmtMessage::KVFindLocally(nid, Some(sync.clone()))).is_err() {
+    error!("chann error in find local val");
+    return None
+  };
+
   // block until result
   utils::clone_wait_one_result(&sync, None).unwrap_or(None)
 }
@@ -279,7 +284,7 @@ pub fn find_local_val<RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcR
 /// Store a value. Specifying our queryconf, and priorities. Note that priority rules are very
 /// important to know if we do propagate value or store local only or cache local only.
 pub fn store_val <RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcRunningContext<RT>, val : RT::V, qconf : &QueryConf, prio : QueryPriority, sprio : StoragePriority) -> bool {
-  let msgqmode = init_qmode(rp, rc, &qconf.mode);
+  let msgqmode = init_qmode(rc, &qconf.mode);
   let lastsent = qconf.hop_hist.map(|(n,ishop)| if ishop 
     {LastSent::LastSentHop(n,vec![rc.me.get_key()].into_iter().collect())}
     else
@@ -298,7 +303,12 @@ pub fn store_val <RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcRunni
     nb_res : 1};
   let sync = utils::new_oneresult(false);
   // for propagate 
-  rp.store.send(KVStoreMgmtMessage::KVAddPropagate(val,Some(sync.clone()),queryconf));
+  if rp.store.send(KVStoreMgmtMessage::KVAddPropagate(val,Some(sync.clone()),queryconf)).is_err() {
+    error!("chann error in store val");
+    return false
+  };
+
+
   // TODO wait for propagate result...??? plus new message cause storekv is
   // wait for conflict management issue reply TODO instead of simple bool
   // for local
@@ -316,7 +326,7 @@ pub fn find_val<RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcRunning
   let maxhop = rc.rules.nbhop(prio);
   let nbquer = rc.rules.nbquery(prio);
   let semsize = rc.rules.notfoundtreshold(nbquer,maxhop,&qconf.mode);
-  let msgqmode = init_qmode(rp, rc, &qconf.mode);
+  let msgqmode = init_qmode(rc, &qconf.mode);
   let lifetime = rc.rules.lifetime(prio);
   let lastsent = qconf.hop_hist.map(|(n,ishop)| if ishop 
     {LastSent::LastSentHop(n,vec![rc.me.get_key()].into_iter().collect())}
@@ -336,14 +346,17 @@ pub fn find_val<RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcRunning
   // local query replyto set to None
   let query = query::init_query(semsize, nb_res, lifetime, None, Some(store));
   
-  rp.store.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()),queryconf, true));
+  if rp.store.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()),queryconf, true)).is_err() {
+    error!("chann error in find val");
+    return Vec::new();
+  };
 
   // block until result
   query.wait_query_result().right().unwrap()
 }
 
 #[inline]
-fn init_qmode<RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcRunningContext<RT>, qm : &QueryMode) -> QueryModeMsg <RT::P>{
+fn init_qmode<RT : RunningTypes> (rc : &ArcRunningContext<RT>, qm : &QueryMode) -> QueryModeMsg <RT::P> {
   match qm {
     &QueryMode::Asynch => QueryModeMsg::Asynch((rc.me).clone(),rc.rules.newid()),
     &QueryMode::AProxy => QueryModeMsg::AProxy((rc.me).clone(),rc.rules.newid()),
@@ -358,26 +371,35 @@ impl<RT : RunningTypes> DHT<RT> {
   }
   pub fn shutdown (&self) {
     debug!("Sending Shutdown");
-    self.rp.store.send(KVStoreMgmtMessage::Shutdown);
-    self.rp.peers.send(PeerMgmtMessage::ShutDown);
+    let mut err = self.rp.store.send(KVStoreMgmtMessage::Shutdown).is_err();
+    err = self.rp.peers.send(PeerMgmtMessage::ShutDown).is_err() || err;
+    if err {
+      error!("Shutdown is failing due to close channels");
+    };
   }
   // reping offline closest peers  TODO refactor so that we refresh until target size not
   // returning nb of connection
-  pub fn refresh_closest_peers(&self, targetNb : usize) -> usize {
-    self.rp.peers.send(PeerMgmtMessage::Refresh(targetNb));
-    // TODO get an appropriate response
+  pub fn refresh_closest_peers(&self, targetnb : usize) -> usize {
+    if self.rp.peers.send(PeerMgmtMessage::Refresh(targetnb)).is_err() {
+      error!("shutdown, channel error");
+      return 0
+    };
+    // TODO get an appropriate response !!!
     0
   }
 
   #[inline]
   fn init_qmode(&self, qm : &QueryMode) -> QueryModeMsg <RT::P>{
-    init_qmode(&self.rp, &self.rc, qm)
+    init_qmode(&self.rc, qm)
   }
 
   pub fn ping_peer (&self, peer : Arc<RT::P>) -> bool {
     let res = utils::new_oneresult(false);
     let ores = Some(res.clone());
-    self.rp.peers.send(PeerMgmtMessage::PeerPing(peer,ores));
+    if self.rp.peers.send(PeerMgmtMessage::PeerPing(peer,ores)).is_err() {
+      error!("ping peer, channel error");
+      return false
+      };
     // TODO timeout
     utils::clone_wait_one_result(&res,None).unwrap_or(false)
   }
@@ -407,7 +429,10 @@ impl<RT : RunningTypes> DHT<RT> {
       nb_res : nb_res}; // querystorage priority is hadcoded but not used to (peer are curently always stored) TODO switch to option??
     // local query replyto set to None
     let query : Query<RT::P,RT::V> = query::init_query(semsize, nb_res, lifetime, None, None); // Dummy store policy
-    self.rp.queries.send(QueryMgmtMessage::NewQuery(query.clone(), PeerMgmtInitMessage::PeerFind(nid, queryconf)));
+    if self.rp.queries.send(QueryMgmtMessage::NewQuery(query.clone(), PeerMgmtInitMessage::PeerFind(nid, queryconf))).is_err() {
+      error!("find peer, channel error");
+      return None
+    }; // TODO return result??
     // block until result
     query.wait_query_result().left().unwrap()
 
@@ -443,83 +468,108 @@ pub fn boot_server
   F3 : FnOnce() -> Option<QC> + Send + 'static,
  >
  (rc : ArcRunningContext<RT>, 
-  mut route : F2, 
-  mut querycache : F3, 
-  mut kvst : F1,
-  cachedNodes : Vec<Arc<RT::P>>, 
-  bootNodes : Vec<Arc<RT::P>>,
+  route : F2, 
+  querycache : F3, 
+  kvst : F1,
+  cached_nodes : Vec<Arc<RT::P>>, 
+  boot_nodes : Vec<Arc<RT::P>>,
   ) 
- -> DHT<RT> {
+ -> MDHTResult<DHT<RT>> {
 
-let (tquery,rquery) = channel();
-let (tkvstore,rkvstore) = channel();
-let (tpeer,rpeer) = channel();
-let cleandelay = rc.rules.asynch_clean();
-let cleantquery = tquery.clone();
-let resulttquery = tquery.clone();
-let cleantpeer = tpeer.clone();
-let cleantkstor = tkvstore.clone();
+  let (tquery,rquery) = channel();
+  let (tkvstore,rkvstore) = channel();
+  let (tpeer,rpeer) = channel();
+  let cleandelay = rc.rules.asynch_clean();
+  let cleantquery = tquery.clone();
+  let resulttquery = tquery.clone();
+  let cleantpeer = tpeer.clone();
+  let cleantkstor = tkvstore.clone();
+  
+  // Query manager is allways start TODO a parameter for not starting it (if running dht in full
+  // proxy mode for instance)
+  thread::spawn (move ||{
+    sphandler_res(querymanager::start::<RT,_,_>(&rquery, &cleantquery, &cleantpeer, &cleantkstor, querycache, cleandelay));
+  });
+  let sem = Arc::new(Semaphore::new(-1)); // wait end of two process from shutdown TODO replace that by joinhandle wait!!!
+  
+  let rp = RunningProcesses {
+    peers : tpeer.clone(), 
+    queries : tquery.clone(),
+    store : tkvstore.clone()
+  };
+  let tpeer3 = tpeer.clone();
+  // starting peer manager process
+  let rcsp = rc.clone();
+  let rpsp = rp.clone();
+  let semsp = sem.clone();
+  thread::spawn (move ||{
+    match peermanager::start (rcsp, route, &rpeer,rpsp) {
+      Ok(()) => {
+        info!("peermanager end ok");
+      },
+      Err(e) => {
+        error!("peermanager failure : {}", e);
+        panic!("peermanager failure");
+      },
+    };
+    semsp.release(); // TODO replace by join handle
+  });
+  
+  // starting kvstore process
+  let rcst = rc.clone();
+  let rpst = rp.clone();
+  let semsp2 = sem.clone();
+  thread::spawn (move ||{
+    match kvmanager::start (rcst, kvst, &rkvstore,rpst) {
+      Ok(()) => {
+        info!("kvmanager end ok");
+      },
+      Err(e) => {
+        error!("kvmanager failure : {}", e);
+        panic!("kvmanager failure");
+      },
+    };
+    semsp2.release(); // TODO replace by join handle
+  });
+  
+  // starting socket listener process
+  
+  let tpeer4 = tpeer3.clone();
+  let rcsp2 = rc.clone();
+  let rpsp2 = rp.clone();
+  thread::spawn (move ||{
+    sphandler_res(server::servloop(rcsp2, rpsp2));
+  });
+  
+  // Typically those cached node are more likely to be initialized with the routing backend (here it
+  // is slower as we need to clone nodes)
+  info!("loading additional cached node {:?}", cached_nodes);
+  for p in cached_nodes.iter() {
+    try!(tpeer3.send(PeerMgmtMessage::PeerAddOffline(p.clone())));
+  }
+  
+  info!("bootstrapping with {:?}", boot_nodes);
+  for p in boot_nodes.iter() {
+    try!(tpeer3.send(PeerMgmtMessage::PeerPing(p.clone(),None))); // TODO avoid cloning node... eg try maping to collection of arc
+  }
 
-// Query manager is allways start TODO a parameter for not starting it (if running dht in full
-// proxy mode for instance)
-thread::spawn (move ||{
-  querymanager::start::<RT,_,_>(&rquery, &cleantquery, &cleantpeer, &cleantkstor, querycache, cleandelay);
-});
-let sem = Arc::new(Semaphore::new(-1)); // wait end of two process from shutdown TODO replace that by joinhandle wait!!!
-
-let rp = RunningProcesses {
-  peers : tpeer.clone(), 
-  queries : tquery.clone(),
-  store : tkvstore.clone()
-};
-let tpeer3 = tpeer.clone();
-// starting peer manager process
-let rcsp = rc.clone();
-let rpsp = rp.clone();
-let semsp = sem.clone();
-thread::spawn (move ||{
-  peermanager::start (rcsp, route, &rpeer,rpsp, semsp)
-});
-
-// starting kvstore process
-let rcst = rc.clone();
-let rpst = rp.clone();
-let semsp2 = sem.clone();
-thread::spawn (move ||{
-  kvmanager::start (rcst, kvst, &rkvstore,rpst, semsp2);
-});
-
-// starting socket listener process
-let tpeer2 = tpeer3.clone();
-let tpeer4 = tpeer3.clone();
-let rcsp2 = rc.clone();
-let rpsp2 = rp.clone();
-thread::spawn (move ||{
-  server::servloop(rcsp2, rpsp2);
-});
-
-// Typically those cached node are more likely to be initialized with the routing backend (here it
-// is slower as we need to clone nodes)
-info!("loading additional cached node {:?}", cachedNodes);
-for p in cachedNodes.iter() {
-  tpeer3.send(PeerMgmtMessage::PeerAddOffline(p.clone()));
+  Ok(DHT {
+    rp : RunningProcesses {
+      peers : tpeer4,
+      queries : resulttquery,
+      store : tkvstore,
+    },
+    rc : rc,
+    f : sem
+  })
+}
 }
 
-info!("bootstrapping with {:?}", bootNodes);
-for p in bootNodes.iter() {
-  tpeer3.send(PeerMgmtMessage::PeerPing(p.clone(),None)); // TODO avoid cloning node... eg try maping to collection of arc
+/// manage result of a spawned handler
+fn sphandler_res<A, E : Debug + Display> (res : Result<A, E>) {
+  match res {
+    Ok(_) => debug!("Spawned result returned gracefully"),
+    Err(e) => error!("Thread exit due to error : {}",e),
+  }
 }
 
-DHT {
-  rp : RunningProcesses {
-    peers : tpeer4,
-    queries : resulttquery,
-    store : tkvstore,
-  },
-  rc : rc,
-  f : sem
-}
-
-}
-
-}

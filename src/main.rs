@@ -17,8 +17,8 @@ use std::fs::{File};
 use std::path::Path;
 use std::io::Read;
 use time::Duration;
-use std::env;
 use std::net::{SocketAddr};
+use std::env;
 use std::sync::Arc;
 use std::sync::Mutex;
 //use self::rand::{thread_rng};
@@ -63,7 +63,6 @@ fn main() {
     }
 
     info!("using conf file : {:?}" , conf_path);
-    info!("using boot file : {:?}" , boot_path);
 
 //    let confFile = File::open(&Path::new(conf_path));
 //    let mut confFile = File::create(&Path::new(conf_path));
@@ -79,7 +78,7 @@ fn main() {
     let tcp_transport = Tcp::new(
       &myadd,
       Duration::seconds(5), // timeout
-      Duration::seconds(5), // conn timeout
+    //  Duration::seconds(5), // conn timeout
       true,//mult
     ).unwrap();
 
@@ -104,7 +103,13 @@ fn main() {
     )
     );
  
-    let serv = DHT::<RunningTypesImpl<DummyRules, Tcp, Json>>::boot_server(rc, move || Some(Inefficientmap::new()), move || Some(SimpleCacheQuery::new(false)), move || Some(SimpleCache::new(None)), Vec::new(), boot_nodes);
+    let serv = DHT::<RunningTypesImpl<DummyRules, Tcp, Json>>::boot_server(
+      rc, 
+      move || Some(Inefficientmap::new()), 
+      move || Some(SimpleCacheQuery::new(false)), 
+      move || Some(SimpleCache::new(None)), 
+      Vec::new(), 
+      boot_nodes).unwrap();
     serv.block();
     info!("exiting...");
  

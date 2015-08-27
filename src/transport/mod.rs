@@ -2,12 +2,12 @@ use std::io::Result as IoResult;
 use std::io::Write;
 use std::io::Read;
 use time::Duration;
-use peer::{Peer};
+
 use std::net::{SocketAddr};
 use std::path::PathBuf;
 use std::fmt::Debug;
 use mydhtresult::Result; 
-use utils::OneResult;
+
 
 #[cfg(feature="mio-impl")]
 pub mod tcp_loop;

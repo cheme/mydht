@@ -1,10 +1,10 @@
 
-use rustc_serialize::{Encodable,Decodable};
+//use rustc_serialize::{Encodable,Decodable};
 use super::MsgEnc;
 use keyval::{KeyVal,Attachment};
 use peer::{Peer};
 use super::ProtoMessage;
-use std::collections::BTreeMap;
+//use std::collections::BTreeMap;
 use std::io::Write;
 use std::io::Read;
 use super::write_attachment;

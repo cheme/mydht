@@ -6,31 +6,31 @@ extern crate openssl;
 extern crate time;
 extern crate bincode;
 
-use mydhtresult::Result as MDHTResult;
+//use mydhtresult::Result as MDHTResult;
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
-use rustc_serialize::hex::{ToHex,FromHex};
-use std::io::Result as IoResult;
+use rustc_serialize::hex::{ToHex};
+//use std::io::Result as IoResult;
 use self::openssl::crypto::hash::{Hasher,Type};
 use self::openssl::crypto::pkey::{PKey};
 use std::fmt::{Formatter,Debug};
 use std::fmt::Error as FmtError;
-use std::str::FromStr;
+//use std::str::FromStr;
 use std::cmp::PartialEq;
 use std::cmp::Eq;
 use std::sync::Arc;
 use std::io::Write;
 use std::ops::Deref;
-use std::path::{Path,PathBuf};
-use self::time::Timespec;
+use std::path::{PathBuf};
+//use self::time::Timespec;
 
 use keyval::{KeyVal};
 use std::net::{SocketAddr};
 use utils::SocketAddrExt;
 use utils::{TimeSpecExt};
 use keyval::{Attachment,SettableAttachment};
-
 use super::{TrustedPeer,Truster,TrustRel,TrustedVal,PeerInfoRel};
-use super::trustedpeer::{TrustedPeerToSignEnc, TrustedPeerToSignDec, SendablePeerEnc, SendablePeerDec};
+//use super::trustedpeer::{TrustedPeerToSignDec};
+use super::trustedpeer::{TrustedPeerToSignEnc, SendablePeerEnc, SendablePeerDec};
 use peer::Peer;
 
 static RSA_SIZE : usize = 2048;
@@ -119,9 +119,9 @@ unsafe impl Sync for PKeyExt {}
 impl Encodable for PKeyExt {
   fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
     s.emit_struct("pkey",2, |s| {
-      s.emit_struct_field("publickey", 0, |s|{
+      try!(s.emit_struct_field("publickey", 0, |s|{
         self.0.encode(s)
-      });
+      }));
       s.emit_struct_field("privatekey", 1, |s|{
         self.1.save_priv().encode(s)
       })
@@ -181,13 +181,13 @@ pub trait RSATruster : KeyVal<Key=Vec<u8>> {
     debug!("with sign {:?}", sign);
     debug!("with key {:?}", self.get_pkey().0);
     let mut digest = Hasher::new(HASH_SIGN);
-    digest.write_all(tocheckenc);
-    self.get_pkey().1.verify_with_hash(&digest.finish()[..], sign, HASH_SIGN)
+    digest.write_all(tocheckenc).is_ok() // TODO proper errror??
+    && self.get_pkey().1.verify_with_hash(&digest.finish()[..], sign, HASH_SIGN)
   }
   fn rsa_key_check (&self) -> bool {
     let mut digest = Hasher::new(HASH_SIGN);
-    digest.write_all(&self.get_pkey().0[..]);
-    self.get_key() == digest.finish()
+    digest.write_all(&self.get_pkey().0[..]).is_ok() // TODO return proper error??
+    && self.get_key() == digest.finish()
   }
 
 
@@ -255,7 +255,13 @@ impl RSAPeer {
 
   fn sign_cont(pkey : &PKey, to_sign : &[u8]) -> Vec<u8> {
     let mut digest = Hasher::new(HASH_SIGN);
-    digest.write_all(to_sign);
+    match digest.write_all(to_sign) { // TODO return result<vec<u8>>
+      Ok(_) => (),
+      Err(e) => {
+        error!("Rsa peer digest failure : {:?}",e);
+        return Vec::new();
+      },
+    }
     pkey.sign_with_hash(&digest.finish()[..], HASH_SIGN)
   }
 
@@ -290,13 +296,16 @@ impl RSAPeer {
       name : data.name,
       date : data.date,
       peersign : data.peersign,
-      addressdate : data.addressdate,
+      addressdate : now,
       address : data.address,
       privatekey : None,
     }
   }
-
+  
   pub fn new (name : String, pem : Option<PathBuf>, address : SocketAddr) -> RSAPeer {
+    if pem.is_some() {
+      panic!("TODO loading from pem"); // TODO
+    };
     // pkey gen
     let mut pkey = PKey::new();
     pkey.gen(RSA_SIZE);
@@ -305,7 +314,7 @@ impl RSAPeer {
     let public  = pkey.save_pub();
 
     let mut digest = Hasher::new(HASH_SIGN);
-    digest.write_all(&public[..]);
+    digest.write_all(&public[..]).unwrap(); // digest should not panic
     let key = digest.finish();
 
     let now = TimeSpecExt(time::get_time());
@@ -386,7 +395,7 @@ impl KeyVal for RSAPeer {
   }*/
 
   #[inline]
-  fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> {
+  fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, _ : bool) -> Result<(), S::Error> {
     if is_local {
       self.encode(s)
     } else {
@@ -395,7 +404,7 @@ impl KeyVal for RSAPeer {
   }
 
   #[inline]
-  fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<RSAPeer, D::Error> {
+  fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, _ : bool) -> Result<RSAPeer, D::Error> {
     if is_local {
       Decodable::decode(d)
     } else {

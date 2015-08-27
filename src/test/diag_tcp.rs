@@ -52,7 +52,7 @@ fn initpeers_tcp<M : PeerMgmtMeths<Node, Node> + Clone> (start_port : u16, nbpee
     let tcp_transport = Tcp::new(
       &addr,
       Duration::seconds(5), // timeout
-      Duration::seconds(5), // conn timeout
+    //  Duration::seconds(5), // conn timeout
       true,//mult
     ).unwrap();
     transports.push(tcp_transport);
@@ -67,8 +67,8 @@ fn connect_rw () {
 
   let a1 = SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port));
   let a2 = SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
-  let tcp_transport_1 : Tcp = Tcp::new (&a1, Duration::seconds(5), Duration::seconds(5), true).unwrap();
-  let tcp_transport_2 : Tcp = Tcp::new (&a2, Duration::seconds(5), Duration::seconds(5), true).unwrap();
+  let tcp_transport_1 : Tcp = Tcp::new (&a1, Duration::seconds(5), true).unwrap();
+  let tcp_transport_2 : Tcp = Tcp::new (&a2, Duration::seconds(5), true).unwrap();
 
   connect_rw_with_optional(tcp_transport_1,tcp_transport_2,&a1,&a2,true);
 }
@@ -79,8 +79,8 @@ fn connect_rw_dup () {
 
   let a1 = SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port));
   let a2 = SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
-  let tcp_transport_1 : Tcp = Tcp::new (&a1, Duration::seconds(5), Duration::seconds(5), false).unwrap();
-  let tcp_transport_2 : Tcp = Tcp::new (&a2, Duration::seconds(5), Duration::seconds(5), false).unwrap();
+  let tcp_transport_1 : Tcp = Tcp::new (&a1, Duration::seconds(5), false).unwrap();
+  let tcp_transport_2 : Tcp = Tcp::new (&a2, Duration::seconds(5), false).unwrap();
 
   connect_rw_with_optional(tcp_transport_1,tcp_transport_2,&a1,&a2,false);
 }

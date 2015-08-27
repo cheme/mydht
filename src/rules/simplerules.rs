@@ -3,7 +3,7 @@ use time::Duration;
 use query::cache::{CachePolicy};
 use query::{QueryPriority,QueryID};
 use rules::DHTRules as DHTRulesIf;
-use peer::{PeerPriority};
+//use peer::{PeerPriority};
 use std::sync::Mutex;
 use rand::{thread_rng,Rng};
 use num::traits::ToPrimitive;
@@ -72,7 +72,7 @@ impl DHTRulesIf for SimpleRules {
     self.1.cleaninterval.map(|s|Duration::seconds(s))
   }
   
-  fn do_store (&self, islocal : bool, qprio : QueryPriority, sprio : StoragePriority, hopnb : Option<usize>) -> (bool,Option<CachePolicy>) {
+  fn do_store (&self, islocal : bool, _ : QueryPriority, sprio : StoragePriority, hopnb : Option<usize>) -> (bool,Option<CachePolicy>) {
     let cacheduration = self.1.cacheduration.map(|s|Duration::seconds(s));
     let res = match sprio {
       StoragePriority::Local =>
@@ -109,7 +109,7 @@ impl DHTRulesIf for SimpleRules {
   }
   #[inline]
   fn client_mode(&self) -> &ClientMode {
-    &cmode
+    &CMODE
   }
 
   #[inline]
@@ -129,6 +129,6 @@ impl DHTRulesIf for SimpleRules {
 
 
 }
-static cmode : ClientMode = ClientMode::ThreadedOne;
+static CMODE : ClientMode = ClientMode::ThreadedOne;
 
 

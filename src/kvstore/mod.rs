@@ -1,24 +1,24 @@
-use std::hash::Hash;
-use procs::{ClientChanel};
-use peer::{Peer,PeerPriority};
-use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
-use std::fmt;
-use super::query::{Query, QueryPriority};
-use std::sync::{Arc,Condvar,Mutex};
-use utils::OneResult;
+//use std::hash::Hash;
+//use procs::{ClientChanel};
+//use peer::{Peer,PeerPriority};
+use rustc_serialize::{Encodable, Encoder, Decoder};
+//use std::fmt;
+//use super::query::{Query, QueryPriority};
+use std::sync::{Arc};
+//use utils::OneResult;
 use query::cache::CachePolicy;
-use query::{LastSent};
-use std::io::Write;
-use std::io::Read;
-use std::fs::File;
-use rustc_serialize::hex::ToHex;
-use super::utils;
-use std::str;
-use std::path::{Path, PathBuf};
-use msgenc;
-use utils::ArcKV;
+//use query::{LastSent};
+//use std::io::Write;
+//use std::io::Read;
+//use std::fs::File;
+//use rustc_serialize::hex::ToHex;
+//use utils;
+//use std::str;
+//use std::path::{Path, PathBuf};
+//use msgenc;
+//use utils::ArcKV;
 use keyval::{KeyVal,Key};
-use std::collections::{HashMap};
+//use std::collections::{HashMap};
 
 pub mod filestore;
 
@@ -78,7 +78,7 @@ mod test {
 /// Storage for `KeyVal`
 pub trait KVStore<V : KeyVal> {
   /// Add value, pair is boolean for do persistent local store, and option for do cache value for
-  /// CachePolicy duration
+  /// CachePolicy duration // TODO return MDHTResult<()>
   fn add_val(& mut self, V, (bool, Option<CachePolicy>));
   /*  #[inline]
   fn add_val(& mut self, kv : Arc<V>, op : (bool, Option<CachePolicy>)){
@@ -92,14 +92,15 @@ pub trait KVStore<V : KeyVal> {
   fn get_val(& self, k : &V::Key) -> Option<Arc<V>>{
     self.c_get_val(k)
   }*/
-  /// Remove value
+  /// Remove value // TODO return MDHTResult
   fn remove_val(& mut self, &V::Key);
   /*  #[inline]
   fn remove_val(& mut self, k : &V::Key){
     self.remove_val(k)
   }*/
 
-  /// Do periodic time consuming action. Typically serialize (eg on kvmanager shutdown)
+  /// Do periodic time consuming action. Typically serialize (eg on kvmanager shutdown) // TODO
+  /// return MDHTResult<bool>
   fn commit_store(& mut self) -> bool;
 }
 

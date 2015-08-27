@@ -1,25 +1,25 @@
-use procs::{ClientChanel};
+//! route are both peer cache/storage and peer selection (routing algorithm)
+//! Those two behaviour should be split soon.
 use std::sync::Mutex;
 use procs::mesgs::{ClientMessage,ClientMessageIx};
 use std::sync::mpsc::{Sender};
-use peer::{Peer, PeerPriority,PeerState,PeerStateChange};
+use peer::{Peer,PeerState,PeerStateChange};
 use keyval::KeyVal;
 use procs::RunningProcesses;
 use std::sync::Arc;
-use std::rc::Rc;
 use std::collections::VecDeque;
 use mydhtresult::Result as MydhtResult;
-use std::thread;
+//use std::thread;
 use procs::RunningTypes;
 use transport::{Address,Transport,WriteTransportStream};
-use std::marker::PhantomData;
+
 use std::ops::Drop;
-use procs::ClientMode;
+
 use procs::ClientHandle;
 use utils;
 use msgenc::{MsgEnc};
 use keyval::{Attachment};
-use msgenc::{ProtoMessage};
+
 use msgenc::send_variant::ProtoMessage as ProtoMessageSend;
 use mydhtresult::Error;
 use mydhtresult::ErrorKind;
@@ -124,7 +124,7 @@ impl<P : Peer, V : KeyVal, T : Transport> ClientInfo<P,V,T> {
       &mut ClientInfo::LocalSpawn(ref mut arcmutexwriter) => {
         Some(arcmutexwriter)
       },
-      &mut ClientInfo::Threaded(ref s,ref ix) => {
+      &mut ClientInfo::Threaded(..) => {
         None
       },
 
@@ -132,10 +132,10 @@ impl<P : Peer, V : KeyVal, T : Transport> ClientInfo<P,V,T> {
  
   }
  
-  // TODO try unified send msg : 
+  //  try unified send msg : need some peermanager info : got it from peermanager code :
+  // removed fn
 //   pub fn send_msg_local(&self, msg : ClientMessage<P,V>, ows : Option<&mut Wriststerma) -> MydhtResult<()> ;
-//   + trait get_mut local option writ
-   pub fn send_climsg_local(&mut self,  msg : ClientMessage<P,V>) -> MydhtResult<()> {
+   /*pub fn send_climsg_local(&mut self,  msg : ClientMessage<P,V>) -> MydhtResult<()> {
     match self {
       &mut ClientInfo::Local(ref mut writer) => {
         // TODO all needed to start client fn exec
@@ -152,7 +152,7 @@ impl<P : Peer, V : KeyVal, T : Transport> ClientInfo<P,V,T> {
       },
 
     }
-  }
+  }*/
   /// Send ClientMessage to threaded client, panic on local client sending (even non managed)
   /// : this is due to non mutable reference to cliinfo (local uses mutable reference for sending).
   pub fn send_climsg(&self,  msg : ClientMessage<P,V>) -> MydhtResult<()> {
@@ -191,10 +191,7 @@ impl ServerInfo {
       },
       &ServerInfo::Threaded(ref mutstop) => {
         // TODO move that to drop implementation of serverInfo!!!
-        match mutstop.lock() {
-          Ok(mut res) => *res = true,
-          Err(m) => error!("poisoned mutex on server shutdown"),
-        };
+        *(try!(mutstop.lock())) = true;
       },
     };
     Ok(())
@@ -268,7 +265,7 @@ pub trait Route<A:Address,P:Peer<Address = A>,V:KeyVal,T:Transport<Address = A>>
   /// existing priority is used (or unknow) 
   fn update_priority(& mut self, &P::Key, Option<PeerState>, Option<PeerStateChange>);
 
-  /// update fields of not that can be modified in place (not priority or node because it could structure
+  /// update fields that can be modified in place (not priority or node because it could structure
   /// route storage).
   fn update_infos<'a, F>(&'a mut self, &P::Key, f : F) -> MydhtResult<bool> where F : FnOnce(&'a mut (Option<ServerInfo>, Option<ClientInfo<P,V,T>>)) -> MydhtResult<()>;
 
@@ -341,14 +338,13 @@ pub trait Route<A:Address,P:Peer<Address = A>,V:KeyVal,T:Transport<Address = A>>
   }
  
 
-
   /// Possible Serialize on quit
   fn commit_store(& mut self) -> bool;
 
   #[inline]
-  fn get_client_info<'a> (&'a self, p : & Arc<P>) -> MydhtResult<&'a ClientInfo<P,V,T>> {
+  fn get_client_info<'a> (&'a self, pid : & <P as KeyVal>::Key) -> MydhtResult<&'a ClientInfo<P,V,T>> {
 
-    match self.get_node(&p.get_key()) {
+    match self.get_node(pid) {
       Some(&(_,_,(_,Some(ref ci)))) => {
         Ok(ci)
       },

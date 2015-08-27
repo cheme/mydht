@@ -1,11 +1,11 @@
 use std::collections::{HashMap,BTreeSet,VecDeque};
-use peer::{Peer,PeerState,PeerStateChange,PeerPriority};
-use procs::{ClientChanel};
+use peer::{Peer,PeerState,PeerStateChange};
+
 use std::sync::{Arc};
-use std::sync::mpsc::{Sender,Receiver};
+//use std::sync::mpsc::{Sender,Receiver};
 use route::Route;
 use std::iter::Iterator;
-use std::rc::Rc;
+
 use keyval::KeyVal;
 use std::hash::Hash;
 use kvcache::KVCache;
@@ -13,14 +13,14 @@ use std::marker::PhantomData;
 use transport::{Transport,Address};
 use super::PeerInfo;
 use super::{pi_remchan,pi_upprio};
-use procs::mesgs::{ClientMessage};
+
 use mydhtresult::Result as MydhtResult;
 use super::{ServerInfo,ClientInfo};
 
 /// Routing structure based on map plus count of query for proxy mode
 /// May also be used for testing
 pub struct Inefficientmap<P : Peer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> where P::Key : Ord + Hash {
-    peersNbQuery : BTreeSet<(u8,P::Key)>, //TODO switch to collection ordered by nb query : highly ineficient when plus and minus on query
+    peers_nbquery : BTreeSet<(u8,P::Key)>, //TODO switch to collection ordered by nb query : highly ineficient when plus and minus on query
 //    peers : HashMap<P::Key, PeerInfo<P,V>>, //TODO maybe get node priority out of this container or do in place update
     peers : C, //TODO maybe get node priority out of this container or do in place update
     _phdat : PhantomData<(V,T)>,
@@ -29,35 +29,35 @@ pub struct Inefficientmap<P : Peer, V : KeyVal, T : Transport, C : KVCache<P::Ke
 
 impl<A : Address, P : Peer<Address = A>, V : KeyVal, T : Transport<Address = A>, C : KVCache<P::Key, PeerInfo<P,V,T>>> Route<A,P,V,T> for Inefficientmap<P,V,T,C> where P::Key : Ord + Hash {
   fn query_count_inc(& mut self, pnid : &P::Key) {
-    let val = match self.peersNbQuery.iter().filter(|&&(ref nb,ref nid)| (*pnid) == (*nid) ).next() {
+    let val = match self.peers_nbquery.iter().filter(|&&(_,ref nid)| (*pnid) == (*nid) ).next() {
       Some(inid) => Some(inid.clone()),
       None => None,
     };
     match val {
       Some(inid) => {
-        self.peersNbQuery.remove(&inid);
-        self.peersNbQuery.insert((inid.0+1,inid.1));
+        self.peers_nbquery.remove(&inid);
+        self.peers_nbquery.insert((inid.0+1,inid.1));
       },
-      None => {self.peersNbQuery.insert((1,(*pnid).clone()));}
+      None => {self.peers_nbquery.insert((1,(*pnid).clone()));}
     };
   }
 
   fn query_count_dec(& mut self, pnid : &P::Key) {
-    let val = match self.peersNbQuery.iter().filter(|&&(ref nb,ref nid)| (*pnid) == (*nid) ).next() {
+    let val = match self.peers_nbquery.iter().filter(|&&(ref nb,ref nid)| (*pnid) == (*nid) ).next() {
       Some(inid) => Some(inid.clone()),
       None => None,
     };
     match val {
       Some(inid) => {
-        self.peersNbQuery.remove(&inid);
-        self.peersNbQuery.insert((inid.0-1,inid.1));
+        self.peers_nbquery.remove(&inid);
+        self.peers_nbquery.insert((inid.0-1,inid.1));
       },
-      None => {self.peersNbQuery.insert((0,(*pnid).clone()));}
+      None => {self.peers_nbquery.insert((0,(*pnid).clone()));}
     };
   }
 
   fn add_node(& mut self, pi : PeerInfo<P,V,T>) {
-    self.peersNbQuery.insert((0,pi.0.get_key()));
+    self.peers_nbquery.insert((0,pi.0.get_key()));
     self.peers.add_val_c(pi.0.get_key(), pi);
   }
 
@@ -86,11 +86,11 @@ impl<A : Address, P : Peer<Address = A>, V : KeyVal, T : Transport<Address = A>,
   }
 
 
-  fn get_closest_for_query(& self, nnid : &V::Key, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {
+  fn get_closest_for_query(& self, _ : &V::Key, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {
     self.get_closest(nbnode, filter)
   }
 
-  fn get_closest_for_node(& self, nnid : &P::Key, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {
+  fn get_closest_for_node(& self, _ : &P::Key, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {
     self.get_closest(nbnode, filter)
   }
 
@@ -98,7 +98,7 @@ impl<A : Address, P : Peer<Address = A>, V : KeyVal, T : Transport<Address = A>,
     let mut r = Vec::new();
     let mut i = 0;
     // here by closest but not necessary could be random (ping may define closest)
-    for nid in self.peersNbQuery.iter() {
+    for nid in self.peers_nbquery.iter() {
       match self.peers.get_val_c(&nid.1) {
         // no status check this method is usefull for refreshing or initiating
         // connections
@@ -132,14 +132,14 @@ impl<P : Peer, V : KeyVal, T : Transport> Inefficientmap<P,V,T,HashMap<P::Key, P
 
 impl<P : Peer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> Inefficientmap<P,V,T,C> where P::Key : Ord + Hash {
   pub fn new_with_cache(c : C) -> Inefficientmap<P,V,T,C> {
-    Inefficientmap{ peersNbQuery : BTreeSet::new(), peers : c, _phdat : PhantomData}
+    Inefficientmap{ peers_nbquery : BTreeSet::new(), peers : c, _phdat : PhantomData}
   }
 
   fn get_closest(& self, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {
     let mut r = Vec::new();
     let mut i = 0;
     // with the nb of query , priority not use
-    for nid in self.peersNbQuery.iter() {
+    for nid in self.peers_nbquery.iter() {
       debug!("!!!in closest node {:?}", nid);
       match self.peers.get_val_c(&nid.1) {
         Some(&(ref ap,PeerState::Online(_),_)) => {
@@ -150,8 +150,7 @@ impl<P : Peer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> 
           }
         },
         Some(&(ref ap,PeerState::Offline(_),_)) => {
-          debug!("found offline");
-          warn!("more prioritary node not send")
+          warn!("high priority node (get_closest) not used (offline) : {:?}", ap);
         },
         _ => (),
       };

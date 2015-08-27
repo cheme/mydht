@@ -4,8 +4,8 @@ use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 use rustc_serialize::hex::ToHex;
 use utils;
 use std::fs::File;
-use std::io::Write;
 use std::io::Read;
+use std::io::Write;
 use std::hash::Hash;
 use std::fmt;
 use num::traits::ToPrimitive;
@@ -340,7 +340,11 @@ impl FileKV {
         d.read_str()
       });
 
-      let(fp, mut file) = utils::create_tmp_file();
+      let (fp, mut file) = match utils::create_tmp_file() {
+        Ok(r) => r,
+        Err(e) => return Err(d.error(format!("Could not create tmp file : {}", e).as_str())),
+      };
+ 
       try!(d.read_struct_field("chunked_file", 2, |d|{
         d.read_seq(|d, len|{
           for i in 0..len {

@@ -16,15 +16,15 @@
 //!
 
 use super::{Transport,ReadTransportStream,WriteTransportStream};
-use super::{Attachment};
+//use super::{Attachment};
 use std::io::Result as IoResult;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
 use mydhtresult::Result;
 use std::net::SocketAddr;
 use time::Duration;
-use peer::Peer;
-use std::iter;
+//use peer::Peer;
+//use std::iter;
 use std::slice;
 use std::net::UdpSocket;
 use std::io::Write;
@@ -47,7 +47,7 @@ pub struct Udp {
 impl Udp {
   /// warning bind on initialize
   pub fn new (p : &SocketAddr, s : usize, spawn : bool) -> IoResult<Udp> {
-    let mut socket = try!(UdpSocket::bind(p));
+    let socket = try!(UdpSocket::bind(p));
     Ok(Udp {
       sock : socket,
       buffsize : s,
@@ -56,7 +56,7 @@ impl Udp {
   }
 }
 
-struct ReadUdpStreamVariant (VecDeque<u8>);
+//struct ReadUdpStreamVariant (VecDeque<u8>);
 struct ReadUdpStream (Vec<u8>);
 
 struct UdpStream {
@@ -86,7 +86,7 @@ impl Write for UdpStream {
     }
 }
 
-impl Read for ReadUdpStreamVariant {
+/*impl Read for ReadUdpStreamVariant {
   fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
     let l = buf.len();
     if l > 0 {
@@ -118,7 +118,7 @@ impl Read for ReadUdpStreamVariant {
     }
  
   }
-}
+}*/
 impl Read for ReadUdpStream {
   fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
     let l = buf.len();
@@ -148,7 +148,7 @@ impl Transport for Udp {
     (self.spawn, false)
   }
 
-  fn start<C> (&self, readHandle : C) -> Result<()>
+  fn start<C> (&self, readhandle : C) -> Result<()>
     where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<()> {
     let buffsize = self.buffsize;
     let mut tmpvec : Vec<u8> = vec![0; buffsize];
@@ -156,13 +156,17 @@ impl Transport for Udp {
     loop {
       match self.sock.recv_from(buf) {
         Ok((size, from)) => {
+          debug!("received udp frame from {}, size {}", from, size);
           // TODO test with small size to see if full size here
           if size < buffsize {
             // let slice = &buff[0,size]
             let r = unsafe {
               slice::from_raw_parts(buf.as_ptr(), size).to_vec()
             };
-            readHandle(ReadUdpStream(r), None);
+            match readhandle(ReadUdpStream(r), None) {
+              Ok(()) => (),
+              Err(e) => error!("Read handler failure : {}",e),
+            }
           }else{
             error!("Datagram on udp transport with size {:?} over buff {:?}, lost datagram", size, buffsize);
           }

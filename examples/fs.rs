@@ -1,21 +1,8 @@
 
-#![feature(int_uint)]
-#![feature(core)]
-#![feature(io)]
-#![feature(collections)]
-#![feature(std_misc)]
-#![feature(file_path)]
-#![feature(fs_walk)]
-#![feature(path_ext)]
-#![feature(net)]
-#![feature(tcp)]
-#![feature(convert)]
-#![feature(alloc)]
-#![feature(thread_sleep)]
-#![feature(rsawot)]
+//#![feature(rsawot)]
 
-fn main() {
-}/*
+/*fn main() {
+}*/
  
 #[macro_use] extern crate log;
 #[macro_use] extern crate mydht;
@@ -40,17 +27,17 @@ fn main() {
 #[cfg(feature="openssl-impl")]
 pub mod fs {
 
-use std::marker::PhantomData;
+//use std::marker::PhantomData;
 use std::env;
-use std::io;
+//use std::io;
 use std::io::Write;
 use std::io::Read;
 use std::io::BufRead;
 use rustc_serialize::json;
 use std::sync::Arc;
-use std::sync::Mutex;
-use std::io::Seek;
-use std::io::SeekFrom;
+//use std::sync::Mutex;
+//use std::io::Seek;
+//use std::io::SeekFrom;
 use std::fs::File;
 use std::io::stdin;
 use std::net::SocketAddr;
@@ -58,37 +45,37 @@ use time::Duration;
 use mydht::Bincode;
 //use mydht::Bencode;
 use mydht::Json;
-use std::sync::mpsc::{Sender,Receiver};
+//use std::sync::mpsc::{Sender,Receiver};
 
 use mydht::{Udp,Tcp};
 use mydht::dhtif::{Peer,PeerMgmtMeths};
 use mydht::{DHT,RunningContext,ArcRunningContext,RunningProcesses,RunningTypes};
-use mydht::{PeerPriority,PeerState,StoragePriority,QueryChunk,QueryMode,QueryConf,QueryID};
+use mydht::{PeerPriority,StoragePriority,QueryChunk,QueryMode,QueryConf};
 use mydht::dhtif::KeyVal;
 use mydht::dhtif::FileKeyVal;
-use mydht::transportif::Transport;
+//use mydht::transportif::Transport;
 use mydht::dhtimpl::FileKV;
 use mydht::CachePolicy;
-use mydht::{TrustedPeer,TrustedVal,Truster};
-
+//use mydht::{TrustedPeer,TrustedVal,Truster};
+use mydht::{Truster};
 use mydht::dhtimpl::{SimpleCache,SimpleCacheQuery,Inefficientmap,FileStore};
-use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
+use rustc_serialize::{Encoder,Encodable,Decoder};
 use mydht::kvstoreif::{KVStore};
-use mydht::kvstoreif::{KVStoreMgmtMessage};
+//use mydht::kvstoreif::{KVStoreMgmtMessage};
 use mydht::dhtimpl::{RSAPeer,PeerSign};
 use mydht::dhtimpl::{WotStore,WotKV,WotK,TrustRules,ClassicWotTrust};
 use rustc_serialize::hex::{ToHex,FromHex};
-use mydht::msgencif::{MsgEnc};
+//use mydht::msgencif::{MsgEnc};
 use mydht::{Attachment,SettableAttachment};
 use std::collections::BTreeSet;
 use std::path::{Path,PathBuf};
 
 use mydht::utils::ArcKV;
-use mydht::utils;
+//use mydht::utils;
 use mydht::dhtimpl::DhtRules;
 use mydht::dhtimpl::SimpleRules;
 
-use std::net::Ipv4Addr;
+//use std::net::Ipv4Addr;
 use uuid;
 use mydht;
 use env_logger;
@@ -116,89 +103,89 @@ pub struct FsConf {
 /// Possible transports
 pub enum TransportDef {
   Tcp(i64,i64),
-    Udp(usize),
+  Udp(usize),
 }
 
 #[derive(Debug,RustcDecodable,RustcEncodable)]
 /// Possible encodings 
 pub enum MsgEncDef {
   Bincode,
-    //Bencode,
-    Json,
+  //Bencode,
+  Json,
 }
 
 // this macros (expand kind) implies it is build for every enum variant (with smaller transport def smaller
 // bin), there is a multiplicative factor in size
 macro_rules! expand_transport_def(($t:ident, $p:ident, $add:expr, $ftn:expr ) => (
-      match $t {
-      &TransportDef::Tcp(stimeout,ctimeout) => {
+  match $t {
+    &TransportDef::Tcp(stimeout,_) => {
       let $p = Tcp::new(
-      $add,
-      let $p = Tcp {
-streamtimeout : Duration::seconds(stimeout),
-connecttimeout : Duration::seconds(ctimeout),
-};
-type TmpTransportMacro = Tcp;
-$ftn;
-},
-&TransportDef::Udp(buffsize) => {
-// TODO cfg with or without spawn
-let $p =  Udp::new($add,buffsize,true).unwrap();
-type TmpTransportMacro = Udp;
-$ftn;
-},
-}
+        $add,
+        Duration::seconds(stimeout),
+        true, // TODO cfig mult or not here mult
+        //connecttimeout : Duration::seconds(ctimeout), TODO rem connect timeout from conf
+      ).unwrap();
+      type TmpTransportMacro = Tcp;
+      $ftn;
+    },
+    &TransportDef::Udp(buffsize) => {
+      // TODO cfg with or without spawn
+      let $p =  Udp::new($add,buffsize,true).unwrap();
+      type TmpTransportMacro = Udp;
+      $ftn;
+    },
+  }
 ));
 
 macro_rules! expand_msgenc_def(( $t:ident, $p:ident, $ftn:expr ) => (
-      match $t {
-      &MsgEncDef::Bincode => {
+  match $t {
+    &MsgEncDef::Bincode => {
       let $p = Bincode;
       type TmpEncMacro = Bincode;
       $ftn;
-      },
+    },
       /*      &MsgEncDef::Bencode => {
               let $p = Bencode;
               $ftn;
               },*/
-      &MsgEncDef::Json => {
+    &MsgEncDef::Json => {
       let $p = Json;
       type TmpEncMacro = Json;
       $ftn;
-      },
-      }
-      ));
+    },
+  }
+));
 
 pub fn main() {
   env_logger::init().unwrap();
-  let showHelp = || println!("-C <file> to select config file, -B <file> to choose node bootstrap file");
-  let mut sconfPath = "fsconf.json".to_string();
-  let mut bootPath = "fsbootstrap.json".to_string();
+  let show_help = || println!("-C <file> to select config file, -B <file> to choose node bootstrap file");
+  let mut sconf_path = "fsconf.json".to_string();
+  let mut boot_path = "fsbootstrap.json".to_string();
   enum ParamState {Normal, Conf, Boot}
   let mut state = ParamState::Normal;
   for arg in env::args() {
     match &arg[..] {
-      "-h" => showHelp(),
-        "--help" => showHelp(),
+      "-h" => show_help(),
+        "--help" => show_help(),
         "-C" => state = ParamState::Conf,
         "-B" => state = ParamState::Boot,
         a  => match state {
           ParamState::Normal => debug!("{:?}", arg),
-          ParamState::Conf => { sconfPath = a.to_string(); state = ParamState::Normal },
-          ParamState::Boot => { bootPath = a.to_string(); state = ParamState::Normal },
+          ParamState::Conf => { sconf_path = a.to_string(); state = ParamState::Normal },
+          ParamState::Boot => { boot_path = a.to_string(); state = ParamState::Normal },
         }
     }
   }
 
-  info!("using conf file : {:?}" , sconfPath);
-  info!("using boot file : {:?}" , bootPath);
+  info!("using conf file : {:?}" , sconf_path);
+  info!("using boot file : {:?}" , boot_path);
 
 
   // no mgmt of io error (panic cf unwrap) when reading conf
-  let confPath = &PathBuf::from(&sconfPath.clone());
-  let mut jsonCont = String::new();
-  File::open(confPath).unwrap().read_to_string(&mut jsonCont).unwrap(); 
-  let fsconf : FsConf = json::decode(&jsonCont[..]).unwrap();
+  let conf_path = &PathBuf::from(&sconf_path.clone());
+  let mut jsoncont = String::new();
+  File::open(conf_path).unwrap().read_to_string(&mut jsoncont).unwrap(); 
+  let fsconf : FsConf = json::decode(&jsoncont[..]).unwrap();
 
   let tcpdef = &fsconf.transport;
   info!("my conf is : {:?}" , fsconf);
@@ -206,7 +193,7 @@ pub fn main() {
 
 
   let mynodewot = mynode.clone();
-  let test = ArcKV::new(RSAPeer::new ("some name".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 9000)));
+//  let test = ArcKV::new(RSAPeer::new ("some name".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 9000)));
 
   /*    if test.key_check() && test.check_val(&test,&PeerInfoRel) {
         debug!("ok local");
@@ -216,15 +203,15 @@ pub fn main() {
   /*    let me2 = trustedpeers::RSAPeer::new (mynode.nodeid.clone(), None, mynode.address.clone(), mynode.port.clone());
         println!("MEEE2 : {:?}", me2);
 
-        let mut tmpPath = "tmp".to_string();
-        let mut tmpFile = File::create(&Path::new(tmpPath));
-        tmpFile.write(json::encode(&me2).unwrap().into_bytes().as_slice());
+        let mut tmppath = "tmp".to_string();
+        let mut tmpfile = File::create(&Path::new(tmppath));
+        tmpfile.write(json::encode(&me2).unwrap().into_bytes().as_slice());
         */
   let dhtrules = fsconf.rules;
 
   let mencdef = &fsconf.msgenc;
-  let mut confFile = File::create(&Path::new("out")).unwrap();
-  confFile.write_all(&json::encode(mencdef).unwrap().into_bytes()[..]);
+  let mut conffile = File::create(&Path::new("out")).unwrap();
+  conffile.write_all(&json::encode(mencdef).unwrap().into_bytes()[..]).unwrap();
   // TODO access from conf!!
   let access = WotAccess {
 treshold  : 2,
@@ -232,129 +219,127 @@ treshold  : 2,
   };
 
   expand_msgenc_def!(mencdef, menc, {
-      expand_transport_def!(tcpdef, transport, &mynode.to_address(), {
+  expand_transport_def!(tcpdef, transport, &mynode.to_address(), {
 
-          struct RunningTypesImpl;
+  struct RunningTypesImpl;
 
-          impl RunningTypes for RunningTypesImpl {
-          type A = SocketAddr;
-          type P = RSAPeer;
-          type V = MulKV;
-          type M = WotAccess;
-          type R = SimpleRules;
-          type T = TmpTransportMacro;
-          type E = TmpEncMacro;
-          }
-          let randqueryid = dhtrules.randqueryid;
+  impl RunningTypes for RunningTypesImpl {
+    type A = SocketAddr;
+    type P = RSAPeer;
+    type V = MulKV;
+    type M = WotAccess;
+    type R = SimpleRules;
+    type T = TmpTransportMacro;
+    type E = TmpEncMacro;
+  }
+  let randqueryid = dhtrules.randqueryid;
           //let rc : ArcRunningContext<RunningTypes<P = RSAPeer, V = MulKV, Q = dhtrules::DhtRulesImpl, T = TmpTransportMacro, E = TmpEncMacro, R = WotAccess>> = Arc::new(
-          let rc : ArcRunningContext<RunningTypesImpl> = Arc::new(
-              RunningContext::new (
-                mynode.0,
-                access,
-                SimpleRules::new(dhtrules),
-                menc,
-                transport,
-                ));
+  let rc : ArcRunningContext<RunningTypesImpl> = Arc::new(
+    RunningContext::new (
+      mynode.0,
+      access,
+      SimpleRules::new(dhtrules),
+      menc,
+      transport,
+  ));
+
+  let route = move || Some(Inefficientmap::new());
+  let querycache = move || Some(SimpleCacheQuery::new(randqueryid));
+  let pconf = PathBuf::from(&fsconf.storepath[..]);
+  let pdbfile = pconf.join("./files.db");
+  let pfiles = pconf.join("./files");
+  let prdb = pconf.join("./reverse.db");
+  let pqueries = pconf.join("./query.db");
+  let pwotpeers = pconf.join("./wotpeers.db");
+  let pwotrels  = pconf.join("./wotrels.db");
+  let pwotsigns = pconf.join("./wotsigns.db");
+  let pwotrust = pconf.join("./wottrustcache.db");
+
+
+  // getting bootstrap peers
+  let mut jsonbcont = String::new();
+  File::open(&Path::new(&boot_path[..])).unwrap().read_to_string(&mut jsonbcont).unwrap(); 
+  let tmpboot_trustedpeers : Vec<RSAPeer>  = json::decode(&jsonbcont[..]).unwrap();
 
 
 
-          let route = move || Some(Inefficientmap::new());
-          let querycache = move || Some(SimpleCacheQuery::new(randqueryid));
-          let pconf = PathBuf::from(&fsconf.storepath[..]);
-          let pdbfile = pconf.join("./files.db");
-          let pfiles = pconf.join("./files");
-          let prdb = pconf.join("./reverse.db");
-          let pqueries = pconf.join("./query.db");
-          let pwotpeers = pconf.join("./wotpeers.db");
-          let pwotrels  = pconf.join("./wotrels.db");
-          let pwotsigns = pconf.join("./wotsigns.db");
-          let pwotrust = pconf.join("./wottrustcache.db");
+  // add boot peers
+  let boot_trustedpeers : Vec<Arc<RSAPeer>> = tmpboot_trustedpeers.into_iter().map(|p|Arc::new(p)).collect();
 
+  let boot_trustedpeerssend  = boot_trustedpeers.clone();
+  let me_send = rc.me.clone(); // should be arckv if bootserver took arckv as param TODO
+  let multip_store = move || {
+    let mut storagequery = SimpleCache::new(Some(pqueries)); // TODO a path to serialize
+    let ca = SimpleCache::new(Some(pdbfile));// TODO a path to serialize
+    let filestore = {
+      // map filestore to set key of storagequery
+      let infn = &mut (|k : &ArcKV<FileKV> |{
+        let v = ArcKV::new(fskeyval::FileQuery{
+          query : k.name(),
+          result : vec![(k.name(),k.get_key())],
+        }); //warning erase existing val
+        storagequery.add_val(v,(true,None))
+      });
+      FileStore::new(pfiles, prdb, Box::new(ca), true,infn).unwrap() // TODO fstore in conf for tests!!!
+    };
 
-          // getting bootstrap peers
-          let mut jsonBCont = String::new();
-          File::open(&Path::new(&bootPath[..])).unwrap().read_to_string(&mut jsonBCont).unwrap(); 
-          let tmpbootTrustedPeers : Vec<RSAPeer>  = json::decode(&jsonBCont[..]).unwrap();
+    let fsstore = fskeyval::FSStore {
+        queries : Box::new(storagequery),
+        files   : Box::new(filestore),
+    };
+    let wotpeers = SimpleCache::new(Some(pwotpeers));
+    let wotrels  = SimpleCache::new(Some(pwotrels));
+    let wotsigns = SimpleCache::new(Some(pwotsigns));
+    let wotrusts = SimpleCache::new(Some(pwotrust));
+    let trust_rules : TrustRules = vec![1,1,3,3,3];
+    let mut wotstore = WotStore::new(
+      wotpeers,
+      wotrels,
+      wotsigns,
+      wotrusts,
+      mynodewot,
+      // TODO this in param conf
+      100,
+      trust_rules,
+    );
+    let mekey = me_send.get_key();
+    let ame = ArcKV(me_send);
+    for p in boot_trustedpeerssend.iter() {
+      // TODO add mechanism to sign only if needed (like param init sign or other)
+      // all boot peer are signed as level 1 peers
+      if mekey != p.get_key() {
+        let akp = ArcKV(p.clone());
+        // TODO Arc for derive KV do not work see add_val refactoring
+        wotstore.add_val (WotKV::Peer(akp.clone()), (true,None));
 
+        let ps : PeerSign<RSAPeer> = PeerSign::new(&ame, &(akp), 1, 0).unwrap();
+        // TODO add those only if needed
+        wotstore.add_val (WotKV::Sign(ps), (true,None));
+      }
+    }
 
-
-          // add boot peers
-          let bootTrustedPeers : Vec<Arc<RSAPeer>> = tmpbootTrustedPeers.into_iter().map(|p|Arc::new(p)).collect();
-
-          let bootTrustedPeersSend  = bootTrustedPeers.clone();
-          let meSend = rc.me.clone(); // should be arckv if bootserver took arckv as param TODO
-          let mut multip_store = move || {
-            let mut storagequery = SimpleCache::new(Some(pqueries)); // TODO a path to serialize
-            let mut ca = SimpleCache::new(Some(pdbfile));// TODO a path to serialize
-            let filestore = {
-              // map filestore to set key of storagequery
-              let infn = &mut (|k : &ArcKV<FileKV> |{
-                  let v = ArcKV::new(fskeyval::FileQuery{
-query : k.name(),
-result : vec![(k.name(),k.get_key())],
-}); //warning erase existing val
-                  storagequery.add_val(v,(true,None))
-                  });
-FileStore::new(pfiles, prdb, Box::new(ca), true,infn).unwrap() // TODO fstore in conf for tests!!!
+    // TODO route possible errors to none
+    Some(MultiplStore {
+      fsstore : fsstore,
+      wotstore : wotstore,
+    })
   };
 
-let fsstore = fskeyval::FSStore {
-queries : Box::new(storagequery),
-        files   : Box::new(filestore),
-};
-let mut wotpeers = SimpleCache::new(Some(pwotpeers));
-let mut wotrels  = SimpleCache::new(Some(pwotrels));
-let mut wotsigns = SimpleCache::new(Some(pwotsigns));
-let mut wotrusts = SimpleCache::new(Some(pwotrust));
-let mut trustRul : TrustRules = vec![1,1,3,3,3];
-let mut wotstore = WotStore::new(
-    wotpeers,
-    wotrels,
-    wotsigns,
-    wotrusts,
-    mynodewot,
-    // TODO this in param conf
-    100,
-trust_rules,
-    );
-let mekey = meSend.get_key();
-let ame = ArcKV(meSend);
-for p in bootTrustedPeersSend.iter() {
-  // TODO add mechanism to sign only if needed (like param init sign or other)
-  // all boot peer are signed as level 1 peers
-  if mekey != p.get_key() {
-    let akp = ArcKV(p.clone());
-    // TODO Arc for derive KV do not work see add_val refactoring
-    wotstore.add_val (WotKV::Peer(akp.clone()), (true,None));
 
-    let ps : PeerSign<RSAPeer> = PeerSign::new(&ame, &(akp), 1, 0).unwrap();
-    // TODO add those only if needed
-    wotstore.add_val (WotKV::Sign(ps), (true,None));
-  }
-}
-
-// TODO route possible errors to none
-Some(MultiplStore {
-fsstore : fsstore,
-wotstore : wotstore,
-})
-};
+  let serv = DHT::<RunningTypesImpl>::boot_server(rc, route, querycache, multip_store, Vec::new(), boot_trustedpeers).unwrap();
 
 
-let mut serv = DHT::<RunningTypesImpl>::boot_server(rc, route, querycache, multip_store, Vec::new(), bootTrustedPeers);
-
-
-// prompt
-println!("add, find, quit?");
-let mut tstdin = stdin();
-let mut stdin = tstdin.lock();
-loop{
-  let mut line = String::new();
-  stdin.read_line(&mut line);
-  match &line[..] {
-    "quit\n" => {
-      break
-    },
+  // prompt
+  println!("add, find, quit?");
+  let tstdin = stdin();
+  let mut stdin = tstdin.lock();
+  loop{
+    let mut line = String::new();
+    stdin.read_line(&mut line).unwrap();
+    match &line[..] {
+      "quit\n" => {
+        break
+      },
       "add\n" => {
         let mut path = String::new();
         stdin.read_line(&mut path).unwrap();
@@ -364,18 +349,18 @@ loop{
         let kv = <FileKV as FileKeyVal>::from_path(p.to_path_buf());
         match kv {
           None => println!("cannot initialize file"),
-               Some(kv) => {
-                 let queryconf = QueryConf {
-mode : QueryMode::Asynch, 
-       chunk : QueryChunk::None, 
-       hop_hist : None,
-                 };
-                 if serv.store_val (MulKV::File(fskeyval::FSKV::File(ArcKV::new(kv))), &queryconf, 1, StoragePriority::Local){
-                   println!("local store ok");
-                 }else{
-                   println!("local store ko");
-                 };
-               },
+          Some(kv) => {
+            let queryconf = QueryConf {
+              mode : QueryMode::Asynch, 
+              chunk : QueryChunk::None, 
+              hop_hist : None,
+            };
+            if serv.store_val (MulKV::File(fskeyval::FSKV::File(ArcKV::new(kv))), &queryconf, 1, StoragePriority::Local){
+              println!("local store ok");
+            }else{
+              println!("local store ko");
+            };
+          },
         };
 
       },
@@ -384,9 +369,9 @@ mode : QueryMode::Asynch,
         stdin.read_line(&mut query).unwrap();
         query.pop();
         let queryconf = QueryConf {
-mode : QueryMode::Asynch, 
-     chunk : QueryChunk::None, 
-     hop_hist : Some((2,false))
+          mode : QueryMode::Asynch, 
+          chunk : QueryChunk::None, 
+          hop_hist : Some((2,false))
         };
         let result = serv.find_val(MulK::File(fskeyval::FSK::Query(query)), &queryconf, 1, StoragePriority::Local, 1);
         match result.into_iter().next().unwrap_or(None) {
@@ -400,85 +385,77 @@ mode : QueryMode::Asynch,
               MulKV::File(fskeyval::FSKV::Query(ref q)) => {
                 let hash = q.0.result.get(six.parse().unwrap());
                 hash.map(|h|{
-                    // TODO file size in h then use treshold to add use querychuncknone or file
-                    let queryconf2 = QueryConf {
-mode : QueryMode::Asynch, 
-chunk : QueryChunk::Attachment, 
-hop_hist : Some((2,false)),
-};
-let result = serv.find_val(MulK::File(fskeyval::FSK::File(h.1.clone())), &queryconf2, 1, StoragePriority::Local, 1);
-println!("getfile {:?}",result);
-});
-},
-  _ => (),
+                  // TODO file size in h then use treshold to add use querychuncknone or file
+                  let queryconf2 = QueryConf {
+                    mode : QueryMode::Asynch, 
+                    chunk : QueryChunk::Attachment, 
+                    hop_hist : Some((2,false)),
+                  };
+                  let result = serv.find_val(MulK::File(fskeyval::FSK::File(h.1.clone())), &queryconf2, 1, StoragePriority::Local, 1);
+                  println!("getfile {:?}",result);
+                });
+              },
+              _ => (),
+            };
+          },
+          None => println!("not found"),
+        };
+      },
+      "newconf\n" => {
+        let mut newname = String::new();
+        stdin.read_line(&mut newname).unwrap();
+        newname.pop();
+        // jsoncont.seek(0,SeekStyle::SeekSet);
+        let mut jsoncont = String::new();
+        File::open(conf_path).unwrap().read_to_string(&mut jsoncont).unwrap(); 
+        let mut fsconf2 : FsConf = json::decode(&jsoncont[..]).unwrap();
+
+        let me2 = RSAPeer::new (newname, None, fsconf2.me.address.0.clone());
+        fsconf2.me = me2;
+
+        let tmppath = "tmp";
+        let mut tmpfile = File::create(&Path::new(tmppath)).unwrap();
+        tmpfile.write_all(&json::encode(&fsconf2).unwrap().into_bytes()[..]).unwrap();
+        println!("New fsconf written to tmp");
+        break;
+      },
+
+      "name\n" => {
+        let mut newname = String::new();
+        stdin.read_line(&mut newname).unwrap();
+        newname.pop();
+        // jsoncont.seek(0,SeekStyle::SeekSet);
+        let mut jsoncont = String::new();
+        File::open(conf_path).unwrap().read_to_string(&mut jsoncont).unwrap(); 
+        let mut fsconf2 : FsConf = json::decode(&jsoncont[..]).unwrap();
+
+        if fsconf2.me.update_info(newname){
+          let tmppath = "tmp";
+          let mut tmpfile = File::create(&Path::new(tmppath)).unwrap();
+          tmpfile.write_all(&json::encode(&fsconf2).unwrap().into_bytes()[..]).unwrap();
+          println!("New fsconf written to tmp");
+          break;
+        }else{
+          println!("No change");
+        }
+      },
+      c => { 
+        println!("unrecognize command : {:?}", c);
+      },
+    };
   };
 
+  // clean shut
+  serv.shutdown();
+  // wait
+  serv.block();
 
 
-},
-  None => println!("not found"),
-  };
+  info!("exiting...");
 
 
-
-},
-  "newconf\n" => {
-    let mut newname = String::new();
-    stdin.read_line(&mut newname).unwrap();
-    newname.pop();
-    // jsonCont.seek(0,SeekStyle::SeekSet);
-    let mut jsonCont = String::new();
-    File::open(confPath).unwrap().read_to_string(&mut jsonCont).unwrap(); 
-    let mut fsconf2 : FsConf = json::decode(&jsonCont[..]).unwrap();
-
-    let me2 = RSAPeer::new (newname, None, fsconf2.me.address.0.clone());
-    fsconf2.me = me2;
-
-    let mut tmpPath = "tmp";
-    let mut tmpFile = File::create(&Path::new(tmpPath)).unwrap();
-    tmpFile.write_all(&json::encode(&fsconf2).unwrap().into_bytes()[..]);
-    println!("New fsconf written to tmp");
-    break;
-  },
-
-  "name\n" => {
-    let mut newname = String::new();
-    stdin.read_line(&mut newname).unwrap();
-    newname.pop();
-    // jsonCont.seek(0,SeekStyle::SeekSet);
-    let mut jsonCont = String::new();
-    File::open(confPath).unwrap().read_to_string(&mut jsonCont).unwrap(); 
-    let mut fsconf2 : FsConf = json::decode(&jsonCont[..]).unwrap();
-
-
-    if fsconf2.me.update_info(newname){
-
-      let mut tmpPath = "tmp";
-      let mut tmpFile = File::create(&Path::new(tmpPath)).unwrap();
-      tmpFile.write_all(&json::encode(&fsconf2).unwrap().into_bytes()[..]);
-      println!("New fsconf written to tmp");
-      break;
-    }else{
-      println!("No change");
-    }
-  },
-  c => { 
-    println!("unrecognize command : {:?}", c);
-  },
-  };
-};
-
-// clean shut
-serv.shutdown();
-// wait
-serv.block();
-
-
-info!("exiting...");
-
-
-});
-});
+  });
+  });
 
 }
 
@@ -507,25 +484,27 @@ unsafe impl Send for UnsignedOpenAccess {
 }
 
 impl PeerMgmtMeths<RSAPeer, MulKV> for UnsignedOpenAccess {
-  fn challenge (&self, n : &RSAPeer) -> String{
+  fn challenge (&self, _ : &RSAPeer) -> String{
     "".to_string()
   }
-  fn signmsg   (&self, n : &RSAPeer, chal : &String) -> String{
+  fn signmsg   (&self, _ : &RSAPeer, _ : &String) -> String{
     "".to_string()
   }
-  fn checkmsg  (&self, n : &RSAPeer, chal : &String, sign : &String) -> bool{ true}
-  fn accept<RT : RunningTypes<P=RSAPeer,V=MulKV>> (&self, n : &RSAPeer, 
-      rp : &RunningProcesses<RT>, 
-      rc : &ArcRunningContext<RT>) 
+  fn checkmsg  (&self, _ : &RSAPeer, _ : &String, _ : &String) -> bool{true}
+  fn accept<RT : RunningTypes<P=RSAPeer,V=MulKV>> (
+      &self, 
+      _ : &RSAPeer, 
+      _ : &RunningProcesses<RT>, 
+      _ : &ArcRunningContext<RT>) 
     -> Option<PeerPriority> {
       // direct local query to kvstore process to know which trust we got for peer (trust is use as
       // priority level.
       Some (PeerPriority::Normal)
     }
 #[inline]
-  fn for_accept_ping<RT : RunningTypes<P=RSAPeer,V=MulKV>>  (&self, n : &Arc<RSAPeer>, 
-      rp : &RunningProcesses<RT>, 
-      rc : &ArcRunningContext<RT>) 
+  fn for_accept_ping<RT : RunningTypes<P=RSAPeer,V=MulKV>>  (&self, _ : &Arc<RSAPeer>, 
+      _ : &RunningProcesses<RT>, 
+      _ : &ArcRunningContext<RT>) 
   {
   }
 }
@@ -550,10 +529,10 @@ impl WotAccess {
         Some(am) => {
           match am {
             MulKV::Wot(WotKV::TrustQuery(ref tr)) => {
-              if (tr.lastdiscovery.0 + self.refresh > time::get_time()) {
+              if tr.lastdiscovery.0 + self.refresh > time::get_time() {
                 (true, None)
               } else {
-                if (tr.trust > self.treshold){
+                if tr.trust > self.treshold {
                   // TODO use blocked and return no option (currently None is same as block with code
                   // outside).
                   // Some(PeerPriority::Blocked)
@@ -584,9 +563,9 @@ mode : QueryMode::Asynch,
           // we are kinda f***
           // TODO configure number of prom for discovery
           let nbprosign = 5;
-          let promsigns = mydht::find_val(rp, rc, MulK::Wot(WotK::P2S(n.get_key())), &queryconf, 1, StoragePriority::NoStore, 5);
+          let promsigns = mydht::find_val(rp, rc, MulK::Wot(WotK::P2S(n.get_key())), &queryconf, 1, StoragePriority::NoStore, nbprosign);
 
-          debug!("PROMSIGN got : {:?}", promsigns);
+          debug!("PROMSIGN got for nbpromsign {:?} : {:?}", nbprosign, promsigns);
           // fuse result
           let mut alreadysend = BTreeSet::new();
           if promsigns.len() > 0 {
@@ -650,7 +629,7 @@ mode : QueryMode::Asynch,
 
 // TODO PeerMgmtMeths to Vec<u8> !!!! here parse_str is very unsaf (si
 impl PeerMgmtMeths<RSAPeer, MulKV> for WotAccess {
-  fn challenge (&self, n : &RSAPeer) -> String{
+  fn challenge (&self, _ : &RSAPeer) -> String{
     uuid::Uuid::new_v4().to_simple_string()
   }
   fn signmsg (&self, n : &RSAPeer, chal : &String) -> String{
@@ -715,14 +694,14 @@ mod fskeyval {
   //! Also notice that the kvstore will need to be customized to allow dynamic search
 
   use mydht::dhtimpl::FileKV;
-  use std::fs::File;
+//  use std::fs::File;
   use mydht::kvstoreif::{KVStore};
   use mydht::dhtif::{FileKeyVal,KeyVal};
   use mydht::CachePolicy;
-  use std::sync::Arc;
+//  use std::sync::Arc;
 
   use mydht::{Attachment,SettableAttachment};
-  use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
+  use rustc_serialize::{Encoder,Encodable,Decoder};
   use mydht::utils::ArcKV;
 
 #[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
@@ -803,12 +782,9 @@ fn remove_val(& mut self, k : &FSK) {
 #[inline]
 fn commit_store(& mut self) -> bool{
   // TODO serialize simple caches
-  let mut r = true;
 
-  r = self.files.commit_store();
-  r = self.queries.commit_store() && r;
-  r
-
+  let r = self.files.commit_store();
+  self.queries.commit_store() && r
 }
 }
 
@@ -818,4 +794,4 @@ fn commit_store(& mut self) -> bool{
 
 
 }
-*/
+

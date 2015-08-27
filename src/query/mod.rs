@@ -1,18 +1,18 @@
 use std::sync::{Arc,Mutex,Semaphore,Condvar};
-use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
-use peer::{PeerPriority};
+use rustc_serialize::{Encoder,Encodable,Decoder};
+//use peer::{PeerPriority};
 use time::Duration;
 use time::{self,Timespec};
 use peer::Peer;
 use std::sync::mpsc::{Sender};
-use procs::mesgs::{KVStoreMgmtMessage,PeerMgmtMessage,QueryMgmtMessage};
+use procs::mesgs::{KVStoreMgmtMessage,PeerMgmtMessage};
 use query::cache::CachePolicy;
 use std::collections::VecDeque;
-use procs::RunningProcesses;
+//use procs::RunningProcesses;
 use keyval::{KeyVal};
 use kvstore::{StoragePriority};
 use utils::Either;
-use num::traits::ToPrimitive;
+//use num::traits::ToPrimitive;
 use rules::DHTRules;
 use transport::{ReadTransportStream,WriteTransportStream};
 
@@ -116,7 +116,8 @@ impl<P : Peer, V : KeyVal> Query<P, V> {
 
   #[inline]
   /// Reply with current query value TODO might consume query (avoiding some clone and clearer
-  /// semantic : check this)!!
+  /// semantic : check this)!! TODO right now error results in panic, rightfull err mgmet could be
+  /// nice
   pub fn release_query<TR : ReadTransportStream, TW : WriteTransportStream>
   (& self, 
    sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>
@@ -127,26 +128,26 @@ impl<P : Peer, V : KeyVal> Query<P, V> {
       &Query::PeerQuery(ref s) => {
         let mut mutg = s.1.lock().unwrap();
         (*mutg).1 = 0;
-        match(s.0){
+        match s.0 {
           QReply::Local(ref cv) => {
             cv.notify_all();
           },
           QReply::Dist(ref conf) => {
-            sp.send(PeerMgmtMessage::StoreNode((*conf).clone(),(*mutg).0.clone()));
+            sp.send(PeerMgmtMessage::StoreNode((*conf).clone(),(*mutg).0.clone())).unwrap();
           },
         };
       },
       &Query::KVQuery(ref s) => {
         let mut mutg = s.1.lock().unwrap();
         (*mutg).1 = 0;
-        match(s.0) {
+        match s.0 {
           QReply::Local(ref cv) => {
             cv.notify_all();
           },
           QReply::Dist(ref conf) => {
             // Send them result one by one
             for v in (*mutg).0.iter() {
-              sp.send(PeerMgmtMessage::StoreKV(conf.clone(), v.clone()));
+              sp.send(PeerMgmtMessage::StoreKV(conf.clone(), v.clone())).unwrap();
             }
           },
         };
@@ -175,12 +176,12 @@ pub fn lessen_query<TR : ReadTransportStream, TW : WriteTransportStream>
       };
       (*mutg).1 = nowcount;
       // if it unlock
-      if (nowcount == 0) {
-        match(s.0){
+      if nowcount == 0 {
+        match s.0 {
           QReply::Local(ref cv) =>
                {cv.notify_all();},
           QReply::Dist(ref conf) =>{
-             sp.send(PeerMgmtMessage::StoreNode((*conf).clone(),(*mutg).0.clone()));
+             sp.send(PeerMgmtMessage::StoreNode((*conf).clone(),(*mutg).0.clone())).unwrap();
           },
         };
         true
@@ -197,13 +198,13 @@ pub fn lessen_query<TR : ReadTransportStream, TW : WriteTransportStream>
       };
       (*mutg).1 = nowcount;
       // if it unlock
-      if (nowcount == 0){
-        match(s.0){
+      if nowcount == 0 {
+        match s.0 {
           QReply::Local(ref cv) =>
                {cv.notify_all();},
           QReply::Dist(ref conf) => {
             for v in (*mutg).0.iter() {
-              sp.send(PeerMgmtMessage::StoreKV(conf.clone(),v.clone()));
+              sp.send(PeerMgmtMessage::StoreKV(conf.clone(),v.clone())).unwrap();
             }
           },
         };
@@ -235,7 +236,7 @@ pub fn set_query_result (&self, r: Either<Option<Arc<P>>,Option<V>>,
           match r.right().unwrap() {
             None => {},
             Some(r) =>{
-              sv.send(KVStoreMgmtMessage::KVAdd(r,None,q.3)); 
+              sv.send(KVStoreMgmtMessage::KVAdd(r,None,q.3)).unwrap(); 
             },
           }
     // no sync (two consecutive query might go network two time
@@ -312,6 +313,9 @@ pub fn set_expire(&mut self, expire : Timespec) {
   let mut d = match self {
     &mut Query::PeerQuery(ref q) => q.2,
     &mut Query::KVQuery(ref q) => q.2,
+  };
+  if d.is_some() {
+    debug!("overriding expire");
   };
   d = Some(CachePolicy(expire));
 }
@@ -447,7 +451,7 @@ impl<P : Peer> QueryModeMsg<P> {
  
     /// Copy conf with a new qid and peer to reply to : when proxying a managed query we do not use the previous id.
     /// TODO see in mut not better
-    pub fn new_hop<p : Peer> (&self, p : Arc<P>, qid : QueryID) -> Self {
+    pub fn new_hop (&self, p : Arc<P>, qid : QueryID) -> Self {
         match self {
             &QueryModeMsg::AProxy (_, _) => QueryModeMsg::AProxy (p, qid),
             &QueryModeMsg::Asynch (_, _) => QueryModeMsg::Asynch (p, qid),
@@ -465,15 +469,15 @@ impl<P : Peer> QueryModeMsg<P> {
     }
     pub fn set_qid (&mut self, qid : QueryID) {
         match self {
-            &mut QueryModeMsg::AProxy (ref a, ref mut q) => *q = qid,
-            &mut QueryModeMsg::Asynch (ref a, ref mut q) => *q = qid,
-            &mut QueryModeMsg::AMix (ref a, ref b, ref mut q) => *q = qid,
+            &mut QueryModeMsg::AProxy (_, ref mut q) => *q = qid,
+            &mut QueryModeMsg::Asynch (_, ref mut q) => *q = qid,
+            &mut QueryModeMsg::AMix (_, _, ref mut q) => *q = qid,
         }
     }
  
     /// Copy conf with a new  andpeer to reply to : when proxying a managed query we do not use the previous id.
     /// TODO see in mut not better
-    pub fn new_peer<p : Peer> (&self, p : Arc<P>) -> Self {
+    pub fn new_peer (&self, p : Arc<P>) -> Self {
         match self {
             &QueryModeMsg::AProxy (_, ref a) => QueryModeMsg::AProxy (p, a.clone()),
             &QueryModeMsg::Asynch (_, ref a) => QueryModeMsg::Asynch (p, a.clone()),

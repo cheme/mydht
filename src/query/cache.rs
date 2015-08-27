@@ -1,5 +1,5 @@
 use query::{QueryID, Query};
-use std::time::Duration;
+//use std::time::Duration;
 
 use std::sync::mpsc::{Sender};
 use procs::mesgs::{PeerMgmtMessage};
@@ -46,7 +46,7 @@ pub fn cache_clean
   TW : WriteTransportStream,
   QC : QueryCache<P,V>>
  (qc : & mut QC, 
-  sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>){
+  sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>) {
     let to_clean = qc.cache_clean_nodes();
     for q in to_clean.iter(){
       debug!("Cache clean process relase a query");

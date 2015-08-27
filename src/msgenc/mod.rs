@@ -25,7 +25,7 @@ pub mod json;
 pub mod bincode;
 //pub mod bencode;
 
-const BUFF_SIZE : usize = 10000; // use for attachment send/receive -- 21888 seems to be maxsize
+const BUFF_SIZE : usize = 10000; // use for attachment send/receive -- 21888 seems to be maxsize for tcp read at least TODO parameterized this one (trait constant?)
 
 
 /// Trait for message encoding between peers.
@@ -58,15 +58,15 @@ pub enum ProtoMessage<P : Peer, V : KeyVal> {
   ///  P is added for reping on lost PING, TODO could be remove and simply origin key in pong
   PONG(P,String),
   /// reply to query of propagate, if no queryid is used it is a node propagate
-  STORE_NODE(Option<QueryID>, Option<DistantEnc<P>>), // reply to synch or asynch query - note no mix in query mode -- no signature, since we go with a ping before adding a node (ping is signed) TODO allow a signing with primitive only for this ?? and possible not ping afterwad
+  STORENODE(Option<QueryID>, Option<DistantEnc<P>>), // reply to synch or asynch query - note no mix in query mode -- no signature, since we go with a ping before adding a node (ping is signed) TODO allow a signing with primitive only for this ?? and possible not ping afterwad
   /// reply to query of propagate, if no queryid is used it is a node propagate
-  STORE_VALUE(Option<QueryID>, Option<DistantEnc<V>>), // reply to synch or asynch query - note no mix in query mode
+  STOREVALUE(Option<QueryID>, Option<DistantEnc<V>>), // reply to synch or asynch query - note no mix in query mode
   /// reply to query of propagate
-  STORE_VALUE_ATT(Option<QueryID>, Option<DistantEncAtt<V>>), // same as store value but use encoding distant with attachment
+  STOREVALUEATT(Option<QueryID>, Option<DistantEncAtt<V>>), // same as store value but use encoding distant with attachment
   /// Query for Peer
-  FIND_NODE(QueryMsg<P>, P::Key), // int is remaining nb hop -- TODO plus message signing for private node communication (add a primitive to check mess like those
+  FINDNODE(QueryMsg<P>, P::Key), // int is remaining nb hop -- TODO plus message signing for private node communication (add a primitive to check mess like those
   /// Query for Value
-  FIND_VALUE(QueryMsg<P>, V::Key),
+  FINDVALUE(QueryMsg<P>, V::Key),
 }
 pub mod send_variant {
 use keyval::{KeyVal,Attachment};
@@ -80,11 +80,11 @@ use std::sync::Arc;
 pub enum ProtoMessage<'a,P : Peer + 'a, V : KeyVal + 'a> {
   PING(&'a P,String, String), 
   PONG(&'a P,String),
-  STORE_NODE(Option<QueryID>, Option<DistantEnc<&'a P>>),
-  STORE_VALUE(Option<QueryID>, Option<DistantEnc<&'a V>>),
-  STORE_VALUE_ATT(Option<QueryID>, Option<DistantEncAtt<&'a V>>),
-  FIND_NODE(QueryMsg<P>, P::Key),
-  FIND_VALUE(QueryMsg<P>, V::Key),
+  STORENODE(Option<QueryID>, Option<DistantEnc<&'a P>>),
+  STOREVALUE(Option<QueryID>, Option<DistantEnc<&'a V>>),
+  STOREVALUEATT(Option<QueryID>, Option<DistantEncAtt<&'a V>>),
+  FINDNODE(QueryMsg<P>, P::Key),
+  FINDVALUE(QueryMsg<P>, V::Key),
 }
 
 }
@@ -142,15 +142,15 @@ fn write_attachment<W : Write> (w : &mut W, a : Option<&Attachment>) -> MDHTResu
       //try!(w.write_u32::<LittleEndian>(nbframe.to_u32().unwrap()));
       //try!(w.write_u32::<LittleEndian>(BUFF_SIZE.to_u32().unwrap()));
       //try!(w.write_u32::<LittleEndian>(lfrsize.to_u32().unwrap()));
-      f.seek(SeekFrom::Start(0));
+      try!(f.seek(SeekFrom::Start(0)));
       let buf = &mut [0; BUFF_SIZE];
       for i in 0..(nbframe + 1) {
         debug!("fread : {:?}", i);
         let nb = try!(f.read(buf));
-        if (nb == BUFF_SIZE) {
+        if nb == BUFF_SIZE {
           try!(w.write_all(buf));
         } else {
-          if (nb != lfrsize){
+          if nb != lfrsize {
             return Err(Error("mismatch file size calc for tcp transport".to_string(), ErrorKind::IOError, None));
           };
           // truncate buff
@@ -174,19 +174,19 @@ fn read_attachment(s : &mut Read)-> MDHTResult<Attachment> {
   debug!("bs{:?}",BUFF_SIZE);
   debug!("nwbfr{:?}",nbframe);
   debug!("frsiz{:?}",lfrsize);
-  let (fp, mut f) = utils::create_tmp_file();
+  let (fp, mut f) = try!(utils::create_tmp_file());
   let buf = &mut [0; BUFF_SIZE];
-  for i in 0..(nbframe + 1) {
+  for _ in 0..(nbframe + 1) {
     let nb = try!(s.read(buf));
-    if (nb == BUFF_SIZE) {
-      f.write(buf);
+    if nb == BUFF_SIZE {
+      try!(f.write(buf));
     } else {
-      if (nb != lfrsize){
+      if nb != lfrsize {
         // todo delete file
         return Err(Error("mismatch received file size calc for tcp transport".to_string(), ErrorKind::IOError, None));
       };
       // truncate buff
-      f.write(&buf[..nb]);
+      try!(f.write(&buf[..nb]));
     }
   };
 

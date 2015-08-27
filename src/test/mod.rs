@@ -198,7 +198,7 @@ where <RT:: P as KeyVal>::Key : Ord + Hash,
       move || Some(SimpleCacheQuery::new(false)), 
       move || Some(SimpleCache::new(None)), 
       Vec::new(), 
-      bpeers)
+      bpeers).unwrap()
   }).collect();
 
   thread::sleep_ms(2000); // TODO remove this
@@ -262,7 +262,7 @@ where <RT:: P as KeyVal>::Key : Ord + Hash,
         move || Some(SimpleCacheQuery::new(false)), 
         move || Some(SimpleCache::new(None)), 
         Vec::new(), 
-        bpeers)
+        bpeers).unwrap()
   }).collect();
 
   thread::sleep_ms(1000); // TODO remove this (might miss unidir in center)
@@ -493,7 +493,7 @@ where <RT as RunningTypes>::M : Clone,
         move || Some(SimpleCacheQuery::new(false)), 
         move || Some(SimpleCache::new(None)), 
         bpeers.clone(), Vec::new(),
-     ),
+     ).unwrap(),
      bpeers
      )
    }).collect();

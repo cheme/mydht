@@ -5,7 +5,7 @@ use super::{
   PeerMgmtMeths,
 };
 use procs::{
-  RunningContext, 
+  //RunningContext, 
   RunningProcesses, 
   ArcRunningContext, 
   RunningTypes,
@@ -16,7 +16,7 @@ use std::thread;
 use keyval::{KeyVal};
 use keyval::{Attachment,SettableAttachment};
 use peer::PeerPriority;
-use utils;
+//use utils;
 use transport::LocalAdd;
 
 
@@ -104,7 +104,7 @@ impl TestingRules {
 }
 
 impl<P : Peer, V : KeyVal> PeerMgmtMeths<P, V> for TestingRules {
-  fn challenge (&self, n : &P) -> String {
+  fn challenge (&self, _ : &P) -> String {
     thread::sleep_ms(self.delay_ms_chal);
     thread_rng().gen::<usize>().to_string()
   }
@@ -117,7 +117,7 @@ impl<P : Peer, V : KeyVal> PeerMgmtMeths<P, V> for TestingRules {
     format!("{:?}, {}",n.get_key(), chal) == *sign
   }
   fn accept<RT : RunningTypes<P=P,V=V>>
-  (&self, n : &P, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
+  (&self, _ : &P, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
   -> Option<PeerPriority> {
     thread::sleep_ms(self.delay_ms_accept);
     Some (PeerPriority::Normal)

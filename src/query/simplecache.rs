@@ -1,22 +1,22 @@
 use std::collections::{HashMap};
 use std::hash::Hash;
-use query::{self,QueryID, Query};
+use query::{QueryID, Query};
 use query::cache::QueryCache;
-use std::time::Duration;
+//use std::time::Duration;
 use peer::Peer;
 use time;
 use keyval::{KeyVal,Key};
 use kvstore::{KVStore,KVStoreRel};
-use kvcache::{KVCache,NoCache};
+use kvcache::{KVCache};
 use query::cache::CachePolicy;
-use std::sync::Arc;
-use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
+use mydhtresult::Result as MDHTResult;
+//use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 use rustc_serialize::json;
-use std::fs::{File};
+//use std::fs::{File};
 use std::fs::{copy,PathExt};
-use std::path::{Path,PathBuf};
-use utils::ArcKV;
-use std::marker::{NoCopy,PhantomData};
+use std::path::{PathBuf};
+//use utils::ArcKV;
+use std::marker::{PhantomData};
 use std::io::{SeekFrom,Write,Read,Seek};
 use std::fs::OpenOptions;
 use rand::{thread_rng,Rng};
@@ -30,7 +30,7 @@ use num::traits::ToPrimitive;
 pub struct SimpleCache<V : KeyVal, C : KVCache<<V as KeyVal>::Key, V>> where V::Key : Hash {
   cache : C,
   persi : Option<PathBuf>,
-  _nocopy : NoCopy,
+
   _phdat : PhantomData<V>
 }
 
@@ -95,6 +95,7 @@ impl<T : KeyVal> KVCache<T::Key, Arc<T>> for SimpleCache<T> {
 /// KVStore implementation with serialization to json (best for testing experimenting) if needed.
 impl<T : KeyVal, C : KVCache<<T as KeyVal>::Key, T>> KVStore<T> for SimpleCache<T,C> 
   where T::Key : Hash  {
+
   #[inline]
   fn add_val(& mut self,  v : T, (persistent, _) : (bool, Option<CachePolicy>)){
     // if cache we should consider caching priority and 
@@ -118,38 +119,48 @@ impl<T : KeyVal, C : KVCache<<T as KeyVal>::Key, T>> KVStore<T> for SimpleCache<
   fn remove_val(& mut self, k : &T::Key){
     self.cache.remove_val_c(k);
   }
-
-  #[inline]
-  fn commit_store(& mut self) -> bool{
-    match self.persi {
-      Some(ref confPath) => {
-        let mut confFile = OpenOptions::new().read(true).write(true).open(confPath).unwrap();
-        debug!("Commit call on Simple cache kvstore");
-        // first bu copy TODO use rename instead.
-        let bupath = confPath.with_extension("_bu");
-        if copy(confPath, &bupath).is_ok(){
-          confFile.seek(SeekFrom::Start(0));
-          // remove content
-          confFile.set_len(0);
-          // write new content
-          // some issue to json serialize hash map due to key type so serialize vec of pair instead
-        //fn second<A, B>((_, b): (A, B)) -> B { b }
-        //let second: fn((&'a <T as KeyVal>::Key,&'a T)) -> &'a T = second;
-          let l  = self.cache.len_c();
-          let vser : Vec<&T> = self.cache.strict_fold_c(Vec::with_capacity(l),&|mut v,p| {v.push(p.1);v});
-          confFile.write(&json::encode(&vser).unwrap().into_bytes()[..]).is_ok()
-        } else {
-          false
-        }
-      },
-      None => true,
-    }
+  #[inline] // TODO switch to new interface
+  fn commit_store(& mut self) -> bool {
+    self.commit_store_new().is_ok()
   }
 }
 
+ 
+impl<T : KeyVal, C : KVCache<<T as KeyVal>::Key, T>> SimpleCache<T,C> 
+  where T::Key : Hash  {
+  #[inline]
+  /// TODO replace commit store
+  fn commit_store_new(& mut self) -> MDHTResult<()> {
+    match self.persi {
+      Some(ref confpath) => {
+        let mut conffile = OpenOptions::new().read(true).write(true).open(confpath).unwrap();
+        debug!("Commit call on Simple cache kvstore");
+        // first bu copy TODO use rename instead.
+        let bupath = confpath.with_extension("_bu");
+        try!(copy(confpath, &bupath));
+        try!(conffile.seek(SeekFrom::Start(0)));
+        // remove content
+        try!(conffile.set_len(0));
+        // write new content
+        // some issue to json serialize hash map due to key type so serialize vec of pair instead
+        //fn second<A, B>((_, b): (A, B)) -> B { b }
+        //let second: fn((&'a <T as KeyVal>::Key,&'a T)) -> &'a T = second;
+        let l  = self.cache.len_c();
+        let vser : Vec<&T> = self.cache.strict_fold_c(Vec::with_capacity(l),&|mut v,p| {v.push(p.1);v});
+        try!(conffile.write(&json::encode(&vser).unwrap().into_bytes()[..]));
+        Ok(())
+      },
+      None => Ok(()),
+    }
+  }
 
+
+}
 
 impl<V : KeyVal> SimpleCache<V,HashMap<<V as KeyVal>::Key, V>> where V::Key : Hash {
+
+
+
   /// Optionaly specify a path for serialization and of course loading initial value.
   /// JSon is used, with some slow trade of due to issue when serializing hashmap with non string
   /// key.
@@ -178,7 +189,7 @@ impl<V : KeyVal> SimpleCache<V,HashMap<<V as KeyVal>::Key, V>> where V::Key : Ha
       },
       &mut None => HashMap::new(),
     };
-    SimpleCache{cache : map, persi : op, _nocopy : NoCopy, _phdat : PhantomData}
+    SimpleCache{cache : map, persi : op, _phdat : PhantomData}
   }
 }
 
@@ -235,7 +246,7 @@ impl<P : Peer, V : KeyVal, C : KVCache<QueryID, Query<P,V>>> QueryCache<P,V> for
 
 
 
-  fn cache_clean_nodes(& mut self)-> Vec<Query<P,V>>{
+  fn cache_clean_nodes(& mut self)-> Vec<Query<P,V>> {
     let expire = time::get_time();
     let mut remqid : Vec<QueryID> = Vec::new();
     let mut remq : Vec<Query<P,V>> = Vec::new();
@@ -253,6 +264,9 @@ impl<P : Peer, V : KeyVal, C : KVCache<QueryID, Query<P,V>>> QueryCache<P,V> for
         },
       })
     });
+    if mr.is_err() { // TODO return result instead
+      error!("map in place failure during cache clean : {:?}", mr.err());
+    };
 /* 
     for mut q in self.cache.iter(){
       match (q.1).get_expire() {

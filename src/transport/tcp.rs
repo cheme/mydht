@@ -7,29 +7,29 @@
 //! TODO bidirect tcp option : we do not multiplex frame : send on a port and receive on another
 //! one. (just dont return ows or ors).
 extern crate byteorder;
-use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+//use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::net::{TcpListener};
 use std::net::{TcpStream};
 use std::io::Result as IoResult;
 use mydhtresult::Result;
-use std::io::Error as IoError;
-use std::io::ErrorKind as IoErrorKind;
+//use std::io::Error as IoError;
+//use std::io::ErrorKind as IoErrorKind;
 use std::net::{SocketAddr};
-use std::io::Write;
+//use std::io::Write;
 use std::io::Read;
 use time::Duration;
 use std::time::Duration as StdDuration;
-use std::thread::Thread;
-use peer::{Peer};
+//use std::thread::Thread;
+//use peer::{Peer};
 use super::{Transport,ReadTransportStream,WriteTransportStream};
-use std::iter;
-use utils;
+//use std::iter;
+//use utils;
 use num::traits::ToPrimitive;
-use super::Attachment;
+//use super::Attachment;
 use std::net::Shutdown;
 
-const BUFF_SIZE : usize = 10000; // use for attachment send/receive -- 21888 seems to be maxsize
-const MAX_BUFF_SIZE : usize = 21888; // 21888 seems to be maxsize
+
+
 
 /// Tcp struct : two options, timeout for connect and time out when connected.
 pub struct Tcp {
@@ -37,8 +37,6 @@ pub struct Tcp {
   /// distinction). When stable should become Option<Duration>.
   /// Currently only seconds are used (conversion over seconds!! waiting for api stabilize).
   streamtimeout : Duration,
-  /// courrently not used
-  connecttimeout : Duration,
   /// either we reuse tcp socket for input / output or open another one (two unidirectional socket
   /// being useless for tcp but still good for test/diagnostics or some special firewal settings
   mult : bool,
@@ -46,11 +44,10 @@ pub struct Tcp {
 }
 
 impl Tcp {
-  pub fn new(  p: &SocketAddr, streamtimeout : Duration, connecttimeout : Duration, mult : bool) -> IoResult<Tcp> {
+  pub fn new(p: &SocketAddr, streamtimeout : Duration, mult : bool) -> IoResult<Tcp> {
     let listener = try!(TcpListener::bind(p));
     Ok(Tcp {
       streamtimeout : streamtimeout,
-      connecttimeout : connecttimeout,
       mult : mult,
       listener : listener,
     })
@@ -62,28 +59,34 @@ impl Transport for Tcp {
   type ReadStream = TcpStream;
   type WriteStream = TcpStream;
   type Address = SocketAddr;
-  fn start<C> (&self, readHandler : C) -> Result<()>
+  fn start<C> (&self, readhandler : C) -> Result<()>
     where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<()> {
     for socket in self.listener.incoming() {
-        match socket {
-            Err(e) => {error!("Socket acceptor error : {:?}", e);}
-            Ok(mut s)  => {
-              debug!("Initiating socket exchange : ");
-              debug!("  - From {:?}", s.local_addr());
-              debug!("  - From {:?}", s.peer_addr());
-              debug!("  - With {:?}", s.peer_addr());
-              if self.mult {
-                s.set_keepalive (self.streamtimeout.num_seconds().to_u32());
-                s.set_read_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs));
-                s.set_write_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs));
+      match socket {
+        Err(e) => {error!("Socket acceptor error : {:?}", e);}
+        Ok(s)  => {
+          debug!("Initiating socket exchange : ");
+          debug!("  - From {:?}", s.local_addr());
+          debug!("  - From {:?}", s.peer_addr());
+          debug!("  - With {:?}", s.peer_addr());
+          if self.mult {
+            try!(s.set_keepalive (self.streamtimeout.num_seconds().to_u32()));
+            try!(s.set_read_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs)));
+            try!(s.set_write_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs)));
 
-                let rs = try!(s.try_clone());
-                readHandler(rs,Some(s));
-              } else {
-                readHandler(s,None);
-              }
+            let rs = try!(s.try_clone());
+            match readhandler(rs,Some(s)) {
+              Ok(()) => (),
+              Err(e) => error!("Read handler failure : {}",e),
             }
+          } else {
+            match readhandler(s,None) {
+              Ok(()) => (),
+              Err(e) => error!("Read handler failure : {}",e),
+            }
+          }
         }
+      }
     };
     Ok(())
   }

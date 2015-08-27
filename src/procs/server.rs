@@ -35,6 +35,7 @@ use mydhtresult::Result as MDHTResult;
 use procs::ServerMode;
 use procs::ClientHandle;
 use route::ServerInfo;
+use procs::sphandler_res;
 
 /// either we created a permanent thread for server, or it is managed otherwhise (for instance udp
 /// single reception loop or tcp evented loop).
@@ -129,13 +130,6 @@ pub fn resolve_server_mode <RT : RunningTypes> (rc : &ArcRunningContext<RT>) -> 
   }
 }
 
-/// manage result of a spawned handler
-fn sphandler_res (res : MDHTResult<()>) {
-  match res {
-    Ok(()) => debug!("spawned result returned gracefully"),
-    Err(e) => error!("Server thread exit due to error : {:?}",e),
-  }
-}
 // fn to start a server process out of transport reception (when connect with of transport return a
 // reader to.
 pub fn start_listener <RT : RunningTypes>
@@ -403,13 +397,13 @@ fn request_handler_internal <RT : RunningTypes>
       try!(rp.peers.send(PeerMgmtMessage::PeerAuth(node,sign)));
     },
     // asynch mode we do not need to keep trace of the query
-    ProtoMessage::FIND_NODE(mut qconf@QueryMsg{ modeinfo : QueryModeMsg::Asynch(..),..}, nid) => {
+    ProtoMessage::FINDNODE(mut qconf@QueryMsg{ modeinfo : QueryModeMsg::Asynch(..),..}, nid) => {
       update_query_conf (&mut qconf ,&rc.rules);
       debug!("Asynch Find peer {:?}", nid);
       try!(rp.peers.send(PeerMgmtMessage::PeerFind(nid,None,qconf)));
     },
     // general case as asynch waiting for reply
-    ProtoMessage::FIND_NODE(mut qconf, nid) => {
+    ProtoMessage::FINDNODE(mut qconf, nid) => {
       let old_qconf = qconf.clone();
       update_query_conf (&mut qconf ,&rc.rules);
       let nbquer = qconf.nb_forw;
@@ -432,13 +426,13 @@ fn request_handler_internal <RT : RunningTypes>
       }
     },
     // particular case for asynch where we skip node during reply process
-    ProtoMessage::FIND_VALUE(mut qconf@QueryMsg{ modeinfo : QueryModeMsg::Asynch(..), ..}, nid) => {
+    ProtoMessage::FINDVALUE(mut qconf@QueryMsg{ modeinfo : QueryModeMsg::Asynch(..), ..}, nid) => {
       update_query_conf (&mut qconf ,&rc.rules);
       debug!("Asynch Find val {:?}", nid);
       try!(rp.store.send(KVStoreMgmtMessage::KVFind(nid,None,qconf,false)));
     },
     // general case as asynch waiting for reply
-    ProtoMessage::FIND_VALUE(mut queryconf, nid) => {
+    ProtoMessage::FINDVALUE(mut queryconf, nid) => {
       let old_qconf = queryconf.clone();
       let oldhop = queryconf.rem_hop; // Warn no set of this value
       let oldqp = queryconf.prio;
@@ -465,7 +459,7 @@ fn request_handler_internal <RT : RunningTypes>
       };
     },
     // store node receive by server is asynch reply
-    ProtoMessage::STORE_NODE(oqid, sre) => match oqid {
+    ProtoMessage::STORENODE(oqid, sre) => match oqid {
       Some(qid) => {
         let res = sre.map(|r|Arc::new(r.0));
         debug!("node store {:?} for {:?}", res, qid);
@@ -482,7 +476,7 @@ fn request_handler_internal <RT : RunningTypes>
         error!("receive store node for non stored query mode : TODO implement propagate");
       },
     },
-    ProtoMessage::STORE_VALUE_ATT(oqid, sre) => match oqid {
+    ProtoMessage::STOREVALUEATT(oqid, sre) => match oqid {
       Some(qid) => {
         let res = sre.map(|r|r.0);
         debug!("node store {:?} for {:?}", res, qid);
@@ -493,7 +487,7 @@ fn request_handler_internal <RT : RunningTypes>
         error!("receive store node for non stored query mode : TODO implement propagate");
       },
     },
-    ProtoMessage::STORE_VALUE(oqid, sre)=> match oqid {
+    ProtoMessage::STOREVALUE(oqid, sre)=> match oqid {
       Some(qid) => {
         let res = match sre {
           Some(r) => {

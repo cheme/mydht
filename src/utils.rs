@@ -6,8 +6,6 @@ extern crate time;
 extern crate openssl;
 extern crate bincode;
 
-#[macro_use]
-
 use num::bigint::{BigUint,RandBigInt};
 use rand::Rng;
 use rand::thread_rng;
@@ -28,6 +26,7 @@ use std::io::Write;
 use std::io::Read;
 #[cfg(feature="rust-crypto-impl")]
 use self::crypto::digest::Digest;
+#[cfg(not(feature="openssl-impl"))]
 #[cfg(feature="rust-crypto-impl")]
 use self::crypto::sha2::Sha256;
 use std::io::Seek;
@@ -36,16 +35,15 @@ use std::fs::File;
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6, Ipv4Addr, Ipv6Addr};
 use std::io::Result as IoResult;
 use std::str::FromStr;
-use std::os;
 use std::env;
 use std::fs;
-use std::iter;
-use std::borrow::ToOwned;
-use std::ffi::OsStr;
+//use std::iter;
+//use std::borrow::ToOwned;
+//use std::ffi::OsStr;
 use std::path::{Path,PathBuf};
 use self::time::Timespec;
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
-use rustc_serialize::hex::{ToHex,FromHex};
+//use rustc_serialize::hex::{ToHex,FromHex};
 use std::ops::Deref;
 use mydhtresult::Result as MDHTResult;
 
@@ -181,6 +179,12 @@ pub enum Either<A,B> {
 }
 
 impl<A,B> Either<A,B> {
+  pub fn to_options (self) -> (Option<A>, Option<B>) {
+    match self {
+      Either::Left(a) => (Some(a), None),
+      Either::Right(b) => (None, Some(b)),
+    }
+  }
   pub fn left (self) -> Option<A> {
     match self {
       Either::Left(a) => Some(a),
@@ -193,6 +197,19 @@ impl<A,B> Either<A,B> {
       Either::Left(_) => None,
     }
   }
+  pub fn left_ref (&self) -> Option<&A> {
+    match self {
+      &Either::Left(ref a) => Some(a),
+      &Either::Right(_) => None,
+    }
+  }
+  pub fn right_ref (&self) -> Option<&B> {
+    match self {
+      &Either::Right(ref b) => Some(b),
+      &Either::Left(_) => None,
+    }
+  }
+
 }
 
 impl Encodable for TimeSpecExt {
@@ -241,15 +258,15 @@ impl Deref for SocketAddrExt {
 
 // TODO rewrite with full new io and new path : this is so awfull + true uuid
 // Error management...
-pub fn create_tmp_file() -> (PathBuf,File) {
+pub fn create_tmp_file() -> IoResult<(PathBuf,File)> {
   let tmpdir = env::temp_dir();
   let mytmpdirpath = tmpdir.join(Path::new("./mydht"));
-  fs::create_dir_all(&mytmpdirpath);
+  try!(fs::create_dir_all(&mytmpdirpath));
   let fname = random_uuid(64).to_string();
   let fpath = mytmpdirpath.join(Path::new(&fname[..]));
   debug!("Creating tmp file : {:?}",fpath);
-  let f = File::create(&fpath).unwrap(); 
-  (fpath, f)
+  let f = try!(File::create(&fpath)); 
+  Ok((fpath, f))
 }
 
 pub fn is_in_tmp_dir(f : &Path) -> bool {
@@ -284,13 +301,13 @@ impl<V> Debug for TransientOption<V> {
 }
 
 impl<V> Encodable for TransientOption<V> {
-  fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
+  fn encode<S:Encoder> (&self, _: &mut S) -> Result<(), S::Error> {
     Ok(())
   }
 }
 
 impl<V> Decodable for TransientOption<V> {
-  fn decode<D:Decoder> (d : &mut D) -> Result<TransientOption<V>, D::Error> {
+  fn decode<D:Decoder> (_ : &mut D) -> Result<TransientOption<V>, D::Error> {
     Ok(TransientOption(None))
   }
 }
@@ -325,7 +342,7 @@ pub fn one_result_val_clone<V : Clone + Send> (ores : &OneResult<V>) -> Option<V
   match ores.0.lock() {
     Ok(res) => Some(res.0.clone()),
     Err(m) => {
-      error!("poisoned mutex for ping result");
+      error!("poisoned mutex for ping result : {:?}", m);
       None
     },
   }
@@ -336,7 +353,7 @@ pub fn one_result_spurious<V> (ores : &OneResult<V>) -> Option<bool> {
   match ores.0.lock() {
     Ok(res) => Some(res.1),
     Err(m) => {
-      error!("poisoned mutex for ping result");
+      error!("poisoned mutex for ping result : {:?}", m);
       None
     },
   }
@@ -352,7 +369,8 @@ pub fn ret_one_result<V : Send> (ores : &OneResult<V>, v : V) {
       res.1 = true;
       res.0 = v
     },
-    Err(m) => error!("poisoned mutex for ping result"),
+    Err(m) => error!("poisoned mutex for ping result : {:?}", m),
+      
   }
   ores.1.notify_all();
 }
@@ -363,7 +381,7 @@ pub fn unlock_one_result<V : Send> (ores : &OneResult<V>, v : V) {
     Ok(mut res) => {
       res.1 = true;
     },
-    Err(m) => error!("poisoned mutex for ping result"),
+    Err(m) => error!("poisoned mutex for ping result : {:?}", m),
   }
   ores.1.notify_all();
 }
@@ -375,7 +393,7 @@ pub fn unlock_one_result<V : Send> (ores : &OneResult<V>, v : V) {
 pub fn change_one_result<V : Send> (ores : &OneResult<V>, v : V) {
   match ores.0.lock() {
     Ok(mut res) => res.0 = v,
-    Err(m) => error!("poisoned mutex for ping result"),
+    Err(m) => error!("poisoned mutex for ping result : {:?}", m),
   }
 }
 
@@ -383,7 +401,7 @@ pub fn change_one_result<V : Send> (ores : &OneResult<V>, v : V) {
 pub fn change_one_result_ifneq<V : Send + Eq> (ores : &OneResult<V>, neq : &V, v : V) {
   match ores.0.lock() {
     Ok(mut res) => if res.0 != *neq {res.0 = v},
-    Err(m) => error!("poisoned mutex for ping result"),
+    Err(m) => error!("poisoned mutex for ping result : {:?}", m),
   }
 }
 
@@ -417,8 +435,8 @@ pub fn clone_wait_one_result<V : Clone + Send> (ores : &OneResult<V>, newval : O
       };
       res
     },
-    Err(poisoned) => {
-      error!("poisonned mutex on one res");
+    Err(m) => {
+      error!("poisonned mutex on one res : {:?}", m);
       None
     }, // not logic
  };
@@ -458,7 +476,7 @@ pub fn clone_wait_one_result_ifneq<V : Clone + Send + Eq> (ores : &OneResult<V>,
         Some(res)
       }
     },
-    Err(poisoned) => {error!("poisonned mutex on one res"); None}, // not logic
+    Err(m) => {error!("poisonned mutex on one res : {:?}", m); None}, // not logic
  };
  r
 }
@@ -502,7 +520,7 @@ pub fn clone_wait_one_result_ifneq_timeout_ms<V : Clone + Send + Eq> (ores : &On
         Some(res)
       }
     },
-    Err(poisoned) => {error!("poisonned mutex on one res"); None}, // not logic
+    Err(m) => {error!("poisonned mutex on one res : {:?}", m); None}, // not logic
  };
  r
 }
@@ -537,7 +555,7 @@ pub fn clone_wait_one_result_timeout_ms<V : Clone + Send> (ores : &OneResult<V>,
       };
       ret
     },
-    Err(poisoned) => {error!("poisonned mutex on one res"); None}, // not logic
+    Err(m) => {error!("poisonned mutex on one res : {:?}", m); None}, // not logic
  };
  r
 }
@@ -585,12 +603,9 @@ where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a,
       <V as KeyVal>::Key : 'a {
  
-  let mut r = true;
-  r = e.encode_into(t,m).is_ok();
-  r = e.attach_into(t,a).is_ok();
-  r = t.flush().is_ok();
-
-  r
+  e.encode_into(t,m).is_ok()
+    && e.attach_into(t,a).is_ok()
+    && t.flush().is_ok()
 }
 
 // TODO switch receive to this iface
@@ -629,12 +644,10 @@ pub fn sendUnconnectMsg<P : Per, V : KeyVal, T : TransportStream, E : MsgEnc>( p
 #[cfg(feature="rust-crypto-impl")]
 pub fn hash_buf_crypto(buff : &[u8], digest : &mut Digest) -> Vec<u8> {
   let bsize = digest.block_size();
-  let bbytes = ((bsize+7)/8);
+  let bbytes = (bsize+7)/8;
   let ressize = digest.output_bits();
-  let outbytes = ((ressize+7)/8);
+  let outbytes = (ressize+7)/8;
   debug!("{:?}:{:?}", bsize,ressize);
-  let mut tmpvec : Vec<u8> = vec![0; bbytes];
-  let buf = tmpvec.as_mut_slice();
 
   let nbiter = if buff.len() == 0 {
       0
@@ -658,36 +671,50 @@ pub fn hash_buf_crypto(buff : &[u8], digest : &mut Digest) -> Vec<u8> {
 }
 
 
+#[cfg(not(feature="openssl-impl"))]
 #[cfg(feature="rust-crypto-impl")]
 pub fn hash_file_crypto(f : &mut File, digest : &mut Digest) -> Vec<u8> {
   let bsize = digest.block_size();
-  let bbytes = ((bsize+7)/8);
+  let bbytes = (bsize+7)/8;
   let ressize = digest.output_bits();
-  let outbytes = ((ressize+7)/8);
+  let outbytes = (ressize+7)/8;
   debug!("{:?}:{:?}", bsize,ressize);
   let mut tmpvec : Vec<u8> = vec![0; bbytes];
   let buf = tmpvec.as_mut_slice();
-  f.seek(SeekFrom::Start(0));
-  loop{
-  match f.read(buf) {
-    Ok(nb) => {
-      if (nb == bbytes) {
-      digest.input(buf);
-      } else {
-        error!("nb{:?}",nb);
-        // truncate buff
-        digest.input(&buf[..nb]);
-        break;
-      }
-    },
+  match f.seek(SeekFrom::Start(0)) {
+    Ok(_) => (),
     Err(e) => {
-      panic!("error happened when reading file for hashing : {:?}", e);
-      break;
+      error!("failure to create hash for file : {:?}",e);
+      return Vec::new(); // TODO correct error mgmt
+    },
+  };
+  loop {
+    match f.read(buf) {
+      Ok(nb) => {
+        if nb == bbytes {
+          digest.input(buf);
+        } else {
+          error!("nb{:?}",nb);
+          // truncate buff
+          digest.input(&buf[..nb]);
+          break;
+        }
+      },
+      Err(e) => {
+        error!("error happened when reading file for hashing : {:?}", e);
+        return Vec::new();
     },
   };
   }
   // reset file reader to start of file
-  f.seek(SeekFrom::Start(0));
+  match f.seek(SeekFrom::Start(0)) {
+    Ok(_) => (),
+    Err(e) => {
+      error!("failure to create hash for file : {:?}",e);
+      return Vec::new(); // TODO correct error mgmt
+    },
+  }
+ 
   let mut rvec : Vec<u8> = vec![0; outbytes];
   let rbuf = rvec.as_mut_slice();
   digest.result(rbuf);
@@ -716,24 +743,43 @@ pub fn hash_default(f : &mut File) -> Vec<u8> {
 #[cfg(feature="openssl-impl")]
 pub fn hash_openssl(f : &mut File) -> Vec<u8> {
   let mut digest = Hasher::new(Type::SHA256); // TODO in filestore parameter with a supported hash enum
-  let bsize = 64;
+//  let bsize = 64;
 //  let bbytes = ((bsize+7)/8);
   let bbytes = 8;
-  let ressize = 256;
+//  let ressize = 256;
 //  let outbytes = ((ressize+7)/8);
-  let outbytes = 32;
+//  let outbytes = 32;
   let mut tmpvec : Vec<u8> = vec![0; bbytes];
   let buf = tmpvec.as_mut_slice();
-  f.seek(SeekFrom::Start(0));
+  match f.seek(SeekFrom::Start(0)) {
+    Ok(_) => (),
+    Err(e) => {
+      error!("failure to create hash for file : {:?}",e);
+      return Vec::new(); // TODO correct error mgmt
+    },
+  };
   loop {
   match f.read(buf) {
     Ok(nb) => {
       if nb == bbytes {
-        digest.write_all(buf);
+        match digest.write_all(buf) {
+          Ok(_) => (),
+          Err(e) => {
+            error!("failure to create hash for file : {:?}",e);
+            return Vec::new(); // TODO correct error mgmt
+          },
+        };
       } else {
         debug!("nb{:?}",nb);
         // truncate buff
-        digest.write_all(&buf[..nb]);
+        match digest.write_all(&buf[..nb]) {
+          Ok(_) => (),
+          Err(e) => {
+            error!("failure to create hash for file : {:?}",e);
+            return Vec::new(); // TODO correct error mgmt
+          },
+        };
+ 
         break;
       }
     },
@@ -744,7 +790,14 @@ pub fn hash_openssl(f : &mut File) -> Vec<u8> {
   };
   }
   // reset file writer to start of file
-  f.seek(SeekFrom::Start(0));
+  match f.seek(SeekFrom::Start(0)) {
+    Ok(_) => (),
+    Err(e) => {
+      error!("failure to create hash for file : {:?}",e);
+      return Vec::new(); // TODO correct error mgmt
+    },
+  };
+ 
   digest.finish()
 }
 

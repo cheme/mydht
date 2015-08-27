@@ -4,9 +4,9 @@ use query::QueryPriority;
 use query::QueryMode;
 use kvstore::StoragePriority;
 use query::cache::CachePolicy;
-use transport::Transport;
+//use transport::Transport;
 use procs::ClientMode;
-use procs::ServerMode;
+//use procs::ServerMode;
 use num;
 use num::traits::ToPrimitive;
 

@@ -253,7 +253,7 @@ pub fn client_match <RT : RunningTypes>
       // send query with hop + 1
       // local queryid set in server here update dest
       queryconf.dec_nbhop(&rc.rules);
-      let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_NODE(queryconf, nid);
+      let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FINDNODE(queryconf, nid);
       sendorconnect!(&mess,None);
       if !ok {
         // lessen TODO asynch is pow...
@@ -264,7 +264,7 @@ pub fn client_match <RT : RunningTypes>
       // no adding query counter for peer
       // send query with hop + 1
       queryconf.dec_nbhop(&rc.rules);
-      let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FIND_VALUE(queryconf, nid);
+      let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FINDVALUE(queryconf, nid);
       sendorconnect!(&mess,None);
       if !ok {
         // lessen TODO asynch is pow... cf lessen of peermanager
@@ -272,18 +272,18 @@ pub fn client_match <RT : RunningTypes>
       }
     },
     ClientMessage::StoreNode(oqid, r) => {
-      let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_NODE(oqid, r.as_ref().map(|v|DistantEnc(v.borrow())));
+      let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORENODE(oqid, r.as_ref().map(|v|DistantEnc(v.borrow())));
       sendorconnect!(&mess,None);
     },
     ClientMessage::StoreKV(oqid, chunk, r) => {
       match chunk {
         QueryChunk::Attachment => {
           let att = r.as_ref().and_then(|kv|kv.get_attachment().map(|p|p.clone()));
-          let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE(oqid, r.as_ref().map(|v|DistantEnc(v)));
+          let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STOREVALUE(oqid, r.as_ref().map(|v|DistantEnc(v)));
           sendorconnect!(&mess,att.as_ref());
         },
         _                     =>  {
-          let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STORE_VALUE_ATT(oqid, r.as_ref().map(|v|DistantEncAtt(v)));
+          let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::STOREVALUEATT(oqid, r.as_ref().map(|v|DistantEncAtt(v)));
           sendorconnect!(&mess,None);
         },
       };

@@ -36,10 +36,10 @@
 extern crate byteorder;
 extern crate mio;
 use std::sync::mpsc;
-use std::sync::mpsc::{Receiver,Sender};
-use std::thread;
+use std::sync::mpsc::{Sender};
+use std::result::Result as StdResult;
 use std::mem;
-use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+//use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::Result as IoResult;
 use mydhtresult::Result;
 use std::io::Error as IoError;
@@ -49,11 +49,11 @@ use std::io::Read;
 use time::Duration;
 use super::{Transport,ReadTransportStream,WriteTransportStream};
 use std::net::SocketAddr;
-use self::mio::tcp::TcpSocket;
+//use self::mio::tcp::TcpSocket;
 use self::mio::tcp::TcpListener;
-//use self::mio::Socket;
+use std::fmt::Debug;
 use self::mio::tcp::TcpStream as MioTcpStream;
-use self::mio::tcp;
+//use self::mio::tcp;
 use self::mio::Token;
 use self::mio::Timeout;
 use self::mio::EventSet;
@@ -62,17 +62,17 @@ use self::mio::Sender as MioSender;
 use self::mio::Handler;
 use self::mio::PollOpt;
 use self::mio::tcp::Shutdown;
-use super::Attachment;
+//use super::Attachment;
 use num::traits::ToPrimitive;
 use std::collections::VecMap;
-use std::sync::Mutex;
-use std::sync::Arc;
-use std::sync::Condvar;
-use std::sync::PoisonError;
+//use std::sync::Mutex;
+//use std::sync::Arc;
+//use std::sync::Condvar;
+//use std::sync::PoisonError;
 use std::error::Error;
-use utils::{OneResult,new_oneresult,ret_one_result,clone_wait_one_result,clone_wait_one_result_ifneq_timeout_ms,clone_wait_one_result_timeout_ms,one_result_val_clone,change_one_result,one_result_spurious};
-use std::os::unix::io::AsRawFd;
-use std::os::unix::io::FromRawFd;
+use utils::{self,OneResult};
+//use std::os::unix::io::AsRawFd;
+//use std::os::unix::io::FromRawFd;
 #[cfg(feature="with-extra-test")]
 #[cfg(test)]
 use transport::test::connect_rw_with_optional;
@@ -110,7 +110,7 @@ impl Tcp {
       keepalive : keepalive,
       timeout : timeout,
       spawn : spawn,
-      channel : new_oneresult(None),
+      channel : utils::new_oneresult(None),
       listener : tcplistener,
     })
   }
@@ -240,9 +240,12 @@ impl<'a,C> Handler for MyHandler<'a,C>
       HandlerMessage::EndRead(tok, rs) => {
         match self.tokens.get(&tok.0) {
           Some(&StreamInfo::Threaded(ref state)) => {
-            let cont = one_result_spurious(state);
+            let cont = utils::one_result_spurious(state);
             if cont.unwrap() {
-              (self.readhandler)(rs, None);
+              match (self.readhandler)(rs, None) {
+                Ok(()) => (),
+                Err(e) => warn!("Readhandler error in tcp loop notify handler : {}", e),
+              };
             } else {
               self.socks.insert(tok.0,rs);
             }
@@ -256,19 +259,28 @@ impl<'a,C> Handler for MyHandler<'a,C>
       HandlerMessage::NewConnTh(r, readst) => {
         let tok = self.new_token();
         // we use only spurious wakeout bool
-        let sync = new_oneresult(());
+        let sync = utils::new_oneresult(());
         // TODO error management
-        event_loop.register_opt(&readst, tok, EventSet::readable(), PollOpt::edge());
+        match event_loop.register_opt(&readst, tok, EventSet::readable(), PollOpt::edge()) {
+           Err(e) => {
+           error!("tcp loop register of socket failed when connecting {:?}",&e);
+           return
+           },
+           Ok(()) => (),
+        };
+
         let si = StreamInfo::Threaded(sync.clone());
         self.tokens.insert(tok.as_usize(), si.clone());
         // TODO add read stream in ret result
-        r.send((tok,si,readst));
+        if r.send((tok,si,readst)).map_err(|e|error!("transport send on newconnth broken : {}", e)).is_err() {
+          self.tokens.remove(&tok.0);
+        };
       },
       HandlerMessage::NewConnCo(r) => {
         let tok = self.new_token();
         let si = StreamInfo::CoRout(tok.clone(), None);
         self.tokens.insert(tok.as_usize(), si.clone());
-        ret_one_result(&r, Some((tok,si)));
+        utils::ret_one_result(&r, Some((tok,si)));
       },
       HandlerMessage::Timeout(tok) => {
 /*        if let Some(si) = self.tokens.get(&tok.0) {
@@ -310,9 +322,9 @@ impl<'a,C> Handler for MyHandler<'a,C>
           *to = None;
           // TODO
           /*
-           *          let st = one_result_val_clone(state);
+           *          let st = utils::one_result_val_clone(state);
           if st == Some(ThreadState::Waiting) {
-            ret_one_result(state, ThreadState::Timeout);
+            utils::ret_one_result(state, ThreadState::Timeout);
             true
           } else {
             false
@@ -342,18 +354,20 @@ impl<'a,C> Handler for MyHandler<'a,C>
             Ok(None)  => {
               break;
             },
-            Ok(Some(mut s))  => {
+            Ok(Some(s))  => {
               debug!("Initiating socket exchange : ");
               debug!("  - From {:?}", s.local_addr());
               debug!("  - From {:?}", s.peer_addr());
               debug!("  - With {:?}", s.peer_addr());
               let tok = self.new_token();
               //let sync = Arc::new((Mutex::new(ThreadState::Init),Condvar::new()));
-              let state = new_oneresult(());
+              let state = utils::new_oneresult(());
               // TODO error management
               match event_loop.register_opt(&s, tok, EventSet::readable(), PollOpt::edge()) {
                 Err(e) => {
                   error!("tcp loop register of socket failed when connecting {:?}",&e);
+                  // TODO deregister ??
+                  return
                 },
                 Ok(()) => {
                   let si = StreamInfo::Threaded(state.clone());
@@ -362,11 +376,16 @@ impl<'a,C> Handler for MyHandler<'a,C>
               };
               let sw = s.try_clone().unwrap();
               let ows = Some(WriteTcpStream(sw));
-              // TODO error mgmt
-              s.set_keepalive (self.keepalive);
+              if s.set_keepalive (self.keepalive).map_err(|e|error!("cannot set keepalif for new socket : {}",e)).is_err() {
+                // TODO deregister ??
+                return
+              };
               // start a receive even if no message : necessary to send ows (warn likely to timeout (or not generally auth right after connect TODO when noauth a ping frame must be send))
               let rs = ReadTcpStream::Threaded(Some(s), tok, state,self.sender.clone(),self.timeout.clone());
-              (self.readhandler)(rs, ows);
+              match (self.readhandler)(rs, ows) {
+                Ok(()) => (),
+                Err(e) => warn!("Readhandler error in tcp loop ready handler : {}", e),
+              };
             }
         }
       }
@@ -384,10 +403,13 @@ impl<'a,C> Handler for MyHandler<'a,C>
         // TODO if socket back in sock 
         match self.socks.remove(&token.0) {
           Some(rs) => {
-            (self.readhandler)(rs, None);
+            match (self.readhandler)(rs, None) {
+              Ok(()) => (),
+              Err(e) => warn!("Readhandler error in tcp loop ready handler : {}", e),
+            };
           },
           None => {
-            ret_one_result(state, ());
+            utils::ret_one_result(state, ());
           },
         };
       },
@@ -434,7 +456,7 @@ impl Transport for Tcp {
     // No timeout to
     let mut eventloop = try!(EventLoop::new());
     let sender = eventloop.channel();
-    ret_one_result(&self.channel, Some(sender.clone()));
+    utils::ret_one_result(&self.channel, Some(sender.clone()));
     try!(eventloop.register(&self.listener, Token(CONN_REC)));
     try!(eventloop.run(&mut MyHandler {
       keepalive : self.keepalive.map(|d|d.num_seconds().to_u32().unwrap()),
@@ -459,7 +481,7 @@ impl Transport for Tcp {
    let (sch,sync) = mpsc::channel();
    let ch = {
     let r = match self.channel.0.lock() {
-      Ok(mut guard) => {
+      Ok(guard) => {
         if guard.0.is_none() {
           let mut rguard = guard;
           loop {
@@ -484,7 +506,7 @@ impl Transport for Tcp {
           guard
         }
       },
-      Err(poisoned) => {error!("poisonned mutex on one res");
+      Err(e) => {error!("poisonned mutex on one res {}", e);
         return Err(IoError::new(IoErrorKind::Other, "condvar issue in connect"));
       },
    };
@@ -497,11 +519,11 @@ impl Transport for Tcp {
         },
         Some(ref ch) => {
           if self.spawn {
-            ch.send(HandlerMessage::NewConnTh(sch, s));
+            try!(to_iores(ch.send(HandlerMessage::NewConnTh(sch, s))));
             ch.clone()
           } else {
-            let sync = new_oneresult(None);
-            ch.send(HandlerMessage::NewConnCo(sync.clone()));
+            let sync = utils::new_oneresult(None);
+            try!(to_iores(ch.send(HandlerMessage::NewConnCo(sync.clone()))));
             ch.clone()
           }
         },
@@ -590,10 +612,10 @@ impl ReadTcpStream {
         (false,nb)
       }
     },
-    Err(poisoned) => {error!("poisonned mutex on one res"); (false,0)},
+    Err(e) => {error!("poisonned mutex on one res : {}",e); (false,0)},
   }  ;
   if !retry && nb == 0 {
-        ch.send(HandlerMessage::Timeout(tok.clone()));
+        try!(to_iores(ch.send(HandlerMessage::Timeout(tok.clone()))));
         Err(IoError::new(IoErrorKind::Other, "time out on transport reception"))
   } else {
     if retry {
@@ -611,11 +633,11 @@ impl ReadTcpStream {
     let nb = try!(s.read(buf));
     if nb == 0 {
       // waiting state
-    /*  change_one_result(or, ThreadState::Waiting);
+    /*  utils::change_one_result(or, ThreadState::Waiting);
       // start a timeout
       ch.send(HandlerMessage::StartTimeout(tok.clone()));
-      let r = clone_wait_one_result(or, Some(ThreadState::Init));
-      let r = clone_wait_one_result_timeout_ms(or, Some(ThreadState::Init), to);
+      let r = utils::clone_wait_one_result(or, Some(ThreadState::Init));
+      let r = utils::clone_wait_one_result_timeout_ms(or, Some(ThreadState::Init), to);
       if r.is_none() || r == Some(ThreadState::Timeout) {
         Err(IoError::new(IoErrorKind::Other, "time out on transport reception"))
       } else {
@@ -644,7 +666,10 @@ impl ReadTransportStream for ReadTcpStream {
      let rs = self.end_clone();
      match self {
       &mut ReadTcpStream::Threaded(_,ref tok, _, ref ch, _) => {
-        ch.send(HandlerMessage::EndRead(tok.clone(), rs));
+        match ch.send(HandlerMessage::EndRead(tok.clone(), rs)) {
+          Ok(_) => (),
+          Err(e) => error!("end read msg of a tcp loop failed due to channel issue : {:?}", e),
+        };
       },
       _ => panic!("TODO"),
      }
@@ -708,3 +733,13 @@ fn connect_rw () {
   connect_rw_with_optional(tcp_transport_1,tcp_transport_2,&a1,&a2,true);
 }
 
+fn to_iores<A,Error : Debug>(e : StdResult<A,Error>) -> IoResult<A> {
+  match e {
+    Ok(a) => Ok(a),
+    Err(e) => {
+      let msg = format!("Io error from non Io error : {:?}",e);
+      Err(IoError::new(IoErrorKind::Other, msg))
+    },
+  }
+
+}

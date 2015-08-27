@@ -9,19 +9,19 @@ use std::collections::VecDeque;
 
 use keyval::{Key,KeyVal,Attachment,SettableAttachment};
 use kvstore::{KVStore,KVStoreRel,BoxedStore,BoxedStoreRel};
-use kvcache::{KVCache,NoCache};
+use kvcache::{KVCache};
 use query::cache::CachePolicy;
 use utils::ArcKV;
 use utils::TimeSpecExt;
-use time::Timespec;
+//use time::Timespec;
 
-use mydhtresult::Result as MDHTResult;
+//use mydhtresult::Result as MDHTResult;
 use super::WotTrust;
 use super::PeerInfoRel;
 use super::{TrustedPeer,Truster,TrustedVal,PeerTrustRel};
 use super::trustedpeer::PeerSign;
 //use std::iter::Iterator;
-use std::collections::hash_map::Iter as HMIter;
+//use std::collections::hash_map::Iter as HMIter;
 
 
 

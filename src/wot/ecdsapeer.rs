@@ -7,21 +7,21 @@ extern crate time;
 extern crate bincode;
 
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
-use rustc_serialize::hex::{ToHex,FromHex};
-use std::io::Result as IoResult;
+//use rustc_serialize::hex::{ToHex,FromHex};
+//use std::io::Result as IoResult;
 use self::crypto::digest::Digest;
 use self::crypto::ripemd160::Ripemd160;
 use self::crypto::ed25519;
-use std::fmt::{Formatter,Debug};
-use std::fmt::Error as FmtError;
-use std::str::FromStr;
-use std::cmp::PartialEq;
+//use std::fmt::{Formatter,Debug};
+//use std::fmt::Error as FmtError;
+//use std::str::FromStr;
+//use std::cmp::PartialEq;
 use std::cmp::Eq;
-use std::sync::Arc;
-use std::io::Write;
-use std::ops::Deref;
-use std::path::{Path,PathBuf};
-use self::time::Timespec;
+//use std::sync::Arc;
+//use std::io::Write;
+//use std::ops::Deref;
+use std::path::{PathBuf};
+//use self::time::Timespec;
 
 use keyval::{KeyVal};
 use std::net::{SocketAddr};
@@ -29,9 +29,9 @@ use utils::SocketAddrExt;
 use utils::{TimeSpecExt};
 use utils;
 use keyval::{Attachment,SettableAttachment};
-
 use super::{TrustedPeer,Truster,TrustRel,TrustedVal,PeerInfoRel};
-use super::trustedpeer::{TrustedPeerToSignEnc, TrustedPeerToSignDec, SendablePeerEnc, SendablePeerDec};
+//use super::trustedpeer::{TrustedPeerToSignDec};
+use super::trustedpeer::{TrustedPeerToSignEnc, SendablePeerEnc, SendablePeerDec};
 use peer::Peer;
 
 #[derive(Debug, PartialEq, Eq, Clone,RustcEncodable,RustcDecodable)]
@@ -204,13 +204,16 @@ impl ECDSAPeer {
       name : data.name,
       date : data.date,
       peersign : data.peersign,
-      addressdate : data.addressdate,
+      addressdate : now,
       address : data.address,
       privatekey : None,
     }
   }
 
   pub fn new (name : String, pem : Option<PathBuf>, address : SocketAddr) -> ECDSAPeer {
+    if pem.is_some() {
+      panic!("TODO loading from pem or rem param"); // TODO
+    };
     let seed = utils::random_bytes(32);
     // pkey gen
     let (pr, pu) = ed25519::keypair(&seed[..]);
@@ -295,7 +298,7 @@ impl KeyVal for ECDSAPeer {
   }
 */
   #[inline]
-  fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> {
+  fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, _ : bool) -> Result<(), S::Error> {
     if is_local {
       self.encode(s)
     } else {
@@ -304,7 +307,7 @@ impl KeyVal for ECDSAPeer {
   }
 
   #[inline]
-  fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<ECDSAPeer, D::Error> {
+  fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, _ : bool) -> Result<ECDSAPeer, D::Error> {
     if is_local {
       Decodable::decode(d)
     } else {
