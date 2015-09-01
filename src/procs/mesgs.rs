@@ -27,7 +27,7 @@ pub enum PeerMgmtMessage<P : Peer,V : KeyVal,TR : ReadTransportStream, TW : Writ
   /// with possibly an initial read stream : start or add to pool of server.
   /// Also Query for a client handle (from procs or other process to skip peermanagement process in
   /// later calls), a synchro is needed eitherway.
-  PeerAddFromServer(Arc<P>, PeerPriority, Option<TW>, SyncSender<ClientHandle<P,V>>, ServerInfo),
+  PeerAddFromServer(Arc<P>, PeerPriority, Option<TW>, SyncSender<ClientHandle<P,V,TW>>, ServerInfo),
   /// TODO use key instead of P (peer handle already initialized)
   ServerInfoFromClient(Arc<P>, ServerInfo),
   /// add an offline peer
@@ -80,7 +80,7 @@ pub enum PeerMgmtMessage<P : Peer,V : KeyVal,TR : ReadTransportStream, TW : Writ
 
 
   /// for client send message without client thread : should only be used by clienthandle
-  ClientMsg(ClientMessage<P,V>,P::Key),
+  ClientMsg(ClientMessage<P,V,TW>,P::Key),
 }
 
 /// message for query management process
@@ -146,10 +146,10 @@ impl <P : Peer, V : KeyVal> PeerMgmtInitMessage<P,V> {
 
 
 //pub type ClientMessageIx<P : Peer, V : KeyVal> = (ClientMessage<P,V>,usize);
-pub type ClientMessageIx<P, V> = (ClientMessage<P,V>,usize);
+pub type ClientMessageIx<P, V, TW> = (ClientMessage<P,V,TW>,usize);
 
 /// message for client process
-pub enum ClientMessage<P : Peer, V : KeyVal> {
+pub enum ClientMessage<P : Peer, V : KeyVal, TW : WriteTransportStream> {
   /// Ping a peer (establishing connection and storing peer in peer manager
   /// parameter is challenge
   PeerPing(Arc<P>, String),
@@ -176,6 +176,11 @@ pub enum ClientMessage<P : Peer, V : KeyVal> {
 //  MultPeerAdd(Arc<P>, usize, T::WriteStream), // T is transport
   /// shutdown client process TODO replace by end
   ShutDown, // when issue with receiving on channel or other, use this to drop your client
+  /// for multiplex peer, add a peer at given index, index is from clientmassageix
+  PeerAdd(Arc<P>, Option<TW>),
+  /// for multiplex peer, end the thread. Message send from peer manager to multiplexed thread with
+  /// an index out of thread peers scope (otherwhise send to peer).
+  EndMult,
 }
 
 pub enum ServerPoolMessage<P : Peer, TR : ReadTransportStream> {

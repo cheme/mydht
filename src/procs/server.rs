@@ -23,10 +23,7 @@ use query::{QueryMsg,QueryModeMsg};
 use rules::DHTRules;
 use time::Duration;
 use query;
-//use query::{QueryID};
-//use utils;
 use keyval::{SettableAttachment};
-//use keyval::{Attachment,SettableAttachment};
 use keyval::{KeyVal,Attachment};
 use utils::{receive_msg};
 use num::traits::ToPrimitive;
@@ -293,7 +290,7 @@ fn request_handler_internal <RT : RunningTypes>
   r : ProtoMessage<RT::P,RT::V>,
   oa : Option<Attachment>,
   op : &mut Option<Arc<RT::P>>,
-  chandle : &mut Option<ClientHandle<RT::P,RT::V>>,
+  chandle : &mut Option<ClientHandle<RT::P,RT::V,<RT::T as Transport>::WriteStream>>,
   managed : bool,
  ) -> MDHTResult<bool>  {
 

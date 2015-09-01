@@ -97,7 +97,7 @@ fn testpeer4hopget (){
       rules.nbhopfact = 3;
       let peers = initpeers_tcp(startport,n, map, TestingRules::new_no_delay(), rules, None);
       finddistantpeer(peers,n,(*m).clone(),2,map,true);
-      startport = startport + nbport;
+      startport = startport + 4 * nbport; // 4 * is useless but due to big nb of open port (both way) it may help some still open port.
     };
    
     // prio 1 max nb hop is 3

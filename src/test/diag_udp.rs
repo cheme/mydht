@@ -24,6 +24,7 @@ use procs::RunningTypes;
 use std::marker::PhantomData;
 use rules::simplerules::SimpleRules;
 use num::traits::ToPrimitive;
+use procs::ClientMode;
 
 #[cfg(test)]
 use transport::test::connect_rw_with_optional_non_managed;
@@ -92,6 +93,7 @@ fn simpeer2hopfindval_udp () {
     let prio = 1;
 
     let mut rules = DHTRULES_DEFAULT.clone();
+    rules.clientmode = ClientMode::Local(true);
     rules.nbhopfact = 3;
     let peers = initpeers_udp(startport,nbpeer, map, TestingRules::new_no_delay(), rules, Some(2000));
     let ref dest = peers.get(nbpeer -1).unwrap().1;
@@ -122,6 +124,7 @@ fn testpeer2hopfindval_udp () {
     let prio = 1;
 
     let mut rules = DHTRULES_DEFAULT.clone();
+    rules.clientmode = ClientMode::Local(false);
     rules.nbhopfact = 3;
     let peers = initpeers_udp(startport,nbpeer, map, TestingRules::new_no_delay(),rules,None);
     let ref dest = peers.get(nbpeer -1).unwrap().1;

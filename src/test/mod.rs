@@ -31,6 +31,7 @@ use utils::ArcKV;
 use peer::PeerMgmtMeths;
 use msgenc::MsgEnc;
 use num::traits::ToPrimitive;
+use procs::ClientMode;
 #[cfg(feature="with-extra-test")]
 mod diag_tcp;
 #[cfg(feature="with-extra-test")]
@@ -53,7 +54,9 @@ const DHTRULES_DEFAULT : DhtRules = DhtRules {
   storelocal : true, // is result stored locally
   storeproxied : None, // store only if less than nbhop
   heavyaccept : false,
-
+  clientmode : ClientMode::ThreadedOne,
+  // TODO client mode param + testing for local tcp and mult tcp in max 2 thread and in pool 2
+  // thread
 };
 
 
@@ -330,7 +333,7 @@ fn testpeer2hopget (){
 }
 
 #[test]
-fn testpeer2hopgetheavy (){
+fn testpeer2hopgetheavy () {
   let n = 4;
   let map : &[&[usize]] = &[&[2],&[3],&[4],&[]];
   for m in FEWTESTMODE.iter() {
@@ -341,6 +344,63 @@ fn testpeer2hopgetheavy (){
     finddistantpeer(peers,n,(*m).clone(),1,map,true); 
   }
 }
+#[test]
+fn testpeer2hopgetheavylocal () {
+  let n = 4;
+  let map : &[&[usize]] = &[&[2],&[3],&[4],&[]];
+  for m in FEWTESTMODE.iter() {
+    let mut rules = DHTRULES_DEFAULT.clone();
+    rules.clientmode = ClientMode::Local(false);
+    rules.nbhopfact = 3;
+    rules.heavyaccept = true;
+    let peers = initpeers_test(n, map, TestingRules::new_small_delay_heavy_accept(Some(100)), rules, None);
+    finddistantpeer(peers,n,(*m).clone(),1,map,true); 
+  }
+}
+#[test]
+fn testpeer2hopgetheavylocalspawn () {
+  let n = 4;
+  let map : &[&[usize]] = &[&[2],&[3],&[4],&[]];
+  for m in FEWTESTMODE.iter() {
+    let mut rules = DHTRULES_DEFAULT.clone();
+    rules.clientmode = ClientMode::Local(true);
+    rules.nbhopfact = 3;
+    rules.heavyaccept = true;
+    let peers = initpeers_test(n, map, TestingRules::new_small_delay_heavy_accept(Some(100)), rules, None);
+    finddistantpeer(peers,n,(*m).clone(),1,map,true); 
+  }
+}
+
+#[test]
+fn testpeer2hopgetmultpool () {
+  let n = 8;
+  let map : &[&[usize]] = &[&[5,6,2,7,8],&[3,5,6,7],&[5,6,7,8,4],&[],&[],&[],&[],&[]];
+  for m in FEWTESTMODE.iter() {
+    let mut rules = DHTRULES_DEFAULT.clone();
+    rules.clientmode = ClientMode::ThreadPool(2);
+    rules.nbhopfact = 3;
+    rules.nbqueryfact = 5.0;
+    let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, None);
+    finddistantpeer(peers,n,(*m).clone(),1,map,true); 
+  }
+}
+#[test]
+fn testpeer2hopgetmultmax () {
+  let n = 8;
+  let map : &[&[usize]] = &[&[5,6,2,7,8],&[3,5,6,7],&[5,6,7,8,4],&[],&[],&[],&[],&[]];
+  for m in FEWTESTMODE.iter() {
+    let mut rules = DHTRULES_DEFAULT.clone();
+    rules.clientmode = ClientMode::ThreadedMax(2);
+    rules.nbhopfact = 3;
+    rules.nbqueryfact = 5.0;
+    let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, None);
+    finddistantpeer(peers,n,(*m).clone(),1,map,true); 
+  }
+}
+
+
+
+
 
 #[cfg(feature="with-extra-test")]
 #[test]

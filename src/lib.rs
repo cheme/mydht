@@ -1,4 +1,5 @@
 #![feature(custom_derive)]
+#![feature(slice_position_elem)]
 #![feature(core)]
 #![feature(fs_walk)]
 #![feature(path_ext)]
@@ -441,6 +442,7 @@ pub enum ErrorKind {
   PingError,
   StoreError,
   MutexError,
+  Bug, // something that should algorithmically not happen
 }
 
 #[derive(Debug)]

@@ -31,6 +31,7 @@ pub struct DhtRules {
   pub storelocal : bool, // is result stored locally
   pub storeproxied : Option<usize>, // store only if less than nbhop // TODO implement other alternative (see comment)
   pub heavyaccept : bool,
+  pub clientmode : ClientMode,
   // TODO further params : clientmode, heavy...
 }
 
@@ -109,7 +110,7 @@ impl DHTRulesIf for SimpleRules {
   }
   #[inline]
   fn client_mode(&self) -> &ClientMode {
-    &CMODE
+    &self.1.clientmode
   }
 
   #[inline]
@@ -129,6 +130,5 @@ impl DHTRulesIf for SimpleRules {
 
 
 }
-static CMODE : ClientMode = ClientMode::ThreadedOne;
 
 

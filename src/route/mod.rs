@@ -37,8 +37,9 @@ pub enum ClientInfo<P : Peer, V : KeyVal, T : Transport> {
   Local(ClientSender<<T as Transport>::WriteStream>),
   /// Stream is used locally, except for connection (need synchro), it run in a new transient thread : TODO should run in a coroutine as pool thread are overall better.
   LocalSpawn(ClientSender<<T as Transport>::WriteStream>),
-  /// usize is only useful for client thread shared
-  Threaded(Sender<ClientMessageIx<P,V>>,usize),
+  /// usize is only useful for client thread shared, first is client index in thread and second is
+  /// thread index in pool
+  Threaded(Sender<ClientMessageIx<P,V,T::WriteStream>>,usize,usize),
 
 }
 /// sender to distant peer TODO maybe local spawn is useless (if we want to spawn a pool is better)
@@ -84,7 +85,7 @@ impl<P : Peer, V : KeyVal, T : Transport>  Drop for ClientInfo<P,V,T> {
     fn drop(&mut self) {
         debug!("Drop of client info");
         match *self {
-          ClientInfo::Threaded(ref s,ref ix) => {s.send((ClientMessage::ShutDown,*ix));()},
+          ClientInfo::Threaded(ref s,ref ix,_) => {s.send((ClientMessage::ShutDown,*ix));()},
           _ => (),
         }
     }
@@ -155,25 +156,26 @@ impl<P : Peer, V : KeyVal, T : Transport> ClientInfo<P,V,T> {
   }*/
   /// Send ClientMessage to threaded client, panic on local client sending (even non managed)
   /// : this is due to non mutable reference to cliinfo (local uses mutable reference for sending).
-  pub fn send_climsg(&self,  msg : ClientMessage<P,V>) -> MydhtResult<()> {
+  pub fn send_climsg(&self,  msg : ClientMessage<P,V,T::WriteStream>) -> MydhtResult<()> {
     match self {
       &ClientInfo::Local(_) | &ClientInfo::LocalSpawn(_) => {
         panic!("Trying to send local message under a non local config");
 
       },
-      &ClientInfo::Threaded(ref s,ref ix) => {
+      &ClientInfo::Threaded(ref s,ref ix,_) => {
         try!(s.send((msg,ix.clone())));
         Ok(())
       },
 
     }
   }
+ 
   /// clone info for threaded
-  pub fn new_handle(&self) -> ClientHandle<P,V> {
+  pub fn new_handle(&self) -> ClientHandle<P,V,T::WriteStream> {
     match self {
       &ClientInfo::Local(_) => ClientHandle::Local,
       &ClientInfo::LocalSpawn(_) => ClientHandle::Local,
-      &ClientInfo::Threaded(ref s, ref ix) => ClientHandle::Threaded(s.clone(),ix.clone()),
+      &ClientInfo::Threaded(ref s, ref ix,_) => ClientHandle::Threaded(s.clone(),ix.clone()),
     }
   }
 

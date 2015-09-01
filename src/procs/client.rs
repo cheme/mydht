@@ -5,7 +5,7 @@
 
 
 use procs::mesgs::{self,PeerMgmtMessage,ClientMessage,ClientMessageIx};
-use mydhtresult::Result as MydhtResult;
+use mydhtresult::Result as MDHTResult;
 use peer::{PeerMgmtMeths,PeerStateChange};
 use procs::{RunningProcesses,ArcRunningContext,RunningTypes};
 use time::Duration;
@@ -24,17 +24,17 @@ use route::{ClientSender};
 use route::send_msg;
 use msgenc::send_variant::ProtoMessage;
 use std::borrow::Borrow;
+use utils::Either;
 
 pub fn start<RT : RunningTypes>
  (p : &Arc<RT::P>,
-  orcl : Option<Receiver<ClientMessageIx<RT::P,RT::V>>>,
+  rcl : Receiver<ClientMessageIx<RT::P,RT::V,<RT::T as Transport>::WriteStream>>,
   rc : ArcRunningContext<RT>,
   rp : RunningProcesses<RT>,
-  omessage : Option<ClientMessage<RT::P,RT::V>>,
   mut osend : Option<ClientSender<<RT::T as Transport>::WriteStream>>,
-  managed : bool,
+  mult : bool,
   ) -> bool {
-  match start_local(p,orcl,&rc,&rp,omessage,osend.as_mut(),managed) {
+  match start_local(p,&rc,&rp,Either::Left((osend,rcl,mult))) {
     Ok(r) => r,
     Err(e) => {
       // peerremfromclient send from client_match directly (no need to try reconnect
@@ -43,8 +43,10 @@ pub fn start<RT : RunningTypes>
     },
   }
 }
- 
-pub struct CleanableReceiver<'a, RT : RunningTypes>(Receiver<ClientMessageIx<RT::P,RT::V>>, &'a Sender<mesgs::PeerMgmtMessage<RT::P,RT::V,<RT::T as Transport>::ReadStream,<RT::T as Transport>::WriteStream>>)
+
+pub struct CleanableReceiver<'a, RT : RunningTypes>(
+  Receiver<ClientMessageIx<RT::P,RT::V,<RT::T as Transport>::WriteStream>>,
+  &'a Sender<mesgs::PeerMgmtMessage<RT::P,RT::V,<RT::T as Transport>::ReadStream,<RT::T as Transport>::WriteStream>>)
 where RT::A : 'a, 
       RT::P : 'a,
       <RT::P as KeyVal>::Key : 'a,
@@ -54,7 +56,7 @@ where RT::A : 'a,
       <RT::T as Transport>::WriteStream : 'a
 ;
 
-impl<'a,RT : RunningTypes>  Drop for CleanableReceiver<'a,RT> 
+impl<'a,RT : RunningTypes> Drop for CleanableReceiver<'a,RT> 
 where RT::A : 'a, 
       RT::P : 'a,
       <RT::P as KeyVal>::Key : 'a,
@@ -68,10 +70,7 @@ where RT::A : 'a,
     // empty channel
     loop {
       match self.0.try_recv() {
-        Ok((ClientMessage::PeerFind(_,Some(query), _),ix)) | Ok((ClientMessage::KVFind(_,Some(query), _),ix)) => {
-          if ix != 0 {
-            panic!("TODO implement mult");
-          };
+        Ok((ClientMessage::PeerFind(_,Some(query), _),_)) | Ok((ClientMessage::KVFind(_,Some(query), _),_)) => {
           debug!("- emptying channel found query");
           query.lessen_query(1, self.1);
         },
@@ -93,68 +92,58 @@ where RT::A : 'a,
 /// (managed Client thread).
 pub fn start_local <RT : RunningTypes>
  (p : &Arc<RT::P>,
-  orcl : Option<Receiver<ClientMessageIx<RT::P,RT::V>>>,
   rc : &ArcRunningContext<RT>,
   rp : &RunningProcesses<RT>,
-  omessage : Option<ClientMessage<RT::P,RT::V>>,
-  osend : Option<&mut ClientSender<<RT::T as Transport>::WriteStream>>,
-  managed : bool,
-  ) -> MydhtResult<bool> {
+  params : Either<
+    (Option<ClientSender<<RT::T as Transport>::WriteStream>>, Receiver<ClientMessageIx<RT::P,RT::V,<RT::T as Transport>::WriteStream>>, bool),
+    (Option<&mut ClientSender<<RT::T as Transport>::WriteStream>>, ClientMessage<RT::P,RT::V,<RT::T as Transport>::WriteStream>)>,
+  ) -> MDHTResult<bool> {
   let mut ok = true;
   // connect
-  let mut onewsend : Option<ClientSender<<RT::T as Transport>::WriteStream>> = if osend.is_none() {
+  let mut onewsend : Option<ClientSender<<RT::T as Transport>::WriteStream>> = 
+    if params.left_ref().map_or(false, |l|l.0.is_none()) 
+    || params.right_ref().map_or(false,|r|r.0.is_none()) {
     // TODO duration from rules!!!
-    match rc.transport.connectwith(&p.to_address(), Duration::seconds(5)) {
-      Ok((ws, ors)) => {
-        // Send back read stream an connected status to peermanager
-        match ors {
-          None => (),
-          Some(rs) => {
-            let sh = try!(start_listener(rs,&rc,&rp));
-            // send si to peermanager
-            try!(rp.peers.send(PeerMgmtMessage::ServerInfoFromClient(p.clone(), serverinfo_from_handle(&sh))));
-          },
-        };
-        Some(ClientSender::Threaded(ws))
-      },
-      Err(e) => {
-        debug!("connection with client failed in client process {}",e);
-        None
-      },
-    }
+    mult_client_connect(p, rc, rp, None).ok()
   } else {
     None
   };
-  let sc : &mut ClientSender<<RT::T as Transport>::WriteStream> = match osend {
-    None => match &mut onewsend {
-      &mut None => {
-        debug!("cannot connect with peer returning false");
-        info!("Cannot connect");
-        try!(rp.peers.send(PeerMgmtMessage::PeerRemFromClient(p.clone(), PeerStateChange::Offline)));
-        // send no connection possible : 
-        return Ok(false);
-      },
-      &mut Some(ref mut ns) => ns,
-    },
-    Some(mut cs) => cs,
-  };
   // TODO if needed start receive and send handle to peermgmt!!!
   // closure to send message with one reconnect try on error
-  if managed { // TODO useless test orcl is none otherwhise
-    // loop on rcl
-    match orcl {
-      None => match omessage {
-        None =>  {
-          error!("Unexpected client process without channel or message");
-          return Ok(false);
-        },
-        Some(m) => {
-          let (okrecv, _) = try!(client_match(p,&rc,&rp,m,false, sc));
+  // loop on rcl
+  match params { // TODO orcl depend on presence of message (plus either of sender : do Either<(rcl, sender),(&mut sender, msg)> for message
+      Either::Right((osend, m)) => {
+          let sc0 : &mut ClientSender<<RT::T as Transport>::WriteStream> = match osend {
+            None => match &mut onewsend {
+              &mut None => {
+                debug!("cannot connect with peer returning false");
+                info!("Cannot connect");
+                // send no connection possible : 
+                return Ok(false);
+              },
+              &mut Some(ref mut ns) => ns,
+            },
+            Some(mut cs) => cs,
+          };
+          let (okrecv, _) = try!(client_match(p,&rc,&rp,m,false,sc0));
           ok = okrecv;
-        },
       },
-      Some(r) => {
-        assert!(omessage.is_none());
+      Either::Left((osend, r, mult)) => {
+        let mut sc = Vec::new();
+        let sc0 : ClientSender<<RT::T as Transport>::WriteStream> = match osend {
+          None => match onewsend {
+            None => {
+              debug!("cannot connect with peer returning false");
+              info!("Cannot connect");
+              // send no connection possible : 
+              return Ok(false);
+            },
+            Some(ns) => ns,
+          },
+          Some(cs) => cs,
+        };
+        sc.push(Some(sc0));
+
         let cr : CleanableReceiver<RT> = CleanableReceiver(r,&rp.peers);
         loop {
           match cr.0.recv() {
@@ -163,30 +152,71 @@ pub fn start_local <RT : RunningTypes>
               break;
             },
             Ok((m,ix)) => {
-              if ix != 0 {
-                panic!("TODO multi client");
-              };
-              let (okrecv, s) = try!(client_match(p,&rc,&rp,m,true, sc)); 
-              match s {
-                // update of stream is for possible reconnect
-                // return &'a mut on reconnect
-                Some(s) => *sc = s,
-                None => (),
-              };
-              if !okrecv {
-                ok = false;
-                break
+              if ix > sc.len() {
+                if mult {
+                  if let ClientMessage::EndMult = m {
+                    ok = false;
+                    break;
+                  };
+                  panic!("BUG receive message for wrongly indexed client sender");
+                } else {
+                  panic!("BUG receive message for wrongly indexed client sender");
+                };
+              } else {
+                let (okrecv, s) = {
+                  match sc.get_mut(ix) {
+                    Some(&mut Some(ref mut six)) => {
+                      try!(client_match(p,rc,rp,m,true,six))
+                    },
+                    Some(&mut None) | None => {
+                      if let ClientMessage::PeerAdd(p,ows) = m {
+                        let newcon = mult_client_connect(&p,rc,rp,ows).map_err(|e|warn!("peer add failure : {:?}",e));
+                        (newcon.is_ok(), newcon.ok())
+                      } else {
+                        (false, None)
+                      }
+                    },
+                  }
+                };
+                match s {
+                  // update of stream is for possible reconnect
+                  // return &'a mut on reconnect
+                  Some(s) => {
+                    if ix == sc.len() {
+                      sc.push(Some(s));
+                    } else if ix < sc.len() {
+                      sc.get_mut(ix).map(|mut sc|{
+                        if sc.is_none() {
+                        };
+                        *sc = Some(s)
+                      });
+                    } else {
+                      panic!("inconsistent client connection address, this is a bug");
+                    }
+                  },
+                  None => (),
+                };
+                if !okrecv {
+                  sc.get_mut(ix).map(|mut sc|{
+                    if sc.is_some() {
+                    };
+                    *sc = None
+                  });
+                  if !mult {
+                    ok = false;
+                    break
+                  };
+                };
               };
             },
           };
         };
       },
-    };
   };
   Ok(ok)
 }
 
-
+const CONNECT_DURATION : i64 = 4; // TODO in params
 
 #[inline]
 /// manage new client message
@@ -196,10 +226,10 @@ pub fn client_match <RT : RunningTypes>
  (p : &Arc<RT::P>,
   rc : &ArcRunningContext<RT>,
   rp : &RunningProcesses<RT>,
-  m : ClientMessage<RT::P,RT::V>,
+  m : ClientMessage<RT::P,RT::V,<RT::T as Transport>::WriteStream>,
   managed : bool,
   s : &mut ClientSender<<RT::T as Transport>::WriteStream>,
-  ) -> MydhtResult<(bool, Option<ClientSender<<RT::T as Transport>::WriteStream>>)> {
+  ) -> MDHTResult<(bool, Option<ClientSender<<RT::T as Transport>::WriteStream>>)> {
   let mut ok;
   let mut newcon = None;
   macro_rules! sendorconnect(($mess:expr,$oa:expr) => (
@@ -207,7 +237,7 @@ pub fn client_match <RT : RunningTypes>
     ok = send_msg($mess,$oa,s,&rc.msgenc);
     if !ok && managed {
       debug!("trying reconnection");
-      match rc.transport.connectwith(&p.to_address(), Duration::seconds(2)){
+      match rc.transport.connectwith(&p.to_address(), Duration::seconds(CONNECT_DURATION)) {
         Ok((n,_)) => {
           // TODO if receive stream restart its server and shut xisting !!!
           debug!("reconnection in client process ok");
@@ -288,8 +318,55 @@ pub fn client_match <RT : RunningTypes>
         },
       };
     },
+    ClientMessage::PeerAdd(..) => {
+      error!("This should not be done in this function");
+      ok = false;
+    },
+    ClientMessage::EndMult(..) => {
+      error!("This should not be done in this function");
+      ok = false;
+    },
   };
   Ok((ok, newcon))
+}
+
+// TODO use in start_local also
+pub fn mult_client_connect <RT : RunningTypes>
+ (p : &Arc<RT::P>,
+  rc : &ArcRunningContext<RT>,
+  rp : &RunningProcesses<RT>,
+  ows : Option<<RT::T as Transport>::WriteStream>,
+  ) -> MDHTResult<ClientSender<<RT::T as Transport>::WriteStream>> {
+  match ows {
+    Some(ws) => {
+      let mut cn = ClientSender::Threaded(ws);
+      Ok(cn)
+    },
+    None => {
+      match rc.transport.connectwith(&p.to_address(), Duration::seconds(CONNECT_DURATION)) {
+        Ok((n,ors)) => {
+          debug!("connection of new mult client ok");
+          // Send back read stream an connected status to peermanager
+          match ors {
+            None => (),
+            Some(rs) => {
+              let sh = try!(start_listener(rs,&rc,&rp));
+              // send si to peermanager
+              try!(rp.peers.send(PeerMgmtMessage::ServerInfoFromClient(p.clone(), serverinfo_from_handle(&sh))));
+            },
+          };
+ 
+          let mut cn = ClientSender::Threaded(n);
+          Ok(cn)
+        },
+        Err(e) => {
+          warn!("initial connection mult failure {}",e);
+          try!(rp.peers.send(PeerMgmtMessage::PeerRemFromClient(p.clone(), PeerStateChange::Offline)));
+          Err(e.into())
+        },
+      }
+    },
+  }
 }
 
 

@@ -1,4 +1,4 @@
-use procs::mesgs::{PeerMgmtMessage,ClientMessage};
+use procs::mesgs::{PeerMgmtMessage,ClientMessage,ClientMessageIx};
 use peer::{PeerMgmtMeths, PeerPriority,PeerState,PeerStateChange};
 use std::sync::mpsc::{Receiver};
 use procs::{client,ArcRunningContext,RunningProcesses,RunningTypes};
@@ -20,6 +20,7 @@ use route::{ClientInfo,ServerInfo};
 use procs::server::{resolve_server_mode,serverinfo_from_handle};
 use mydhtresult::Result as MydhtResult;
 use route::{ClientSender};
+use std::sync::mpsc::{Sender};
 use procs::server::start_listener;
 use procs::sphandler_res;
 use utils::TransientOption;
@@ -69,6 +70,7 @@ pub fn start<RT : RunningTypes,
 
 
   let clientmode = rc.rules.client_mode();
+  let mut threadpool = ((0, Vec::new()),Vec::new());
   let local = *clientmode == ClientMode::Local(true) || *clientmode == ClientMode::Local(false);
   let localspawn = *clientmode == ClientMode::Local(true);
   let servermode = resolve_server_mode (&rc);
@@ -80,7 +82,7 @@ pub fn start<RT : RunningTypes,
  
     match r.recv() {
       Ok(m) => {
-        match peermanager_internal (&rc, &mut route, &rp, &clientmode, heavyaccept, local, localspawn, m) {
+        match peermanager_internal (&rc, &mut route, &mut threadpool, &rp, clientmode, heavyaccept, local, localspawn, m) {
           Ok(true) => (),
           Ok(false) => {
             break;
@@ -103,11 +105,12 @@ pub fn start<RT : RunningTypes,
   res
 }
 
-pub fn peermanager_internal<RT : RunningTypes, 
+fn peermanager_internal<RT : RunningTypes, 
   T : Route<RT::A,RT::P,RT::V,RT::T>,
   >
  (rc : &ArcRunningContext<RT>,
-  route : &mut T, 
+  route : &mut T,
+  threadpool : &mut ThreadPool<RT>,
   rp : &RunningProcesses<RT>,
   clientmode : &ClientMode,
   heavyaccept : bool,
@@ -182,15 +185,15 @@ pub fn peermanager_internal<RT : RunningTypes,
         },
       };
       onenewprio.map(|(prio, rm)|{
-        route.update_priority(&k,Some(prio),None);
         if rm {
-          // close connection
-          route.remchan(&k,&rc.transport);
+          rem_peer(route, &k,rc,threadpool,clientmode,Some(prio),None);
+        } else {
+          route.update_priority(&k,Some(prio),None);
         };
       }).is_none();
     },
     PeerMgmtMessage::ClientMsg(msg, nodeid) => {
-      match clisend(Either::Right(&nodeid), rc, route, rp, msg, localspawn, heavyaccept, local, &clientmode) {
+      match clisend(Either::Right(&nodeid), rc, route, rp, msg, localspawn, heavyaccept, local, clientmode,threadpool) {
         Ok(true) => debug!("cli msg proxied ok in peerman"),
         Ok(false) => warn!("cli msg proxied failure in peerman (missing peer)"),
         Err(e) => error!("send error in proxied : {}",e),
@@ -199,16 +202,12 @@ pub fn peermanager_internal<RT : RunningTypes,
     PeerMgmtMessage::PeerRemFromClient(p,pschange) => {
       let nodeid = p.get_key().clone();
       // close all info
-      route.remchan(&nodeid,&rc.transport);
-      // update prio
-      route.update_priority(&nodeid,None,Some(pschange));
+      rem_peer(route,&nodeid,rc,threadpool,clientmode,None,Some(pschange));
     },
     PeerMgmtMessage::PeerRemFromServer(p,pschange) => {
       let nodeid = p.get_key().clone();
       // close all info
-      route.remchan(&nodeid,&rc.transport);
-      // update prio
-      route.update_priority(&nodeid,None,Some(pschange));
+      rem_peer(route,&nodeid,rc,threadpool,clientmode,None,Some(pschange));
     },
     PeerMgmtMessage::PeerAddOffline(p) => {
       info!("Adding offline peer : {:?}", p);
@@ -235,7 +234,7 @@ pub fn peermanager_internal<RT : RunningTypes,
           _ => false,
         };
         let ok = if upd {
-          peer_ping(rc,rp,route,&p,None,prio,heavyaccept,localspawn,local,&clientmode).is_ok()
+          peer_ping(rc,rp,route,&p,None,prio,heavyaccept,localspawn,local,clientmode,threadpool).is_ok()
         } else {
           true
         };
@@ -246,13 +245,12 @@ pub fn peermanager_internal<RT : RunningTypes,
           if !route.get_client_info(&nodeid).and_then(|ci|
             ci.send_climsg(mess)).is_ok() {
                warn!("closed connection detected");
-               route.update_priority(&nodeid,None,Some(PeerStateChange::Offline));
-               route.remchan(&nodeid,&rc.transport);
+               rem_peer(route,&nodeid,rc,threadpool,clientmode,None,Some(PeerStateChange::Offline));
              
           };
  
         } else if ok {
-          if !send_local::<RT,T>(&p,rc,route,rp,mess,localspawn) {
+          if !send_local::<RT,T>(&p,rc,route,rp,mess,localspawn,clientmode,threadpool) {
             error!("send_local_pong_reply failure from peerman");
           };
         };
@@ -275,13 +273,11 @@ pub fn peermanager_internal<RT : RunningTypes,
             // paninc on none (but test avoid it)
             (init_local(&clientmode, ows),None)
           } else {
-            match init_client_info(&p,&rc,&rp,ows,&clientmode) {
+            match init_client_info(&p,&rc,&rp,ows,clientmode,threadpool) {
               Ok(r) => (Some(r.0),r.1),
               Err(e) => {
                 error!("cannot connect client connection (a server connection was connected but without send handle, putting peer offline : {}", e);
-                route.remchan(&nodeid,&rc.transport);
-                // update prio
-                route.update_priority(&nodeid,None,Some(PeerStateChange::Offline));
+                rem_peer(route,&nodeid,rc,threadpool,clientmode,None,Some(PeerStateChange::Offline));
 
                 (None,None)
               },
@@ -300,14 +296,13 @@ pub fn peermanager_internal<RT : RunningTypes,
             let okserhand = ssend.send(clihandler).is_ok();
             // on send of new clihandler to server (either new peer or connection lost to server
             // and reinit, start a replying ping (pong is sent directly)
-            if peer_ping(rc,rp,route,&p,None,prio,heavyaccept,localspawn,local,&clientmode).is_err() || !okserhand {
+            if peer_ping(rc,rp,route,&p,None,prio,heavyaccept,localspawn,local,clientmode,threadpool).is_err() || !okserhand {
               if okserhand {
                  warn!("closed server connection detected");
               } else {
                  warn!("closed connection detected");
               };
-              route.update_priority(&nodeid,None,Some(PeerStateChange::Offline));
-              route.remchan(&nodeid,&rc.transport);
+              rem_peer(route,&nodeid,rc,threadpool,clientmode,None,Some(PeerStateChange::Offline));
             };
           });
         } else {
@@ -357,11 +352,10 @@ pub fn peermanager_internal<RT : RunningTypes,
       route.query_count_dec(&p.get_key());
     },
     PeerMgmtMessage::PeerPing(p, ores) => {
-      if peer_ping(rc,rp,route,&p,ores,PeerPriority::Unchecked,heavyaccept,localspawn,local,&clientmode).is_err() {
+      if peer_ping(rc,rp,route,&p,ores,PeerPriority::Unchecked,heavyaccept,localspawn,local,clientmode,threadpool).is_err() {
         let nodeid = p.get_key();
         // this will drop peerping state and ores will return.
-        route.update_priority(&nodeid,None,Some(PeerStateChange::Offline));
-        route.remchan(&nodeid,&rc.transport);
+        rem_peer(route,&nodeid,rc,threadpool,clientmode,None,Some(PeerStateChange::Offline));
       };
     },
     PeerMgmtMessage::KVFind(key, oquery, queryconf) => {
@@ -414,13 +408,12 @@ pub fn peermanager_internal<RT : RunningTypes,
             if !route.get_client_info(&nodeid).and_then(|ci|
               ci.send_climsg(mess)).is_ok() {
                 warn!("closed connection detected");
-                route.update_priority(&nodeid,None,Some(PeerStateChange::Offline));
-                route.remchan(&nodeid,&rc.transport);
+                rem_peer(route,&nodeid,rc,threadpool,clientmode,None,Some(PeerStateChange::Offline));
             };
  
             // TODO mult ix
           } else {
-            send_local::<RT, T> (p, rc , route, rp, mess, localspawn);
+            send_local::<RT, T> (p, rc , route, rp, mess, localspawn,clientmode,threadpool);
           };
         };
       } else {
@@ -502,7 +495,7 @@ pub fn peermanager_internal<RT : RunningTypes,
                     _ => false,
                   };
                   let ok = if upd {
-                    peer_ping(rc,rp,route,recnode,None,PeerPriority::Unchecked,heavyaccept,localspawn,local,&clientmode).is_ok()
+                    peer_ping(rc,rp,route,recnode,None,PeerPriority::Unchecked,heavyaccept,localspawn,local,clientmode,threadpool).is_ok()
                   } else {
                     true
                   };
@@ -511,12 +504,11 @@ pub fn peermanager_internal<RT : RunningTypes,
                     if !route.get_client_info(&nodeid).and_then(|ci|
                       ci.send_climsg(mess)).is_ok() {
                         warn!("closed connection detected");
-                        route.update_priority(&nodeid,None,Some(PeerStateChange::Offline));
-                        route.remchan(&nodeid,&rc.transport);
+                        rem_peer(route,&nodeid,rc,threadpool,clientmode,None,Some(PeerStateChange::Offline));
                     };
  // TODO borderline as no auth : just proxy (a ping has been send but without checking of pong : we need to trust query from : implement a condition to send message on peerauth (add msg to peerping state)
                   } else if ok {
-                     send_local::<RT, T> (recnode, rc , route, rp, mess, localspawn);
+                     send_local::<RT, T> (recnode, rc , route, rp, mess, localspawn,clientmode,threadpool);
                   };
                 },
                 _ => {error!("None query in none asynch peerfind");},
@@ -545,11 +537,10 @@ pub fn peermanager_internal<RT : RunningTypes,
                if !route.get_client_info(&nodeid).and_then(|ci|
                  ci.send_climsg(mess)).is_ok() {
                    warn!("closed connection detected");
-                   route.update_priority(&nodeid,None,Some(PeerStateChange::Offline));
-                   route.remchan(&nodeid,&rc.transport);
+                   rem_peer(route,&nodeid,rc,threadpool,clientmode,None,Some(PeerStateChange::Offline));
                };
              } else {
-               send_local::<RT, T> (p, rc , route, rp, mess, localspawn);
+               send_local::<RT, T> (p, rc , route, rp, mess, localspawn,clientmode,threadpool);
              };
            };
          },
@@ -560,10 +551,10 @@ pub fn peermanager_internal<RT : RunningTypes,
        let torefresh = route.get_pool_nodes(max);
        for n in torefresh.iter(){
          if local {
-           send_local_ping::<RT, T>(n, rc, route, rp,localspawn,None);
+           send_local_ping::<RT, T>(n, rc, route, rp,localspawn,clientmode,threadpool,None);
          } else {
            // normal process
-           peer_ping(rc,rp,route,n,None,PeerPriority::Unchecked,heavyaccept,localspawn,local,&clientmode).is_ok();
+           peer_ping(rc,rp,route,n,None,PeerPriority::Unchecked,heavyaccept,localspawn,local,clientmode,threadpool).is_ok();
          }
        }
      },
@@ -583,7 +574,7 @@ pub fn peermanager_internal<RT : RunningTypes,
                _ => false,
              };
              let ok = if upd {
-               peer_ping(rc,rp,route,&rec,None,PeerPriority::Unchecked,heavyaccept,localspawn,local,&clientmode).is_ok()
+               peer_ping(rc,rp,route,&rec,None,PeerPriority::Unchecked,heavyaccept,localspawn,local,clientmode,threadpool).is_ok()
              } else {
                true
              };
@@ -591,12 +582,11 @@ pub fn peermanager_internal<RT : RunningTypes,
                if !route.get_client_info(&nodeid).and_then(|ci|
                  ci.send_climsg(mess)).is_ok() {
                    warn!("closed connection detected");
-                   route.update_priority(&nodeid,None,Some(PeerStateChange::Offline));
-                   route.remchan(&nodeid,&rc.transport);
+                   rem_peer(route,&nodeid,rc,threadpool,clientmode,None,Some(PeerStateChange::Offline));
                  };
                // TODO do something for not having to create an arc here eg arc in qconf + previous qconf clone
              } else if ok {
-               send_local::<RT, T> (&rec, rc, route, rp, mess, localspawn);
+               send_local::<RT, T> (&rec, rc, route, rp, mess, localspawn,clientmode,threadpool);
              };
            } else {
              error!("local loop detected for store node");
@@ -621,7 +611,7 @@ pub fn peermanager_internal<RT : RunningTypes,
                _ => false,
              };
              let ok = if upd {
-               peer_ping(rc,rp,route,&rec,None,PeerPriority::Unchecked,heavyaccept,localspawn,local,&clientmode).is_ok()
+               peer_ping(rc,rp,route,&rec,None,PeerPriority::Unchecked,heavyaccept,localspawn,local,clientmode,threadpool).is_ok()
              } else {
                true
              };
@@ -629,12 +619,11 @@ pub fn peermanager_internal<RT : RunningTypes,
                if !route.get_client_info(&nodeid).and_then(|ci|
                  ci.send_climsg(mess)).is_ok() {
                    warn!("closed connection detected");
-                   route.update_priority(&nodeid,None,Some(PeerStateChange::Offline));
-                   route.remchan(&nodeid,&rc.transport);
+                   rem_peer(route,&nodeid,rc,threadpool,clientmode,None,Some(PeerStateChange::Offline));
                }
 
              } else if ok {
-               send_local::<RT, T> (&rec, rc , route, rp, mess, localspawn);
+               send_local::<RT, T> (&rec, rc , route, rp, mess, localspawn,clientmode,threadpool);
              };
            } else {
              error!("local loop detected for store kv {:?}", result);
@@ -660,11 +649,12 @@ fn clisend<RT : RunningTypes, T : Route<RT::A,RT::P,RT::V,RT::T>>
   rc : & ArcRunningContext<RT>, 
   route : & mut T , 
   rp : & RunningProcesses<RT>,
-  mess : ClientMessage<RT::P,RT::V>,
+  mess : ClientMessage<RT::P,RT::V,<RT::T as Transport>::WriteStream>,
   localspawn : bool,
   heavyaccept : bool,
   local : bool,
   clientmode : &ClientMode,
+  threadpool : &mut ThreadPool<RT>,
  ) -> MydhtResult<bool> {
   let (op,oi) = ep.to_options();
   let onodeid = op.map(|p|p.get_key());
@@ -695,7 +685,7 @@ fn clisend<RT : RunningTypes, T : Route<RT::A,RT::P,RT::V,RT::T>>
           Some(p) => p,
           None => op.unwrap(),
         };
-        peer_ping(rc,rp,route,p,None,prio,heavyaccept,localspawn,local,clientmode).is_ok()
+        peer_ping(rc,rp,route,p,None,prio,heavyaccept,localspawn,local,clientmode,threadpool).is_ok()
       }
     } else {
       true
@@ -707,14 +697,13 @@ fn clisend<RT : RunningTypes, T : Route<RT::A,RT::P,RT::V,RT::T>>
       let res = route.get_client_info(nodeid).and_then(|ci| ci.send_climsg(mess));
       if res.is_err() {
         warn!("closed connection detected");
-        route.update_priority(nodeid,None,Some(PeerStateChange::Offline));
-        route.remchan(nodeid,&rc.transport);
+        rem_peer(route,nodeid,rc,threadpool,clientmode,None,Some(PeerStateChange::Offline));
         res.map(|_|true)
       } else {
         Ok(true)
       }
     } else {
-      if !send_local::<RT,T>(op.unwrap(),rc,route,rp,mess,localspawn) {
+      if !send_local::<RT,T>(op.unwrap(),rc,route,rp,mess,localspawn,clientmode,threadpool) {
         error!("send message failure from peerman");
         Err(Error("local send error TODO send from send_local fn".to_string(), ErrorKind::RouteError,None))
       } else {
@@ -735,8 +724,10 @@ fn send_local<RT : RunningTypes, T : Route<RT::A,RT::P,RT::V,RT::T>>
   rc : & ArcRunningContext<RT>, 
   route : & mut T , 
   rp : & RunningProcesses<RT>,
-  mess : ClientMessage<RT::P,RT::V>,
+  mess : ClientMessage<RT::P,RT::V,<RT::T as Transport>::WriteStream>,
   localspawn : bool,
+  clientmode : &ClientMode,
+  threadpool : &mut ThreadPool<RT>,
  )
  -> bool {
    // TODO first route.updateinfo  (and send_mesg_local on ci), then if Err with kind no Cliinfo in
@@ -767,13 +758,13 @@ fn send_local<RT : RunningTypes, T : Route<RT::A,RT::P,RT::V,RT::T>>
  if res {
    let (rem,rec) = match olspawn {
      // localspawn
-     Some(mutws) => {
+     Some(mut mutws) => {
        let rpsp = rp.clone();
        let rcsp = rc.clone();
        let psp = p.clone();
        let erpeer = rpsp.peers.clone();
        thread::spawn (move || {
-         if ! client::start::<RT>(&psp, None, rcsp, rpsp, Some(mess),mutws,false) {
+         if client::start_local::<RT>(&psp, &rcsp, &rpsp, Either::Right((mutws.as_mut(),mess))).is_err() {
            // TODO try reconnect or add it to client directly
            sphandler_res(erpeer.send(PeerMgmtMessage::PeerRemFromClient(psp, PeerStateChange::Offline)));
          }
@@ -789,19 +780,19 @@ fn send_local<RT : RunningTypes, T : Route<RT::A,RT::P,RT::V,RT::T>>
            Some(ref mut cli) => {
              let osend = cli.get_mut_sender();
              assert!(osend.is_some());
-             if !try!(client::start_local::<RT>(&p, None, &rc, &rp, Some(mess),osend,false)) {
+             if !try!(client::start_local::<RT>(&p, &rc, &rp, Either::Right((osend,mess)))) {
                rem = true;
                rec = true;
              }
            },
            None => {
-             let (cli, oser) = try!(init_client_info(&p, &rc, &rp, None, &ClientMode::Local(false)));
+             let (cli, oser) = try!(init_client_info(&p, &rc, &rp, None, &ClientMode::Local(false),threadpool));
              sercli.1 = Some(cli);
              if let Some(ref mut clii) = sercli.1 {
                let osend = clii.get_mut_sender();
                assert!(osend.is_some());
              
-               if !try!(client::start_local::<RT>(&p, None, &rc, &rp, Some(mess),osend,false)) {
+               if !try!(client::start_local::<RT>(&p, &rc, &rp, Either::Right((osend,mess)))) {
                  // no reconnnect
                  rem = true;
                };
@@ -828,8 +819,7 @@ fn send_local<RT : RunningTypes, T : Route<RT::A,RT::P,RT::V,RT::T>>
      // TODO try reconnect 
      };
      warn!("Closed connection detected");
-     route.update_priority(&key,None,Some(PeerStateChange::Offline));
-     route.remchan(&key,&rc.transport);
+     rem_peer(route,&key,rc,threadpool,clientmode,None,Some(PeerStateChange::Offline));
    }
  };
  res
@@ -845,13 +835,15 @@ fn send_local_ping<RT : RunningTypes, T : Route<RT::A,RT::P,RT::V,RT::T>>
   route : & mut T , 
   rp : & RunningProcesses<RT>,
   localspawn : bool,
+  clientmode : &ClientMode,
+  threadpool : &mut ThreadPool<RT>,
   ores : Option<OneResult<bool>>,
  )
  ->  bool {
 
    let chal = rc.peerrules.challenge(&(*p));
    let mess = ClientMessage::PeerPing(p.clone(), chal.clone());
-   let r = send_local(p,rc,route,rp,mess,localspawn);
+   let r = send_local(p,rc,route,rp,mess,localspawn,clientmode,threadpool);
    if r {
      route.update_priority(&p.get_key(),None,Some(PeerStateChange::Ping(chal,TransientOption(ores))));
    };
@@ -865,6 +857,7 @@ fn init_client_info<'a, RT : RunningTypes>
   rp : & RunningProcesses<RT>,
   ows : Option<<RT::T as Transport>::WriteStream>, 
   cmode : & ClientMode,
+  tp : &mut ThreadPool<RT>,
  )
  -> MydhtResult<(ClientInfo<RT::P,RT::V,RT::T>, Option<ServerInfo>)> {
   match cmode {
@@ -891,15 +884,53 @@ fn init_client_info<'a, RT : RunningTypes>
     },
     &ClientMode::ThreadedOne => {
       let (tcl,rcl) = channel();
-      let ci = ClientInfo::Threaded(tcl,0);
+      let ci = ClientInfo::Threaded(tcl,0,0);
       let psp = p.clone();
       let rcsp = rc.clone();
       let rpsp = rp.clone();
 
-      thread::spawn (move || {client::start::<RT>(&psp, Some(rcl), rcsp, rpsp, None, ows.map(|ws|ClientSender::Threaded(ws)), true)});
+      thread::spawn (move || {client::start::<RT>(&psp, rcl, rcsp, rpsp, ows.map(|ws|ClientSender::Threaded(ws)), false)});
       Ok((ci,None))
     },
-    _ => {panic!("TODO implement cli pools")},
+    &ClientMode::ThreadedMax(_) | &ClientMode::ThreadPool(_) => {
+      let (thix, pix) = try!(add_peer_to_pool (&mut tp.0, cmode));
+      if is_lesseq_pool_thread(&mut tp.0,thix,1,cmode) {
+        let (tcl,rcl) = channel();
+        let ctcl = tcl.clone();
+        let ci = ClientInfo::Threaded(tcl,pix,thix);
+        let psp = p.clone();
+        let rcsp = rc.clone();
+        let rpsp = rp.clone();
+
+        thread::spawn (move || {client::start::<RT>(&psp, rcl, rcsp, rpsp, ows.map(|ws|ClientSender::Threaded(ws)), true)});
+        
+        if thix < tp.1.len() {
+          tp.1.get_mut(thix).map(|mut v|{
+            if v.is_some() {
+              error!("starting a new thread over an existing one");
+            };
+            *v = Some(ctcl);
+          });
+        } else {
+          for i in tp.1.len()..thix {
+            tp.1.push(None);
+          };
+          tp.1.push(Some(ctcl));
+        };
+        Ok((ci,None))
+      } else {
+        let ci = match tp.1.get(thix) {
+          Some(&Some(ref tcl)) => {
+            try!(tcl.send((ClientMessage::PeerAdd(p.clone(),ows),pix)));
+            ClientInfo::Threaded((*tcl).clone(),pix,thix)
+          },
+          _ => {
+            return Err(Error("missing reference to multiplexed thread".to_string(), ErrorKind::RouteError, None));
+          },
+        };
+        Ok((ci,None))
+      }
+    },
   }
 }
  
@@ -949,7 +980,7 @@ pub fn init_local<P : Peer, V : KeyVal, T : Transport> (cm : &ClientMode, ows : 
 
 /// process to run for pinging a peer, for new peer, peer initialization is done
 /// TODO return bool to have right cannot connect and wrong io error (for refused or unreachable)
-pub fn peer_ping <RT : RunningTypes, 
+fn peer_ping <RT : RunningTypes, 
   T : Route<RT::A,RT::P,RT::V,RT::T>,
   >
  (rc : &ArcRunningContext<RT>,
@@ -962,6 +993,7 @@ pub fn peer_ping <RT : RunningTypes,
   localspawn : bool,
   local : bool,
   clientmode : &ClientMode,
+  threadpool : &mut ThreadPool<RT>,
   ) -> MDHTResult<()> {
   let nodeid = p.get_key();
   if nodeid != rc.me.get_key() {
@@ -997,7 +1029,7 @@ pub fn peer_ping <RT : RunningTypes,
       }
     };
     let ok = notref && toinit.map_or(true,|(pri,hasserv)|{
-      init_client_info(&p,&rc,&rp,None,clientmode).map(|ci|{
+      init_client_info(&p,&rc,&rp,None,clientmode,threadpool).map(|ci|{
         assert!(!(ci.1.is_some() && hasserv));
         route.add_node((p.clone(),PeerState::Offline(pri),(ci.1,Some(ci.0))));
       }).is_ok()
@@ -1009,7 +1041,7 @@ pub fn peer_ping <RT : RunningTypes,
       route.get_client_info(&nodeid).and_then(|ci|
         ci.send_climsg(ClientMessage::PeerPing(p.clone(),chal)))
     } else if ok {
-      if !send_local_ping::<RT, T>(p, rc , route, rp,localspawn,ores) {
+      if !send_local_ping::<RT, T>(p, rc , route, rp,localspawn,clientmode,threadpool,ores) {
         error!("send_local_ping failure TODO get error");
         // TODO get errorr
         Err(Error("send_local_ping failure TODO get error".to_string(), ErrorKind::PingError,None))
@@ -1036,4 +1068,205 @@ fn calc_adj(nbquery : u8, rsize : usize, nftresh : usize) -> usize {
   }
 }
 
+/// Thread pool is only use for multiple peers in order to manage index of new peers and start of
+/// new threads (a thread with no peers is designed to stop).
+/// Synchro with peer thread is a push : we may have living thread with empty peers slot until
+/// receiving peer removed message from client, but client are only added from this thread.
+type ThreadPoolInfo = (usize,Vec<bool>); // TODO replace vec bool by bitvec
+type ThreadPool<RT : RunningTypes> = (ThreadPoolInfo,Vec<Option<Sender<ClientMessageIx<RT::P,RT::V,<RT::T as Transport>::WriteStream>>>>); // TODO replace vec bool by bitvec
 
+#[inline]
+fn is_empty_pool_thread (tp : &mut ThreadPoolInfo, thix : usize, cmode : &ClientMode) -> bool {
+  is_lesseq_pool_thread(tp,thix,0,cmode)
+}
+
+// TODO memoize size of each thix in threadpoolinfo
+fn is_lesseq_pool_thread (tp : &mut ThreadPoolInfo, thix : usize, treshold : usize, cmode : &ClientMode) -> bool {
+  let mut tot = 0;
+  
+  match cmode {
+    &ClientMode::ThreadPool(ref poolsize) => {
+      if thix >= *poolsize {
+        return true;
+      };
+      let mut ix = thix;
+      while let Some(v) = tp.1.get(ix) {
+        if *v {
+          tot = tot + 1;
+          if tot > treshold {
+            return false;
+          };
+        };
+        ix = ix + poolsize;
+      }
+    },
+    &ClientMode::ThreadedMax(ref maxth) => {
+      let ixstart = thix * maxth;
+      for ix in ixstart..(ixstart + maxth) {
+        if let Some(&true) = tp.1.get(ix) {
+          tot = tot + 1;
+          if tot > treshold {
+            return false;
+          };
+        };
+      };
+    },
+    _ => {
+      error!("wrong peer config for thread pool removal");
+      return false;
+    },
+  };
+  true
+}
+ 
+// return thread ix and peer index in thread 
+fn add_peer_to_pool (tp : &mut ThreadPoolInfo, cmode : &ClientMode) -> MDHTResult<(usize, usize)> {
+  let (thix, pix) = match cmode {
+    &ClientMode::ThreadPool(ref poolsize) => {
+      let pix = tp.0 / poolsize;
+      (tp.0 - pix * poolsize, pix)
+    },
+    &ClientMode::ThreadedMax(ref maxth) => {
+      let thix = tp.0 / maxth;
+      (thix.clone(), tp.0 - thix * maxth)
+    },
+    _ => {
+      error!("wrong peer config for thread pool removal");
+      return Err(Error("Wrong peer config".to_string(), ErrorKind::RouteError, None));
+    },
+  };
+
+  let (push_last, recalc_pos) =  match tp.1.get_mut(tp.0) {
+    Some(mut val) => {
+      if *val {
+        debug!("wrong *val index value, pool may be full");
+        return Err(Error("Full pool of peers".to_string(), ErrorKind::RouteError, None));
+      } else {
+        *val = true;
+        (false,true)
+      }
+    },
+    None => {
+      (true,false) 
+    },
+  };
+  if push_last {
+    tp.1.push(true); 
+    // here if thread limit push false instead (currently no limit)
+    tp.0 = tp.0 + 1;
+  } else if recalc_pos {
+    tp.0 = tp.1.position_elem(&false).unwrap_or(tp.1.len());
+  };
+  Ok((thix, pix))
+  
+}
+
+fn rem_peer_from_pool (tp : &mut ThreadPoolInfo, thix : usize, pix : usize, cmode : &ClientMode) {
+  let ix = match cmode {
+    &ClientMode::ThreadPool(ref poolsize) => pix * poolsize + thix,
+    &ClientMode::ThreadedMax(ref maxth) => thix * maxth + pix,
+    _ => {
+      error!("wrong peer config for thread pool removal");
+      return
+    },
+  };
+  let rem = match tp.1.get_mut(ix) {
+    Some(mut val) => {
+      if *val {
+        *val = false;
+        true
+      } else {
+        debug!("trying to remove peer that was already removed from pool");
+        false
+      }
+    },
+    None => {
+      debug!("trying to remove peer but not define peer index in pool");
+      false
+    },
+  };
+  if rem && ix < tp.0 {
+    tp.0 = ix;
+//    tp.1.position_elem(&false);
+  };
+}
+
+#[inline]
+/// remove peer with new prio
+fn rem_peer
+<RT : RunningTypes, 
+  T : Route<RT::A,RT::P,RT::V,RT::T>,
+  >
+(route : &mut T, 
+ k : &<RT::P as KeyVal>::Key, 
+ rc : &ArcRunningContext<RT>,
+ tp : &mut ThreadPool<RT>,
+ cm : &ClientMode,
+ ons : Option<PeerState>,
+ onsc : Option<PeerStateChange>) {
+ match cm {
+   &ClientMode::ThreadedMax(_) | &ClientMode::ThreadPool(_) => {
+     match route.get_client_info(k) {
+       Ok(&ClientInfo::Threaded(_,ref ix, ref thix)) => {
+         rem_peer_from_pool(&mut tp.0, *thix, *ix, cm);
+         if is_empty_pool_thread(&mut tp.0,*thix, cm) {
+           tp.1.get_mut(*thix).map(|mut v|{
+             if v.is_none() || v.as_ref().unwrap().send((ClientMessage::EndMult,usize::max_value())).is_err(){
+               error!("could not send end thread message");
+             };
+             *v = None
+           }); 
+         };
+       },
+       _ => {warn!("mismatch client mode and client info, or missing client for removal");},
+     }
+   },
+   _ => (),
+ };
+ route.update_priority(k,ons,onsc);
+ route.remchan(k,&rc.transport);
+}
+
+#[test]
+fn test_thread_max() {
+  let cmode = ClientMode::ThreadedMax(2);
+  let mut tp = (0,Vec::new());
+
+  assert!((0,0) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+  assert!((0,1) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+  assert!((1,0) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+  assert!((1,1) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+  assert!((2,0) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+  assert!(false == is_empty_pool_thread (&mut tp, 0, &cmode));
+  assert!(false == is_empty_pool_thread (&mut tp, 1, &cmode));
+  assert!(false == is_empty_pool_thread (&mut tp, 2, &cmode));
+  assert!(true == is_empty_pool_thread (&mut tp, 3, &cmode));
+  rem_peer_from_pool (&mut tp, 1, 0, &cmode);
+  assert!(false == is_empty_pool_thread (&mut tp, 1, &cmode));
+  rem_peer_from_pool (&mut tp, 1, 1, &cmode);
+  assert!(true == is_empty_pool_thread (&mut tp, 1, &cmode));
+  assert!((1,0) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+  assert!((1,1) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+  assert!((2,1) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+}
+#[test]
+fn test_thread_pool() {
+  let cmode = ClientMode::ThreadPool(2);
+  let mut tp = (0,Vec::new());
+
+  assert!((0,0) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+  assert!((1,0) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+  assert!((0,1) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+  assert!((1,1) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+  assert!((0,2) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+  assert!(false == is_empty_pool_thread (&mut tp, 0, &cmode));
+  assert!(false == is_empty_pool_thread (&mut tp, 1, &cmode));
+  assert!(true == is_empty_pool_thread (&mut tp, 2, &cmode));
+  rem_peer_from_pool (&mut tp, 1, 0, &cmode);
+  assert!(false == is_empty_pool_thread (&mut tp, 1, &cmode));
+  rem_peer_from_pool (&mut tp, 1, 1, &cmode);
+  assert!(true == is_empty_pool_thread (&mut tp, 1, &cmode));
+  assert!((1,0) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+  assert!((1,1) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+  assert!((1,2) == add_peer_to_pool (&mut tp, &cmode).unwrap());
+}

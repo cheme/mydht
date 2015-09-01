@@ -12,6 +12,7 @@ use std::thread;
 use route::Route;
 use peer::Peer;
 use transport::{Transport,Address};
+use transport::{WriteTransportStream};
 use time::Duration;
 use utils::{self};
 use msgenc::MsgEnc;
@@ -56,7 +57,7 @@ pub trait RunningTypes : Send + Sync + 'static
 }*/
 
 // TODO implement : client mode in rules!!
-#[derive(Debug,PartialEq,Eq)]
+#[derive(Debug,PartialEq,Eq,RustcEncodable,RustcDecodable,Clone)]
 pub enum ClientMode {
   /// client run from PeerManagement and does not loop
   /// - bool say if we spawn a thread or not
@@ -74,7 +75,7 @@ pub enum ClientMode {
 /// Reference used to send Client Message.
 /// This could be used by any process to keep trace of a client process : 
 /// for instance from server client direct client query (without peermgmt)
-pub enum ClientHandle<P : Peer, V : KeyVal> {
+pub enum ClientHandle<P : Peer, V : KeyVal, W : WriteTransportStream> {
 
   /// Uninitialised client or no handle from peermgmt
   /// First message is querying a handle from peermgmt (through OneResult), when in server.
@@ -95,14 +96,14 @@ pub enum ClientHandle<P : Peer, V : KeyVal> {
   //ThreadedMult(Sender<ClientMessageIx<P,V>>, usize),
 
   /// WriteTransportStream is runing (loop) in its own thread
-  Threaded(Sender<ClientMessageIx<P,V>>,usize),
+  Threaded(Sender<ClientMessageIx<P,V,W>>,usize),
 }
 
-impl<P : Peer, V : KeyVal> ClientHandle<P,V> {
+impl<P : Peer, V : KeyVal, W : WriteTransportStream> ClientHandle<P,V,W> {
   
   /// send message with the handle if the handle allows it otherwhise return false.
   /// If an error is returned consider either the handle died (ask for new) or something else. 
-  pub fn send_msg(&self, mess : ClientMessage<P,V>) -> MDHTResult<bool> {
+  pub fn send_msg(&self, mess : ClientMessage<P,V,W>) -> MDHTResult<bool> {
     match self {
       &ClientHandle::Threaded(ref clisend, ref ix) => {
         try!(clisend.send((mess,*ix)));
@@ -198,7 +199,7 @@ impl<
   type T = T;
 }
 
-pub type ClientChanel<P, V> = Sender<mesgs::ClientMessageIx<P,V>>;
+pub type ClientChanel<P, V, W> = Sender<mesgs::ClientMessageIx<P,V,W>>;
 
 /// Running context contain all information needed, mainly configuration and calculation rules.
 pub struct RunningContext<RT : RunningTypes> {
