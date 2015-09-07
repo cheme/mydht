@@ -26,6 +26,8 @@ use mydhtresult::ErrorKind;
 
 
 pub mod inefficientmap;
+#[cfg(feature="dht-route")]
+pub mod knodetable;
 
 #[cfg(feature="dht-route")]
 pub mod btkad;

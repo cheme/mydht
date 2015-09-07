@@ -75,6 +75,7 @@ impl<A : Address, P : Peer<Address = A> + DhtPeer, V : KeyVal, T : Transport<Add
   }
   fn add_node(& mut self, pi : PeerInfo<P,V,T>) {
     self.peers.add_val_c(pi.0.get_key(), pi);
+    // TODO if online update val in kad too
   }
 
   fn remchan(& mut self, nodeid : &P::Key, t : & T) where P::Key : Send {

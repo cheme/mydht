@@ -16,7 +16,7 @@ authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
 [features]
 #default = ["striple-impl","openssl-impl","rust-crypto-impl","dht-route","mio-impl"]
-default = ["striple-impl","rust-crypto-impl","with-extra-test","mio-impl","openssl-impl"]
+default = ["striple-impl","rust-crypto-impl","with-extra-test","mio-impl","openssl-impl","dht-route"]
 striple-impl = ["striple"]
 openssl-impl = ["openssl"]
 rust-crypto-impl = ["rust-crypto"]
@@ -34,6 +34,10 @@ bincode = "0.3.0"
 rustc-serialize = "0.3.15"
 time = "0.1.31"
 byteorder = "0.3.11"
+#bit-vec = "0.4.1"
+
+[dependencies.bit-vec]
+git = "https://github.com/cheme/bit-vec.git"
 
 [dependencies.mio]
 version = "0.4.1"
