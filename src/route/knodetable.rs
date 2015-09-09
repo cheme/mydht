@@ -9,9 +9,7 @@ extern crate bit_vec;
 use self::bit_vec::BitVec;
 //use std::convert::AsRef;
 use std::borrow::Borrow;
-use std::marker::PhantomData;
 use std::mem::swap;
-
 /// need to contain a fix size u8 representation
 pub trait KElem {
 //  const KLEN : usize;
@@ -24,27 +22,6 @@ pub trait KElem {
 
 /// Convenience trait if bitvec representation for kelem is not stored in kelem (computed each time).
 ///
-/// # For instance 
-///
-/// ```
-/// pub struct Test<'a>(Vec<u8>,PhantomData<&'a ()>);
-/// 
-/// impl<'a> KElemBytes<'a> for Test<'a> {
-///   type Bytes = &'a [u8];
-///   fn bytes_ref_keb (&'a self) -> Self::Bytes {
-///     &self.0[..]
-///   }
-///   ...
-/// }
-///
-/// impl<'a> KElemBytes<'a> for &'a [u8] {
-///   type Bytes = &'a [u8];
-///   fn bytes_ref_keb (&'a self) -> Self::Bytes {
-///     self
-///   }
-///   ...
-/// }
-/// ```
 pub trait KElemBytes<'a> {
   type Bytes : 'a + Borrow<[u8]>;
 //  const KLENB : usize;
@@ -128,7 +105,7 @@ impl<E : KElem> KNodeTable<E> {
   fn assert_rep(&self, lens : &[usize]) {
     let l = self.buckets.len();
     let ll = lens.len();
-    assert!(ll >= l);
+    assert!(ll >= l, "result len less than actual buck : {},{}",ll,l);
     for m in l..ll {
       assert!(lens[m] == 0)
     }
@@ -137,7 +114,7 @@ impl<E : KElem> KNodeTable<E> {
         let bsize = self.buckets[i].as_ref().map(|b|b.get_size()).unwrap();
         assert!(bsize == lens[i], "mismatch at bucket {} , {} instead of {}", i, bsize, lens[i])
       }else{
-      assert!(lens[i] == 0)
+      assert!(lens[i] == 0, "mismatch, none bucket at {} expecting 0 instead of {}", i, lens[i])
       }
     }
     
@@ -225,22 +202,27 @@ impl<E : KElem> KNodeTable<E> {
       };
       let newsize = bucket.add(elem);
       if newsize > current_bsize {
-        Some((distix,ix,bucket.split(&us, distix)))
+        Some((distix,ix,bucket.split(&us)))
       } else {
         None
       }
     };
-    if let Some((distix,ix,(left,right,ixsplit,dist))) = osplited {
+    if let Some((distix,ix,(left,right,ixsplit))) = osplited {
+      let dist = if ixsplit > distix {
+        bitxor(&left.get_closest(1)[0].bits_ref(), &self.us.bits_ref())
+      } else {
+        BitVec::new()
+      };
       // remove xisting bucket
       self.buckets[ix] = None;
       let mut leftix = 0;
       let mut rightix = 0;
       let mut i = ix;
-      for l in distix..(ixsplit + 1) {
+      for l in distix..ixsplit + 1 {
         let (is_r, tmp_left, tmp_right) = if l == ixsplit {
           (false,None,None)
         } else {
-          if dist[i] {
+          if dist[l] {
             (true,Some(KBucket::new()),None)
           } else {
             (false,None,Some(KBucket::new()))
@@ -260,6 +242,7 @@ impl<E : KElem> KNodeTable<E> {
           self.bintree.push(0);
           self.bintree[i * 2] = newix;
         };
+        // add right
         if let Some(newix) = self.rem_ix.pop() {
           rightix = newix;
           self.buckets[newix] = tmp_right;
@@ -297,32 +280,44 @@ impl<E : KElem> KNodeTable<E> {
   /// TODO does not work : need paper for design... : id is just switch one bit at a time (dist + 1
   /// ) but issue is when next it goes bellow dist: we do not allways go up (need some history)
   pub fn get_closest<'a>(&'a self, id: &BitVec, nb: usize) -> Vec<&'a E> {
-    let (mut distix,_,bucket) = {
+    let (_,ix,bucket) = {
       self.resolve_bucket(id)
     };
     let mut res = bucket.get_closest(nb);
-    if res.len() < nb {
-      let mut nbrem = nb - res.len();
-      let mut recid = id.clone();
-      let mut nextup = false;
-      while nbrem > 0 {
-        if nextup {
-          let nv = !recid[distix - 1];
-          recid.set(distix -1 , nv);
-          nextup = false;
-        } else {
-          let nv = !recid[distix];
-          recid.set(distix , nv);
-          nextup = true;
-        };
-        let (newdistix,_,bucket) = {
-          self.resolve_bucket(&recid)
-        };
-        distix = newdistix;
-        let resit = bucket.get_closest(nb);
-        res.push_all(&resit[..]);
-        nbrem -= resit.len();
-      }
+    let mut nb = nb - res.len();
+    if nb > 0 {
+      // complete with random others
+      let lbucket = self.buckets.len();
+      if ix < lbucket {
+        for i in ix + 1 .. lbucket {
+          match self.buckets.get(i) {
+            Some (&Some(ref b)) => {
+              let r = b.get_closest(nb);
+              nb = nb - r.len();
+              res.extend(r);
+              if nb < 1 {
+                break
+              }
+            },
+            _ => (),
+          };
+        }
+      };
+      if nb > 0  && ix > 0 {
+        for i in 0 .. ix {
+          match self.buckets.get(i) {
+            Some (&Some(ref b)) => {
+              let r = b.get_closest(nb);
+              nb = nb - r.len();
+              res.extend(r);
+              if nb < 1 {
+                break
+              }
+            },
+            _ => (),
+          };
+        }
+      };
     };
     res
   }
@@ -361,33 +356,70 @@ impl<E : KElem> KNodeTable<E> {
     };
     // TODO actually remove buckets
     orem.map(|(distix,ix)|{
+      let mut ix = ix;
       // if brother has no content
       println!("us : {:?}",elem.bits_ref().borrow());
+      let mut ixdst = distix;
+      let mut first = true;
+      loop {
+      if ixdst == 0 {
+        break
+      };
+      ixdst = ixdst - 1;
       let mut bro_bits = elem.bits_ref().borrow().clone();
-      let nv = !bro_bits[distix - 1];
-      bro_bits.set(distix - 1,nv);
+      let nv = !bro_bits[ixdst];
+      bro_bits.set(ixdst,nv);
       println!("br : {:?}",bro_bits);
       let (parix, ixbro) = self.resolve_bucket_parent(&bro_bits);
       if !self.has_content(ixbro) {
         // bro without content remove it 
+        self.rem_ix.push(ixbro);
         if self.buckets[ixbro].is_some() {
           self.buckets[ixbro] = None;
-          self.rem_ix.push(ix);
         } else {
           self.bintree[ixbro * 2] = 0;
           self.bintree[ixbro * 2 + 1] = 0;
         };
-        // remove ourselve
-        if self.buckets[ix].is_some() {
-          self.buckets[ix] = None;
-          self.rem_ix.push(ix);
-        } else {
+        // set ourselves as parent
+        self.rem_ix.push(ix);
+        let bro = {
+          let old_bro = self.buckets.get_mut(ix).unwrap();
+          let mut bro = None;
+          swap(&mut bro, old_bro);
           self.bintree[ix * 2] = 0;
           self.bintree[ix * 2 + 1] = 0;
+          bro
         };
-        // set empty bucket in parent
-        self.buckets[parix] = Some(KBucket::new());
+        self.buckets[parix] = bro;
+        self.bintree[parix * 2] = 0;
+        self.bintree[parix * 2 + 1] = 0;
+      } else {
+        if !first {
+          break // TODO in fact we should sum left and right to allow merge
+        };
+        // set parent as bro
+        self.rem_ix.push(ixbro);
+        let bro = {
+          let old_bro = self.buckets.get_mut(ixbro).unwrap();
+          let mut bro = None;
+          swap(&mut bro, old_bro);
+          self.bintree[ixbro * 2] = 0;
+          self.bintree[ixbro * 2 + 1] = 0;
+          bro
+        };
+        self.buckets[parix] = bro;
+        self.bintree[parix * 2] = 0;
+        self.bintree[parix * 2 + 1] = 0;
+
+        // remove ourselve
+        self.rem_ix.push(ix);
+        self.buckets[ix] = None;
+        self.bintree[ix * 2] = 0;
+        self.bintree[ix * 2 + 1] = 0;
       };
+      first = false;
+      ix = parix;
+      }
       
     });
     
@@ -440,7 +472,7 @@ impl<E : KElem> KBucket<E> {
   }
 
   // empty current bucket and create two new one left (next bit at 0) and right (next bit at 1).
-  pub fn split(&mut self, us : &BitVec, ix : usize) -> (KBucket<E>, KBucket<E>, usize, BitVec) {
+  pub fn split(&mut self, us : &BitVec) -> (KBucket<E>, KBucket<E>, usize) {
     let ilen = self.size;
     if ilen < 2 {
       panic!("trying to split bucket of less than two size");
@@ -452,28 +484,22 @@ impl<E : KElem> KBucket<E> {
     ).collect();
     // find split ix
     let six = {
-      let mut v1 = dists.get(0).unwrap(); // split should panic on bucket of size less than 2
-      let mut v2 = dists.get(1).unwrap();
-      for i in 2..ilen {
+      let mut v = dists.get(0).unwrap(); // split should panic on bucket of size less than 2
+      let mut max_xor = BitVec::new();
+      for i in 1..ilen {
         let d = dists.get(i).unwrap();
-        if d > v2 {
-          if d > v1 {
-            v2 = v1;
-            v1 = d;
-          } else {
-            v2 = d;
-          }
-        };
-      };
-      bitxor(v1,v2).iter().position(|b|b==true).unwrap_or(v1.len())
-    };
-    let distr = if six > ix {
-      dists.get(0).unwrap().clone()
-    } else {
-      BitVec::new()
+        let xor = bitxor(v, d);
+        if xor > max_xor {
+          v = d;
+          max_xor = xor;
+        }
+      }
+      max_xor.iter().position(|b|b==true).unwrap_or(v.len())
     };
     // we do not sort/split as it loose priorities, so me simply empty origin and fill dest (pop,
     // push). Certainly not very efficient
+    self.data.reverse();
+    dists.reverse();
     while let Some(elem) = self.data.pop() {
       // distance could be stored in data TODO space or efficiency???
       let dist = dists.pop().unwrap();
@@ -483,6 +509,7 @@ impl<E : KElem> KBucket<E> {
         left.push(elem)
       }
     }
+
     (
       KBucket{
         size :left.len(),
@@ -493,7 +520,6 @@ impl<E : KElem> KBucket<E> {
         data :right,
       },
       six,
-      distr,
     )
   }
 
@@ -555,8 +581,6 @@ impl KElem for KeyConflict {
 }
 
 
-#[cfg(test)]
-pub struct Test<'a>(Vec<u8>,PhantomData<&'a ()>);
 
 #[cfg(test)]
 impl<'a> KElemBytes<'a> for Vec<u8> {
@@ -607,26 +631,26 @@ fn bucket_tests () {
   let us = BitVec::from_bytes(&[0b11000000]);
   let usv = BitVec::from_bytes(&[0b11100000]);
   let elem = BitVec::from_bytes(&[0b01100000]);
-  let elemrem = elem.clone();
   let elem2 = BitVec::from_bytes(&[0b01000000]);
   let elem3 = BitVec::from_bytes(&[0b01010000]);
   bucket.add(elem.clone());
   assert!(bucket.get_size() == 1);
   bucket.add(elem2.clone());
   assert!(bucket.get_size() == 2);
-  let (mut l1, mut r1, spix,_) = bucket.split(&us,0);
+  let (l1, mut r1, spix) = bucket.split(&us);
   assert!(l1.get_size() == 1);
   assert!(r1.get_size() == 1);
   assert!(spix == 2);
+
   assert!(bucket.get_size() == 2);
   r1.add(elem2.clone());
   r1.add(elem3.clone());
   assert!(r1.get_size() == 3);
-  let (mut l3, mut r3, spix,_) = r1.split(&usv,1);
+  let (l3, mut r3, spix) = r1.split(&usv);
   assert!(l3.get_size() == 1);
   assert!(r3.get_size() == 2);
   assert!(spix == 2);
-  let (mut l4, mut r4, spix,_) = r3.split(&us,2);
+  let (l4, r4, spix) = r3.split(&us);
   assert!(l4.get_size() == 1);
   assert!(r4.get_size() == 1);
   assert!(spix == 3);
@@ -722,16 +746,80 @@ fn ktable_tests_split_np () {
   ktable.remove(&e2);
   ktable.assert_rep([0,0,1,1,0,1,1].as_ref());
   ktable.remove(&e4);
-  ktable.assert_rep([0,0,1,1,0,1,0].as_ref());
+  ktable.assert_rep([0,0,1,1,1,0,0].as_ref());
   ktable.add(e2.clone());
-  ktable.assert_rep([0,0,1,1,0,1,1].as_ref());
+  ktable.assert_rep([0,0,1,1,2,0,0].as_ref());
   ktable.remove(&e2);
   ktable.remove(&e3);
-  ktable.assert_rep([0,0,1,1,0,0,0].as_ref());
+  ktable.assert_rep([0,1,1,0,0,0,0].as_ref());
   ktable.add(e2.clone()); // recycle removed id
-  ktable.assert_rep([0,0,1,1,1,0,0].as_ref());
-
+  ktable.assert_rep([0,2,1,0,0,0,0].as_ref());
 
 }
 
+#[test]
+fn ktable_tests_nrem () {
+  let bucket_size = 2; // small bucket for testing
+  let hash_size = 8; // using only two bytes for testing
+  let us = BitVec::from_bytes(&[0b01010101]);
+  let mut ktable = KNodeTable::new(us, bucket_size, hash_size);
+  // one 
+  let e1 = BitVec::from_bytes(&[0b00010000]);
+  let e2 = BitVec::from_bytes(&[0b00000100]);
+  let e3 = BitVec::from_bytes(&[0b00011000]);
+  ktable.add(e1.clone());
+  println!("{:?}",ktable.bintree);
+  ktable.add(e2.clone());
+  println!("{:?}",ktable.bintree);
+  ktable.add(e3.clone());
+  println!("{:?}",ktable.bintree);
+  ktable.assert_rep([0,0,0,0,0,0,0,2,1].as_ref());
+  ktable.remove(&e2);
+  println!("{:?}",ktable.bintree);
+  ktable.assert_rep([2,0,0,0,0,0,0,0,0].as_ref());
+  ktable.remove(&e1);
+  ktable.remove(&e3);
+  ktable.assert_rep([0,0,0,0,0,0,0,0,0].as_ref());
+  ktable.add(e2.clone());
+  ktable.assert_rep([1,0,0,0,0,0,0,0,0].as_ref());
+  ktable.add(e1.clone());
+  ktable.add(e3.clone());
+  ktable.assert_rep([0,0,0,0,0,0,0,1,2].as_ref());
+  println!("{:?}",ktable.bintree);
+}
+
+#[test]
+fn ktable_get_closests () {
+  let bucket_size = 2; // small bucket for testing
+  let hash_size = 8; // using only two bytes for testing
+  let us = BitVec::from_bytes(&[0b10101010]);
+  let mut ktable = KNodeTable::new(us, bucket_size, hash_size);
+  let e1 = BitVec::from_bytes(&[0b01010000]);
+  let e2 = BitVec::from_bytes(&[0b00100100]);
+  let e3 = BitVec::from_bytes(&[0b00011000]);
+  let e4 = BitVec::from_bytes(&[0b00111000]);
+  let e5 = BitVec::from_bytes(&[0b10111000]);
+  ktable.add(e1.clone());
+  ktable.add(e2.clone());
+  ktable.add(e3.clone());
+  ktable.add(e4.clone());
+  ktable.add(e5.clone());
+  println!("{:?}",ktable.bintree);
+  ktable.assert_rep([0,1,0,0,1,2,1].as_ref());
+
+  assert!(ktable.get_closest_one_bucket(&e1,100) == [&e1]);
+  assert!(ktable.get_closest_one_bucket(&e2,100) == [&e2,&e4]);
+  assert!(ktable.get_closest_one_bucket(&e2,1) == [&e4]);
+  assert!(ktable.get_closest_one_bucket(&e3,100) == [&e3]);
+  assert!(ktable.get_closest_one_bucket(&e4,100) == [&e2,&e4]);
+  assert!(ktable.get_closest_one_bucket(&e5,100) == [&e5]);
+ 
+  assert!(ktable.get_closest(&e1,1) == [&e1]);
+  assert!(ktable.get_closest(&e1,2)[0] == &e1);
+  assert!(ktable.get_closest(&e1,2).len() == 2);
+  assert!(ktable.get_closest(&e4,100)[0] == &e2);
+  assert!(ktable.get_closest(&e4,100)[1] == &e4);
+  assert!(ktable.get_closest(&e4,100).len() == 5);
+}
+ 
 

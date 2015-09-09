@@ -13,7 +13,6 @@
 #![feature(socket_timeout)]
 #![feature(vecmap)] // in tcp_loop
 #![feature(slice_bytes)] // in tcp_loop
-#![feature(vec_push_all)] // TODO find how to rem it
 
 #[macro_use] extern crate log;
 extern crate rustc_serialize;
