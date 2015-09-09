@@ -1,7 +1,7 @@
 //! hash table with torrent bucket implementation
 //! Running over Vec<u8> ids
 //!
-//! Warning no constraint on has key, you need to ensure KElem impl of both peer and contents are
+//! Warning no constraint on has key, you need to ensure DHTElem impl of both peer and contents are
 //! of same size (the size defined in the bucket), when associated constant stabilize Bytes could
 //! became Borrow<[u8;Self::KLEN]>.
 
@@ -10,67 +10,33 @@ use self::bit_vec::BitVec;
 //use std::convert::AsRef;
 use std::borrow::Borrow;
 use std::mem::swap;
-/// need to contain a fix size u8 representation
-pub trait KElem {
-//  const KLEN : usize;
-  fn bits_ref (& self) -> & BitVec;
-  /// we do not use Eq or Bits compare as in some case (for example a keyval with long key but
-  /// short bits it may make sense to compare the long key in the bucket)
-  /// return true if equal
-  fn bucket_elem_eq(&self, other : &Self) -> bool;
-}
-
-/// Convenience trait if bitvec representation for kelem is not stored in kelem (computed each time).
-///
-pub trait KElemBytes<'a> {
-  type Bytes : 'a + Borrow<[u8]>;
-//  const KLENB : usize;
-  fn bytes_ref_keb (&'a self) -> Self::Bytes;
-  fn bucket_elem_eq_keb(&self, other : &Self) -> bool;
-}
-
-// TODO test without HRTB : put
-struct SimpleKElemBytes<KEB> (KEB, BitVec)
-  where for<'a> KEB : KElemBytes<'a>;
-
-
-impl<KEB> SimpleKElemBytes<KEB>
-  where for<'a> KEB : KElemBytes<'a> {
-  pub fn new(v : KEB) -> SimpleKElemBytes<KEB> {
-    let bv = BitVec::from_bytes(v.bytes_ref_keb().borrow());
-    SimpleKElemBytes(v,bv)
-  }
-}
-
-impl<KEB> KElem for SimpleKElemBytes<KEB>
-  where for<'a> KEB : KElemBytes<'a> {
-//  const KLEN : usize = <Self as KElemBytes<'a>>::KLENB;
-  fn bits_ref (& self) -> & BitVec {
-    &self.1
-  }
-  fn bucket_elem_eq(&self, other : &Self) -> bool {
-    self.0.bucket_elem_eq_keb(&other.0)
-  }
-}
-
+use super::byte_rep::{
+  DHTElem,
+  DHTElemBytes,
+  SimpleDHTElemBytes,
+};
+#[cfg(test)]
+use super::byte_rep::{
+  KeyConflict,
+};
 // TODO switch to trait with constant over hash_size and bucket_size when possible
-pub struct KNodeTable<E : KElem> {
-  us: E,
-  hash_size: usize, // TODO should be associated constant of KElem
+pub struct KNodeTable<E : DHTElem> {
+  us: BitVec,
+  hash_size: usize, // TODO should be associated constant of DHTElem
   bucket_size: usize,
   bintree: Vec<usize>,
   buckets: Vec<Option<KBucket<E>>>,
   rem_ix: Vec<usize>,
 }
 
-struct KBucket<E : KElem> {
+struct KBucket<E : DHTElem> {
   data: Vec<E>, // TODO trait of storage with a few more operation (similar to route)!!!
   size: usize,
 }
 
 
-impl<E : KElem> KNodeTable<E> {
-  pub fn new(us : E, bucket_size : usize, hash_size : usize) -> KNodeTable<E> {
+impl<E : DHTElem> KNodeTable<E> {
+  pub fn new(us : BitVec, bucket_size : usize, hash_size : usize) -> KNodeTable<E> {
     assert!(bucket_size > 1);
     let mut buckets = Vec::new();
     let mut bintree = Vec::new(); // TODO allocate
@@ -122,7 +88,7 @@ impl<E : KElem> KNodeTable<E> {
 
   /// return distance index, index of the bucket, and the bucket
   fn resolve_bucket<'a>(&'a self, key: &BitVec) -> (usize, usize, &'a KBucket<E>) {
-    let dist = bitxor(self.us.bits_ref(), key);
+    let dist = bitxor(&self.us, key);
     let mut ix = 0;
     let mut distix = 0;
     loop {
@@ -143,7 +109,7 @@ impl<E : KElem> KNodeTable<E> {
 
   /// return parent bucket ix and bucket ix
   fn resolve_bucket_parent<'a>(&'a self, key: &BitVec) -> (usize, usize) {
-    let dist = bitxor(self.us.bits_ref(), key);
+    let dist = bitxor(&self.us, key);
     let mut ix = 0;
     let mut parix = 0;
     let mut distix = 0;
@@ -169,7 +135,7 @@ impl<E : KElem> KNodeTable<E> {
 
   /// return distance index, index of the bucket, and the bucket
   fn resolve_bucket_mut<'a>(&'a mut self, key: &BitVec) -> (usize, usize, &'a mut KBucket<E>) {
-    let dist = bitxor(self.us.bits_ref(), key);
+    let dist = bitxor(&self.us, key);
     let mut ix = 0;
     let mut distix = 0;
     loop {
@@ -191,10 +157,10 @@ impl<E : KElem> KNodeTable<E> {
 
   // add an element in table, if already in refresh its position in table to next
   pub fn add(&mut self, elem: E) {
-    assert!(!elem.bucket_elem_eq(&self.us));
+//    assert!(!elem.kelem_eq(&self.us));
     let osplited = {
       let current_bsize = self.bucket_size;
-      let us = self.us.bits_ref().clone(); // unclean TODO add ref to us in bucket ??
+      let us = self.us.clone(); // unclean TODO add ref to us in bucket ??
       let (distix,ix,bucket) = {
         let br = elem.bits_ref();
         let bv : &BitVec = br.borrow();
@@ -209,7 +175,7 @@ impl<E : KElem> KNodeTable<E> {
     };
     if let Some((distix,ix,(left,right,ixsplit))) = osplited {
       let dist = if ixsplit > distix {
-        bitxor(&left.get_closest(1)[0].bits_ref(), &self.us.bits_ref())
+        bitxor(&left.get_closest(1)[0].bits_ref(), &self.us)
       } else {
         BitVec::new()
       };
@@ -429,7 +395,7 @@ impl<E : KElem> KNodeTable<E> {
 }
 /*
 #[inline]
-fn distance<'a,E : KElem<'a>> (id1: &'a E, id2: &'a E) -> BitVec {
+fn distance<'a,E : DHTElem<'a>> (id1: &'a E, id2: &'a E) -> BitVec {
   bitxor(id1.bits_ref().borrow(), id2.bits_ref().borrow())
 }*/
 
@@ -442,7 +408,7 @@ pub fn bitxor(us : & BitVec, other: & BitVec) -> BitVec {
 
 
 
-impl<E : KElem> KBucket<E> {
+impl<E : DHTElem> KBucket<E> {
   pub fn new() -> KBucket<E> {
     KBucket {
       data: Vec::new(),
@@ -458,7 +424,7 @@ impl<E : KElem> KBucket<E> {
   pub fn add(&mut self, elem: E) -> usize {
     // find TODO maybe change impl for larger bucket (eg using map of a key... then need to change
     // and not use eq but a getter to a ref to partialeq value associated type)
-    match self.data.iter().position(|v|elem.bucket_elem_eq(v)) {
+    match self.data.iter().position(|v|elem.kelem_eq(v)) {
       // remove from vec 
       Some(ix) => {
         self.data.remove(ix); // TODO inefficient we only want to put it first consider biased swap_remove
@@ -535,7 +501,7 @@ impl<E : KElem> KBucket<E> {
 
   pub fn remove(&mut self, elem: &E) -> bool {
     let mut res = false;
-    match self.data.iter().position(|v|elem.bucket_elem_eq(v)) {
+    match self.data.iter().position(|v|elem.kelem_eq(v)) {
       Some(ix) => {
         self.data.remove(ix); // TODO inefficient we only want to put it first consider biased swap_remove
         self.size -= 1;
@@ -547,66 +513,6 @@ impl<E : KElem> KBucket<E> {
   }
 
 }
-
-#[cfg(test)]
-impl KElem for BitVec {
-  #[inline]
-  fn bits_ref (& self) -> & BitVec {
-    &self
-  }
-  #[inline]
-  fn bucket_elem_eq(&self, other : &Self) -> bool {
-    self == other
-  }
-}
-
-
-#[cfg(test)]
-#[derive(Clone,PartialEq,Eq)]
-struct KeyConflict {
-  key : BitVec,
-  content : BitVec,
-}
-
-#[cfg(test)]
-impl KElem for KeyConflict {
-  #[inline]
-  fn bits_ref (& self) -> & BitVec {
-    &self.key
-  }
-  #[inline]
-  fn bucket_elem_eq(&self, other : &Self) -> bool {
-    self.content == other.content
-  }
-}
-
-
-
-#[cfg(test)]
-impl<'a> KElemBytes<'a> for Vec<u8> {
-  // return ing Vec<u8> is stupid but it is for testing
-  type Bytes = Vec<u8>;
-  fn bytes_ref_keb (&'a self) -> Self::Bytes {
-    self.clone()
-  }
-  fn bucket_elem_eq_keb(&self, other : &Self) -> bool {
-    self == other
-  }
-}
-
-#[cfg(test)]
-impl<'a, 'b> KElemBytes<'a> for &'b [u8] {
-  // using different lifetime is for test : for instance if we store a reference to a KeyVal
-  // (typical implementation in route (plus need algo to hash))
-  type Bytes = &'a [u8];
-  fn bytes_ref_keb (&'a self) -> Self::Bytes {
-     self
-  }
-  fn bucket_elem_eq_keb(&self, other : &Self) -> bool {
-    self == other
-  }
-}
-
 
 #[test]
 fn bitxor_test () {
@@ -664,9 +570,9 @@ fn simplekelem_tests () {
   let e2 : &[u8] = &e2mem[..];
   let mut bucket1 = KBucket::new();
   let mut bucket2 = KBucket::new();
-  bucket1.add(SimpleKElemBytes::new(e1));
+  bucket1.add(SimpleDHTElemBytes::new(e1));
   assert!(bucket1.get_size() == 1);
-  bucket2.add(SimpleKElemBytes::new(e2));
+  bucket2.add(SimpleDHTElemBytes::new(e2));
  // assert!(bucket2.get_size() == 2);
 }
 
@@ -695,7 +601,7 @@ fn ktable_tests_si () {
   let bucket_size = 2; // small bucket for testing
   let hash_size = 8; // using only two bytes for testing
   let us = BitVec::from_bytes(&[0b01010101]);
-  let mut ktable = KNodeTable::new(us, bucket_size, hash_size);
+  let mut ktable = KNodeTable::new(us.bits_ref().clone(), bucket_size, hash_size);
 
   let e1 = BitVec::from_bytes(&[0b00000000]);
   let e2 = BitVec::from_bytes(&[0b10000000]);
@@ -724,7 +630,7 @@ fn ktable_tests_split_np () {
   let bucket_size = 2; // small bucket for testing
   let hash_size = 8; // using only two bytes for testing
   let us = BitVec::from_bytes(&[0b01010101]);
-  let mut ktable = KNodeTable::new(us, bucket_size, hash_size);
+  let mut ktable = KNodeTable::new(us.bits_ref().clone(), bucket_size, hash_size);
   // one 
   let e1 = BitVec::from_bytes(&[0b01010000]);
   let e2 = BitVec::from_bytes(&[0b00100100]);
@@ -762,7 +668,7 @@ fn ktable_tests_nrem () {
   let bucket_size = 2; // small bucket for testing
   let hash_size = 8; // using only two bytes for testing
   let us = BitVec::from_bytes(&[0b01010101]);
-  let mut ktable = KNodeTable::new(us, bucket_size, hash_size);
+  let mut ktable = KNodeTable::new(us.bits_ref().clone(), bucket_size, hash_size);
   // one 
   let e1 = BitVec::from_bytes(&[0b00010000]);
   let e2 = BitVec::from_bytes(&[0b00000100]);
@@ -793,7 +699,7 @@ fn ktable_get_closests () {
   let bucket_size = 2; // small bucket for testing
   let hash_size = 8; // using only two bytes for testing
   let us = BitVec::from_bytes(&[0b10101010]);
-  let mut ktable = KNodeTable::new(us, bucket_size, hash_size);
+  let mut ktable = KNodeTable::new(us.bits_ref().clone(), bucket_size, hash_size);
   let e1 = BitVec::from_bytes(&[0b01010000]);
   let e2 = BitVec::from_bytes(&[0b00100100]);
   let e3 = BitVec::from_bytes(&[0b00011000]);

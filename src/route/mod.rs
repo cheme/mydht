@@ -26,11 +26,12 @@ use mydhtresult::ErrorKind;
 
 
 pub mod inefficientmap;
-#[cfg(feature="dht-route")]
+
 pub mod knodetable;
 
-#[cfg(feature="dht-route")]
 pub mod btkad;
+
+
 
 //pub type PeerInfo<P,V,T> = (Arc<P>, PeerPriority, Option<ClientChanel<P,V>>,PhantomData<T>);
 /// Stored info about client in peer management (in route transient cache).
@@ -263,7 +264,8 @@ pub trait Route<A:Address,P:Peer<Address = A>,V:KeyVal,T:Transport<Address = A>>
   fn query_count_inc(& mut self, &P::Key);
   /// count of running query (currently only updated in proxy mode)
   fn query_count_dec(& mut self, &P::Key);
-  /// add or update a peer
+  /// add a peer, note that peer should be added in an offline status (offline or refused), and
+  /// then status change by update_priority
   fn add_node(& mut self, PeerInfo<P,V,T>);
   /// change a peer prio (eg setting offline or normal...), when peerprio is set to none, old
   /// existing priority is used (or unknow) 
@@ -407,4 +409,131 @@ use peer::{Peer, PeerPriority,PeerState,PeerStateChange};
     // assert!(route.get_node(&fkey).unwrap().2.is_none());
  
   }
-} 
+}
+
+/// trait to use peer and content wich can be route depending upon a byte or bit representation of
+/// themselves (mainly in DHT routing)
+pub mod byte_rep {
+
+  extern crate bit_vec;
+  use self::bit_vec::BitVec;
+  use std::borrow::Borrow;
+  use peer::Peer;
+  use std::sync::Arc;
+
+
+  /// need to contain a fix size u8 representation
+  pub trait DHTElem {
+  //  const KLEN : usize;
+    fn bits_ref (& self) -> & BitVec;
+    /// we do not use Eq or Bits compare as in some case (for example a keyval with long key but
+    /// short bits it may make sense to compare the long key in the bucket)
+    /// return true if equal
+    fn kelem_eq(&self, other : &Self) -> bool;
+  }
+
+  /// Convenience trait if bitvec representation for kelem is not stored in kelem (computed each time).
+  pub trait DHTElemBytes<'a> {
+    type Bytes : 'a + Borrow<[u8]>;
+  //  const KLENB : usize;
+    fn bytes_ref_keb (&'a self) -> Self::Bytes;
+    fn kelem_eq_keb(&self, other : &Self) -> bool;
+  }
+
+  // TODO test without HRTB : put
+  pub struct SimpleDHTElemBytes<KEB> (pub KEB, pub BitVec)
+    where for<'a> KEB : DHTElemBytes<'a>;
+
+  impl<KEB> SimpleDHTElemBytes<KEB>
+    where for<'a> KEB : DHTElemBytes<'a> {
+    pub fn new(v : KEB) -> SimpleDHTElemBytes<KEB> {
+      let bv = BitVec::from_bytes(v.bytes_ref_keb().borrow());
+      SimpleDHTElemBytes(v,bv)
+    }
+  }
+
+  impl<KEB> DHTElem for SimpleDHTElemBytes<KEB>
+    where for<'a> KEB : DHTElemBytes<'a> {
+  //  const KLEN : usize = <Self as DHTElemBytes<'a>>::KLENB;
+    fn bits_ref (& self) -> & BitVec {
+      &self.1
+    }
+    fn kelem_eq(&self, other : &Self) -> bool {
+      self.0.kelem_eq_keb(&other.0)
+    }
+  }
+
+  impl<'a, P : DHTElemBytes<'a>> DHTElemBytes<'a> for Arc<P> {
+    // return ing Vec<u8> is stupid but it is for testing
+    type Bytes = <P as DHTElemBytes<'a>>::Bytes;
+    fn bytes_ref_keb (&'a self) -> Self::Bytes {
+      (**self).bytes_ref_keb()
+    }
+    fn kelem_eq_keb(&self, other : &Self) -> bool {
+      (**self).kelem_eq_keb(other)
+    }
+  }
+
+
+
+  #[cfg(test)]
+  impl DHTElem for BitVec {
+    #[inline]
+    fn bits_ref (& self) -> & BitVec {
+      &self
+    }
+    #[inline]
+    fn kelem_eq(&self, other : &Self) -> bool {
+    self == other
+    }
+  }
+
+
+  #[cfg(test)]
+  #[derive(Clone,PartialEq,Eq)]
+  pub struct KeyConflict {
+    pub key : BitVec,
+    pub content : BitVec,
+  }
+
+  #[cfg(test)]
+  impl DHTElem for KeyConflict {
+    #[inline]
+    fn bits_ref (& self) -> & BitVec {
+      &self.key
+    }
+    #[inline]
+    fn kelem_eq(&self, other : &Self) -> bool {
+      self.content == other.content
+    }
+  }
+
+
+
+  #[cfg(test)]
+  impl<'a> DHTElemBytes<'a> for Vec<u8> {
+    // return ing Vec<u8> is stupid but it is for testing
+    type Bytes = Vec<u8>;
+    fn bytes_ref_keb (&'a self) -> Self::Bytes {
+      self.clone()
+    }
+    fn kelem_eq_keb(&self, other : &Self) -> bool {
+      self == other
+    }
+  }
+
+  #[cfg(test)]
+  impl<'a, 'b> DHTElemBytes<'a> for &'b [u8] {
+    // using different lifetime is for test : for instance if we store a reference to a KeyVal
+    // (typical implementation in route (plus need algo to hash))
+    type Bytes = &'a [u8];
+    fn bytes_ref_keb (&'a self) -> Self::Bytes {
+       self
+    }
+    fn kelem_eq_keb(&self, other : &Self) -> bool {
+      self == other
+    }
+  }
+
+
+}

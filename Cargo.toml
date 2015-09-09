@@ -15,13 +15,12 @@ authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
 
 [features]
-#default = ["striple-impl","openssl-impl","rust-crypto-impl","dht-route","mio-impl"]
-default = ["striple-impl","rust-crypto-impl","with-extra-test","mio-impl","openssl-impl","dht-route"]
+#default = ["striple-impl","openssl-impl","rust-crypto-impl","mio-impl"]
+default = ["striple-impl","rust-crypto-impl","with-extra-test","mio-impl","openssl-impl"]
 striple-impl = ["striple"]
 openssl-impl = ["openssl"]
 rust-crypto-impl = ["rust-crypto"]
 mio-impl = ["mio","coroutine"]
-dht-route = ["dht"]
 with-extra-test = []
 
 [dependencies]
@@ -64,10 +63,6 @@ path = "../rust-striple/"
 optional = true
 features = ["public_crypto","serialize","public_openssl","cryptoecdsa","opensslrsa","opensslpbkdf2"]
 
-[dependencies.dht]
-path = "../mydht-dep/rust-dht/"
-#git = "https://github.com/cheme/rust-dht.git"
-optional = true
 
 
 

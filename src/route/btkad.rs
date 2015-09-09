@@ -1,8 +1,6 @@
-extern crate dht as odht;
-extern crate num;
 
-use self::odht::KNodeTable;
-use self::odht::Peer as DhtPeer;
+extern crate bit_vec;
+use self::bit_vec::BitVec;
 use std::io::Result as IoResult;
 use mydhtresult::{ErrorKind,Error};
 
@@ -27,45 +25,45 @@ use procs::mesgs::{ClientMessage};
 use mydhtresult::Result as MydhtResult;
 use super::{ServerInfo,ClientInfo};
 
-#[derive(Clone,Debug)]
-struct ArcP<P : DhtPeer>(Arc<P>);
+use std::borrow::Borrow;
+
+use super::byte_rep::{
+  DHTElem,
+  DHTElemBytes,
+  SimpleDHTElemBytes
+};
+
+use route::knodetable::KNodeTable;
+
 
 // No priority mgmt only offline or not (only one kad) // TODO minus hashmap : pb is get
 /// Routing with a bitorrent kademlia choice of closest peer
 /// In fact it need DhtKey for peer and value (converting key to bigint to be able to xor
 /// keys).
-/// This route need Peer implementing DhtPeer trait for interface with underlying library fork.
-pub struct BTKad<P : Peer + DhtPeer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> where P::Key : Hash {
+/// This route need Peer implementing DHTPeer trait for interface with underlying library fork.
+/// TODO make it generic over any routing table
+/// Note that for element which store a bitvec as a key this is not efficient (for element storing
+/// or calculing Vec<u8> its fine).
+pub struct BTKad<P : Peer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> 
+  where for<'a> P::Key : DHTElemBytes<'a>,
+        for<'a> V::Key : DHTElemBytes<'a>,
+        for<'a> P : DHTElemBytes<'a>,
+{
   // TODO switch to a table of key only : here P is already in cache!!!!
-  kad : KNodeTable<ArcP<P>>,
+  kad : KNodeTable<SimpleDHTElemBytes<Arc<P>>>,
 //  peers : HashMap<P::Key, (Arc<P>, PeerPriority, Option<ClientChanel<P,V>>)>,
   peers : C, //TODO maybe get node priority out of this container or do in place update
   _phdat : PhantomData<(V,T)>,
 }
 
 
-impl<P : DhtPeer> DhtPeer for ArcP<P> {
-  type Id = P::Id;
-  fn id<'a> (&'a self) -> &'a P::Id {
-    self.0.id()
-  }
-  #[inline]
-  fn key_as_buint<'a>(k : &'a P::Id) -> &'a num::BigUint {
-    <P as DhtPeer>::key_as_buint(k)
-  }
-  #[inline]
-  fn random_id(hash_size : usize) -> P::Id {
-    <P as DhtPeer>::random_id(hash_size)
-  }
-}
-
-// trait use for kad like routing where the key of value is compared with user dhtkey
-pub trait DhtKey<K : DhtPeer> {
-  fn to_peer_key(&self) -> K::Id;
-}
 
 // implementation of bt kademlia from rust-dht project
-impl<A : Address, P : Peer<Address = A> + DhtPeer, V : KeyVal, T : Transport<Address = A>, C : KVCache<P::Key, PeerInfo<P,V,T>>> Route<A,P,V,T> for BTKad<P,V,T,C> where P::Key : DhtKey<P> + Hash,  V::Key : DhtKey<P>  {
+impl<A : Address, P : Peer<Address = A>, V : KeyVal, T : Transport<Address = A>, C : KVCache<P::Key, PeerInfo<P,V,T>>> Route<A,P,V,T> for BTKad<P,V,T,C> 
+  where for<'a> P::Key : DHTElemBytes<'a>,
+        for<'a> V::Key : DHTElemBytes<'a>,
+        for<'a> P : DHTElemBytes<'a>,
+{
   fn query_count_inc(& mut self, pnid : &P::Key){
     // Not used
   }
@@ -89,9 +87,6 @@ impl<A : Address, P : Peer<Address = A> + DhtPeer, V : KeyVal, T : Transport<Add
     })
   }
 
-
-
-
   fn update_priority(& mut self, nodeid : &P::Key, opri : Option<PeerState>, och : Option<PeerStateChange>) where P::Key : Send {
     debug!("update prio of {:?} to {:?} , {:?}",nodeid,opri,och);
     let putinkad = match opri {
@@ -111,20 +106,18 @@ impl<A : Address, P : Peer<Address = A> + DhtPeer, V : KeyVal, T : Transport<Add
       pi_upprio(v,opri,och)
     }) {
       if putinkad {
-          // Note that update is done even if same status (it invole a kad position
-          // update)
-          let tmp = self.peers.get_val_c(nodeid);
-          let updok = if tmp.is_some(){
-            self.kad.update(&ArcP(tmp.unwrap().0.clone())) // TODO return possibly not added node
-          }else{
-            false
-          };
-          if !updok {
-            debug!("Viable node not in possible closest due to full bucket");
-          }
+        // Note that update is done even if same status (it invole a kad position
+        // update)
+        let tmp = self.peers.get_val_c(nodeid);
+        if tmp.is_some(){
+          self.kad.add(SimpleDHTElemBytes::new(tmp.unwrap().0.clone())) // TODO return possibly not added node
+        };
       } else {
+        let tmp = self.peers.get_val_c(nodeid);
+        if let Some(elem) = tmp {
           //remove
-          self.kad.remove(&nodeid.to_peer_key());
+          self.kad.remove(&SimpleDHTElemBytes::new(elem.0.clone())); // TODO
+        }
       }
 
     };
@@ -138,14 +131,15 @@ impl<A : Address, P : Peer<Address = A> + DhtPeer, V : KeyVal, T : Transport<Add
   }
 
   fn get_closest_for_node(& self, nnid : &P::Key, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {
-    let id : &P::Id = &nnid.to_peer_key();
-    self.kad.find(id, nbnode.to_usize().unwrap()) // TODO filter offline!! if no remove??
-      .into_iter().map (|n|n.0).collect()
+    let id = BitVec::from_bytes(nnid.bytes_ref_keb().borrow());
+    self.kad.get_closest(&id, nbnode.to_usize().unwrap()) // TODO filter offline!! if no remove??
+      .into_iter().map (|n|n.0.clone()).collect()
   }
 
   fn get_closest_for_query(& self, nnid : &V::Key, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {
-    self.kad.find(&nnid.to_peer_key(), nbnode.to_usize().unwrap()) // TODO filter offline!!
-      .into_iter().map (|n|n.0).collect()
+    let id = BitVec::from_bytes(nnid.bytes_ref_keb().borrow());
+    self.kad.get_closest(&id, nbnode.to_usize().unwrap()) // TODO filter offline!!
+      .into_iter().map (|n|n.0.clone()).collect()
   }
  
   fn get_pool_nodes(& self, nbnode : usize) -> Vec<Arc<P>> {
@@ -170,18 +164,30 @@ impl<A : Address, P : Peer<Address = A> + DhtPeer, V : KeyVal, T : Transport<Add
 
 }
 
-impl<P : Peer + DhtPeer, V : KeyVal, T : Transport> BTKad<P,V,T,HashMap<P::Key, PeerInfo<P,V,T>>> where P::Key : Hash {
+impl<P : Peer, V : KeyVal, T : Transport> BTKad<P,V,T,HashMap<P::Key, PeerInfo<P,V,T>>>
+  where for<'a> P::Key : DHTElemBytes<'a>,
+        for<'a> V::Key : DHTElemBytes<'a>,
+        for<'a> P : DHTElemBytes<'a>,
+        P::Key : Hash,
+{
   #[inline]
-  pub fn new(k : P::Id) -> BTKad<P,V,T,HashMap<P::Key, PeerInfo<P,V,T>>> {
-    Self::new_with_cache(k, HashMap::new())
+  pub fn new(k : &P::Key, bucket_size : usize, hash_size : usize) -> BTKad<P,V,T,HashMap<P::Key, PeerInfo<P,V,T>>> {
+    Self::new_with_cache(k, HashMap::new(), bucket_size, hash_size)
   }
 }
 
-impl<P : Peer + DhtPeer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> BTKad<P,V,T,C> where P::Key : Hash {
+impl<P : Peer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo<P,V,T>>> BTKad<P,V,T,C>
+  where for<'a> P::Key : DHTElemBytes<'a>,
+        for<'a> V::Key : DHTElemBytes<'a>,
+        for<'a> P : DHTElemBytes<'a>,
+        P::Key : Hash,
+{
     // TODO spawn a cleaner of the dht for poping oldest or pop in knodetable on update over full
     // TODO use with detail for right size of key (more in knodetable)
-  pub fn new_with_cache(k : P::Id, c : C) -> BTKad<P,V,T,C> {
-    BTKad{ kad : KNodeTable::new(k), peers : c, _phdat : PhantomData}
+  pub fn new_with_cache(k : &P::Key, c : C, bucket_size : usize, hash_size : usize) -> BTKad<P,V,T,C> {
+    let usid = BitVec::from_bytes(k.bytes_ref_keb().borrow());
+    let ktable = KNodeTable::new(usid, bucket_size, hash_size);
+    BTKad{ kad : ktable, peers : c, _phdat : PhantomData}
   }
 }
 
@@ -190,17 +196,21 @@ impl<P : Peer + DhtPeer, V : KeyVal, T : Transport, C : KVCache<P::Key, PeerInfo
 
 #[cfg(test)]
 mod test {
-  extern crate dht as odht;
   use rustc_serialize as serialize;
+  use super::super::byte_rep::{
+    DHTElem,
+    SimpleDHTElemBytes,
+    DHTElemBytes,
+  };
+
+
   use super::super::Route;
   use super::BTKad;
-  use super::DhtKey;
   use super::super::test;
   use keyval::KeyVal;
   use std::sync::{Arc};
   use std::collections::VecDeque;
   use peer::node::{Node,NodeID};
-  use self::odht::Peer as DhtPeer;
   use num::{BigUint};
   use num::bigint::RandBigInt;
   use std::net::{SocketAddr};
@@ -211,6 +221,7 @@ mod test {
   use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
   use std::fs::File;
   use rand;
+  use rand::Rng;
   use std::net::{Ipv4Addr};
   use keyval::{Attachment,SettableAttachment};
   use std::str::FromStr;
@@ -218,9 +229,10 @@ mod test {
 
 // TODO a clean nodeK, with better serialize (use as_vec) , but here good for testing as key is not
 // same type as id
-#[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
-pub struct NodeK(Node,BigUint);
-
+//#[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
+//pub struct NodeK(Node,BigUint);
+type NodeK = Node;
+/*
 impl KeyVal for NodeK {
     type Key = NodeID;
     /*
@@ -246,30 +258,31 @@ impl Peer for NodeK {
   }
 
 }
+*/
 
-impl DhtPeer for NodeK {
-  type Id = BigUint;
-  #[inline]
-  fn id<'a> (&'a self) -> &'a BigUint {
-    &self.1
-//      &BigUint::from_bytes_be(self.nodeid.as_bytes())
+
+impl<'a> DHTElemBytes<'a> for NodeK {
+  // return ing Vec<u8> is stupid but it is for testing
+  type Bytes = Vec<u8>;
+  fn bytes_ref_keb (&'a self) -> Self::Bytes {
+    self.nodeid.bytes_ref_keb()
   }
-  #[inline]
-  fn key_as_buint<'a>(k : &'a BigUint) -> &'a BigUint {
-      k
-  }
-  #[inline]
-  fn random_id(hash_size : usize) -> BigUint {
-      let mut rng = rand::thread_rng();
-      rng.gen_biguint(hash_size)
+  fn kelem_eq_keb(&self, other : &Self) -> bool {
+    self == other
   }
 }
-impl DhtKey<NodeK> for NodeID {
-  fn to_peer_key(&self) -> BigUint{
-      //BigUint::from_bytes_be(self.as_bytes())
-      FromStr::from_str(&self[..]).unwrap()
+impl<'a> DHTElemBytes<'a> for NodeID {
+  // return ing Vec<u8> is stupid but it is for testing
+  type Bytes = Vec<u8>;
+  fn bytes_ref_keb (&'a self) -> Self::Bytes {
+    self.as_bytes().to_vec()
+  }
+  fn kelem_eq_keb(&self, other : &Self) -> bool {
+    self == other
   }
 }
+
+
 /*
 impl serialize::Encodable for NodeK {
     fn encode<S:serialize::Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
@@ -305,21 +318,29 @@ impl serialize::Decodable for NodeK {
 }
 */
 
+const HASH_SIZE : usize = 160;
+const BUCKET_SIZE : usize = 10;
+
+fn random_id(hash_size : usize) -> NodeID {
+  let mut rng = rand::thread_rng();
+  let mut res : Vec<u8> = [0;HASH_SIZE / 8].to_vec();
+  rng.fill_bytes(&mut res[..]);
+  unsafe{
+    String::from_utf8_unchecked(res)
+  }
+}
 
 fn initpeer() -> Arc<NodeK> {
-  let id = <NodeK as DhtPeer>::random_id(160); // TODO hash size in btkad params 
+  let id = random_id(HASH_SIZE); // TODO hash size in btkad params 
 //    let sid = to_str_radix(id,10);
-  let sid = id.to_string();
-  let rid = sid.to_peer_key();
-  assert!(rid == id);
-  Arc::new(NodeK(Node{nodeid:sid, address: SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), 8080))},id))
+  Arc::new(Node{nodeid:id, address: SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), 8080))})
 }
 
 
-//#[test]
+#[test]
 fn test(){
-  let myid = <NodeK as DhtPeer>::random_id(160); // TODO hash size in btkad params 
-  let mut route : BTKad<NodeK, NodeK,Tcp,_> = BTKad::new(myid);
+  let myid = random_id(HASH_SIZE); // TODO hash size in btkad params 
+  let mut route : BTKad<NodeK, NodeK,Tcp,_> = BTKad::new(&myid,BUCKET_SIZE,HASH_SIZE);
     let nodes  = [
     initpeer(),
     initpeer(),
@@ -327,7 +348,7 @@ fn test(){
     initpeer(),
     initpeer(),
     ];
-  let kv = <NodeK as DhtPeer>::random_id(160).to_string();
+  let kv = random_id(HASH_SIZE).to_string();
 
   test::test_route(&nodes, & mut route, kv);
 }

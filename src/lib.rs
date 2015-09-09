@@ -258,7 +258,6 @@ pub mod dhtimpl {
   pub use query::simplecache::{SimpleCache,SimpleCacheQuery};
   pub use route::inefficientmap::{Inefficientmap};
 
-  #[cfg(feature="dht-route")]
   pub use route::btkad::{BTKad};
   pub use keyval::{FileKV};
   pub use kvstore::filestore::{FileStore};
