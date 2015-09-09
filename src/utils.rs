@@ -493,7 +493,7 @@ pub fn clone_wait_one_result_ifneq_timeout_ms<V : Clone + Send + Eq> (ores : &On
       match ores.1.wait_timeout_ms(guard, to) {
         
         Ok(mut r) => {
-          if !r.1 {
+          if r.1 {
             if (r.0).1 {
               (r.0).1  = false;
               let res = (r.0).0.clone();
@@ -534,7 +534,7 @@ pub fn clone_wait_one_result_timeout_ms<V : Clone + Send> (ores : &OneResult<V>,
       loop {
       match ores.1.wait_timeout_ms(guard, to) {
         Ok(mut r) => {
-          if !r.1 {
+          if r.1 {
             if (r.0).1 {
               (r.0).1  = false;
               let res = (r.0).0.clone();

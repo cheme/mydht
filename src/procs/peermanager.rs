@@ -26,6 +26,7 @@ use procs::sphandler_res;
 use utils::TransientOption;
 use mydhtresult::{Error,ErrorKind};
 use mydhtresult::Result as MDHTResult;
+use bit_vec::BitVec;
 
 
 /// TODO expect problem if pool of server managed by peermgmt & client local to peermgmt : client
@@ -70,7 +71,7 @@ pub fn start<RT : RunningTypes,
 
 
   let clientmode = rc.rules.client_mode();
-  let mut threadpool = ((0, Vec::new()),Vec::new());
+  let mut threadpool = ((0, BitVec::new()),Vec::new());
   let local = *clientmode == ClientMode::Local(true) || *clientmode == ClientMode::Local(false);
   let localspawn = *clientmode == ClientMode::Local(true);
   let servermode = resolve_server_mode (&rc);
@@ -1067,12 +1068,12 @@ fn calc_adj(nbquery : u8, rsize : usize, nftresh : usize) -> usize {
     adj * nftresh / unbq
   }
 }
-
+/// next free position and is there a sender
+type ThreadPoolInfo = (usize,BitVec);
 /// Thread pool is only use for multiple peers in order to manage index of new peers and start of
 /// new threads (a thread with no peers is designed to stop).
 /// Synchro with peer thread is a push : we may have living thread with empty peers slot until
 /// receiving peer removed message from client, but client are only added from this thread.
-type ThreadPoolInfo = (usize,Vec<bool>); // TODO replace vec bool by bitvec
 type ThreadPool<RT : RunningTypes> = (ThreadPoolInfo,Vec<Option<Sender<ClientMessageIx<RT::P,RT::V,<RT::T as Transport>::WriteStream>>>>); // TODO replace vec bool by bitvec
 
 #[inline]
@@ -1091,7 +1092,7 @@ fn is_lesseq_pool_thread (tp : &mut ThreadPoolInfo, thix : usize, treshold : usi
       };
       let mut ix = thix;
       while let Some(v) = tp.1.get(ix) {
-        if *v {
+        if v {
           tot = tot + 1;
           if tot > treshold {
             return false;
@@ -1103,7 +1104,7 @@ fn is_lesseq_pool_thread (tp : &mut ThreadPoolInfo, thix : usize, treshold : usi
     &ClientMode::ThreadedMax(ref maxth) => {
       let ixstart = thix * maxth;
       for ix in ixstart..(ixstart + maxth) {
-        if let Some(&true) = tp.1.get(ix) {
+        if let Some(true) = tp.1.get(ix) {
           tot = tot + 1;
           if tot > treshold {
             return false;
@@ -1136,26 +1137,26 @@ fn add_peer_to_pool (tp : &mut ThreadPoolInfo, cmode : &ClientMode) -> MDHTResul
     },
   };
 
-  let (push_last, recalc_pos) =  match tp.1.get_mut(tp.0) {
-    Some(mut val) => {
-      if *val {
+  let is_last =  match tp.1.get(tp.0) {
+    Some(val) => {
+      if val {
         debug!("wrong *val index value, pool may be full");
         return Err(Error("Full pool of peers".to_string(), ErrorKind::RouteError, None));
       } else {
-        *val = true;
-        (false,true)
+        false
       }
     },
     None => {
-      (true,false) 
+      true 
     },
   };
-  if push_last {
+  if is_last {
     tp.1.push(true); 
     // here if thread limit push false instead (currently no limit)
     tp.0 = tp.0 + 1;
-  } else if recalc_pos {
-    tp.0 = tp.1.position_elem(&false).unwrap_or(tp.1.len());
+  } else  {
+    tp.1.set(tp.0,true);
+    tp.0 = tp.1.iter().position(|b|b==false).unwrap_or(tp.1.len());
   };
   Ok((thix, pix))
   
@@ -1170,10 +1171,9 @@ fn rem_peer_from_pool (tp : &mut ThreadPoolInfo, thix : usize, pix : usize, cmod
       return
     },
   };
-  let rem = match tp.1.get_mut(ix) {
-    Some(mut val) => {
-      if *val {
-        *val = false;
+  let rem = match tp.1.get(ix) {
+    Some(val) => {
+      if val {
         true
       } else {
         debug!("trying to remove peer that was already removed from pool");
@@ -1185,9 +1185,11 @@ fn rem_peer_from_pool (tp : &mut ThreadPoolInfo, thix : usize, pix : usize, cmod
       false
     },
   };
-  if rem && ix < tp.0 {
+  if rem {
+    tp.1.set(ix,false);
+    if ix < tp.0 {
     tp.0 = ix;
-//    tp.1.position_elem(&false);
+    };
   };
 }
 
@@ -1230,7 +1232,7 @@ fn rem_peer
 #[test]
 fn test_thread_max() {
   let cmode = ClientMode::ThreadedMax(2);
-  let mut tp = (0,Vec::new());
+  let mut tp = (0,BitVec::new());
 
   assert!((0,0) == add_peer_to_pool (&mut tp, &cmode).unwrap());
   assert!((0,1) == add_peer_to_pool (&mut tp, &cmode).unwrap());
@@ -1252,7 +1254,7 @@ fn test_thread_max() {
 #[test]
 fn test_thread_pool() {
   let cmode = ClientMode::ThreadPool(2);
-  let mut tp = (0,Vec::new());
+  let mut tp = (0,BitVec::new());
 
   assert!((0,0) == add_peer_to_pool (&mut tp, &cmode).unwrap());
   assert!((1,0) == add_peer_to_pool (&mut tp, &cmode).unwrap());

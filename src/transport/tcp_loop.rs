@@ -34,6 +34,7 @@
 
 
 extern crate byteorder;
+extern crate vec_map;
 extern crate mio;
 use std::sync::mpsc;
 use std::sync::mpsc::{Sender};
@@ -64,7 +65,7 @@ use self::mio::PollOpt;
 use self::mio::tcp::Shutdown;
 //use super::Attachment;
 use num::traits::ToPrimitive;
-use std::collections::VecMap;
+use self::vec_map::VecMap;
 //use std::sync::Mutex;
 //use std::sync::Arc;
 //use std::sync::Condvar;
@@ -592,7 +593,7 @@ impl ReadTcpStream {
         loop {
           guard = match or.1.wait_timeout_ms(guard, *to) {
             Ok(mut r) => {
-              if (r.0).1 {
+              if !r.1 || (r.0).1 { // timeout or marker changed
                 (r.0).1 = false;
                 res = (r.1,0);
                 break;
@@ -629,6 +630,7 @@ impl ReadTcpStream {
     panic!("trying to read on closed read tcp stream : this is a bug");
   }
   }
+
   fn read_co(buf: &mut [u8], s : &mut MioTcpStream, tok : &Token, ch : &MioSender<HandlerMessage>) -> IoResult<usize> {
     let nb = try!(s.read(buf));
     if nb == 0 {

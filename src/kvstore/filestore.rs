@@ -1,4 +1,5 @@
-use bincode;
+use bincode::rustc_serialize as bincode;
+use bincode::SizeLimit;
 use std::io::Read;
 use std::io::Write;
 use std::io::Seek;
@@ -184,7 +185,7 @@ impl<V : FileKeyVal> KVStore<V> for FileStore<V> {
         ior = ior && conffile.set_len(0).is_ok();
         info!("writing paths cache for filestore : {:?}", self.paths);
         // write new content
-        ior = ior && conffile.write_all(&bincode::encode(&self.paths, bincode::SizeLimit::Infinite).unwrap()[..]).is_ok();
+        ior = ior && conffile.write_all(&bincode::encode(&self.paths, SizeLimit::Infinite).unwrap()[..]).is_ok();
         ior
       }).unwrap_or(false)
     } else {

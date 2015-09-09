@@ -12,7 +12,8 @@ use super::read_attachment;
 use mydhtresult::Result as MDHTResult;
 use mydhtresult::{Error,ErrorKind};
 use msgenc::send_variant::ProtoMessage as ProtoMessageSend;
-use bincode;
+use bincode::rustc_serialize as bincode;
+use bincode::SizeLimit;
 
 // full bencode impl
 #[derive(Debug,Clone)]
@@ -36,7 +37,7 @@ where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a,
       <V as KeyVal>::Key : 'a {
  
-     try!(bincode::encode_into(mesg, w, bincode::SizeLimit::Infinite));
+     try!(bincode::encode_into(mesg, w, SizeLimit::Infinite));
      Ok(())
   }
 
@@ -46,7 +47,7 @@ where <P as Peer>::Address : 'a,
   }
 
   fn decode_from<R : Read, P : Peer, V : KeyVal>(&self, r : &mut R) -> MDHTResult<ProtoMessage<P,V>> {
-    Ok(try!(bincode::decode_from(r, bincode::SizeLimit::Infinite)))
+    Ok(try!(bincode::decode_from(r, SizeLimit::Infinite)))
   }
 
   fn attach_from<R : Read>(&self, r : &mut R) -> MDHTResult<Option<Attachment>> {

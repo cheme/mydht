@@ -4,8 +4,9 @@
 
 extern crate crypto;
 extern crate time;
-extern crate bincode;
 
+use bincode::rustc_serialize as bincode;
+use bincode::SizeLimit;
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 //use rustc_serialize::hex::{ToHex,FromHex};
 //use std::io::Result as IoResult;
@@ -147,7 +148,7 @@ impl<'a> TrustedVal<ECDSAPeer, PeerInfoRel> for ECDSAPeer {
       name : &self.name,
       date : &self.date,
     }
-, bincode::SizeLimit::Infinite).unwrap()
+, SizeLimit::Infinite).unwrap()
   }
   #[inline]
   fn get_sign<'b> (&'b self) -> &'b Vec<u8> {
@@ -233,7 +234,7 @@ impl ECDSAPeer {
       <ECDSAPeer as TrustedVal<ECDSAPeer,PeerInfoRel>>::init_sign_val(&private, PeerInfoRel.get_rep().as_slice(), 
       & bincode::encode(
       &tosign
-, bincode::SizeLimit::Infinite).unwrap()
+, SizeLimit::Infinite).unwrap()
       )
     };
  
@@ -264,7 +265,7 @@ impl ECDSAPeer {
       <ECDSAPeer as TrustedVal<ECDSAPeer,PeerInfoRel>>::init_sign_val(pk, PeerInfoRel.get_rep().as_slice(), 
       & bincode::encode(
       tosign
-, bincode::SizeLimit::Infinite).unwrap()
+, SizeLimit::Infinite).unwrap()
       )
     });
 

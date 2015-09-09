@@ -1,7 +1,8 @@
 //! Trusted peer implementation.
 
 
-extern crate bincode;
+use bincode::rustc_serialize as bincode;
+use bincode::SizeLimit;
 
 use rustc_serialize::{Encoder,Encodable,Decoder};
 use keyval::{KeyVal};
@@ -87,7 +88,7 @@ impl<TP : TrustedPeer> PeerSign<TP> {
        
       (&from, &about, trust, tag)
 
-, bincode::SizeLimit::Infinite).unwrap()
+, SizeLimit::Infinite).unwrap()
       ;
       <Self as TrustedVal<TP, PeerTrustRel>>::sign_val(fromp, &PeerTrustRel, &tosign)
     };
@@ -131,7 +132,7 @@ impl<'a, TP : TrustedPeer> TrustedVal<TP, PeerTrustRel> for PeerSign<TP> {
   fn get_sign_content (& self) -> Vec<u8> {
    bincode::encode(
      & (self.from(), self.about(), self.trust, self.tag)
-, bincode::SizeLimit::Infinite).unwrap()
+, SizeLimit::Infinite).unwrap()
   }
   #[inline]
   fn get_sign<'b> (&'b self) -> &'b Vec<u8> {

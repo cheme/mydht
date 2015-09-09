@@ -1,6 +1,5 @@
 
-extern crate bit_vec;
-use self::bit_vec::BitVec;
+use bit_vec::BitVec;
 use std::io::Result as IoResult;
 use mydhtresult::{ErrorKind,Error};
 

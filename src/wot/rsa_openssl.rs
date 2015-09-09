@@ -4,7 +4,6 @@
 
 extern crate openssl;
 extern crate time;
-extern crate bincode;
 
 //use mydhtresult::Result as MDHTResult;
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
@@ -32,6 +31,8 @@ use super::{TrustedPeer,Truster,TrustRel,TrustedVal,PeerInfoRel};
 //use super::trustedpeer::{TrustedPeerToSignDec};
 use super::trustedpeer::{TrustedPeerToSignEnc, SendablePeerEnc, SendablePeerDec};
 use peer::Peer;
+use bincode::rustc_serialize as bincode;
+use bincode::SizeLimit;
 
 static RSA_SIZE : usize = 2048;
 static HASH_SIGN : Type = Type::SHA512;
@@ -232,7 +233,7 @@ impl<'a> TrustedVal<RSAPeer, PeerInfoRel> for RSAPeer
       name : &self.name,
       date : &self.date,
     }
-, bincode::SizeLimit::Infinite).unwrap()
+, SizeLimit::Infinite).unwrap()
   }
   #[inline]
   fn get_sign<'b> (&'b self) -> &'b Vec<u8> {
@@ -328,7 +329,7 @@ impl RSAPeer {
       <RSAPeer as TrustedVal<RSAPeer,PeerInfoRel>>::init_sign_val(&pkey, &PeerInfoRel.get_rep()[..], 
       & bincode::encode(
       & tosign
-, bincode::SizeLimit::Infinite).unwrap()
+, SizeLimit::Infinite).unwrap()
       )
     };
  
@@ -361,7 +362,7 @@ impl RSAPeer {
       <RSAPeer as TrustedVal<RSAPeer,PeerInfoRel>>::init_sign_val(&pkey, &PeerInfoRel.get_rep()[..], 
       &bincode::encode(&
       tosign
-, bincode::SizeLimit::Infinite).unwrap()
+, SizeLimit::Infinite).unwrap()
       )
     };
 

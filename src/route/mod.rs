@@ -415,8 +415,7 @@ use peer::{Peer, PeerPriority,PeerState,PeerStateChange};
 /// themselves (mainly in DHT routing)
 pub mod byte_rep {
 
-  extern crate bit_vec;
-  use self::bit_vec::BitVec;
+  use bit_vec::BitVec;
   use std::borrow::Borrow;
   use peer::Peer;
   use std::sync::Arc;

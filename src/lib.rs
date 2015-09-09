@@ -20,6 +20,7 @@ extern crate time;
 extern crate num;
 extern crate bincode;
 extern crate byteorder;
+extern crate bit_vec;
 extern crate rand;
 
 #[macro_export]
@@ -315,8 +316,8 @@ use std::sync::mpsc::SendError;
 use std::sync::mpsc::RecvError;
 
 //use std::marker::Reflect;
-use bincode::EncodingError as BincError;
-use bincode::DecodingError as BindError;
+use bincode::rustc_serialize::EncodingError as BincError;
+use bincode::rustc_serialize::DecodingError as BindError;
 use std::result::Result as StdResult;
 
 #[derive(Debug)]

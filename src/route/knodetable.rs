@@ -5,8 +5,7 @@
 //! of same size (the size defined in the bucket), when associated constant stabilize Bytes could
 //! became Borrow<[u8;Self::KLEN]>.
 
-extern crate bit_vec;
-use self::bit_vec::BitVec;
+use bit_vec::BitVec;
 //use std::convert::AsRef;
 use std::borrow::Borrow;
 use std::mem::swap;

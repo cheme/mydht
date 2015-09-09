@@ -70,7 +70,7 @@ impl Transport for Tcp {
           debug!("  - From {:?}", s.peer_addr());
           debug!("  - With {:?}", s.peer_addr());
           if self.mult {
-            try!(s.set_keepalive (self.streamtimeout.num_seconds().to_u32()));
+//            try!(s.set_keepalive (self.streamtimeout.num_seconds().to_u32()));
             try!(s.set_read_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs)));
             try!(s.set_write_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs)));
 
@@ -94,7 +94,7 @@ impl Transport for Tcp {
     // connect TODO new api timeout
     //let s = TcpStream::connect_timeout(p, self.connecttimeout);
     let s = try!(TcpStream::connect(p));
-    try!(s.set_keepalive (self.streamtimeout.num_seconds().to_u32()));
+//    try!(s.set_keepalive (self.streamtimeout.num_seconds().to_u32()));
     if self.mult {
       let rs = try!(s.try_clone());
       Ok((s,Some(rs)))

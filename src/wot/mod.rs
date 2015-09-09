@@ -1,6 +1,7 @@
 //! Web of trust base components.
-extern crate bincode;
 
+use bincode::rustc_serialize as bincode;
+use bincode::SizeLimit;
 
 //use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 //use std::path::{Path,PathBuf};
@@ -51,7 +52,7 @@ pub trait TrustedVal<T : Truster, R : TrustRel> : KeyVal {
   fn check_val (&self, from : &T, about : &R) -> bool {
     if self.get_from() == &from.get_key() {
       let tosign = &self.get_sign_content();
-      let tocheckenc = bincode::encode(&(about.get_rep(),tosign), bincode::SizeLimit::Infinite).unwrap();
+      let tocheckenc = bincode::encode(&(about.get_rep(),tosign), SizeLimit::Infinite).unwrap();
       from.content_check(tocheckenc.as_slice(), self.get_sign().as_slice())
     } else {
       false
@@ -60,13 +61,13 @@ pub trait TrustedVal<T : Truster, R : TrustRel> : KeyVal {
 
   //fn sign_val<EC : Encodable> (from : &T, about : &R, cont : &EC) -> Vec<u8> 
   fn sign_val (from : &T, about : &R, cont : &Vec<u8>) -> Vec<u8> {
-    from.content_sign(bincode::encode(&(about.get_rep(),cont), bincode::SizeLimit::Infinite).unwrap().as_slice())
+    from.content_sign(bincode::encode(&(about.get_rep(),cont), SizeLimit::Infinite).unwrap().as_slice())
   }
 
   /// same as sign_val but for technical usage when Trustor is not yet totally initiated
   fn init_sign_val (from : &T::Internal, about : &[u8], cont : &Vec<u8>) -> Vec<u8> {
   //fn init_sign_val<EC : Encodable> (from : &T::Internal, about : &[u8], cont : &EC) -> Vec<u8> 
-    <T as Truster>::init_content_sign(from, bincode::encode(&(about,cont), bincode::SizeLimit::Infinite).unwrap().as_slice())
+    <T as Truster>::init_content_sign(from, bincode::encode(&(about,cont), SizeLimit::Infinite).unwrap().as_slice())
   }
 
   // TODO evolution to include get_sign value in the key creation -> add a method init key (maybe
