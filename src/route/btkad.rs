@@ -132,13 +132,13 @@ impl<A : Address, P : Peer<Address = A>, V : KeyVal, T : Transport<Address = A>,
 
   fn get_closest_for_node(& self, nnid : &P::Key, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {
     let id = BitVec::from_bytes(nnid.bytes_ref_keb().borrow());
-    self.kad.get_closest(&id, nbnode.to_usize().unwrap()) // TODO filter offline!! if no remove??
+    self.kad.get_closest(&id, nbnode.to_usize().unwrap())
       .into_iter().map (|n|n.0.clone()).collect()
   }
 
   fn get_closest_for_query(& self, nnid : &V::Key, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {
     let id = BitVec::from_bytes(nnid.bytes_ref_keb().borrow());
-    self.kad.get_closest(&id, nbnode.to_usize().unwrap()) // TODO filter offline!!
+    self.kad.get_closest(&id, nbnode.to_usize().unwrap())
       .into_iter().map (|n|n.0.clone()).collect()
   }
  
