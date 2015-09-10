@@ -18,22 +18,22 @@ pub trait KVCache<K, V> {
   }
   /// update value, possibly inplace (depending upon impl (some might just get value modify it and
   /// set it again)), return true if update effective
-  fn update_val_c<'a, F>(&'a mut self, &K, f : F) -> Result<bool> where F : FnOnce(&'a mut V) -> Result<()>;
+  fn update_val_c<F>(& mut self, &K, f : F) -> Result<bool> where F : FnOnce(& mut V) -> Result<()>;
  
   /// Remove value
   fn remove_val_c(& mut self, &K);
 
   /// fold without closure over all content
-  fn strict_fold_c<'a, B, F>(&'a self, init: B, f: &F) -> B where F: Fn(B, (&'a K, &'a V)) -> B;
+  fn strict_fold_c<'a, B, F>(&'a self, init: B, f: F) -> B where F: Fn(B, (&'a K, &'a V)) -> B, K : 'a, V : 'a;
   /// very permissive fold (allowing closure)
-  fn fold_c<'a, B, F>(&'a self, init: B, mut f: F) -> B where F: FnMut(B, (&'a K, &'a V)) -> B;
+  fn fold_c<'a, B, F>(&'a self, init: B, mut f: F) -> B where F: FnMut(B, (&'a K, &'a V)) -> B, K : 'a, V : 'a;
 
   // TODO lightweigh map (more lightweight than  fold (no fn mut), find name where result is a
   // Result () not a vec + default impl in trem of fold_c TODO a result for fail computation : work
   // in Mdht result
   /// map allowing closure, stop on first error, depending on sematic error may be used to end
   /// computation (fold with early return).
-  fn map_inplace_c<'a,F>(&'a self, mut f: F) -> Result<()> where F: FnMut((&'a K, &'a V)) -> Result<()> {
+  fn map_inplace_c<'a,F>(&'a self, mut f: F) -> Result<()> where F: FnMut((&'a K, &'a V)) -> Result<()>, K : 'a, V : 'a {
     self.fold_c(Ok(()),|err,kv|{if err.is_ok() {f(kv)} else {err}})
   }
 
@@ -45,9 +45,9 @@ pub trait KVCache<K, V> {
 
 
 
-pub struct NoCache<K, V>(PhantomData<(K, V)>);
+pub struct NoCache<K,V>(PhantomData<(K,V)>);
 
-impl<K , V > KVCache<K,V> for NoCache<K,V> {
+impl<K,V> KVCache<K,V> for NoCache<K,V> {
   //type I = ();
   fn add_val_c(& mut self, _ : K, _ : V) {
     ()
@@ -55,16 +55,16 @@ impl<K , V > KVCache<K,V> for NoCache<K,V> {
   fn get_val_c<'a>(&'a self, _ : &K) -> Option<&'a V> {
     None
   }
-  fn update_val_c<'a, F>(&'a mut self, _ : &K, _ : F) -> Result<bool> where F : FnOnce(&'a mut V) -> Result<()> {
+  fn update_val_c<F>(&mut self, _ : &K, _ : F) -> Result<bool> where F : FnOnce(&mut V) -> Result<()> {
     Ok(false)
   }
-  fn remove_val_c(& mut self, _ : &K) {
+  fn remove_val_c(&mut self, _ : &K) {
     ()
   }
-  fn strict_fold_c<'a, B, F>(&'a self, init: B, _: &F) -> B where F: Fn(B, (&'a K, &'a V)) -> B {
+  fn strict_fold_c<'a, B, F>(&'a self, init: B, _: F) -> B where F: Fn(B, (&'a K, &'a V)) -> B, K : 'a, V : 'a {
     init
   }
-  fn fold_c<'a, B, F>(&'a self, init: B, _ : F) -> B where F: FnMut(B, (&'a K, &'a V)) -> B {
+  fn fold_c<'a, B, F>(&'a self, init: B, _ : F) -> B where F: FnMut(B, (&'a K, &'a V)) -> B, K : 'a, V : 'a {
     init
   }
   fn len_c (& self) -> usize {
@@ -91,7 +91,7 @@ impl<K: Hash + Eq, V> KVCache<K,V> for HashMap<K,V> {
     self.contains_key(key)
   }
 
-  fn update_val_c<'a, F>(&'a mut self, k : &K, f : F) -> Result<bool> where F : FnOnce(&'a mut V) -> Result<()> {
+  fn update_val_c<F>(&mut self, k : &K, f : F) -> Result<bool> where F : FnOnce(&mut V) -> Result<()> {
     if let Some(x) = self.get_mut(k) {
       try!(f(x));
       Ok(true)
@@ -111,14 +111,14 @@ impl<K: Hash + Eq, V> KVCache<K,V> for HashMap<K,V> {
     self.len()
   }
 
-  fn strict_fold_c<'a, B, F>(&'a self, init: B, f: &F) -> B where F: Fn(B, (&'a K, &'a V)) -> B {
+  fn strict_fold_c<'a, B, F>(&'a self, init: B, f: F) -> B where F: Fn(B, (&'a K, &'a V)) -> B, K : 'a, V : 'a {
     let mut res = init;
     for kv in self.iter(){
       res = f(res,kv);
     };
     res
   }
-  fn fold_c<'a, B, F>(&'a self, init: B, mut f: F) -> B where F: FnMut(B, (&'a K, &'a V)) -> B {
+  fn fold_c<'a, B, F>(&'a self, init: B, mut f: F) -> B where F: FnMut(B, (&'a K, &'a V)) -> B, K : 'a, V : 'a  {
     let mut res = init;
     for kv in self.iter(){
       res = f(res,kv);

@@ -273,7 +273,7 @@ pub trait Route<A:Address,P:Peer<Address = A>,V:KeyVal,T:Transport<Address = A>>
 
   /// update fields that can be modified in place (not priority or node because it could structure
   /// route storage).
-  fn update_infos<'a, F>(&'a mut self, &P::Key, f : F) -> MydhtResult<bool> where F : FnOnce(&'a mut (Option<ServerInfo>, Option<ClientInfo<P,V,T>>)) -> MydhtResult<()>;
+  fn update_infos<F>(&mut self, &P::Key, f : F) -> MydhtResult<bool> where F : FnOnce(&mut (Option<ServerInfo>, Option<ClientInfo<P,V,T>>)) -> MydhtResult<()>;
 
   // TODO change
   /// get a peer info (peer, priority (eg offline), and existing channel to client process) 

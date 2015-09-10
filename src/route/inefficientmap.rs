@@ -72,8 +72,8 @@ impl<A : Address, P : Peer<Address = A>, V : KeyVal, T : Transport<Address = A>,
     self.peers.update_val_c(nodeid,|v|pi_upprio(v,opri,och)).unwrap();
   }
 
-  fn update_infos<'a, F>(&'a mut self, nodeid : &P::Key, f : F) -> MydhtResult<bool> where F : FnOnce(&'a mut (Option<ServerInfo>, Option<ClientInfo<P,V,T>>)) -> MydhtResult<()> {
-    self.peers.update_val_c(nodeid,|& mut (_,_,ref mut sici)|{
+  fn update_infos<F>(&mut self, nodeid : &P::Key, f : F) -> MydhtResult<bool> where F : FnOnce(&mut (Option<ServerInfo>, Option<ClientInfo<P,V,T>>)) -> MydhtResult<()> {
+    self.peers.update_val_c(nodeid,|&mut (_,_,ref mut sici)|{
       f(sici)
     })
   }

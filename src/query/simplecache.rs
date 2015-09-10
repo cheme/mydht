@@ -41,7 +41,7 @@ pub struct SimpleCache<V : KeyVal, C : KVCache<<V as KeyVal>::Key, V>> where V::
 impl<K1 : Key + Hash, K2 : Key + Hash, V : KeyVal<Key=(K1,K2)>, C : KVCache<(K1,K2),V>> KVStoreRel<K1, K2, V> for SimpleCache<V,C>
  {
   fn get_vals_from_left(& self, k1 : &K1) -> Vec<V> {
-    self.cache.strict_fold_c(Vec::new(),&|mut r, (ref k,ref v)| {
+    self.cache.strict_fold_c(Vec::new(),|mut r, (ref k,ref v)| {
       if k.0 == *k1 {
         r.push((*v).clone())
       };
@@ -50,7 +50,7 @@ impl<K1 : Key + Hash, K2 : Key + Hash, V : KeyVal<Key=(K1,K2)>, C : KVCache<(K1,
     //self.cache.iter_c().filter(|&(ref k,ref v)| k.0 == *k1).map(|(ref k, ref v)|(*v).clone()).collect()
   }
   fn get_vals_from_right(& self, k2 : &K2) -> Vec<V> {
-    self.cache.strict_fold_c(Vec::new(),&|mut r, (ref k,ref v)| {
+    self.cache.strict_fold_c(Vec::new(),|mut r, (ref k,ref v)| {
       if k.1 == *k2 {
         r.push((*v).clone())
       };
@@ -146,7 +146,7 @@ impl<T : KeyVal, C : KVCache<<T as KeyVal>::Key, T>> SimpleCache<T,C>
         //fn second<A, B>((_, b): (A, B)) -> B { b }
         //let second: fn((&'a <T as KeyVal>::Key,&'a T)) -> &'a T = second;
         let l  = self.cache.len_c();
-        let vser : Vec<&T> = self.cache.strict_fold_c(Vec::with_capacity(l),&|mut v,p| {v.push(p.1);v});
+        let vser : Vec<&T> = self.cache.strict_fold_c(Vec::with_capacity(l),|mut v,p| {v.push(p.1);v});
         try!(conffile.write(&json::encode(&vser).unwrap().into_bytes()[..]));
         Ok(())
       },
