@@ -155,12 +155,12 @@ impl PeerMgmtMeths<Node, DummyKeyVal> for DummyRules{
   fn checkmsg  (&self, _ : &Node, _ : &String, _ : &String) -> bool{ true}
   // typically accept return either normal (no priority managed) or a int priority
  
-  fn accept<RT : RunningTypes<P=Node,V=DummyKeyVal>>
+  fn accept<M : PeerMgmtMeths<Node, DummyKeyVal>, RT : RunningTypes<P=Node,V=DummyKeyVal,A=<Node as Peer>::Address,M=M>>
   (&self, _ : &Node, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
   -> Option<PeerPriority>
   {Some (PeerPriority::Priority(1))}
   #[inline]
-  fn for_accept_ping<RT : RunningTypes<P=Node,V=DummyKeyVal>>
+  fn for_accept_ping<M : PeerMgmtMeths<Node, DummyKeyVal>, RT : RunningTypes<P=Node,V=DummyKeyVal,A=<Node as Peer>::Address,M=M>>
   (&self, _ : &Arc<Node>, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
   {}
 }
@@ -181,12 +181,12 @@ impl PeerMgmtMeths<Node, DummyKeyVal> for DummyRules2 {
 
 
   // typically accept return either normal (no priority managed) or a int priority
-  fn accept<RT : RunningTypes<P=Node,V=DummyKeyVal>>
+  fn accept<M : PeerMgmtMeths<Node, DummyKeyVal>, RT : RunningTypes<P=Node,V=DummyKeyVal,A=<Node as Peer>::Address,M=M>>
   (&self, _ : &Node, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
   -> Option<PeerPriority>
   {Some (PeerPriority::Priority(2))}
   #[inline]
-  fn for_accept_ping<RT : RunningTypes<P=Node,V=DummyKeyVal>>
+  fn for_accept_ping<M : PeerMgmtMeths<Node, DummyKeyVal>, RT : RunningTypes<P=Node,V=DummyKeyVal,A=<Node as Peer>::Address,M=M>>
   (&self, _ : &Arc<Node>, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
   {}
   

@@ -113,10 +113,10 @@ pub trait PeerMgmtMeths<P : Peer, V : KeyVal> : Send + Sync + 'static {
   fn checkmsg (&self, &P, &String, &String) -> bool; // node, challenge and signature
   /// accept a peer? (reference to running process and running context could be use to query
   /// ourself
-  fn accept<RT : RunningTypes<P=P,V=V>> (&self, &P, &RunningProcesses<RT>, &ArcRunningContext<RT>) -> Option<PeerPriority>;
+  fn accept<M : PeerMgmtMeths<P,V>, RT : RunningTypes<P=P,V=V,A=P::Address,M=M>> (&self, &P, &RunningProcesses<RT>, &ArcRunningContext<RT>) -> Option<PeerPriority>;
   // call from accept it will loop on sending info to never online peer)
   /// Post action after adding a new online peer : eg propagate or update this in another store
-  fn for_accept_ping<RT : RunningTypes<P=P,V=V>> (&self, &Arc<P>, &RunningProcesses<RT>, &ArcRunningContext<RT>);
+  fn for_accept_ping<M : PeerMgmtMeths<P,V>, RT : RunningTypes<P=P,V=V,A=P::Address,M=M>> (&self, &Arc<P>, &RunningProcesses<RT>, &ArcRunningContext<RT>);
 }
 
 

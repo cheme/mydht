@@ -491,7 +491,7 @@ impl PeerMgmtMeths<RSAPeer, MulKV> for UnsignedOpenAccess {
     "".to_string()
   }
   fn checkmsg  (&self, _ : &RSAPeer, _ : &String, _ : &String) -> bool{true}
-  fn accept<RT : RunningTypes<P=RSAPeer,V=MulKV>> (
+  fn accept<M : PeerMgmtMeths<RSAPeer, MulKV>, RT : RunningTypes<P=RSAPeer,V=MulKV,A=<RSAPeer as Peer>::Address,M=M>> (
       &self, 
       _ : &RSAPeer, 
       _ : &RunningProcesses<RT>, 
@@ -502,7 +502,7 @@ impl PeerMgmtMeths<RSAPeer, MulKV> for UnsignedOpenAccess {
       Some (PeerPriority::Normal)
     }
 #[inline]
-  fn for_accept_ping<RT : RunningTypes<P=RSAPeer,V=MulKV>>  (&self, _ : &Arc<RSAPeer>, 
+  fn for_accept_ping<M : PeerMgmtMeths<RSAPeer, MulKV>, RT : RunningTypes<P=RSAPeer,V=MulKV,A=<RSAPeer as Peer>::Address,M=M>> (&self, _ : &Arc<RSAPeer>, 
       _ : &RunningProcesses<RT>, 
       _ : &ArcRunningContext<RT>) 
   {
@@ -645,13 +645,17 @@ impl PeerMgmtMeths<RSAPeer, MulKV> for WotAccess {
     }
   }
 #[inline]
-  fn accept<RT : RunningTypes<P = RSAPeer, V = MulKV>> (&self, n : &RSAPeer, 
+  fn accept<M : PeerMgmtMeths<RSAPeer, MulKV>, RT : RunningTypes<P=RSAPeer,V=MulKV,A=<RSAPeer as Peer>::Address,M=M>> (
+      &self, 
+      n : &RSAPeer, 
       rp : &RunningProcesses<RT>, 
       rc : &ArcRunningContext<RT>) 
     -> Option<PeerPriority> {
       self.accept_rec(n, rp, rc, true)
     }
-  fn for_accept_ping<RT : RunningTypes<P = RSAPeer, V = MulKV>> (&self, n : &Arc<RSAPeer>, 
+  fn for_accept_ping<M : PeerMgmtMeths<RSAPeer, MulKV>, RT : RunningTypes<P=RSAPeer,V=MulKV,A=<RSAPeer as Peer>::Address,M=M>> (
+      &self,
+      n : &Arc<RSAPeer>, 
       rp : &RunningProcesses<RT>, 
       rc : &ArcRunningContext<RT>) 
   {
