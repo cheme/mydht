@@ -7,8 +7,10 @@ use std::net::{SocketAddr};
 use std::path::PathBuf;
 use std::fmt::Debug;
 use mydhtresult::Result; 
+use std::thread::JoinHandle;
 
-
+#[cfg(feature="mio-impl")]
+use coroutine::Handle as CoHandle;
 #[cfg(feature="mio-impl")]
 pub mod tcp_loop;
 pub mod tcp;
@@ -31,7 +33,40 @@ impl Address for SocketAddr {}
 pub struct LocalAdd (pub usize);
 impl Address for LocalAdd{}
 
+#[cfg(feature="mio-impl")]
+/// possible handle when starting a server process to read
+pub enum ReaderHandle {
+  Local, // Nothing, run locally
+  LocalTh(JoinHandle<()>), // run locally but in a thread
+  Thread(JoinHandle<()>),
+  Coroutine(CoHandle),
+  // Scoped // TODO?
+}
 
+#[cfg(not(feature="mio-impl"))]
+/// possible handle when starting a server process to read
+pub enum ReaderHandle {
+  Local, // Nothing, run locally
+  LocalTh, // run locally but in a thread
+  Thread(JoinHandle),
+  // Scoped // TODO?
+}
+
+#[cfg(feature="mio-impl")]
+pub enum SpawnRecMode {
+  Local,
+  LocalSpawn, // local with spawn
+  Threaded,
+  Coroutine,
+}
+
+#[cfg(not(feature="mio-impl"))]
+pub enum SpawnRecMode {
+  Local,
+  LocalSpawn, // local with spawn
+  Threaded,
+  Coroutine,
+}
 
 /// transport must be sync (in running type), it implies that it is badly named as transport must
 /// only contain enough information to instantiate needed component (even not sync) in the start
@@ -43,10 +78,8 @@ pub trait Transport : Send + Sync + 'static {
   type Address : Address;
  
   /// should we spawn a new thread for reception
-  /// Defaults to true
-  /// First returned bool is true if spawn false if not
-  /// Second returned bool is true if spawn process need to be managed (likely to loop)
-  fn do_spawn_rec(&self) -> (bool,bool) {(true,true)}
+  /// default to threaded mode
+  fn do_spawn_rec(&self) -> SpawnRecMode {SpawnRecMode::Threaded}
  
 
   /// depending on impl method should send stream to peermgmt as a writestream (for instance tcp socket are
@@ -54,7 +87,7 @@ pub trait Transport : Send + Sync + 'static {
   /// D fn will not start every time (only if WriteStream created), and is only to transmit stream
   /// to either peermanager or as query (waiting for auth).
   fn start<C> (&self, C) -> Result<()>
-    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<()>;
+    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<ReaderHandle>;
 
   /// Sometimes : for instance with tcp, the writestream is the same as the read stream,
   /// if we expect to use the same (and not open two socket), receive watching process should be

@@ -17,6 +17,8 @@ extern crate bincode;
 extern crate byteorder;
 extern crate bit_vec;
 extern crate rand;
+#[cfg(feature="mio-impl")]
+extern crate coroutine;
 
 #[macro_export]
 /// Automatic define for KeyVal without attachment

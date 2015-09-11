@@ -35,7 +35,7 @@ use std::io::ErrorKind as IoErrorKind;
 use std::io::{Read,Write};
 use mydhtresult::Result;
 use time::Duration;
-use transport::{Transport,Address,ReadTransportStream,WriteTransportStream};
+use transport::{Transport,Address,ReadTransportStream,WriteTransportStream,SpawnRecMode,ReaderHandle};
 use transport::LocalAdd;
 #[cfg(test)]
 use transport::test as ttest;
@@ -133,7 +133,7 @@ impl Transport for TransportTest {
   /// index in transport dir
   type Address = LocalAdd;
   fn start<C> (&self, readhandler : C) -> Result<()>
-    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<()> {
+    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<ReaderHandle> {
       // lock mutex indefinitely but it is the only occurence
       let r = self.recv.lock().unwrap();
 
@@ -232,14 +232,15 @@ impl Transport for TransportTest {
 
   }
 
-  fn do_spawn_rec(&self) -> (bool,bool) {
+  fn do_spawn_rec(&self) -> SpawnRecMode {
     if self.managed {
-      (true,true)
+      SpawnRecMode::Threaded
     } else {
-      (true,false) // TODO non spawn one
+      SpawnRecMode::LocalSpawn
     }
   }
- 
+
+
 }
 
 impl Write for LocalWriteStream {

@@ -5,7 +5,7 @@
 
 use std::thread;
 use std::sync::mpsc;
-use transport::{Transport,Address};
+use transport::{Transport,Address,SpawnRecMode,ReaderHandle};
 use std::io::Result as IoResult;
 use mydhtresult::Result;
 use std::io::Read;
@@ -62,11 +62,12 @@ pub fn connect_rw_with_optional<A : Address, T : Transport<Address=A>> (t1 : T, 
  
       sspawn.send(true);
     });
-    Ok(())
+    Ok(ReaderHandle::Thread(o))
   };
   let readhandler2 = move |mut rs : <T as Transport>::ReadStream, mut ows : Option<<T as Transport>::WriteStream> | {
     if with_optional {
       assert!(ows.is_some());
+      Ok(ReaderHandle::Local) // not local but no thread started
     } else {
       assert!(ows.is_none());
       let sspawn = s2.clone();
@@ -76,9 +77,8 @@ pub fn connect_rw_with_optional<A : Address, T : Transport<Address=A>> (t1 : T, 
         assert!(rr.unwrap() == 4);
         sspawn.send(true);
       });
-    };
-
-    Ok(())
+      Ok(ReaderHandle::Thread(o))
+    }
   };
  
   let a1c = a1.clone();
@@ -136,8 +136,6 @@ pub fn connect_rw_with_optional<A : Address, T : Transport<Address=A>> (t1 : T, 
 
 pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_optional : bool)
 {
-  assert!(t1.do_spawn_rec().1 == false); // managed so we can receive multiple message
-  let spawn = t1.do_spawn_rec().0; // TODO conditional spawn (for now always spawn)
   let mess_to = "hello world".as_bytes();
   let mess_to_2 = "hello2".as_bytes();
   let mess_from = "pong".as_bytes();
@@ -176,11 +174,12 @@ pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A
       };
       sspawn.send(true);
     });
-    Ok(())
+    Ok(ReaderHandle::LocalTh(o))
   };
   let readhandler2 = move |mut rs : <T as Transport>::ReadStream, mut ows : Option<<T as Transport>::WriteStream> | {
     if with_optional {
       assert!(ows.is_some());
+      Ok(ReaderHandle::Local)
     } else {
       assert!(ows.is_none());
       let sspawn = s2.clone();
@@ -191,9 +190,8 @@ pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A
         assert!(rr.unwrap() == 4);
         sspawn.send(true);
       });
-    };
-
-    Ok(())
+      Ok(ReaderHandle::LocalTh(o))
+    }
   };
  
   let a1c = a1.clone();
@@ -249,9 +247,3 @@ pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A
   } else {()};
 }
 
-pub fn sending<A : Address, T : Transport<Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A) {
-  if t1.do_spawn_rec() == (true,true) && t1.do_spawn_rec() == (true,true) {
-  } else {
-    error!("transport test was skipped due to incompatible transport behaviour");
-  }
-}

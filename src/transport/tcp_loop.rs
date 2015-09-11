@@ -1,3 +1,13 @@
+//! 
+//! Status : In developpement
+//!
+//!   - testing connection in threaded mode ok
+//!
+//!
+//! TODO Coroutine spawn failure : due to closure restriction : move coroutine start to server and
+//! return handle (closure should return handle), need new localcoroutine mode TODO bef some
+//! testing C
+//!
 //! Tcp transport using system loop instead of multiple threads.
 //! Implementation is therefore looping over receive method while stream objects are just shared reference
 //! to token/client id...
@@ -27,10 +37,30 @@
 //!  thread). We might need another conf for dht rules (not transport (neutral)).
 //!  That is more a mater of creating a new recv handler managing pool of readstream.
 //!  (avoid all those spawn in run once).
+//!
+//!  Coroutine mode is simplier (one coroutine per connection and that is all : no attempt to
+//!  reduce the number of coroutine like in threaded mode).
+//!  
+//!  TODO allow spawn non managed for coroutine mode (similar to spawn udp) ??? do some testing
+//!  : usefull (avoid blocked server process : should be default)?
+//!
+//!  TODO coroutine could maybe run in managed mode -> useless 
+//!  
+//!  NOTTODO channel mode : Reader only contain a receiver over Vec<u8>, and  stream read is done in
+//!  tcp_loop process only -> run in managed mode -> a thread per reader : useless (should run
+//!  normal tcp) 
+//!
+//!
+//!  TODO coroutine disconnect : currently nothing done : coroutine exit and no token map update...
+//!  (handle and ended corouting kept : need a end message send at end of every coroutine
+//!  spawn).!!!! here might get coroutine stuck (read on error does not sched)
+//!  TODO coroutine timeout !!!
+//!  TODO test
+//! 
+//!
+//!  TODO need testing on disconnect
+//!
 
-
-//! TODO refactor all, even reader start is not done (even register token(0) for inc connect)
-//! plus remove timeout
 
 
 extern crate byteorder;
@@ -48,7 +78,7 @@ use std::io::ErrorKind as IoErrorKind;
 use std::io::Write;
 use std::io::Read;
 use time::Duration;
-use super::{Transport,ReadTransportStream,WriteTransportStream};
+use super::{Transport,ReadTransportStream,WriteTransportStream,SpawnRecMode,ReaderHandle};
 use std::net::SocketAddr;
 //use self::mio::tcp::TcpSocket;
 use self::mio::tcp::TcpListener;
@@ -74,9 +104,15 @@ use std::error::Error;
 use utils::{self,OneResult};
 //use std::os::unix::io::AsRawFd;
 //use std::os::unix::io::FromRawFd;
+use coroutine::Coroutine;
+use coroutine::Handle as CoHandle;
+
 #[cfg(feature="with-extra-test")]
 #[cfg(test)]
 use transport::test::connect_rw_with_optional;
+#[cfg(feature="with-extra-test")]
+#[cfg(test)]
+use transport::test::connect_rw_with_optional_non_managed;
 #[cfg(feature="with-extra-test")]
 #[cfg(test)]
 use utils::{SocketAddrExt,sa4};
@@ -90,8 +126,11 @@ const CONN_REC : usize = 0;
 pub struct Tcp {
   keepalive : Option<Duration>,
   timeout : Duration,
+
   // choice of read model for stream (either coroutine in same thread or condvar synch reading with
-  // other thread). Note that could be feature gate to avoid enum overhead.
+  // other thread). Note that could be feature gate to avoid enum overhead. TODO actualy spawn is
+  // used for that and threaded is used nowhere
+  threaded : bool,
   spawn : bool,
   
   // usage of mutex is not so good yet it is only used on connection init
@@ -103,13 +142,14 @@ pub struct Tcp {
 
 impl Tcp {
   /// constructor.
-  pub fn new (p : &SocketAddr,  keepalive : Option<Duration>, timeout : Duration, spawn : bool) -> IoResult<Tcp> {
+  pub fn new (p : &SocketAddr,  keepalive : Option<Duration>, timeout : Duration, threaded : bool, spawn : bool) -> IoResult<Tcp> {
 
     let tcplistener = try!(TcpListener::bind(p));
 
     Ok(Tcp {
       keepalive : keepalive,
       timeout : timeout,
+      threaded : threaded,
       spawn : spawn,
       channel : utils::new_oneresult(None),
       listener : tcplistener,
@@ -120,9 +160,9 @@ impl Tcp {
 #[derive(Clone)]
 pub enum StreamInfo {
   Threaded(OneResult<ThreadState>),
-  CoRout(Token, Option<Timeout>),
+  CoRout(CoHandle),
 }
-
+/*
 impl StreamInfo {
   pub fn set_timeout(&mut self, to : Option<Timeout>) {
     match self {
@@ -136,10 +176,11 @@ impl StreamInfo {
       &StreamInfo::CoRout(_, ref to) => to.clone(), 
     }
   }
-}
+}*/
 
 
-/// tread state : true if something to read (true of spurious wakeout)
+/// tread state : true if something to read (true of spurious wakeout) TODO remove condvar is
+/// enough for threaded and coroutine has its internal state.
 pub type ThreadState = ();
 /*
 #[derive(PartialEq,Eq,Clone)]
@@ -162,36 +203,29 @@ pub enum ThreadState {
 }*/
 
 pub struct WriteTcpStream (MioTcpStream);
+
+/// cotain the read stream, token reference 
 pub enum ReadTcpStream {
-  Threaded(Option<MioTcpStream>,Token, OneResult<ThreadState>,MioSender<HandlerMessage>,u32),
-  CoRout(MioTcpStream,Token,MioSender<HandlerMessage>),
+  Threaded(Option<MioTcpStream>,Token,OneResult<ThreadState>,MioSender<HandlerMessage>,u32),
+  CoRout(MioTcpStream,Token,MioSender<HandlerMessage>,u32), // plus the fact that it is use in context of coroutine (readhandler is started in a coroutine)
 }
 
 impl ReadTcpStream {
-  /// end stream returning a new with handle of tcpstream (the one who was registerd
+  /// end stream returning a new with handle of tcpstream (the one who was registerd).
+  /// Coroutine being clonable it is useless.
    fn end_clone(&mut self) -> Self {
-     let st = match self {
-       &mut ReadTcpStream::Threaded(ref mut st, _, _,_,_) => {
-         mem::replace (st, None)
-       },
-       &mut ReadTcpStream::CoRout(..) => {
-         panic!("TODO");
-       },
-     };
      match self {
-       &mut ReadTcpStream::Threaded(_, ref tok, ref or, ref sm, ref to) => {
+       &mut ReadTcpStream::Threaded(ref mut st, ref tok, ref or, ref sm, ref to) => {
+         let st = mem::replace (st, None);
          ReadTcpStream::Threaded(st, tok.clone(), or.clone(), sm.clone(), to.clone())
        },
-       &mut ReadTcpStream::CoRout( ref st, ref tok, ref sm) => {
-         panic!("TODO");
-       },
+       &mut ReadTcpStream::CoRout(..) => panic!("end clone mechanism is only to remove stream from threaded mode, it should not be use with coroutin mode"),
      }
- 
    }
 }
 
 struct MyHandler<'a, C>
-    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> Result<()> {
+    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> Result<ReaderHandle> {
 
   keepalive : Option<u32>,
   /// info about stream (for unlocking read)
@@ -202,10 +236,13 @@ struct MyHandler<'a, C>
   listener : &'a TcpListener,
   sender : MioSender<HandlerMessage>,
   readhandler : C,
+  threaded : bool,
+  spawn : bool,
+ 
 }
 
 impl<'a,C> MyHandler<'a,C>
-    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> Result<()> {
+    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> Result<ReaderHandle> {
 
 
   // TODO maybe map token on RawFd of socket values (no need for tokens persistence for
@@ -230,7 +267,7 @@ impl<'a,C> MyHandler<'a,C>
 }
 
 impl<'a,C> Handler for MyHandler<'a,C>
-    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> Result<()> {
+    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> Result<ReaderHandle> {
   type Timeout = Token;
   type Message = HandlerMessage;
 
@@ -244,7 +281,8 @@ impl<'a,C> Handler for MyHandler<'a,C>
             let cont = utils::one_result_spurious(state);
             if cont.unwrap() {
               match (self.readhandler)(rs, None) {
-                Ok(()) => (),
+                Ok(ReaderHandle::LocalTh(_)) => (),
+                Ok(_) => warn!("Unmatched Readerhandle"),
                 Err(e) => warn!("Readhandler error in tcp loop notify handler : {}", e),
               };
             } else {
@@ -252,7 +290,7 @@ impl<'a,C> Handler for MyHandler<'a,C>
             }
           },
           Some(&StreamInfo::CoRout(..)) => {
-            panic!("TODO impl");
+            panic!("Coroutine mode do not use EndRead message");
           },
           None => (),
         }
@@ -272,16 +310,42 @@ impl<'a,C> Handler for MyHandler<'a,C>
 
         let si = StreamInfo::Threaded(sync.clone());
         self.tokens.insert(tok.as_usize(), si.clone());
-        // TODO add read stream in ret result
-        if r.send((tok,si,readst)).map_err(|e|error!("transport send on newconnth broken : {}", e)).is_err() {
+        if r.send(Some((tok,si,readst))).map_err(|e|error!("transport send on newconnth broken : {}", e)).is_err() {
           self.tokens.remove(&tok.0);
         };
       },
-      HandlerMessage::NewConnCo(r) => {
+      HandlerMessage::NewConnCo(r, readst) => {
         let tok = self.new_token();
-        let si = StreamInfo::CoRout(tok.clone(), None);
-        self.tokens.insert(tok.as_usize(), si.clone());
-        utils::ret_one_result(&r, Some((tok,si)));
+        match event_loop.register_opt(&readst, tok, EventSet::readable(), PollOpt::edge()) {
+           Err(e) => {
+           error!("tcp loop register of socket failed when connecting {:?}",&e);
+           return
+           },
+           Ok(()) => (),
+        };
+
+        // this result from connect with and write stream is return from connect with (not used in
+        // this read handler
+        let rts = ReadTcpStream::CoRout(readst,tok,self.sender.clone(),self.timeout.clone());
+        let cohandle = match (self.readhandler)(rts, None) {
+          Ok(ReaderHandle::Coroutine(ch)) => ch,
+          Ok(_) => {
+            error!("Readerhandle mismatch for coroutine");
+            return
+          },
+          Err(e) => {
+            error!("Readhandler error in tcp loop notify handler : {}", e);
+            return
+          },
+        };
+        // run server up to first read where we get back to returning the write stream
+        cohandle.resume().ok().expect("Failed to resume coroutine in start of conn to");
+        let si = StreamInfo::CoRout(cohandle);
+        self.tokens.insert(tok.as_usize(), si);
+        if r.send(None).map_err(|e|error!("transport send on newconnth broken : {}", e)).is_err() {
+          self.tokens.remove(&tok.0);
+        };
+ 
       },
       HandlerMessage::Timeout(tok) => {
 /*        if let Some(si) = self.tokens.get(&tok.0) {
@@ -371,10 +435,11 @@ impl<'a,C> Handler for MyHandler<'a,C>
                   return
                 },
                 Ok(()) => {
-                  let si = StreamInfo::Threaded(state.clone());
-                  self.tokens.insert(tok.as_usize(), si.clone());
                 },
               };
+
+
+
               let sw = s.try_clone().unwrap();
               let ows = Some(WriteTcpStream(sw));
               if s.set_keepalive (self.keepalive).map_err(|e|error!("cannot set keepalif for new socket : {}",e)).is_err() {
@@ -382,11 +447,40 @@ impl<'a,C> Handler for MyHandler<'a,C>
                 return
               };
               // start a receive even if no message : necessary to send ows (warn likely to timeout (or not generally auth right after connect TODO when noauth a ping frame must be send))
-              let rs = ReadTcpStream::Threaded(Some(s), tok, state,self.sender.clone(),self.timeout.clone());
-              match (self.readhandler)(rs, ows) {
-                Ok(()) => (),
-                Err(e) => warn!("Readhandler error in tcp loop ready handler : {}", e),
-              };
+              if self.threaded {
+                let rs = ReadTcpStream::Threaded(Some(s), tok, state.clone(),self.sender.clone(),self.timeout.clone());
+
+                let si = StreamInfo::Threaded(state.clone());
+                self.tokens.insert(tok.as_usize(), si.clone());
+
+                // start only after insert!!
+                match (self.readhandler)(rs, ows) {
+                  Ok(ReaderHandle::LocalTh(_)) => (),
+                  Ok(_) => warn!("Unmatched Readerhandle"),
+                  Err(e) => warn!("Readhandler error in tcp loop ready handler : {}", e),
+                };
+
+              } else {
+
+                let rs = ReadTcpStream::CoRout(s, tok, self.sender.clone(),self.timeout.clone());
+                let cohandle = match (self.readhandler)(rs, ows) {
+                  Ok(ReaderHandle::Coroutine(ch)) => ch,
+                  Ok(_) => {
+                    error!("Readerhandle mismatch for coroutine");
+                    return
+                  },
+                  Err(e) => {
+                    error!("Readhandler error in tcp loop notify handler : {}", e);
+                    return
+                  },
+                };
+ 
+                // start server up to read wheer we get back to init stream info
+                cohandle.resume().ok().expect("Failed to resume coroutine in start of receiv conn");
+                let si = StreamInfo::CoRout(cohandle);
+                self.tokens.insert(tok.as_usize(), si);
+
+              }
             }
         }
       }
@@ -399,36 +493,37 @@ impl<'a,C> Handler for MyHandler<'a,C>
         si.set_timeout(None);
       };
 */ 
-    match self.tokens.get(&token.0) {
-      Some(&StreamInfo::Threaded(ref state)) => {
-        // TODO if socket back in sock 
-        match self.socks.remove(&token.0) {
-          Some(rs) => {
-            match (self.readhandler)(rs, None) {
-              Ok(()) => (),
-              Err(e) => warn!("Readhandler error in tcp loop ready handler : {}", e),
-            };
-          },
-          None => {
-            utils::ret_one_result(state, ());
-          },
-        };
-      },
-      Some(&StreamInfo::CoRout(_,_)) => {
-        // TODO
-      },
-      //if not in map log error
-      None => error!("receive content for disconnected stream, timeout may be to short"),
+      match self.tokens.get(&token.0) {
+        Some(&StreamInfo::Threaded(ref state)) => {
+          // TODO if socket back in sock 
+          match self.socks.remove(&token.0) {
+            Some(rs) => {
+              match (self.readhandler)(rs, None) {
+                Ok(ReaderHandle::LocalTh(_)) => (),
+                Ok(_) => warn!("Unmatched Readerhandle"),
+                Err(e) => warn!("Readhandler error in tcp loop ready handler : {}", e),
+              };
+            },
+            None => {
+              utils::ret_one_result(state, ());
+            },
+          };
+        },
+        Some(&StreamInfo::CoRout(ref handle)) => {
+          // unlock read of coroutine
+          handle.resume().ok().expect("Failed to resume coroutine when receiving content from tcp loop");
+        },
+        //if not in map log error
+        None => error!("receive content for disconnected stream, timeout may be to short"),
+      }
     }
-    }
-
   }
 
 }
 
 pub enum HandlerMessage {
-  NewConnTh(Sender<(Token,StreamInfo,MioTcpStream)>, MioTcpStream),
-  NewConnCo(OneResult<Option<(Token,StreamInfo)>>),
+  NewConnTh(Sender<Option<(Token,StreamInfo,MioTcpStream)>>, MioTcpStream),
+  NewConnCo(Sender<Option<(Token,StreamInfo,MioTcpStream)>>, MioTcpStream),
   Timeout(Token),
   // get back the socket
   EndRead(Token,ReadTcpStream),
@@ -448,8 +543,23 @@ impl Transport for Tcp {
   type ReadStream = ReadTcpStream;
   type WriteStream = WriteTcpStream;
   type Address = SocketAddr;
+
+  /// if spawn we do not loop (otherwhise we should not event loop at all), the thread is just for
+  /// one message.
+  fn do_spawn_rec(&self) -> SpawnRecMode {
+    if self.threaded {
+      if self.spawn {
+        SpawnRecMode::LocalSpawn
+      } else {
+        SpawnRecMode::Local
+      }
+    } else {
+      SpawnRecMode::Coroutine
+    }
+  }
+
   fn start<C> (&self, readhandler : C) -> Result<()>
-    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<()> {
+    where C : Fn(ReadTcpStream,Option<WriteTcpStream>) -> Result<ReaderHandle> {
 //    tcplistener.0.set_write_timeout_ms(self.timeout.num_milliseconds());
 
 
@@ -467,6 +577,8 @@ impl Transport for Tcp {
       listener : &self.listener,
       sender : sender, 
       readhandler : readhandler,
+      threaded : self.threaded,
+      spawn : self.spawn,
       }));
     Ok(())
   }
@@ -519,12 +631,11 @@ impl Transport for Tcp {
           return Err(IoError::new(IoErrorKind::Other, msg));
         },
         Some(ref ch) => {
-          if self.spawn {
+          if self.threaded {
             try!(to_iores(ch.send(HandlerMessage::NewConnTh(sch, s))));
             ch.clone()
           } else {
-            let sync = utils::new_oneresult(None);
-            try!(to_iores(ch.send(HandlerMessage::NewConnCo(sync.clone()))));
+            try!(to_iores(ch.send(HandlerMessage::NewConnCo(sch, s))));
             ch.clone()
           }
         },
@@ -537,27 +648,21 @@ impl Transport for Tcp {
     } else {
         oosi.unwrap()
     };
-    let tok = si.0;
-    match si.1 {
-      StreamInfo::Threaded(state) => {
+    match si {
+      Some((tok,StreamInfo::Threaded(state),rs)) => {
         Ok((WriteTcpStream(ws),
         // TODO get tcpstream
-          Some(ReadTcpStream::Threaded(Some(si.2), tok, state,ch,self.timeout.num_milliseconds().to_u32().unwrap())
+          Some(ReadTcpStream::Threaded(Some(rs), tok, state,ch,self.timeout.num_milliseconds().to_u32().unwrap())
         )))
       },
-      StreamInfo::CoRout(_,_) => {
-        // TODO same mechanism as threaded?? or separate match globally (s is consume in previous
-        // match)
-        let s = ws.try_clone().unwrap();
-        Ok((WriteTcpStream(ws),
-        Some(ReadTcpStream::CoRout(s,tok,ch))))
+      _ => {
+        // no read stream returned : server already started as a coroutine by the transport
+        // coroutine init ok
+        Ok((WriteTcpStream(ws), None))
       },
 
     }
   }
-  /// if spawn we do not loop (otherwhise we should not event loop at all), the thread is just for
-  /// one message.
-  fn do_spawn_rec(&self) -> (bool,bool) {(self.spawn,false)}
 
   /// deregister the read stream for this address
   fn disconnect(&self, sock : &SocketAddr) -> IoResult<bool> {
@@ -614,13 +719,13 @@ impl ReadTcpStream {
       }
     },
     Err(e) => {error!("poisonned mutex on one res : {}",e); (false,0)},
-  }  ;
+  };
   if !retry && nb == 0 {
         try!(to_iores(ch.send(HandlerMessage::Timeout(tok.clone()))));
         Err(IoError::new(IoErrorKind::Other, "time out on transport reception"))
   } else {
     if retry {
-      s.read(buf)
+      s.read(buf) // TODO useless?? retry from a read 0
     } else {
       Ok(nb)
     }
@@ -632,23 +737,10 @@ impl ReadTcpStream {
   }
 
   fn read_co(buf: &mut [u8], s : &mut MioTcpStream, tok : &Token, ch : &MioSender<HandlerMessage>) -> IoResult<usize> {
-    let nb = try!(s.read(buf));
-    if nb == 0 {
-      // waiting state
-    /*  utils::change_one_result(or, ThreadState::Waiting);
-      // start a timeout
-      ch.send(HandlerMessage::StartTimeout(tok.clone()));
-      let r = utils::clone_wait_one_result(or, Some(ThreadState::Init));
-      let r = utils::clone_wait_one_result_timeout_ms(or, Some(ThreadState::Init), to);
-      if r.is_none() || r == Some(ThreadState::Timeout) {
-        Err(IoError::new(IoErrorKind::Other, "time out on transport reception"))
-      } else {
-        // aka r == Threadstate::Something : read again, we trust the loop so no recursive call
-        s.read(buf)
-      }*/
-    };
+    // TODO no timeout mechanism : coroutine could easily get stuck !!!!
+    Coroutine::sched();
+    Ok(try!(s.read(buf)))
  
-    Ok(0)
   }
 
 }
@@ -657,7 +749,7 @@ impl Read for ReadTcpStream {
   fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
     match self {
       &mut ReadTcpStream::Threaded(ref mut s,ref tok, ref or, ref ch, ref to) => ReadTcpStream::read_th(buf,s,tok,or,ch,to),
-      &mut ReadTcpStream::CoRout(ref mut s,ref tok, ref ch) =>  ReadTcpStream::read_co(buf,s,tok,ch),
+      &mut ReadTcpStream::CoRout(ref mut s,ref tok, ref ch, ref to) =>  ReadTcpStream::read_co(buf,s,tok,ch),
     }
   }
 }
@@ -682,7 +774,7 @@ impl ReadTransportStream for ReadTcpStream {
       &mut ReadTcpStream::Threaded(ref mut s,ref tok, ref or, ref ch, ref to) => {
     // TODO send token (plus address for mapping table) Disconnect in channel and from msg deregister and remove infos
       },
-      &mut ReadTcpStream::CoRout(ref mut s,ref tok, ref ch) =>  {
+      &mut ReadTcpStream::CoRout(ref mut s,ref tok, ref ch, ref to) =>  {
         //TODO howto ???
       },
     };
@@ -691,8 +783,10 @@ impl ReadTransportStream for ReadTcpStream {
  
   /// no loop (already event loop)
   fn rec_end_condition(&self) -> bool {
-    // TODO change state??? : no done in end_read_msg TODO mode where we read n messages...
-    true
+    match self {
+      &ReadTcpStream::Threaded(..) => true, // change state is done in end_read_msg TODO mode where we read n messages... bef exit
+      &ReadTcpStream::CoRout(..) => false, // corout is kept
+    }
   }
 
 }
@@ -713,6 +807,7 @@ impl WriteTransportStream for WriteTcpStream {
   }
  
 }
+
 impl Write for WriteTcpStream {
     fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
       self.0.write(buf)
@@ -729,11 +824,27 @@ fn connect_rw () {
 
   let a1 = SocketAddrExt(sa4(Ipv4Addr::new(127,0,0,1), start_port));
   let a2 = SocketAddrExt(sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
-  let tcp_transport_1 : Tcp = Tcp::new (&a1, Some(Duration::seconds(5)), Duration::seconds(5), true).unwrap();
-  let tcp_transport_2 : Tcp = Tcp::new (&a2, Some(Duration::seconds(5)), Duration::seconds(5), true).unwrap();
+  let tcp_transport_1 : Tcp = Tcp::new (&a1, Some(Duration::seconds(5)), Duration::seconds(5), true, false).unwrap();
+  let tcp_transport_2 : Tcp = Tcp::new (&a2, Some(Duration::seconds(5)), Duration::seconds(5), true, false).unwrap();
+  // TODO test with spawn
 
   connect_rw_with_optional(tcp_transport_1,tcp_transport_2,&a1,&a2,true);
 }
+
+
+#[cfg(feature="with-extra-test")]
+#[test]
+fn connect_rw_corout () {
+  let start_port = 40000;
+
+  let a1 = SocketAddrExt(sa4(Ipv4Addr::new(127,0,0,1), start_port));
+  let a2 = SocketAddrExt(sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
+  let tcp_transport_1 : Tcp = Tcp::new (&a1, Some(Duration::seconds(5)), Duration::seconds(5), false, false).unwrap();
+  let tcp_transport_2 : Tcp = Tcp::new (&a2, Some(Duration::seconds(5)), Duration::seconds(5), false, false).unwrap();
+  // TODO need a test variant for coroutine (returning corouting handle and using no thread)
+
+}
+
 
 fn to_iores<A,Error : Debug>(e : StdResult<A,Error>) -> IoResult<A> {
   match e {
@@ -743,5 +854,4 @@ fn to_iores<A,Error : Debug>(e : StdResult<A,Error>) -> IoResult<A> {
       Err(IoError::new(IoErrorKind::Other, msg))
     },
   }
-
 }

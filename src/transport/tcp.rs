@@ -21,7 +21,7 @@ use time::Duration;
 use std::time::Duration as StdDuration;
 //use std::thread::Thread;
 //use peer::{Peer};
-use super::{Transport,ReadTransportStream,WriteTransportStream};
+use super::{Transport,ReadTransportStream,WriteTransportStream,ReaderHandle};
 //use std::iter;
 //use utils;
 use num::traits::ToPrimitive;
@@ -60,7 +60,7 @@ impl Transport for Tcp {
   type WriteStream = TcpStream;
   type Address = SocketAddr;
   fn start<C> (&self, readhandler : C) -> Result<()>
-    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<()> {
+    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<ReaderHandle> {
     for socket in self.listener.incoming() {
       match socket {
         Err(e) => {error!("Socket acceptor error : {:?}", e);}
@@ -76,12 +76,12 @@ impl Transport for Tcp {
 
             let rs = try!(s.try_clone());
             match readhandler(rs,Some(s)) {
-              Ok(()) => (),
+              Ok(_) => (),
               Err(e) => error!("Read handler failure : {}",e),
             }
           } else {
             match readhandler(s,None) {
-              Ok(()) => (),
+              Ok(_) => (),
               Err(e) => error!("Read handler failure : {}",e),
             }
           }

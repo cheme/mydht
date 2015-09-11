@@ -117,10 +117,44 @@ impl<P : Peer, V : KeyVal, W : WriteTransportStream> ClientHandle<P,V,W> {
 
 }
 
-
-
+#[cfg(not(feature="mio-impl"))]
 #[derive(Debug,PartialEq,Eq)]
 pub enum ServerMode {
+  /// server code is run once on reception, this is for transport that do not need to block on each
+  /// message reception : for instance tcp event loop or udp transport.
+  /// In this case transport is run for one message only (no loop)
+  Local(bool),
+  /// Thread recycle local execution (got all stream and receive message to start a read).
+  /// Read must be considered Nonblocking.
+  /// This is mainly implemented in the handler which will not spawn, otherwhise it is similar to
+  /// Local(true)
+  /// - max nb of stream to read
+  LocalMax(usize),
+  /// Same as LocalMax but
+  /// - number of thread to share
+  LocalPool(usize),
+  /// Transport Stream (generally blocking) is read in its own loop in its own Thread.
+  /// - optional duration is a timeout to end from peermanager (cleanup), normally transport should
+  /// implement a reception timeout for this and this option should be useless in most cases. TODO unimplemented
+  ThreadedOne(Option<Duration>),
+  /// alternatively receive from blocking thread with a short timeout (timeout will does not mean
+  /// thread is off). This is not really good, it will only work if transport read timeout is
+  /// short.
+  /// - max nb of stream to read
+  /// - number of short timeout to consider peer offlint
+  ThreadedMax(usize,usize),
+  /// same as TreadedMax but in pool mode
+  /// - number of thread to share
+  /// - number of short timeout to consider peer offlint
+  ThreadedPool(usize,usize),
+}
+ 
+
+#[cfg(feature="mio-impl")]
+#[derive(Debug,PartialEq,Eq)]
+pub enum ServerMode {
+  /// start process in a coroutine
+  Coroutine,
   /// server code is run once on reception, this is for transport that do not need to block on each
   /// message reception : for instance tcp event loop or udp transport.
   /// In this case transport is run for one message only (no loop)

@@ -8,12 +8,18 @@
 //! send message after ping and not at the same time)
 
 
+#[cfg(feature="mio-impl")]
+use coroutine::Handle as CoHandle;
+#[cfg(feature="mio-impl")]
+use coroutine::Coroutine;
 
 use procs::mesgs::{PeerMgmtInitMessage,PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage,ServerPoolMessage,ClientMessage};
 use msgenc::{ProtoMessage};
 use procs::{ArcRunningContext,RunningProcesses,RunningTypes};
 use peer::{Peer,PeerMgmtMeths,PeerPriority,PeerStateChange};
 use transport::ReadTransportStream;
+use transport::ReaderHandle;
+use transport::SpawnRecMode;
 use transport::Transport;
 use std::sync::{Mutex,Arc};
 use std::sync::mpsc::{Sender};
@@ -94,13 +100,34 @@ fn new_query_mode<P : Peer> (qm : &QueryModeMsg<P>, me : &Arc<P>) -> QueryModeMs
    }
 }
 
+
+#[cfg(feature="mio-impl")]
+#[inline]
+pub fn extend_mode (mode : SpawnRecMode) -> ServerMode {
+  match mode {
+    SpawnRecMode::Coroutine => {
+      ServerMode::Coroutine
+    },
+    _ => panic!("Invalid transport definition"),
+  }
+}
+
+#[cfg(not(feature="mio-impl"))]
+#[inline]
+pub fn extend_mode (mode : SpawnRecMode) -> ServerMode {
+  match mode {
+      _ => panic!("Invalid transport definition"),
+  }
+}
+
+
 /// fn to define server mode depending on what transport allows and DHTRules
 #[inline]
 pub fn resolve_server_mode <RT : RunningTypes> (rc : &ArcRunningContext<RT>) -> ServerMode {
   let (max, pool, timeoutmul, otimeout) = rc.rules.server_mode_conf();
   match rc.transport.do_spawn_rec() {
       // spawn and managed eg tcp
-      (true,true) => {
+      SpawnRecMode::Threaded => {
         if max > 1 {
           ServerMode::ThreadedMax(max,timeoutmul)
         } else if pool > 1 {
@@ -110,7 +137,7 @@ pub fn resolve_server_mode <RT : RunningTypes> (rc : &ArcRunningContext<RT>) -> 
         }
       },
       // spawn in non managed
-      (true,false) => {
+      SpawnRecMode::LocalSpawn => {
         if max > 1 {
           ServerMode::LocalMax(max)
         } else if pool > 1 {
@@ -120,10 +147,10 @@ pub fn resolve_server_mode <RT : RunningTypes> (rc : &ArcRunningContext<RT>) -> 
         }
       },
       // non managed no spawn
-      (false,false) => {
+      SpawnRecMode::Local => {
         ServerMode::Local(false)
       },
-      _ => panic!("Invalid transport definition"),
+      a => extend_mode(a) 
   }
 }
 
@@ -156,14 +183,61 @@ pub fn start_listener <RT : RunningTypes>
 }
 
 
+
+#[cfg(feature="mio-impl")]
 /// Server loop
 pub fn servloop <RT : RunningTypes>
  (rc : ArcRunningContext<RT>, 
   rp : RunningProcesses<RT>) -> MDHTResult<()> {
 
-    let servermode = resolve_server_mode (&rc); 
+    let servermode = resolve_server_mode (&rc);
+    let rcstart = rc.clone();
  
-    let spserv = |s, ows| {
+    let spserv = move |s, ows| {
+      Ok(match servermode {
+        ServerMode::ThreadedOne(otimeout) => {
+          let rp_thread = rp.clone();
+          let rc_thread = rc.clone();
+          ReaderHandle::Thread(thread::spawn (move || {
+            let amut = Arc::new(Mutex::new(false));
+            sphandler_res(request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::ThreadedOne(amut), otimeout,false));
+          }))
+        },
+        ServerMode::Local(true) => {
+          let rp_thread = rp.clone();
+          let rc_thread = rc.clone();
+          ReaderHandle::LocalTh(thread::spawn (move || {
+            sphandler_res(request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::Local, None,false));
+          }))
+        },
+        ServerMode::Local(false) => {
+          try!(request_handler::<RT>(s, &rc, &rp, ows, ServerHandle::Local, None, false));
+          ReaderHandle::Local
+        },
+        ServerMode::Coroutine => {
+          let rp_thread = rp.clone();
+          let rc_thread = rc.clone();
+          ReaderHandle::Coroutine(Coroutine::spawn (move || {
+            sphandler_res(request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::Local, None, false));
+          }))
+        },
+        _ => panic!("Server Mult mode are unimplemented!!!"),//TODO mult thread mgmt
+
+      })
+    };
+    // loop in transport receive function TODO if looping : start it from PeerManager thread
+    rcstart.transport.start(spserv)
+}
+#[cfg(not(feature="mio-impl"))]
+/// Server loop
+pub fn servloop <RT : RunningTypes>
+ (rc : ArcRunningContext<RT>, 
+  rp : RunningProcesses<RT>) -> MDHTResult<()> {
+
+    let servermode = resolve_server_mode (&rc);
+    let rcstart = rc.clone();
+ 
+    let spserv = move |s, ows| {
       let mut res = ();
       match servermode {
         ServerMode::ThreadedOne(otimeout) => {
@@ -185,12 +259,14 @@ pub fn servloop <RT : RunningTypes>
           res = try!(request_handler::<RT>(s, &rc, &rp, ows, ServerHandle::Local, None, false));
         },
         _ => panic!("Server Mult mode are unimplemented!!!"),//TODO mult thread mgmt
+
       };
       Ok(res)
     };
     // loop in transport receive function TODO if looping : start it from PeerManager thread
-    rc.transport.start(spserv)
+    rcstart.transport.start(spserv)
 }
+
 
 
 /// Spawn thread either for one message (non connected) or for one connected peer (loop on stream
@@ -253,8 +329,8 @@ fn request_handler <RT : RunningTypes>
       error!("Request handler failure : {:?}",e);
       false});
     ows = None;
-
-    if !managed {
+  
+    if s.rec_end_condition() {
       doloop = false;
     } else {
       // TODO not for all mult

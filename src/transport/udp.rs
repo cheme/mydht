@@ -15,7 +15,13 @@
 //!
 //!
 
-use super::{Transport,ReadTransportStream,WriteTransportStream};
+use super::{
+  Transport,
+  ReadTransportStream,
+  WriteTransportStream,
+  SpawnRecMode,
+  ReaderHandle,
+};
 //use super::{Attachment};
 use std::io::Result as IoResult;
 use std::io::Error as IoError;
@@ -144,12 +150,16 @@ impl Transport for Udp {
   type WriteStream = UdpStream;
   type Address = SocketAddr;
   
-  fn do_spawn_rec(&self) -> (bool, bool) {
-    (self.spawn, false)
+  fn do_spawn_rec(&self) -> SpawnRecMode {
+    if self.spawn {
+      SpawnRecMode::LocalSpawn
+    } else {
+      SpawnRecMode::Local
+    }
   }
 
   fn start<C> (&self, readhandle : C) -> Result<()>
-    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<()> {
+    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<ReaderHandle> {
     let buffsize = self.buffsize;
     let mut tmpvec : Vec<u8> = vec![0; buffsize];
     let buf = tmpvec.as_mut_slice();
@@ -164,7 +174,7 @@ impl Transport for Udp {
               slice::from_raw_parts(buf.as_ptr(), size).to_vec()
             };
             match readhandle(ReadUdpStream(r), None) {
-              Ok(()) => (),
+              Ok(_) => (),
               Err(e) => error!("Read handler failure : {}",e),
             }
           }else{
