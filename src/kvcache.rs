@@ -74,7 +74,7 @@ impl<K,V> KVCache<K,V> for NoCache<K,V> {
     None
   }*/
   fn new() -> Self {
-    NoCache::new()
+    NoCache(PhantomData)
   }
 }
 

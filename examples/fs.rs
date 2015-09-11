@@ -518,7 +518,9 @@ treshold : u8,
 }
 
 impl WotAccess {
-  fn accept_rec<RT : RunningTypes<P=RSAPeer, V=MulKV>> (&self, n : &RSAPeer, 
+  fn accept_rec<M : PeerMgmtMeths<RSAPeer, MulKV>, RT : RunningTypes<P=RSAPeer,V=MulKV,A=<RSAPeer as Peer>::Address,M=M>>
+     (&self, 
+      n : &RSAPeer, 
       rp : &RunningProcesses<RT>, 
       rc : &ArcRunningContext<RT>,
       rec : bool) 

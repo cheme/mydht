@@ -1,17 +1,12 @@
 #![feature(custom_derive)]
 #![feature(associated_consts)]
-#![feature(slice_position_elem)]
-#![feature(core)]
 #![feature(fs_walk)]
 #![feature(path_ext)]
-#![feature(tcp)]
 #![feature(convert)]
 #![feature(semaphore)]
-#![feature(duration)]
 #![feature(arc_unique)]
 #![feature(deque_extras)]
 #![feature(socket_timeout)]
-#![feature(vecmap)] // in tcp_loop
 #![feature(slice_bytes)] // in tcp_loop
 
 #[macro_use] extern crate log;

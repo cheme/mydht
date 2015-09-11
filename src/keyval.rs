@@ -21,7 +21,7 @@ pub type Attachment = PathBuf; // TODO change to Path !!! to allow copy ....
 
 
 //pub trait Key : fmt::Debug + Hash + Eq + Clone + Send + Sync + Ord + 'static{}
-pub trait Key : Encodable + Decodable + fmt::Debug + Eq + Clone + 'static {
+pub trait Key : Encodable + Decodable + fmt::Debug + Eq + Clone + 'static + Send + Sync {
 //  fn key_encode(&self) -> MDHTResult<Vec<u8>>;
 // TODO 
 //fn as_ref<KR : KeyRef<Key = Self>>(&'a self) -> KR;
@@ -56,7 +56,7 @@ impl<'a, K : Key> AsKeyRef<'a> for &'a K {
 */
 
 // TODO remove for 'as_key_ref'
-impl<K : Encodable + Decodable + fmt::Debug + Eq + Clone + 'static> Key for K {
+impl<K : Encodable + Decodable + fmt::Debug + Eq + Clone + 'static + Send + Sync> Key for K {
  /* fn key_encode(&self) -> MDHTResult<Vec<u8>> {
     Ok(try!(bincode::encode(self, bincode::SizeLimit::Infinite)))
   }*/

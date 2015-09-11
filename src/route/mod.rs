@@ -12,7 +12,7 @@ use mydhtresult::Result as MydhtResult;
 //use std::thread;
 use procs::RunningTypes;
 use transport::{Address,Transport,WriteTransportStream};
-
+use peer::PeerMgmtMeths;
 use std::ops::Drop;
 
 use procs::ClientHandle;
@@ -309,7 +309,7 @@ pub trait Route<A:Address,P:Peer<Address = A>,V:KeyVal,T:Transport<Address = A>>
   ///
   /// Default implementation should simply panic, here instead it do a slow get_closest (same as
   /// slow one).
-  fn heavy_get_closest_for_node<RT : RunningTypes<P = P, V = V>,C,D>(& self, node : &P::Key, nb : u8, filter : &VecDeque<P::Key>, rc : &RunningProcesses<RT>, each : C, adjustnb : D) 
+  fn heavy_get_closest_for_node<M : PeerMgmtMeths<P,V>, RT : RunningTypes<P=P,V=V,A=P::Address,M=M>,C,D>(& self, node : &P::Key, nb : u8, filter : &VecDeque<P::Key>, rc : &RunningProcesses<RT>, each : C, adjustnb : D) 
     where C : Fn(&Arc<P>, &RunningProcesses<RT>), 
           D : Fn(usize) {
        let vclo = self.get_closest_for_node(node, nb, filter);
@@ -322,7 +322,7 @@ pub trait Route<A:Address,P:Peer<Address = A>,V:KeyVal,T:Transport<Address = A>>
   
   // TODO lot of missing params(queryconf, msg...) : change it when implementing (first good code
   // for light client separating concerns in fn).
-  fn heavy_get_closest_for_query<RT : RunningTypes<P = P, V = V>,C,D>(& self, k : &V::Key, nb : u8, filter : &VecDeque<P::Key>, rc : &RunningProcesses<RT>, each : C, adjustnb : D)
+  fn heavy_get_closest_for_query<M : PeerMgmtMeths<P,V>, RT : RunningTypes<P=P,V=V,A=P::Address,M=M>,C,D>(& self, k : &V::Key, nb : u8, filter : &VecDeque<P::Key>, rc : &RunningProcesses<RT>, each : C, adjustnb : D)
     where C : Fn(&Arc<P>, &RunningProcesses<RT>), 
           D : Fn(usize) {
        let vclo = self.get_closest_for_query(k, nb, filter);
@@ -335,7 +335,7 @@ pub trait Route<A:Address,P:Peer<Address = A>,V:KeyVal,T:Transport<Address = A>>
   
   // TODO lot of missing params(queryconf, msg...) : change it when implementing (first good code
   // for light client separating concerns in fn).
-  fn heavy_get_pool_nodes<RT : RunningTypes<P = P, V = V>,C>(&self, nb : usize, rc : &RunningProcesses<RT>, each : C) 
+  fn heavy_get_pool_nodes<M : PeerMgmtMeths<P,V>, RT : RunningTypes<P=P,V=V,A=P::Address,M=M>,C>(&self, nb : usize, rc : &RunningProcesses<RT>, each : C) 
     where C : Fn(&Arc<P>, &RunningProcesses<RT>) {
      let vclo = self.get_pool_nodes(nb);
      for n in vclo.iter() {
