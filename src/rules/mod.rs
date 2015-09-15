@@ -19,9 +19,6 @@ pub mod simplerules;
 /// In fact some info are related to DHT, this is more DHTRules than QueryRules (could be split in
 /// two).
 pub trait DHTRules : Sync + Send + 'static {
-  /// create a query new id : use for asynch query (most of the time will simply be the key of the resource
-  /// TODO remove : as soon as new flow for query creation (id created in querymanager)
-  fn newid (&self) -> QueryID;
   /// Max number of hop for the query, the method is currently called in main peermgmt process, therefore it must be fast (a mapping, not a db access).
   fn nbhop (&self, QueryPriority) -> u8;
   /// Number of peers to transmit to at each hop, the method is currently called in main peermgmt process, therefore it must be fast (a mapping not a db access).

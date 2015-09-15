@@ -13,7 +13,8 @@ use coroutine::Handle as CoHandle;
 #[cfg(feature="mio-impl")]
 use coroutine::Coroutine;
 
-use procs::mesgs::{PeerMgmtInitMessage,PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage,ServerPoolMessage,ClientMessage};
+use procs::mesgs::{PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage,ServerPoolMessage,ClientMessage};
+//use procs::mesgs::{PeerMgmtInitMessage,PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage,ServerPoolMessage,ClientMessage};
 use msgenc::{ProtoMessage};
 use procs::{ArcRunningContext,RunningProcesses,RunningTypes};
 use peer::{Peer,PeerMgmtMeths,PeerPriority,PeerStateChange};
@@ -473,7 +474,7 @@ fn request_handler_internal <RT : RunningTypes>
     ProtoMessage::FINDNODE(mut qconf@QueryMsg{ modeinfo : QueryModeMsg::Asynch(..),..}, nid) => {
       update_query_conf (&mut qconf ,&rc.rules);
       debug!("Asynch Find peer {:?}", nid);
-      try!(rp.peers.send(PeerMgmtMessage::PeerFind(nid,None,qconf)));
+      try!(rp.peers.send(PeerMgmtMessage::PeerFind(nid,None,qconf,false)));
     },
     // general case as asynch waiting for reply
     ProtoMessage::FINDNODE(mut qconf, nid) => {
@@ -481,7 +482,7 @@ fn request_handler_internal <RT : RunningTypes>
       update_query_conf (&mut qconf ,&rc.rules);
       let nbquer = qconf.nb_forw;
       let qp = qconf.prio;
-      if qconf.rem_hop > 0 { // TODO remhop is specific to med it should be in query mode or at least this condition should be is_last that takes param in account.
+//      if qconf.rem_hop > 0 { // TODO remhop is specific to med it should be in query mode or at least this condition should be is_last that takes param in account.
         // TODO server query initialization is not really efficient it should be done after local
         debug!("Proxying Find peer {:?}", nid);
         let lifetime = rc.rules.lifetime(qp); // TODO special lifetime when hoping?
@@ -492,17 +493,18 @@ fn request_handler_internal <RT : RunningTypes>
         debug!("Asynch Find peer {:?}", nid);
         // warn here is new qmode
         // it is managed : send to querycache (qid (init here to 0) and query cache)
-        try!(rp.queries.send(QueryMgmtMessage::NewQuery(query, PeerMgmtInitMessage::PeerFind(nid, qconf))));
-      } else {
-        debug!("Last hop Find peer {:?}", nid);
-        try!(rp.peers.send(PeerMgmtMessage::PeerFind(nid,None,qconf)));
-      }
+        // TODO send directly to peer
+ //       try!(rp.queries.send(QueryMgmtMessage::NewQuery(query, PeerMgmtInitMessage::PeerFind(nid, qconf))));
+  //    } else {
+   //     debug!("Last hop Find peer {:?}", nid);
+        try!(rp.peers.send(PeerMgmtMessage::PeerFind(nid,Some(query),qconf,false)));
+    //  }
     },
     // particular case for asynch where we skip node during reply process
     ProtoMessage::FINDVALUE(mut qconf@QueryMsg{ modeinfo : QueryModeMsg::Asynch(..), ..}, nid) => {
       update_query_conf (&mut qconf ,&rc.rules);
       debug!("Asynch Find val {:?}", nid);
-      try!(rp.store.send(KVStoreMgmtMessage::KVFind(nid,None,qconf,false)));
+      try!(rp.store.send(KVStoreMgmtMessage::KVFind(nid,None,qconf)));
     },
     // general case as asynch waiting for reply
     ProtoMessage::FINDVALUE(mut queryconf, nid) => {
@@ -525,10 +527,10 @@ fn request_handler_internal <RT : RunningTypes>
         // Warning here is old qmode stored in conf; new mode is for proxied query
         let query : query::Query<RT::P,RT::V> = query::init_query(nbfrep, nb_req, lifetime, Some(old_qconf), Some(store));
         debug!("Asynch Find val {:?}", nid);
-        try!(rp.store.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()),queryconf,true)));
+        try!(rp.store.send(KVStoreMgmtMessage::KVFind(nid,Some(query),queryconf)));
       } else {
         debug!("Last hop Find val {:?}", nid);
-        try!(rp.store.send(KVStoreMgmtMessage::KVFind(nid,None,queryconf,false)));
+        try!(rp.store.send(KVStoreMgmtMessage::KVFind(nid,None,queryconf)));
       };
     },
     // store node receive by server is asynch reply

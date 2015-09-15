@@ -1,10 +1,10 @@
-use procs::mesgs::{PeerMgmtMessage,ClientMessage,ClientMessageIx};
+use procs::mesgs::{PeerMgmtMessage,ClientMessage,ClientMessageIx,QueryMgmtMessage,PeerMgmtInitMessage};
 use peer::{PeerMgmtMeths, PeerPriority,PeerState,PeerStateChange};
 use std::sync::mpsc::{Receiver};
 use procs::{client,ArcRunningContext,RunningProcesses,RunningTypes};
 use std::collections::{VecDeque};
 use std::sync::{Arc,Semaphore,Mutex};
-use query::{LastSent,QueryMsg};
+use query::{LastSent,QueryMsg,QueryHandle,QueryModeMsg};
 use route::Route;
 use std::sync::mpsc::channel;
 use time::Duration;
@@ -359,17 +359,18 @@ fn peermanager_internal<RT : RunningTypes,
         rem_peer(route,&nodeid,rc,threadpool,clientmode,None,Some(PeerStateChange::Offline));
       };
     },
-    PeerMgmtMessage::KVFind(key, oquery, queryconf) => {
+    PeerMgmtMessage::KVFind(key, queryconf) => {
       let remhop = queryconf.rem_hop;
       let nbquery = queryconf.nb_forw;
 //        let qp = queryconf.prio;
-      if remhop > 0 {
+      let mut ok = remhop > 0;
+      if ok {
         // get closest node to query
         // if no result launch (spawn) discovery processing
         debug!("!!!in peer find of procman bef get closest");
         let peers = match queryconf.hop_hist {
           None => route.get_closest_for_query(&key, nbquery, &VecDeque::new()),
-          Some(LastSent::LastSentPeer(_, ref filter)) | Some(LastSent::LastSentHop(_, ref filter))  => route.get_closest_for_query(&key, nbquery, filter),
+          Some(LastSent::LastSentPeer(_, ref filter)) | Some(LastSent::LastSentHop(_, ref filter)) => route.get_closest_for_query(&key, nbquery, filter),
         };
         let mut newqueryconf = update_lastsent_conf ( &queryconf , &peers , nbquery);
         let rsize = peers.len();
@@ -387,41 +388,47 @@ fn peermanager_internal<RT : RunningTypes,
           }
         };
         newqueryconf.nb_res = newrnbres;
-        match oquery {
-          Some(ref query) => {
-            // adjust nb request
-            let nftresh = rc.rules.notfoundtreshold(nbquery, remhop, &newqueryconf.modeinfo.get_mode());
-            let nbless = calc_adj(nbquery, rsize, nftresh);
-            query.lessen_query(nbless,&rp.peers);
-          },
-          None => {
-            if rsize == 0 {
-              // no proxy should reply None (send to ourselve)
-              try!(rp.peers.send(PeerMgmtMessage::StoreKV(queryconf.clone(), None)));
-            };
-          },
-        };
+        if rsize == 0 {
+          ok = false;
+        } else {
+          let qh = if let QueryModeMsg::Asynch(..) = queryconf.modeinfo {
+              QueryHandle::NoHandle
+           } else {
+              QueryHandle::QueryManager(queryconf.get_query_id())
+           };
+           let mut nbfail = 0;
+           for p in peers.iter() {
+             let mess =  ClientMessage::KVFind(key.clone(),qh.clone(), newqueryconf.clone()); // TODO queryconf arc?? + remove newqueryconf.clone() already cloned why the second (bug or the fact that we send)
+             if !local {
+               let nodeid = p.get_key();
+               if !route.get_client_info(&nodeid).and_then(|ci|
+                 ci.send_climsg(mess)).is_ok() {
+                 warn!("closed connection detected");
+                 rem_peer(route,&nodeid,rc,threadpool,clientmode,None,Some(PeerStateChange::Offline));
+                 nbfail = nbfail + 1;
+               };
+             } else {
+               if !send_local::<RT, T> (p, rc , route, rp, mess, localspawn,clientmode,threadpool) {
+                 // peer rem in send_local method
+                 nbfail = nbfail + 1;
+               };
+             };
+           };
+           if nbfail >= rsize {
+             ok = false;
+           } else {
+           if nbfail > 0 {
 
-        for p in peers.iter(){
-          let mess =  ClientMessage::KVFind(key.clone(),oquery.clone(), newqueryconf.clone()); // TODO queryconf arc?? + remove newqueryconf.clone() already cloned why the second (bug or the fact that we send)
-          if !local  {
-            let nodeid = p.get_key();
-            if !route.get_client_info(&nodeid).and_then(|ci|
-              ci.send_climsg(mess)).is_ok() {
-                warn!("closed connection detected");
-                rem_peer(route,&nodeid,rc,threadpool,clientmode,None,Some(PeerStateChange::Offline));
-            };
- 
-            // TODO mult ix
-          } else {
-            send_local::<RT, T> (p, rc , route, rp, mess, localspawn,clientmode,threadpool);
-          };
+             try!(rp.queries.send(QueryMgmtMessage::Lessen(queryconf.get_query_id(),nbfail))); // TODO asynch mult???
+           }};
         };
-      } else {
-        oquery.map(|q|q.release_query(&rp.peers));
-      }
+      };
+      if !ok {
+        debug!("forwarding kvfind to no peers, releasing query");
+        try!(rp.queries.send(QueryMgmtMessage::Release(queryconf.get_query_id())));
+      };
     },
-    PeerMgmtMessage::PeerFind(nid, oquery, queryconf) => {
+    PeerMgmtMessage::PeerFind(nid, mut oquery, queryconf, in_cache) => {
       let remhop = queryconf.rem_hop;
       let nbquery = queryconf.nb_forw;
 //        let qp = queryconf.prio;
@@ -429,7 +436,17 @@ fn peermanager_internal<RT : RunningTypes,
       // query ourselve if here and local // no ping at this point : trust current
       // status, proxyto is either right with destination or left with a possible result in
       // parameter
-      let proxyto = match route.get_node(&nid) {
+      // async
+      let asyncproxy = !in_cache && oquery.is_none();
+      let proxyto = 
+      {
+      let rnode = if in_cache {
+        None // already done once
+      } else {
+        route.get_node(&nid)
+      };
+
+        match rnode {
         // blocked peer are also blocked for transmission (this is likely to make them
         // disapear) TODO might not be a nice idea
         Some(&(_,PeerState::Blocked(_), _)) => Either::Left(None),
@@ -443,7 +460,7 @@ fn peermanager_internal<RT : RunningTypes,
             let peers = match queryconf.hop_hist {
               None => route.get_closest_for_node(&nid, nbquery, &VecDeque::new()),
               Some(LastSent::LastSentPeer(_, ref filter)) | Some(LastSent::LastSentHop(_, ref filter))  => 
-                route.get_closest_for_node(&nid, nbquery, filter),
+                route.get_closest_for_node(&nid, nbquery, filter), // this get_closest could be skip by sending to querymanager directly
             };
             let newqueryconf = update_lastsent_conf ( &queryconf , &peers , nbquery);
 
@@ -457,14 +474,13 @@ fn peermanager_internal<RT : RunningTypes,
             Either::Left(None)
           }
         },
-      };
+      }};
       match proxyto {
         // result local due to not proxied (none) or result found localy
         Either::Left(r) => {
           match oquery {
-            Some(query) => {
+            Some(mut query) => {
               // put result !! in a spawn (do not want to manipulate mutex here (even
-              let querysp = query.clone();
               let ssp = rp.peers.clone();
               let srp = rp.store.clone();
               // TODO remove this spawn even if dealing with mutex (too costy?? )
@@ -472,22 +488,25 @@ fn peermanager_internal<RT : RunningTypes,
                 debug!("!!!!found not sent unlock semaphore");
                 if r == None {
                   // No update of result so will reply none
-                  querysp.release_query(& ssp);
+                  query.release_query(&ssp);
                 } else {
-                  if querysp.set_query_result(Either::Left(r),&srp) {
-                    querysp.release_query(& ssp);
+                  if query.set_query_result(Either::Left(r),&srp) {
+                    query.release_query(&ssp);
                   } else {
-                    querysp.lessen_query(1, & ssp);
+                    if query.lessen_query(1, &ssp) {
+                      query.release_query(&ssp);
+                    }
                   }
                 };
               });
             },
             None => {
               // Here no query object created
-              // eg Async hop reply directly TODO call storepeer to recnode
-              // TODO fn
-              debug!("!!!AsyncResult returning {:?}", r);
-              match queryconf.modeinfo.get_rec_node().map(|r|r.clone()) {
+              // eg Async hop reply directly
+              // asynch)
+              if asyncproxy {
+                  debug!("!!!AsyncResult returning {:?}", r); 
+               match queryconf.modeinfo.get_rec_node().map(|r|r.clone()) {
                 Some (ref recnode) => {
                   let mess = ClientMessage::StoreNode(queryconf.modeinfo.to_qid(), r);
                   let nodeid = recnode.get_key();
@@ -496,7 +515,7 @@ fn peermanager_internal<RT : RunningTypes,
                     _ => false,
                   };
                   let ok = if upd {
-                    peer_ping(rc,rp,route,recnode,None,PeerPriority::Unchecked,heavyaccept,localspawn,local,clientmode,threadpool).is_ok()
+                    peer_ping(rc,rp,route,recnode,None,PeerPriority::Unchecked,heavyaccept,localspawn,local,clientmode,threadpool).is_ok() // TODO actually this only tell if route will contain peer in Ping status, and start an auth, sending cli_messg should be done after auth : TODO evo to add message to Ping state !!!
                   } else {
                     true
                   };
@@ -514,24 +533,53 @@ fn peermanager_internal<RT : RunningTypes,
                 },
                 _ => {error!("None query in none asynch peerfind");},
               }
+
+              } else {
+                  debug!("None return to queryman, no proxy, releasing");
+                  if r.is_some() {
+                    try!(rp.queries.send(QueryMgmtMessage::NewReply(queryconf.get_query_id(),(r,None))));
+                  } else {
+                    try!(rp.queries.send(QueryMgmtMessage::Release(queryconf.get_query_id())));
+                  };
+              };
             },
           };
         },
         Either::Right((newqueryconf,peers)) => {
-          match oquery {
-            Some(ref query) => {
-              let rsize = peers.len();
-              // TODO nf treashold in queryconf??
-              let nftresh = rc.rules.notfoundtreshold(nbquery, remhop, &newqueryconf.modeinfo.get_mode());
-              let nbless = calc_adj(nbquery, rsize, nftresh);
-              // Note that it doesnot prevent unresponsive client
-              query.lessen_query(nbless,&rp.peers);
-             },
-             _ => (), 
-           };
+          let rsize = peers.len();
+          assert!(rsize != 0); // should have been left case
+          let (rel, qh) = 
+            match oquery {
+              Some(mut query) => {
+                // TODO nf treashold in queryconf?? TODO check this with fail in kvfind (unclear,
+                // overcomplicated)
+                let nftresh = rc.rules.notfoundtreshold(nbquery, remhop, &newqueryconf.modeinfo.get_mode());
+                let nbless = calc_adj(nbquery, rsize, nftresh);
+                // Note that it doesnot prevent unresponsive client
+                if query.lessen_query(nbless,&rp.peers) {
+                  query.release_query(&rp.peers);
+                  (true, QueryHandle::NoHandle)
+                } else {
+                  let qh = query.get_handle();
+                  try!(rp.queries.send(QueryMgmtMessage::NewQuery(query, PeerMgmtInitMessage::PeerFind(nid.clone(),queryconf.clone()))));
+                    debug!("peerfind send to queryman");
+                    (true, qh)
+               }
+ 
+               },
+               None => {
+                if asyncproxy {
+                  (false, QueryHandle::NoHandle)
+                } else {
+                  let qh = QueryHandle::QueryManager(queryconf.get_query_id());
+                  (false, qh)
+                }
+              },
+          };
+          if !rel {
+           let mut nb_fail = 0;
            for p in peers.iter() {
-             let mess = ClientMessage::PeerFind(nid.clone(),oquery.clone(), newqueryconf.clone()); // TODO queryconf arc??
-
+             let mess = ClientMessage::PeerFind(nid.clone(),qh.clone(), newqueryconf.clone()); // TODO queryconf arc??
              if !local {
                // get connection
                let nodeid = p.get_key();
@@ -539,13 +587,21 @@ fn peermanager_internal<RT : RunningTypes,
                  ci.send_climsg(mess)).is_ok() {
                    warn!("closed connection detected");
                    rem_peer(route,&nodeid,rc,threadpool,clientmode,None,Some(PeerStateChange::Offline));
+                   nb_fail = nb_fail + 1;
                };
              } else {
-               send_local::<RT, T> (p, rc , route, rp, mess, localspawn,clientmode,threadpool);
+               if !send_local::<RT, T> (p, rc , route, rp, mess, localspawn,clientmode,threadpool) {
+                 nb_fail = nb_fail + 1;
+               };
              };
            };
-         },
-       }
+           if nb_fail > 0 {
+             try!(rp.queries.send(QueryMgmtMessage::Lessen(queryconf.get_query_id(),nb_fail))); // TODO asynch mult???
+           }};
+
+
+          },
+         };
      },
      PeerMgmtMessage::Refresh(max) => {
        info!("Refreshing connection pool");

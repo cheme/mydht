@@ -20,7 +20,7 @@ impl SimpleRules {
 // TODO redesign nbhop nbquery depending on prio put higher prio on big num
 #[derive(Debug,Clone,RustcDecodable,RustcEncodable)]
 pub struct DhtRules {
-  pub randqueryid : bool, // TODO switch to mutex usize or threadrng
+  pub randqueryid : bool, // used to conf querycache : remnant from old code, still use in fs
   pub nbhopfact : u8, // nbhop is prio * fact or nbhopfact if normal // TODO invert prio (higher being 1)
   pub nbqueryfact : f32, // nbquery is 1 + query * fact
   pub lifetime : i64, // seconds of lifetime, static bound
@@ -44,7 +44,7 @@ impl DHTRulesIf for SimpleRules {
   }
 
   // here both a static counter and a rand one just for show // TODO switch QueryID to BigInt
-  fn newid (&self) -> QueryID {
+  /*fn newid (&self) -> QueryID {
     if self.1.randqueryid {
       let mut rng = thread_rng();
       // (eg database connection)
@@ -55,7 +55,7 @@ impl DHTRulesIf for SimpleRules {
       *i += 1;
       *i
     }
-  }
+  }*/
 
   fn nbhop (&self, prio : QueryPriority) -> u8 {
     self.1.nbhopfact * prio

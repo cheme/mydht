@@ -148,7 +148,7 @@ pub fn kvmanager_internal
       });
     },
     //asynch find
-    KVStoreMgmtMessage::KVFind(key, None, queryconf,_) => {
+    KVStoreMgmtMessage::KVFind(key, None, queryconf) => {
       match store.get_val(&key) {
         Some(val) => {
           try!(rp.peers.send(PeerMgmtMessage::StoreKV(queryconf, Some(val.clone()))));
@@ -156,7 +156,7 @@ pub fn kvmanager_internal
         None => {
           if queryconf.rem_hop > 0 {
             // proxy
-            try!(rp.peers.send(PeerMgmtMessage::KVFind(key, None, queryconf)));
+            try!(rp.peers.send(PeerMgmtMessage::KVFind(key, queryconf)));
           } else {
             // no result
             try!(rp.peers.send(PeerMgmtMessage::StoreKV(queryconf, None)));
@@ -164,14 +164,12 @@ pub fn kvmanager_internal
         },
       };
     },
-    KVStoreMgmtMessage::KVFind(key, Some(query), queryconf, dostorequery) => {
+    KVStoreMgmtMessage::KVFind(key, Some(mut query), queryconf) => {
       let success = match store.get_val(&key) {
         Some(val) => {
           debug!("!!!KV Found match!!! no proxying");
-          let querysp = query.clone();
 
-          if querysp.set_query_result(Either::Right(Some(val.clone())),&rp.store) {
-            query.release_query(& rp.peers);
+          if query.set_query_result(Either::Right(Some(val.clone())),&rp.store) {
             true
           } else {
             // no lessen on local or more results needed : proxy
@@ -182,18 +180,20 @@ pub fn kvmanager_internal
           false
         },
       };
-      if !success {
+      if success {
+        query.release_query(&rp.peers);
+      } else {
         if queryconf.rem_hop > 0 {
           debug!("!!!KV not Found match or multiple result needed !!! proxying");
           // If dostorequery then send to query manager for new query
-          if dostorequery {
-            try!(rp.queries.send(QueryMgmtMessage::NewQuery(query, PeerMgmtInitMessage::KVFind(key, queryconf))));
-          } else {
-            // else send directly to peers
-            try!(rp.peers.send(PeerMgmtMessage::KVFind(key, Some(query), queryconf)));
-          };
+          //if query.is_local() {
+          try!(rp.queries.send(QueryMgmtMessage::NewQuery(query,PeerMgmtInitMessage::KVFind(key,queryconf))));
+          //} else {
+            // send to peers
+          //  try!(rp.peers.send(PeerMgmtMessage::KVFind(key, queryconf)));
+         // }
         } else {
-           query.release_query(& rp.peers);
+          query.release_query(&rp.peers);
         };
       };
     },

@@ -46,7 +46,8 @@ pub fn start<RT : RunningTypes>
 
 pub struct CleanableReceiver<'a, RT : RunningTypes>(
   Receiver<ClientMessageIx<RT::P,RT::V,<RT::T as Transport>::WriteStream>>,
-  &'a Sender<mesgs::PeerMgmtMessage<RT::P,RT::V,<RT::T as Transport>::ReadStream,<RT::T as Transport>::WriteStream>>)
+  &'a Sender<mesgs::PeerMgmtMessage<RT::P,RT::V,<RT::T as Transport>::ReadStream,<RT::T as Transport>::WriteStream>>,
+  &'a Sender<mesgs::QueryMgmtMessage<RT::P,RT::V>>)
 where RT::A : 'a, 
       RT::P : 'a,
       <RT::P as KeyVal>::Key : 'a,
@@ -70,9 +71,11 @@ where RT::A : 'a,
     // empty channel
     loop {
       match self.0.try_recv() {
-        Ok((ClientMessage::PeerFind(_,Some(query), _),_)) | Ok((ClientMessage::KVFind(_,Some(query), _),_)) => {
+        Ok((ClientMessage::PeerFind(_,query_handle, _),_)) | Ok((ClientMessage::KVFind(_,query_handle, _),_)) => {
           debug!("- emptying channel found query");
-          query.lessen_query(1, self.1);
+          if query_handle.lessen_query(1, self.1, self.2) {
+            query_handle.release_query(self.1, self.2)
+          }
         },
         Err(e) => {
           debug!("end of emptying channel : {:?}",e);
@@ -144,7 +147,7 @@ pub fn start_local <RT : RunningTypes>
         };
         sc.push(Some(sc0));
 
-        let cr : CleanableReceiver<RT> = CleanableReceiver(r,&rp.peers);
+        let cr : CleanableReceiver<RT> = CleanableReceiver(r,&rp.peers,&rp.queries);
         loop {
           match cr.0.recv() {
             Err(_) => {
@@ -277,7 +280,8 @@ pub fn client_match <RT : RunningTypes>
       let mess : ProtoMessage<RT::P,RT::V> = ProtoMessage::PING(rc.me.borrow(), chal.clone(), sign);
       sendorconnect!(&mess,None);
     },
-    ClientMessage::PeerFind(nid, oquery, mut queryconf) =>  {
+    // TODO oquery should be mutex handler over dist., + TODO send message of lessen to queryman when no query
+    ClientMessage::PeerFind(nid, queryh, mut queryconf) => {
       // note that new queryid and recnode has been set in server
       // and query count in server -> amix and aproxy became as simple send
       // send query with hop + 1
@@ -286,11 +290,12 @@ pub fn client_match <RT : RunningTypes>
       let mess  : ProtoMessage<RT::P,RT::V> = ProtoMessage::FINDNODE(queryconf, nid);
       sendorconnect!(&mess,None);
       if !ok {
-        // lessen TODO asynch is pow...
-        oquery.map(|query|query.lessen_query(1, &rp.peers));
+        if queryh.lessen_query(1, &rp.peers, &rp.queries) {
+          queryh.release_query(&rp.peers, &rp.queries)
+        }
       }
     },
-    ClientMessage::KVFind(nid, oquery, mut queryconf) => {
+    ClientMessage::KVFind(nid, queryh, mut queryconf) => {
       // no adding query counter for peer
       // send query with hop + 1
       queryconf.dec_nbhop(&rc.rules);
@@ -298,7 +303,9 @@ pub fn client_match <RT : RunningTypes>
       sendorconnect!(&mess,None);
       if !ok {
         // lessen TODO asynch is pow... cf lessen of peermanager
-        oquery.map(|query|query.lessen_query(1, &rp.peers));
+        if queryh.lessen_query(1, &rp.peers, &rp.queries) {
+            queryh.release_query(&rp.peers, &rp.queries)
+        }
       }
     },
     ClientMessage::StoreNode(oqid, r) => {

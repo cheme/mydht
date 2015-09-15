@@ -116,7 +116,7 @@ impl<T : KeyVal, C : KVCache<<T as KeyVal>::Key, T>> KVStore<T> for SimpleCache<
 
 
   #[inline]
-  fn remove_val(& mut self, k : &T::Key){
+  fn remove_val(& mut self, k : &T::Key) {
     self.cache.remove_val_c(k);
   }
   #[inline] // TODO switch to new interface
@@ -227,9 +227,12 @@ impl<P : Peer, V : KeyVal, C : KVCache<QueryID, Query<P,V>>> QueryCache<P,V> for
   fn query_get(&mut self, qid : &QueryID) -> Option<&Query<P,V>> {
     self.cache.get_val_c(qid)
   }
+  fn query_update<F>(&mut self, qid : &QueryID, f : F) -> MDHTResult<bool> where F : FnOnce(&mut Query<P,V>) -> MDHTResult<()> {
+    self.cache.update_val_c(qid,f)
+  }
   #[inline]
-  fn query_remove(&mut self, quid : &QueryID){
-      self.cache.remove_val_c(quid);
+  fn query_remove(&mut self, quid : &QueryID) -> Option<Query<P,V>> {
+      self.cache.remove_val_c(quid)
   }
   fn newid (&mut self) -> QueryID {
     if self.randomids {
@@ -249,18 +252,16 @@ impl<P : Peer, V : KeyVal, C : KVCache<QueryID, Query<P,V>>> QueryCache<P,V> for
   fn cache_clean_nodes(& mut self)-> Vec<Query<P,V>> {
     let expire = time::get_time();
     let mut remqid : Vec<QueryID> = Vec::new();
-    let mut remq : Vec<Query<P,V>> = Vec::new();
-    let mut initexpire : Vec<Query<P,V>> = Vec::new();
+    let mut initexpire : Vec<QueryID> = Vec::new();
     // use of fnmut (should be cleaner with foldm and vec in params
     let mr = self.cache.map_inplace_c(|q| {
       Ok(match (q.1).get_expire() {
         Some(date) => if date > expire {
           warn!("expired query to be cleaned : {:?}", q.0);
-          remq.push(q.1.clone());
           remqid.push(q.0.clone());
         },
         None => {
-          initexpire.push(q.1.clone());//q is arc
+          initexpire.push(q.0.clone());
         },
       })
     });
@@ -280,11 +281,16 @@ impl<P : Peer, V : KeyVal, C : KVCache<QueryID, Query<P,V>>> QueryCache<P,V> for
         },
       }
     }*/
-    for mut q in initexpire.into_iter(){
-      q.set_expire(expire); 
+    for mut q in initexpire.iter() {
+      self.cache.update_val_c(q,|mut mq| {mq.set_expire(expire); Ok(())});
     };
+
+    let mut remq : Vec<Query<P,V>> = Vec::with_capacity(remqid.len());
     for qid in remqid.iter(){
-      self.cache.remove_val_c(qid);
+      match self.cache.remove_val_c(qid) {
+        Some(q) => remq.push(q),
+        None => error!("Not removed clean query, may be race"),
+      }
     };
     remq
   }

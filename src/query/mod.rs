@@ -5,7 +5,7 @@ use time::Duration;
 use time::{self,Timespec};
 use peer::Peer;
 use std::sync::mpsc::{Sender};
-use procs::mesgs::{KVStoreMgmtMessage,PeerMgmtMessage};
+use procs::mesgs::{KVStoreMgmtMessage,PeerMgmtMessage,QueryMgmtMessage};
 use query::cache::CachePolicy;
 use std::collections::VecDeque;
 //use procs::RunningProcesses;
@@ -51,6 +51,17 @@ pub enum QReply<P : Peer> {
   Dist(QueryMsg<P>),
 }
 
+#[derive(Clone)]
+/// in process if there is a query handle, the query is not in query manager and reply could be use
+/// directly through the query.
+/// Query handle is clonable when query is not.
+pub enum QueryHandle<P : Peer, V : KeyVal> {
+  LocalP(Arc<(QReply<P>, Mutex<(Option<Arc<P>>, usize)>, Option<CachePolicy>)>),
+  LocalV(Arc<(QReply<P>, Mutex<(Vec<Option<V>>, usize)>, Option<CachePolicy>, (bool, Option<CachePolicy>), usize)>),
+  QueryManager(QueryID),
+  NoHandle, // for direct asynch reply directly to peer
+}
+
 /// Query Priority.
 pub type QueryPriority = u8; // TODO rules for getting number of hop from priority -> convert this to a trait with methods.
 /// Query ID.
@@ -91,13 +102,17 @@ impl<P : Peer> QueryMsg<P> {
   pub fn dec_nbhop<QR : DHTRules>(&mut self,qr : &QR) {
     self.rem_hop -= qr.nbhop_dec();
   }
+  pub fn get_query_id(&self) -> QueryID {
+    self.modeinfo.get_qid_clone()
+  }
 }
 
 
-#[derive(Clone)]
+//#[derive(Clone)]
 ///  Query type, it is related to a kind of `Peer` and a `KeyVal`.
 /// The query is seen as ok when all peer reply None or the first peer replies something (if number
 /// of result needed is one (common case), otherwhise n).
+/// TODO !!! move arc mutex in qreply (and non mutex/arc for dist query), plus remove arc
 pub enum Query<P : Peer, V : KeyVal> {
   /// Querying for peer. With reply info, current query reply value (initiated to None the second
   /// pair value is the number of replies send (or to send)) and the possible query timeout (a
@@ -111,21 +126,18 @@ pub enum Query<P : Peer, V : KeyVal> {
 }  // boolean being pending or not (if not pending and option at none : nothing were found : replace by semaphore // TODO option is not the right type) - TODO replace duration by start time!!
 // to free all semaphore of a query
 
-/// Query methods
-impl<P : Peer, V : KeyVal> Query<P, V> {
-
+impl<P : Peer, V : KeyVal> QueryHandle<P, V> {
   #[inline]
-  /// Reply with current query value TODO might consume query (avoiding some clone and clearer
-  /// semantic : check this)!! TODO right now error results in panic, rightfull err mgmet could be
-  /// nice
+  /// release query
   pub fn release_query<TR : ReadTransportStream, TW : WriteTransportStream>
-  (& self, 
-   sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>
+  (self, 
+   sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>,
+   sq : &Sender<QueryMgmtMessage<P,V>>,
   )
   where PeerMgmtMessage<P,V,TR,TW> : Send {
-    debug!("Query Full release");
+    debug!("Query handle Full release");
     match self {
-      &Query::PeerQuery(ref s) => {
+      QueryHandle::LocalP(s) => {
         let mut mutg = s.1.lock().unwrap();
         (*mutg).1 = 0;
         match s.0 {
@@ -137,7 +149,7 @@ impl<P : Peer, V : KeyVal> Query<P, V> {
           },
         };
       },
-      &Query::KVQuery(ref s) => {
+      QueryHandle::LocalV(s) => {
         let mut mutg = s.1.lock().unwrap();
         (*mutg).1 = 0;
         match s.0 {
@@ -152,22 +164,28 @@ impl<P : Peer, V : KeyVal> Query<P, V> {
           },
         };
       },
+      QueryHandle::QueryManager(qid) => {
+        sq.send(QueryMgmtMessage::Release(qid.clone())).unwrap();
+      },
+      QueryHandle::NoHandle => {
+        panic!("release on nohandle")
+      },
     };
   }
 
 #[inline] // TODO closure to avoid redundant code??
-// return true if unlock query (so that cache man know it can remove its query
-/// Remove one peer to wait on, if no more peer query is released
+/// lessen query
 pub fn lessen_query<TR : ReadTransportStream, TW : WriteTransportStream>
 
- (&self, 
+ (&self,
   i : usize, 
-  sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>)
+  sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>,
+  sq : &Sender<QueryMgmtMessage<P,V>>)
  -> bool
  where PeerMgmtMessage<P,V,TR,TW> : Send {
   debug!("Query lessen {:?}", i);
   match self {
-    &Query::PeerQuery(ref s) => {
+    &QueryHandle::LocalP(ref s) => {
       let mut mutg = s.1.lock().unwrap();
       let nowcount = if i < (*mutg).1 {
         (*mutg).1 - i
@@ -175,21 +193,9 @@ pub fn lessen_query<TR : ReadTransportStream, TW : WriteTransportStream>
         0
       };
       (*mutg).1 = nowcount;
-      // if it unlock
-      if nowcount == 0 {
-        match s.0 {
-          QReply::Local(ref cv) =>
-               {cv.notify_all();},
-          QReply::Dist(ref conf) =>{
-             sp.send(PeerMgmtMessage::StoreNode((*conf).clone(),(*mutg).0.clone())).unwrap();
-          },
-        };
-        true
-      } else {
-        false
-      }
+      nowcount == 0
     },
-    &Query::KVQuery(ref s) => {
+    &QueryHandle::LocalV(ref s) => {
       let mut mutg = s.1.lock().unwrap();
       let nowcount = if i < (*mutg).1 {
         (*mutg).1 - i
@@ -197,65 +203,30 @@ pub fn lessen_query<TR : ReadTransportStream, TW : WriteTransportStream>
         0
       };
       (*mutg).1 = nowcount;
-      // if it unlock
-      if nowcount == 0 {
-        match s.0 {
-          QReply::Local(ref cv) =>
-               {cv.notify_all();},
-          QReply::Dist(ref conf) => {
-            for v in (*mutg).0.iter() {
-              sp.send(PeerMgmtMessage::StoreKV(conf.clone(),v.clone())).unwrap();
-            }
-          },
-        };
-        true
-      } else {
-        false
-      }
+      nowcount == 0
     },
+    &QueryHandle::QueryManager(ref qid) => {
+      sq.send(QueryMgmtMessage::Lessen(qid.clone(),i)).unwrap();
+      false // release will be triggered in queryman
+    },
+    &QueryHandle::NoHandle => {
+      panic!("lessen on nohandle")
+    },
+ 
   }
 }
 
 #[inline]
-/// Update query result. If the query is keyval result, the value is send to its KeyVal storage.
-/// It return true if we got enough result, otherwhise false.
-pub fn set_query_result (&self, r: Either<Option<Arc<P>>,Option<V>>,
-  sv : &Sender<KVStoreMgmtMessage<P,V>>) -> bool { // TODO switch to two function set_qu_res_peer and val
-  debug!("Query setresult");
-  match self {
-    &Query::PeerQuery(ref q) => {
-      (*q.1.lock().unwrap()).0 = r.left().unwrap();
-      true
-    },
-    &Query::KVQuery(ref q) => {
-      let mut avec = q.1.lock().unwrap();
-      avec.0.push(r.clone().right().unwrap());
-      let res = avec.0.len() >= q.4;
-      match q.3 {
-        (true,_) | (_,Some(_)) => {
-          match r.right().unwrap() {
-            None => {},
-            Some(r) =>{
-              sv.send(KVStoreMgmtMessage::KVAdd(r,None,q.3)).unwrap(); 
-            },
-          }
-    // no sync (two consecutive query might go network two time
-    // TODO sync to avoid it ??? probably for querying node, less for proxying nodes
-    // sync will involve release done here in another thread
-        },
-        _ => {},
-      };
-      res
-    },
-  }
-}
-
-#[inline]
-// TODO try remove pair result when all is stable + closure to avoid dup code
 ///  for local query, blocking wait for a result (either peer or keyval). // TODO timeout on wait   with returning content as in return result (plus spurious evo : see onersult)
 pub fn wait_query_result (&self) -> Either<Option<Arc<P>>,Vec<Option<V>>> { // TODO switch to two function set_qu_res_peer and val
   match self {
-    &Query::PeerQuery(ref s) => {
+    &QueryHandle::QueryManager(ref qid) => {
+      panic!("wait over querymanager is not permitted");
+    },
+    &QueryHandle::NoHandle => {
+      panic!("wait over nohandle is not permitted");
+    },
+    &QueryHandle::LocalP(ref s) => {
       let r = match s.0 {
         QReply::Local(ref cv) => {
           debug!("Query wait");
@@ -275,7 +246,7 @@ pub fn wait_query_result (&self) -> Either<Option<Arc<P>>,Vec<Option<V>>> { // T
       };
       Either::Left(r)
     },
-    &Query::KVQuery(ref s) => {
+    &QueryHandle::LocalV(ref s) => {
       let r = match s.0 {
       QReply::Local(ref cv) => {
         debug!("Query wait");
@@ -294,6 +265,167 @@ pub fn wait_query_result (&self) -> Either<Option<Arc<P>>,Vec<Option<V>>> { // T
       },
       };
       Either::Right(r)
+    },
+  }
+}
+
+
+
+}
+/// Query methods
+impl<P : Peer, V : KeyVal> Query<P, V> {
+   
+  pub fn is_local(&self) -> bool {
+    match self {
+      &Query::PeerQuery(ref arc) => {
+        match arc.0 {
+          QReply::Local(..) => true,
+          _ => false,
+        }
+      },
+      &Query::KVQuery(ref arc) => {
+        match arc.0 {
+          QReply::Local(..) => true,
+          _ => false,
+        }
+      },
+    }
+  }
+
+  /// get handle for query.
+  /// Method does no work when in Asynch mode on dist.
+  pub fn get_handle(&self) -> QueryHandle<P,V> {
+    match self {
+      &Query::PeerQuery(ref arc) => {
+        match arc.0 {
+          QReply::Local(..) => {
+            QueryHandle::LocalP(arc.clone())
+          },
+          QReply::Dist(ref qmode) => {
+            QueryHandle::QueryManager(qmode.get_query_id())
+          },
+        }
+      },
+      &Query::KVQuery(ref arc) => {
+        match arc.0 {
+          QReply::Local(..) => {
+            QueryHandle::LocalV(arc.clone())
+          },
+          QReply::Dist(ref qmode) => {
+            QueryHandle::QueryManager(qmode.get_query_id())
+          },
+        }
+      },
+    }
+  }
+
+  #[inline]
+  /// Reply with current query value TODO might consume query (avoiding some clone and clearer
+  /// semantic : check this)!! TODO right now error results in panic, rightfull err mgmet could be
+  /// nice
+  pub fn release_query<TR : ReadTransportStream, TW : WriteTransportStream>
+  (self, 
+   sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>
+  )
+  where PeerMgmtMessage<P,V,TR,TW> : Send {
+    debug!("Query Full release");
+    match self {
+      Query::PeerQuery(s) => {
+        let mut mutg = s.1.lock().unwrap();
+        (*mutg).1 = 0;
+        match s.0 {
+          QReply::Local(ref cv) => {
+            cv.notify_all();
+          },
+          QReply::Dist(ref conf) => {
+            sp.send(PeerMgmtMessage::StoreNode((*conf).clone(),(*mutg).0.clone())).unwrap();
+          },
+        };
+      },
+      Query::KVQuery(s) => {
+        let mut mutg = s.1.lock().unwrap();
+        (*mutg).1 = 0;
+        match s.0 {
+          QReply::Local(ref cv) => {
+            cv.notify_all();
+          },
+          QReply::Dist(ref conf) => {
+            // Send them result one by one
+            for v in (*mutg).0.iter() {
+              sp.send(PeerMgmtMessage::StoreKV(conf.clone(), v.clone())).unwrap();
+            }
+          },
+        };
+      },
+    };
+  }
+
+#[inline] // TODO closure to avoid redundant code??
+// return true if unlock query (so that cache man know it can remove its query
+/// Remove one peer to wait on
+/// return true if there is no remaining query to wait for (so we can release)
+pub fn lessen_query<TR : ReadTransportStream, TW : WriteTransportStream>
+
+ (&mut self, 
+  i : usize, 
+  sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>)
+ -> bool
+ where PeerMgmtMessage<P,V,TR,TW> : Send {
+  debug!("Query lessen {:?}", i);
+  match self {
+    &mut Query::PeerQuery(ref s) => {
+      let mut mutg = s.1.lock().unwrap();
+      let nowcount = if i < (*mutg).1 {
+        (*mutg).1 - i
+      } else {
+        0
+      };
+      (*mutg).1 = nowcount;
+      nowcount == 0
+    },
+    &mut Query::KVQuery(ref s) => {
+      let mut mutg = s.1.lock().unwrap();
+      let nowcount = if i < (*mutg).1 {
+        (*mutg).1 - i
+      } else {
+        0
+      };
+      (*mutg).1 = nowcount;
+      nowcount == 0
+    },
+  }
+}
+
+#[inline]
+/// Update query result. If the query is keyval result, the value is send to its KeyVal storage.
+/// It return true if we got enough result, otherwhise false.
+pub fn set_query_result (&mut self, r: Either<Option<Arc<P>>,Option<V>>,
+  sv : &Sender<KVStoreMgmtMessage<P,V>>) -> bool { // TODO switch to two function set_qu_res_peer and val
+  debug!("Query setresult");
+  match self {
+    &mut Query::PeerQuery(ref q) => {
+      (*q.1.lock().unwrap()).0 = r.left().unwrap();
+      true
+    },
+    &mut Query::KVQuery(ref q) => {
+      let mut avec = q.1.lock().unwrap();
+      avec.0.push(r.clone().right().unwrap());
+      let res = avec.0.len() >= q.4;
+      match q.3 {
+        (true,_) | (_,Some(_)) => {
+          match r.right().unwrap() {
+            None => {},
+            Some(r) =>{
+              sv.send(KVStoreMgmtMessage::KVAdd(r,None,q.3)).unwrap(); 
+            },
+          }
+    // no sync (two consecutive query might go network two time
+    // TODO sync to avoid it ??? probably for querying node, less for proxying nodes
+    // sync will involve release done here in another thread
+        },
+        _ => {},
+      };
+      res
     },
   }
 }
@@ -328,6 +460,7 @@ pub fn set_expire(&mut self, expire : Timespec) {
 /// TODO remove this : instead msg to forward send and send forward from here to peermanager
 /// rename to send_for_query,  rp to param, managed is bool, qid calculated here with update of
 /// QueryMsg,  + add peermgmt msg 
+/// TODO something more implicit to know if dist or local
 pub fn init_query<P : Peer, V : KeyVal> 
  (nbquer : usize,
  nbresp   : usize,
@@ -434,11 +567,11 @@ impl<P : Peer> QueryModeMsg<P> {
             &QueryModeMsg::AMix (_,_, ref q) => Some (q),
         }
     }
-    pub fn get_qid_clone (&self) -> Option<QueryID> {
+    pub fn get_qid_clone (&self) -> QueryID {
         match self {
-            &QueryModeMsg::AProxy (_, ref q) => Some (q.clone()),
-            &QueryModeMsg::Asynch (_, ref q) => Some (q.clone()),
-            &QueryModeMsg::AMix (_,_, ref q) => Some (q.clone()),
+            &QueryModeMsg::AProxy (_, ref q) => q.clone(),
+            &QueryModeMsg::Asynch (_, ref q) => q.clone(),
+            &QueryModeMsg::AMix (_,_, ref q) => q.clone(),
         }
     }
     pub fn to_qid (self) -> Option<QueryID> {
@@ -509,5 +642,4 @@ pub trait ChunkTable<V : KeyVal> {
   fn init(&self, V) -> bool; // init the table for the stream (or get from persistence...)
   fn check(&self, u32, String) -> bool; // check chunk for a index (calculate and verify hash) TODO not string but some byte array for ressource
 }
-
 

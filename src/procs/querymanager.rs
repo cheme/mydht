@@ -117,41 +117,57 @@ pub fn querymanager_internal
       // update query with qid
       msg.change_query_id(qid.clone());
       debug!("adding query to cache with id {:?}", qid);
-      cn.query_add(qid, query.clone());
+      cn.query_add(qid, query);
       // Unlock parent thread (we cannot send query if not in cache already) 
-      try!(p.send(msg.to_peermsg(query)));
+      // TODO send queryid instead and create lessen message
+      try!(p.send(msg.to_peermsg()));
     },
     QueryMgmtMessage::NewReply(qid, reply) => {
-      // get query if xisting
-      let rem = match cn.query_get(&qid) {
-        Some (query) => {
-          match reply {
+      // update query if xisting
+      let rem = cn.query_update(&qid, move |mut query|{
+          if match reply {
             (r@Some(_),_) => {
-              query.set_query_result(Either::Left(r),k);
-              query.release_query(p);
-              true
+              query.set_query_result(Either::Left(r),k)
             },
             (_,r@Some(_)) => {
-              query.set_query_result(Either::Right(r),k);
-              query.release_query(p);
-              true
+              query.set_query_result(Either::Right(r),k)
             },
             _ => {
               query.lessen_query(1, p)
             },
+          } {
+            Err(Error("".to_string(), ErrorKind::ExpectedError,None))
+          } else {
+            Ok(())
           }
-        },
-        None => {
-          warn!("received reply to missing query (expired?) {:?}",qid); 
-          false
-        },
-      };
+
+      }).is_err();
       if rem {
-        cn.query_remove(&qid)};
-      },
+        let query = cn.query_remove(&qid);
+        query.map(|q|q.release_query(p));
+      }
+    },
     QueryMgmtMessage::PerformClean => {
       debug!("Query manager called for cache clean");
       cache_clean(cn,p);
+    },
+    QueryMgmtMessage::Lessen(qid, nb) => {
+      let rem = cn.query_update(&qid, move |mut query|{
+        if query.lessen_query(nb, p) {
+            Err(Error("".to_string(), ErrorKind::ExpectedError,None))
+          } else {
+            Ok(())
+          }
+
+      }).is_err();
+      if rem {
+        let query = cn.query_remove(&qid);
+        query.map(|q|q.release_query(p));
+      };
+    },
+    QueryMgmtMessage::Release(qid) => {
+        let query = cn.query_remove(&qid);
+        query.map(|q|q.release_query(p));
     },
   };
   Ok(true)

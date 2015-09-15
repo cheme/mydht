@@ -345,10 +345,10 @@ pub trait Route<A:Address,P:Peer<Address = A>,V:KeyVal,T:Transport<Address = A>>
  
 
   /// Possible Serialize on quit
-  fn commit_store(& mut self) -> bool;
+  fn commit_store(&mut self) -> bool;
 
   #[inline]
-  fn get_client_info<'a> (&'a self, pid : & <P as KeyVal>::Key) -> MydhtResult<&'a ClientInfo<P,V,T>> {
+  fn get_client_info<'a> (&'a self, pid : &<P as KeyVal>::Key) -> MydhtResult<&'a ClientInfo<P,V,T>> {
 
     match self.get_node(pid) {
       Some(&(_,_,(_,Some(ref ci)))) => {

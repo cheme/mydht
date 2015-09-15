@@ -21,7 +21,7 @@ pub trait KVCache<K, V> {
   fn update_val_c<F>(& mut self, &K, f : F) -> Result<bool> where F : FnOnce(& mut V) -> Result<()>;
  
   /// Remove value
-  fn remove_val_c(& mut self, &K);
+  fn remove_val_c(& mut self, &K) -> Option<V>;
 
   /// fold without closure over all content
   fn strict_fold_c<'a, B, F>(&'a self, init: B, f: F) -> B where F: Fn(B, (&'a K, &'a V)) -> B, K : 'a, V : 'a;
@@ -58,8 +58,8 @@ impl<K,V> KVCache<K,V> for NoCache<K,V> {
   fn update_val_c<F>(&mut self, _ : &K, _ : F) -> Result<bool> where F : FnOnce(&mut V) -> Result<()> {
     Ok(false)
   }
-  fn remove_val_c(&mut self, _ : &K) {
-    ()
+  fn remove_val_c(&mut self, _ : &K) -> Option<V> {
+    None
   }
   fn strict_fold_c<'a, B, F>(&'a self, init: B, _: F) -> B where F: Fn(B, (&'a K, &'a V)) -> B, K : 'a, V : 'a {
     init
@@ -99,8 +99,8 @@ impl<K: Hash + Eq, V> KVCache<K,V> for HashMap<K,V> {
       Ok(false)
     }
   }
-  fn remove_val_c(& mut self, key : &K) {
-    self.remove(key);
+  fn remove_val_c(& mut self, key : &K) -> Option<V> {
+    self.remove(key)
   }
 
   fn new() -> Self {

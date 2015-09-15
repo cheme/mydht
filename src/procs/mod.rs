@@ -5,7 +5,8 @@ use rules::DHTRules;
 use kvstore::{StoragePriority, KVStore};
 use keyval::{KeyVal};
 use query::cache::QueryCache;
-use self::mesgs::{PeerMgmtMessage,PeerMgmtInitMessage,KVStoreMgmtMessage,QueryMgmtMessage,ClientMessage,ClientMessageIx};
+use self::mesgs::{PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage,ClientMessage,ClientMessageIx};
+//use self::mesgs::{PeerMgmtMessage,PeerMgmtInitMessage,KVStoreMgmtMessage,QueryMgmtMessage,ClientMessage,ClientMessageIx};
 use std::sync::{Arc,Semaphore};
 use std::sync::mpsc::channel;
 use std::thread;
@@ -380,22 +381,23 @@ pub fn find_val<RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcRunning
     nb_res : nb_res};
   // local query replyto set to None
   let query = query::init_query(semsize, nb_res, lifetime, None, Some(store));
+  let qh = query.get_handle();
   
-  if rp.store.send(KVStoreMgmtMessage::KVFind(nid,Some(query.clone()),queryconf, true)).is_err() {
+  if rp.store.send(KVStoreMgmtMessage::KVFind(nid,Some(query),queryconf)).is_err() {
     error!("chann error in find val");
     return Vec::new();
   };
 
   // block until result
-  query.wait_query_result().right().unwrap()
+  qh.wait_query_result().right().unwrap()
 }
 
 #[inline]
 fn init_qmode<RT : RunningTypes> (rc : &ArcRunningContext<RT>, qm : &QueryMode) -> QueryModeMsg <RT::P> {
   match qm {
-    &QueryMode::Asynch => QueryModeMsg::Asynch((rc.me).clone(),rc.rules.newid()),
-    &QueryMode::AProxy => QueryModeMsg::AProxy((rc.me).clone(),rc.rules.newid()),
-    &QueryMode::AMix(i) => QueryModeMsg::AMix(i,rc.me.clone(),rc.rules.newid()),
+    &QueryMode::Asynch => QueryModeMsg::Asynch((rc.me).clone(),NULL_QUERY_ID),
+    &QueryMode::AProxy => QueryModeMsg::AProxy((rc.me).clone(),NULL_QUERY_ID),
+    &QueryMode::AMix(i) => QueryModeMsg::AMix(i,rc.me.clone(),NULL_QUERY_ID),
   }
 }
 
@@ -464,12 +466,15 @@ impl<RT : RunningTypes> DHT<RT> {
       nb_res : nb_res}; // querystorage priority is hadcoded but not used to (peer are curently always stored) TODO switch to option??
     // local query replyto set to None
     let query : Query<RT::P,RT::V> = query::init_query(semsize, nb_res, lifetime, None, None); // Dummy store policy
-    if self.rp.queries.send(QueryMgmtMessage::NewQuery(query.clone(), PeerMgmtInitMessage::PeerFind(nid, queryconf))).is_err() {
+    let qh = query.get_handle();
+    // TODO send directly peermgmt
+    if self.rp.peers.send(PeerMgmtMessage::PeerFind(nid,Some(query),queryconf,false)).is_err() {
+//    if self.rp.queries.send(QueryMgmtMessage::NewQuery(query.clone(), PeerMgmtInitMessage::PeerFind(nid, queryconf))).is_err() {
       error!("find peer, channel error");
       return None
     }; // TODO return result??
     // block until result
-    query.wait_query_result().left().unwrap()
+    qh.wait_query_result().left().unwrap()
 
   }
 
@@ -608,3 +613,4 @@ fn sphandler_res<A, E : Debug + Display> (res : Result<A, E>) {
   }
 }
 
+static NULL_QUERY_ID : usize = 0; // TODO replace by optional value to None!!

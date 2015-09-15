@@ -208,18 +208,6 @@ impl dhtif::DHTRules for DummyQueryRules {
     1 // most of the time (some time we may random to 0 so we do not know if first hop
   }
 
-  // here both a static counter and a rand one just for show
-  fn newid (&self) -> QueryID {
-      // (eg database connection)
-      //let rng = thread_rng();
-      //let s = rng.gen_range(0,65555);
-      //let s = rng.next_u64().to_usize().unwrap();
-      let mut i = self.idcnt.lock().unwrap();
-      *i += 1;
-//      let r = "query ".to_string() + &s.to_string()[..] + "_" + &(*i).to_string()[..];
- //     println!("############### {}" , r);
-      *i
-  }
   fn nbhop (&self, prio : QueryPriority) -> u8{
       match prio {
           1 => 6, // do not change (used in tests)

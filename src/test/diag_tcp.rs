@@ -86,7 +86,7 @@ fn connect_rw_dup () {
 }
 
 #[test]
-fn testpeer4hopget (){
+fn testpeer4hopget () {
     let n = 6;
     let nbport = n.to_u16().unwrap();
     let map : &[&[usize]] = &[&[2],&[3],&[4],&[5],&[6],&[]];
