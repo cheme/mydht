@@ -558,12 +558,13 @@ fn peermanager_internal<RT : RunningTypes,
                 // Note that it doesnot prevent unresponsive client
                 if query.lessen_query(nbless,&rp.peers) {
                   query.release_query(&rp.peers);
-                  (true, QueryHandle::NoHandle)
+                  (true, QueryHandle::NoHandle) // here qh not use
                 } else {
-                  let qh = query.get_handle();
+                  //let qh = query.get_handle();
                   try!(rp.queries.send(QueryMgmtMessage::NewQuery(query, PeerMgmtInitMessage::PeerFind(nid.clone(),queryconf.clone()))));
                     debug!("peerfind send to queryman");
-                    (true, qh)
+                    (true, QueryHandle::NoHandle) // here qh not use
+                   // (true, qh)
                }
  
                },

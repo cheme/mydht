@@ -1,4 +1,4 @@
-use std::sync::{Arc,Mutex,Semaphore,Condvar};
+use std::sync::{Arc,Mutex,Condvar};
 use rustc_serialize::{Encoder,Encodable,Decoder};
 //use peer::{PeerPriority};
 use time::Duration;
@@ -18,8 +18,6 @@ use transport::{ReadTransportStream,WriteTransportStream};
 
 pub mod cache;
 pub mod simplecache;
-// a semaphore with access to its current state
-pub type SemaState = (Semaphore,isize);
 
 
 // TODO all sender peermgmt replaced by client handle
@@ -42,22 +40,25 @@ pub type LastSentConf = Option<(usize,bool)>; // if bool true then ls hop else l
 
 
 // TODO switch condvar to something with timeout
+#[derive(Clone)]
 /// Internal data type to manage query reply
-pub enum QReply<P : Peer> {
+pub enum QReply<P : Peer,V> {
   /// a local thread is waiting for a reply on a condvar
   /// when querying we start a query and wait on the semaphore (actually a condvar/mutex) for a result
-  Local(Condvar),
+  Local(QRepLoc<V>),
   /// reply should be forwarded given a query conf.
-  Dist(QueryMsg<P>),
+  Dist(QueryMsg<P>,V),
 }
+
+type QRepLoc<V> = Arc<(Condvar, Mutex<V>)>;
 
 #[derive(Clone)]
 /// in process if there is a query handle, the query is not in query manager and reply could be use
 /// directly through the query.
 /// Query handle is clonable when query is not.
 pub enum QueryHandle<P : Peer, V : KeyVal> {
-  LocalP(Arc<(QReply<P>, Mutex<(Option<Arc<P>>, usize)>, Option<CachePolicy>)>),
-  LocalV(Arc<(QReply<P>, Mutex<(Vec<Option<V>>, usize)>, Option<CachePolicy>, (bool, Option<CachePolicy>), usize)>),
+  LocalP(QRepLoc<(Option<Arc<P>>,usize)>),
+  LocalV(QRepLoc<(Vec<Option<V>>,usize)>),
   QueryManager(QueryID),
   NoHandle, // for direct asynch reply directly to peer
 }
@@ -117,12 +118,12 @@ pub enum Query<P : Peer, V : KeyVal> {
   /// Querying for peer. With reply info, current query reply value (initiated to None the second
   /// pair value is the number of replies send (or to send)) and the possible query timeout (a
   /// must have for managed query).
-  PeerQuery(Arc<(QReply<P>, Mutex<(Option<Arc<P>>, usize)>, Option<CachePolicy>)>),
+  PeerQuery(QReply<P,(Option<Arc<P>>,usize)>, Option<CachePolicy>),
   /// Querying for KeyVal. Same as `PeerQuery`, with an additional storage policy (pair is local
   /// plus possible timeout for cache). Typically storage policiy is used to automatically store
   /// on query with one result needed only, otherwhise application may choose the right result
   /// and storage may happen later.
-  KVQuery(Arc<(QReply<P>, Mutex<(Vec<Option<V>>, usize)>, Option<CachePolicy>, (bool, Option<CachePolicy>), usize)>),
+  KVQuery(QReply<P,(Vec<Option<V>>,usize)>, Option<CachePolicy>, (bool, Option<CachePolicy>), usize),
 }  // boolean being pending or not (if not pending and option at none : nothing were found : replace by semaphore // TODO option is not the right type) - TODO replace duration by start time!!
 // to free all semaphore of a query
 
@@ -137,35 +138,18 @@ impl<P : Peer, V : KeyVal> QueryHandle<P, V> {
   where PeerMgmtMessage<P,V,TR,TW> : Send {
     debug!("Query handle Full release");
     match self {
-      QueryHandle::LocalP(s) => {
-        let mut mutg = s.1.lock().unwrap();
+      QueryHandle::LocalP(cv) => {
+        let mut mutg = cv.1.lock().unwrap();
         (*mutg).1 = 0;
-        match s.0 {
-          QReply::Local(ref cv) => {
-            cv.notify_all();
-          },
-          QReply::Dist(ref conf) => {
-            sp.send(PeerMgmtMessage::StoreNode((*conf).clone(),(*mutg).0.clone())).unwrap();
-          },
-        };
+        cv.0.notify_all();
       },
-      QueryHandle::LocalV(s) => {
-        let mut mutg = s.1.lock().unwrap();
+      QueryHandle::LocalV(cv) => {
+        let mut mutg = cv.1.lock().unwrap();
         (*mutg).1 = 0;
-        match s.0 {
-          QReply::Local(ref cv) => {
-            cv.notify_all();
-          },
-          QReply::Dist(ref conf) => {
-            // Send them result one by one
-            for v in (*mutg).0.iter() {
-              sp.send(PeerMgmtMessage::StoreKV(conf.clone(), v.clone())).unwrap();
-            }
-          },
-        };
+        cv.0.notify_all();
       },
       QueryHandle::QueryManager(qid) => {
-        sq.send(QueryMgmtMessage::Release(qid.clone())).unwrap();
+        sq.send(QueryMgmtMessage::Release(qid)).unwrap();
       },
       QueryHandle::NoHandle => {
         panic!("release on nohandle")
@@ -185,6 +169,7 @@ pub fn lessen_query<TR : ReadTransportStream, TW : WriteTransportStream>
  where PeerMgmtMessage<P,V,TR,TW> : Send {
   debug!("Query lessen {:?}", i);
   match self {
+
     &QueryHandle::LocalP(ref s) => {
       let mut mutg = s.1.lock().unwrap();
       let nowcount = if i < (*mutg).1 {
@@ -226,45 +211,27 @@ pub fn wait_query_result (&self) -> Either<Option<Arc<P>>,Vec<Option<V>>> { // T
     &QueryHandle::NoHandle => {
       panic!("wait over nohandle is not permitted");
     },
-    &QueryHandle::LocalP(ref s) => {
-      let r = match s.0 {
-        QReply::Local(ref cv) => {
+    &QueryHandle::LocalP(ref cv) => {
           debug!("Query wait");
-          let mut l = s.1.lock().unwrap();
+          let mut l = cv.1.lock().unwrap();
           debug!("Query l is {:?}", l.1);
           while l.1 > 0 {
             debug!("Query l is {:?}", l.1);
-            l = cv.wait(l).unwrap();// TODO spurious catch with condition over either None and 0 waiting or not none
+            l = cv.0.wait(l).unwrap();// TODO spurious catch with condition over either None and 0 waiting or not none
           }
           debug!("Query Wait finished");
-          l.0.clone()
-        },
-        _ => {
-          error!("waiting result on non condvar non local query"); // TODO up local query to (Qreply) to query type -> single level match
-          None
-        },
-      };
-      Either::Left(r)
+      Either::Left(l.0.clone())
     },
-    &QueryHandle::LocalV(ref s) => {
-      let r = match s.0 {
-      QReply::Local(ref cv) => {
+    &QueryHandle::LocalV(ref cv) => {
         debug!("Query wait");
-        let mut l = s.1.lock().unwrap();
+        let mut l = cv.1.lock().unwrap();
         debug!("Query l is {:?}", l.1);
         while l.1 > 0 {
           debug!("Query l is {:?}", l.1);
-          l = cv.wait(l).unwrap();// TODO spurious catch with condition over either None and 0 waiting or not none
+          l = cv.0.wait(l).unwrap();// TODO spurious catch with condition over either None and 0 waiting or not none
         }
         debug!("Query Wait finished");
-        l.0.clone()
-      },
-      _ => {
-        error!("waiting result on non condvar non local query"); // TODO up local query to (Qreply) to query type -> single level match
-        vec!()
-      },
-      };
-      Either::Right(r)
+        Either::Right(l.0.clone())
     },
   }
 }
@@ -277,44 +244,29 @@ impl<P : Peer, V : KeyVal> Query<P, V> {
    
   pub fn is_local(&self) -> bool {
     match self {
-      &Query::PeerQuery(ref arc) => {
-        match arc.0 {
-          QReply::Local(..) => true,
-          _ => false,
-        }
-      },
-      &Query::KVQuery(ref arc) => {
-        match arc.0 {
-          QReply::Local(..) => true,
-          _ => false,
-        }
-      },
+      &Query::PeerQuery(QReply::Local(..), _) => true,
+      &Query::KVQuery(QReply::Local(..),_,_,_) => true,
+      _ => false,
     }
   }
 
   /// get handle for query.
   /// Method does no work when in Asynch mode on dist.
+  /// Result should not be send to client (client use querymanager handle or no handle (not local
+  /// because at this point qreply local are in querymanager)
   pub fn get_handle(&self) -> QueryHandle<P,V> {
     match self {
-      &Query::PeerQuery(ref arc) => {
-        match arc.0 {
-          QReply::Local(..) => {
-            QueryHandle::LocalP(arc.clone())
-          },
-          QReply::Dist(ref qmode) => {
-            QueryHandle::QueryManager(qmode.get_query_id())
-          },
-        }
+      &Query::PeerQuery(QReply::Local(ref arc), _) => {
+        QueryHandle::LocalP(arc.clone())
       },
-      &Query::KVQuery(ref arc) => {
-        match arc.0 {
-          QReply::Local(..) => {
-            QueryHandle::LocalV(arc.clone())
-          },
-          QReply::Dist(ref qmode) => {
-            QueryHandle::QueryManager(qmode.get_query_id())
-          },
-        }
+      &Query::KVQuery(QReply::Local(ref arc), _,_,_) => {
+        QueryHandle::LocalV(arc.clone())
+      },
+      &Query::PeerQuery(QReply::Dist(ref qmode, _), _) => {
+        QueryHandle::QueryManager(qmode.get_query_id())
+      },
+      &Query::KVQuery(QReply::Dist(ref qmode, _), _,_,_) => {
+        QueryHandle::QueryManager(qmode.get_query_id())
       },
     }
   }
@@ -330,29 +282,29 @@ impl<P : Peer, V : KeyVal> Query<P, V> {
   where PeerMgmtMessage<P,V,TR,TW> : Send {
     debug!("Query Full release");
     match self {
-      Query::PeerQuery(s) => {
-        let mut mutg = s.1.lock().unwrap();
-        (*mutg).1 = 0;
-        match s.0 {
-          QReply::Local(ref cv) => {
-            cv.notify_all();
+      Query::PeerQuery(s,_) => {
+        match s {
+          QReply::Local(cv) => {
+            let mut mutg = cv.1.lock().unwrap();
+            (*mutg).1 = 0;
+            cv.0.notify_all();
           },
-          QReply::Dist(ref conf) => {
-            sp.send(PeerMgmtMessage::StoreNode((*conf).clone(),(*mutg).0.clone())).unwrap();
+          QReply::Dist(conf,v) => {
+            sp.send(PeerMgmtMessage::StoreNode(conf,v.0)).unwrap();
           },
         };
       },
-      Query::KVQuery(s) => {
-        let mut mutg = s.1.lock().unwrap();
-        (*mutg).1 = 0;
-        match s.0 {
-          QReply::Local(ref cv) => {
-            cv.notify_all();
+      Query::KVQuery(s,_,_,_) => {
+        match s {
+          QReply::Local(cv) => {
+            let mut mutg = cv.1.lock().unwrap();
+            (*mutg).1 = 0;
+            cv.0.notify_all();
           },
-          QReply::Dist(ref conf) => {
+          QReply::Dist(conf,v) => {
             // Send them result one by one
-            for v in (*mutg).0.iter() {
-              sp.send(PeerMgmtMessage::StoreKV(conf.clone(), v.clone())).unwrap();
+            for v in v.0.into_iter() {
+              sp.send(PeerMgmtMessage::StoreKV(conf.clone(), v)).unwrap();
             }
           },
         };
@@ -371,59 +323,89 @@ pub fn lessen_query<TR : ReadTransportStream, TW : WriteTransportStream>
   sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>)
  -> bool
  where PeerMgmtMessage<P,V,TR,TW> : Send {
+  fn minus_val_is_zero(initval : &mut usize, minus : usize) -> bool {
+    let nowcount = if minus < *initval {
+      *initval - minus
+    } else {
+      0
+    };
+    *initval = nowcount;
+    nowcount == 0
+  }
+
   debug!("Query lessen {:?}", i);
   match self {
-    &mut Query::PeerQuery(ref s) => {
-      let mut mutg = s.1.lock().unwrap();
-      let nowcount = if i < (*mutg).1 {
-        (*mutg).1 - i
-      } else {
-        0
-      };
-      (*mutg).1 = nowcount;
-      nowcount == 0
+    &mut Query::PeerQuery(QReply::Local(ref cv),_) => {
+          let mut c = &mut cv.1.lock().unwrap().1;
+          minus_val_is_zero(c, i)
     },
-    &mut Query::KVQuery(ref s) => {
-      let mut mutg = s.1.lock().unwrap();
-      let nowcount = if i < (*mutg).1 {
-        (*mutg).1 - i
-      } else {
-        0
-      };
-      (*mutg).1 = nowcount;
-      nowcount == 0
+    &mut Query::PeerQuery(QReply::Dist(_, ref mut v),_) => {
+          minus_val_is_zero(&mut v.1, i)
+    },
+    &mut Query::KVQuery(QReply::Local(ref cv),_,_,_) => {
+          let mut c = &mut cv.1.lock().unwrap().1;
+          minus_val_is_zero(c, i)
+    },
+    &mut Query::KVQuery(QReply::Dist(_, ref mut v),_,_,_) => {
+          minus_val_is_zero(&mut v.1, i)
     },
   }
 }
-
 #[inline]
 /// Update query result. If the query is keyval result, the value is send to its KeyVal storage.
 /// It return true if we got enough result, otherwhise false.
+/// It also lessen query count (one query received)
 pub fn set_query_result (&mut self, r: Either<Option<Arc<P>>,Option<V>>,
   sv : &Sender<KVStoreMgmtMessage<P,V>>) -> bool { // TODO switch to two function set_qu_res_peer and val
   debug!("Query setresult");
+  // do store to kvstore if needed
   match self {
-    &mut Query::PeerQuery(ref q) => {
-      (*q.1.lock().unwrap()).0 = r.left().unwrap();
-      true
-    },
-    &mut Query::KVQuery(ref q) => {
-      let mut avec = q.1.lock().unwrap();
-      avec.0.push(r.clone().right().unwrap());
-      let res = avec.0.len() >= q.4;
-      match q.3 {
+    &mut Query::KVQuery(_,_,do_store,_) => {
+      match do_store {
         (true,_) | (_,Some(_)) => {
-          match r.right().unwrap() {
-            None => {},
-            Some(r) =>{
-              sv.send(KVStoreMgmtMessage::KVAdd(r,None,q.3)).unwrap(); 
+          match r.right_ref() {
+            Some(&Some(ref r)) => {
+              sv.send(KVStoreMgmtMessage::KVAdd(r.clone(),None,do_store)).unwrap(); 
             },
+            _ => {},
           }
     // no sync (two consecutive query might go network two time
     // TODO sync to avoid it ??? probably for querying node, less for proxying nodes
     // sync will involve release done here in another thread
         },
         _ => {},
+      };
+
+    },
+    _ => (),
+  };
+  // set result
+  match self {
+    &mut Query::PeerQuery(QReply::Local(ref cv),_) => {
+      let mut mutg = cv.1.lock().unwrap();
+      (*mutg).0 = r.left().unwrap();
+      (*mutg).1 = 0;
+      true
+    },
+    &mut Query::PeerQuery(QReply::Dist(_, ref mut v),_) => {
+      v.0 = r.left().unwrap();
+      v.1 = 0;
+      true
+    },
+    &mut Query::KVQuery(QReply::Local(ref cv),_,_,ref nbres) => {
+      let mut avec = cv.1.lock().unwrap();
+      avec.0.push(r.right().unwrap());
+      let res = avec.0.len() >= *nbres;
+      if avec.1 > 1 {
+        avec.1 = avec.1 - 1;
+      };
+      res
+    },
+    &mut Query::KVQuery(QReply::Dist(_, ref mut v),_,_,ref nbres) => {
+      v.0.push(r.right().unwrap());
+      let res = v.0.len() >= *nbres;
+      if v.1 > 1 {
+        v.1 = v.1 - 1;
       };
       res
     },
@@ -434,8 +416,8 @@ pub fn set_query_result (&mut self, r: Either<Option<Arc<P>>,Option<V>>,
 /// Get expire date for query (used by cleaning process of query cache).
 pub fn get_expire(&self) -> Option<Timespec> {
   match self {
-    &Query::PeerQuery(ref q) => (q.2).map(|c|c.0.clone()),
-    &Query::KVQuery(ref q) =>  (q.2).map(|c|c.0.clone()),
+    &Query::PeerQuery(_, ref q) => q.map(|c|c.0.clone()),
+    &Query::KVQuery(_, ref q, _, _) =>  q.map(|c|c.0.clone()),
   }
 }
 
@@ -443,13 +425,13 @@ pub fn get_expire(&self) -> Option<Timespec> {
 /// Update expire date of query.
 pub fn set_expire(&mut self, expire : Timespec) {
   let mut d = match self {
-    &mut Query::PeerQuery(ref q) => q.2,
-    &mut Query::KVQuery(ref q) => q.2,
+    &mut Query::PeerQuery(_, ref mut q) => q,
+    &mut Query::KVQuery(_, ref mut q, _, _) => q,
   };
   if d.is_some() {
     debug!("overriding expire");
   };
-  d = Some(CachePolicy(expire));
+  (*d) = Some(CachePolicy(expire));
 }
 
 }
@@ -475,20 +457,30 @@ pub fn init_query<P : Peer, V : KeyVal>
     None => {
       let query = match replyto {
         Some(qconf) => 
-          Arc::new((QReply::Dist(qconf), Mutex::new((None, nbquer)),Some(expire))),
+          QReply::Dist(qconf, (None, nbquer)),
         None =>
-          Arc::new((QReply::Local(Condvar::new()),Mutex::new((None, nbquer)),Some(expire))),
+          QReply::Local(Arc::new((Condvar::new(),Mutex::new((None, nbquer))))),
        };
-       Query::PeerQuery(query)
+       // PeerQuery(QReply<P,(Option<Arc<P>>,usize)>, Option<CachePolicy>),
+       //Local(QRepLoc<V>),
+//  /// reply should be forwarded given a query conf.
+//  Dist(QueryMsg<P>,V),
+//}
+
+//type QRepLoc<V> = Arc<(Condvar, Mutex<V>)>;
+
+
+       //
+       Query::PeerQuery(query, Some(expire))
     },
     Some(storeconf) => {
       let query = match replyto {
         Some(node) => 
-          Arc::new((QReply::Dist(node), Mutex::new((vec!(), nbquer)),Some(expire),storeconf, nbresp)),
+          QReply::Dist(node, (vec!(), nbquer)),
         None =>
-          Arc::new((QReply::Local(Condvar::new()),Mutex::new((vec!(), nbquer)),Some(expire),storeconf,nbresp)),
+          QReply::Local(Arc::new((Condvar::new(),Mutex::new((vec!(), nbquer))))),
         };
-        Query::KVQuery(query)
+        Query::KVQuery(query, Some(expire), storeconf, nbresp)
     },
   };
   q
