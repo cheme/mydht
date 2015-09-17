@@ -134,7 +134,9 @@ pub fn connect_rw_with_optional<A : Address, T : Transport<Address=A>> (t1 : T, 
   } else {()};
 }
 
-pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_optional : bool)
+
+
+pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_connect_rs : bool, with_recv_ws : bool, variant : bool)
 {
   let mess_to = "hello world".as_bytes();
   let mess_to_2 = "hello2".as_bytes();
@@ -142,7 +144,7 @@ pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A
   let (s,r) = mpsc::channel();
   let (s2,r2) = mpsc::channel();
   let readhandler = move |mut rs : <T as Transport>::ReadStream, mut ows : Option<<T as Transport>::WriteStream> | {
-    if with_optional {
+    if with_recv_ws {
       assert!(ows.is_some());
     } else {
       assert!(ows.is_none());
@@ -156,7 +158,11 @@ pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A
       let s = rr.unwrap();
       if s == 10 {
         // first message
-        let rr2 = rs.read(&mut buff[..]);
+        let rr2 = if variant {
+          rs.read(&mut buff[0..1]) // we get only one byte (second message may be here)
+        } else {
+          rs.read(&mut buff[..])
+        };
         assert!(rr2.is_ok());
         assert!(rr2.unwrap() == 1);
         match ows {
@@ -177,7 +183,7 @@ pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A
     Ok(ReaderHandle::LocalTh(o))
   };
   let readhandler2 = move |mut rs : <T as Transport>::ReadStream, mut ows : Option<<T as Transport>::WriteStream> | {
-    if with_optional {
+    if with_recv_ws {
       assert!(ows.is_some());
       Ok(ReaderHandle::Local)
     } else {
@@ -207,7 +213,7 @@ pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A
   let cres = at2.connectwith(a1, Duration::milliseconds(300));
   assert!(cres.as_ref().is_ok(),"{:?}", cres.as_ref().err());
   let (mut ws, mut ors) = cres.unwrap();
-  if with_optional {
+  if with_connect_rs {
     assert!(ors.is_some());
   } else {
     assert!(ors.is_none());
@@ -234,15 +240,20 @@ pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A
     },
   };
 
+  if !variant {
+    r.recv();// first message
+  };
   let wr = ws.write(&mess_to_2[..]);
   assert!(wr.is_ok());
   assert!(ws.flush().is_ok());
 
-  // first message
-  r.recv();
+  if variant {
+    r.recv();// first message
+  };
+ 
   // second message
   r.recv();
-  if !with_optional {
+  if !with_recv_ws {
     r2.recv();
   } else {()};
 }

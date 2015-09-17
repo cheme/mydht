@@ -342,6 +342,6 @@ fn test_connect_rw_nonmanaged () {
  let t2 = trs.pop().unwrap();
  let t1 = trs.pop().unwrap();
 
- ttest::connect_rw_with_optional_non_managed (t1 , t2 , a1 , a2, multiplex); 
+ ttest::connect_rw_with_optional_non_managed (t1 , t2 , a1 , a2, multiplex,multiplex,false); 
 }
 

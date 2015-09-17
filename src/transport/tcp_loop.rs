@@ -119,6 +119,15 @@ use utils::{SocketAddrExt,sa4};
 #[cfg(feature="with-extra-test")]
 #[cfg(test)]
 use std::net::Ipv4Addr;
+#[cfg(feature="with-extra-test")]
+#[cfg(test)]
+use std::sync::Arc;
+#[cfg(feature="with-extra-test")]
+#[cfg(test)]
+use transport::Address;
+#[cfg(feature="with-extra-test")]
+#[cfg(test)]
+use std::thread;
 
 const CONN_REC : usize = 0;
 
@@ -339,12 +348,13 @@ impl<'a,C> Handler for MyHandler<'a,C>
           },
         };
         // run server up to first read where we get back to returning the write stream
-        cohandle.resume().ok().expect("Failed to resume coroutine in start of conn to");
-        let si = StreamInfo::CoRout(cohandle);
-        self.tokens.insert(tok.as_usize(), si);
-        if r.send(None).map_err(|e|error!("transport send on newconnth broken : {}", e)).is_err() {
-          self.tokens.remove(&tok.0);
-        };
+        if resume_h(&cohandle, "in start of conn to") {
+          let si = StreamInfo::CoRout(cohandle);
+          self.tokens.insert(tok.as_usize(), si);
+          if r.send(None).map_err(|e|error!("transport send on newconnth broken : {}", e)).is_err() {
+            self.tokens.remove(&tok.0);
+          };
+        } // TODO dereg when failure
  
       },
       HandlerMessage::Timeout(tok) => {
@@ -476,9 +486,10 @@ impl<'a,C> Handler for MyHandler<'a,C>
                 };
  
                 // start server up to read wheer we get back to init stream info
-                cohandle.resume().ok().expect("Failed to resume coroutine in start of receiv conn");
-                let si = StreamInfo::CoRout(cohandle);
-                self.tokens.insert(tok.as_usize(), si);
+                if resume_h(&cohandle, "in start of receiv conn") {
+                  let si = StreamInfo::CoRout(cohandle);
+                  self.tokens.insert(tok.as_usize(), si);
+                }; // TODO dereg
 
               }
             }
@@ -511,7 +522,10 @@ impl<'a,C> Handler for MyHandler<'a,C>
         },
         Some(&StreamInfo::CoRout(ref handle)) => {
           // unlock read of coroutine
-          handle.resume().ok().expect("Failed to resume coroutine when receiving content from tcp loop");
+          if resume_h(&handle, "when receiving content from tcp loop") {
+          } else {
+            // TODO dereg and remove close coroutine
+          };
         },
         //if not in map log error
         None => error!("receive content for disconnected stream, timeout may be to short"),
@@ -591,7 +605,7 @@ impl Transport for Tcp {
     //try!(s.0.set_read_timeout_ms(self.timeout.num_milliseconds().to_usize().unwrap()));
     
     // get token from event loop!!
-   let (sch,sync) = mpsc::channel();
+   let (sch,sync) = mpsc::channel(); // TODO something else than a channel for coroutine??
    let ch = {
     let r = match self.channel.0.lock() {
       Ok(guard) => {
@@ -657,7 +671,7 @@ impl Transport for Tcp {
       },
       _ => {
         // no read stream returned : server already started as a coroutine by the transport
-        // coroutine init ok
+        // coroutine init ok TODO homogenized??
         Ok((WriteTcpStream(ws), None))
       },
 
@@ -737,9 +751,25 @@ impl ReadTcpStream {
   }
 
   fn read_co(buf: &mut [u8], s : &mut MioTcpStream, tok : &Token, ch : &MioSender<HandlerMessage>) -> IoResult<usize> {
-    // TODO no timeout mechanism : coroutine could easily get stuck !!!!
-    Coroutine::sched();
-    Ok(try!(s.read(buf)))
+    let nb = match s.read(buf) {
+      Ok(n) => n,
+      Err(e) => {
+        let rawerr = e.raw_os_error();
+        // 11 as temporaryly unavalable
+        if rawerr == Some(11) {
+          0
+        } else {
+          return Err(e);
+        }
+      },
+    };
+    if nb == 0 {
+      // TODO no timeout mechanism : coroutine could easily get stuck !!!!
+      Coroutine::sched();
+      Ok(try!(s.read(buf)))
+    } else {
+      Ok(nb)
+    }
  
   }
 
@@ -835,13 +865,19 @@ fn connect_rw () {
 #[cfg(feature="with-extra-test")]
 #[test]
 fn connect_rw_corout () {
-  let start_port = 40000;
+  let start_port = 40400;
 
   let a1 = SocketAddrExt(sa4(Ipv4Addr::new(127,0,0,1), start_port));
   let a2 = SocketAddrExt(sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
+  let a3 = SocketAddrExt(sa4(Ipv4Addr::new(127,0,0,1), start_port+2));
+  let a4 = SocketAddrExt(sa4(Ipv4Addr::new(127,0,0,1), start_port+3));
   let tcp_transport_1 : Tcp = Tcp::new (&a1, Some(Duration::seconds(5)), Duration::seconds(5), false, false).unwrap();
   let tcp_transport_2 : Tcp = Tcp::new (&a2, Some(Duration::seconds(5)), Duration::seconds(5), false, false).unwrap();
+  let tcp_transport_3 : Tcp = Tcp::new (&a3, Some(Duration::seconds(5)), Duration::seconds(5), false, false).unwrap();
+  let tcp_transport_4 : Tcp = Tcp::new (&a4, Some(Duration::seconds(5)), Duration::seconds(5), false, false).unwrap();
   // TODO need a test variant for coroutine (returning corouting handle and using no thread)
+  connect_rw_with_optional_non_managed_corout(tcp_transport_1,tcp_transport_2,&a1,&a2,false,true,true);
+  connect_rw_with_optional_non_managed_corout(tcp_transport_3,tcp_transport_4,&a3,&a4,false,true,false);
 
 }
 
@@ -852,6 +888,146 @@ fn to_iores<A,Error : Debug>(e : StdResult<A,Error>) -> IoResult<A> {
     Err(e) => {
       let msg = format!("Io error from non Io error : {:?}",e);
       Err(IoError::new(IoErrorKind::Other, msg))
+    },
+  }
+}
+
+
+// Note that transport is herby managed
+#[cfg(feature="with-extra-test")]
+#[cfg(test)]
+pub fn connect_rw_with_optional_non_managed_corout<A : Address, T : Transport<Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_connect_rs : bool, with_recv_ws : bool, variant : bool)
+{
+  let mess_to = "hello world".as_bytes();
+  let mess_to_2 = "hello2".as_bytes();
+  let mess_from = "pong".as_bytes();
+  let (s,r) = mpsc::channel();
+  let (s2,r2) = mpsc::channel();
+  let readhandler = move |mut rs : <T as Transport>::ReadStream, mut ows : Option<<T as Transport>::WriteStream> | {
+/*    if with_recv_ws {
+      assert!(ows.is_some());
+    } else {
+      assert!(ows.is_none());
+    };*/
+    let sspawn = s.clone();
+    // need to thread the process (especially because blocking read and we are in receiving loop)
+    let o = Coroutine::spawn(move|| {
+      let mut buff = vec!(0;10);
+      let rr = rs.read(&mut buff[..]);
+      assert!(rr.is_ok());
+      let s = rr.unwrap();
+      if s == 10 {
+        // first message
+        let rr2 = if variant {
+          rs.read(&mut buff[0..1]) // we get only one byte (second message may be here)
+        } else {
+          rs.read(&mut buff[..])
+        };
+        assert!(rr2.is_ok());
+        assert!(rr2.unwrap() == 1);
+        match ows {
+          Some (mut ws) => {
+            let wr = ws.write(&mess_from[..]);
+            assert!(wr.is_ok());
+            assert!(ws.flush().is_ok());
+          },
+          None => (),
+
+        };
+      };
+      sspawn.send(true);
+      let rr = rs.read(&mut buff[..]);
+      assert!(rr.is_ok());
+      let s = rr.unwrap();
+      // second message
+      assert!(s == 6);
+    });
+    Ok(ReaderHandle::Coroutine(o))
+  };
+  let readhandler2 = move |mut rs : <T as Transport>::ReadStream, mut ows : Option<<T as Transport>::WriteStream> | {
+    if false {
+      assert!(ows.is_some());
+      Ok(ReaderHandle::Local)
+    } else {
+//      assert!(ows.is_none());
+      let sspawn = s2.clone();
+      let o = Coroutine::spawn(move|| {
+        let mut buff = vec!(0;10);
+        let rr = rs.read(&mut buff[..]);
+        assert!(rr.is_ok());
+        assert!(rr.unwrap() == 4);
+        sspawn.send(true);
+      });
+      Ok(ReaderHandle::Coroutine(o))
+    }
+  };
+ 
+  let a1c = a1.clone();
+  let a2c = a2.clone();
+  let at1 = Arc::new(t1);
+  let at1c = at1.clone();
+  let at2 = Arc::new(t2);
+  let at2c = at2.clone();
+
+  let g = thread::spawn(move|| {at1c.start(readhandler);});
+  let g2 = thread::spawn(move|| {at2c.start(readhandler2);});
+//  thread::sleep_ms(3000);
+  let cres = at2.connectwith(a1, Duration::milliseconds(300));
+  assert!(cres.as_ref().is_ok(),"{:?}", cres.as_ref().err());
+  let (mut ws, mut ors) = cres.unwrap();
+  if with_connect_rs {
+    assert!(ors.is_some());
+  } else {
+    assert!(ors.is_none());
+  };
+  
+  let wr = ws.write(&mess_to[..]);
+  assert!(wr.is_ok());
+  assert!(ws.flush().is_ok());
+
+  match ors {
+    Some (ref mut rs) => {
+      let mut buff = vec!(0;10);
+      let rr = rs.read(&mut buff[..]);
+      assert!(rr.unwrap() == 4);
+    },
+    // test in read handler
+    None => {
+      let cres = at1.connectwith(a2, Duration::milliseconds(300));
+      assert!(cres.is_ok());
+      let mut ws = cres.unwrap().0;
+      let wr = ws.write(&mess_from[..]);
+      assert!(wr.is_ok());
+      assert!(ws.flush().is_ok());
+    },
+  };
+  if !variant {
+    r.recv();// first message
+  };
+  let wr = ws.write(&mess_to_2[..]);
+  assert!(wr.is_ok());
+  assert!(ws.flush().is_ok());
+
+  if variant {
+    r.recv();// first message
+  };
+ 
+  // second message
+  r.recv();
+  if !with_recv_ws {
+    r2.recv();
+  } else {()};
+}
+
+
+#[inline]
+//run in tcp loop so no panic!!
+fn resume_h(h : &CoHandle, more : &str) -> bool {
+  match h.resume() {
+    Ok(_) => true,
+    Err(e) => {
+      warn!("a server might have failed, cannot resume its coroutine : {}", more);
+      false
     },
   }
 }
