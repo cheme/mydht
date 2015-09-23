@@ -295,7 +295,7 @@ impl Read for LocalReadStream {
       let mut from : &mut Vec<u8> = if culen != 0 {
         &mut self.1
       } else {
-        Arc::make_unique(&mut afrom)
+        Arc::make_mut(&mut afrom)
       };
       let fromlen = from.len();
       let mut rfrom : & [u8] = from.as_ref();

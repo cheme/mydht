@@ -4,7 +4,6 @@
 #![feature(path_ext)]
 #![feature(convert)]
 #![feature(semaphore)]
-#![feature(arc_unique)]
 #![feature(deque_extras)]
 #![feature(socket_timeout)]
 #![feature(slice_bytes)] // in tcp_loop

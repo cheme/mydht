@@ -145,7 +145,7 @@ impl<KV : KeyVal> SettableAttachment for ArcKV<KV> {
     // Othewhise need a kvmut used for protomess only
     // currently no use of weak pointer over our Arc, so when used after receiving a message
     // (unique arc) no clone may occurs (see fn doc).
-    let kv = Arc::make_unique(&mut self.0);
+    let kv = Arc::make_mut(&mut self.0);
     kv.set_attachment(fi)
   }
 

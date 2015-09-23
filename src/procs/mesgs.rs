@@ -45,15 +45,15 @@ pub enum PeerMgmtMessage<P : Peer,V : KeyVal,TR : ReadTransportStream, TW : Writ
   /// peer add before)
   PeerPing(Arc<P>, Option<OneResult<bool>>), // optional mutex if we need reply
   /// Pong a peer, this is emit after ping reception on server, client may not be initialized.
-  /// String is signed challenge
+  /// Vec<u8> is signed challenge
   /// priority is for initialized of peers if not in peer manager (no update on xisting client)
   /// optional write stream is for non managed server (no client handle get from a first peer add,
   /// and a write stream to send)
-  PeerPong(Arc<P>, PeerPriority, String, Option<TW>),
+  PeerPong(Arc<P>, PeerPriority, Vec<u8>, Option<TW>),
   /// received pong need auth
   /// first peer : TODO switch to key only
   /// second received signed challenge
-  PeerAuth(P, String),
+  PeerAuth(P, Vec<u8>),
   /// Find a peer by its key, (first local lookup, then depending on query conf propagate).
   ///  - first is key of peer to find
   ///  - second is possible query stored in querymanager (asynch is done without it), only used to
@@ -155,7 +155,7 @@ pub type ClientMessageIx<P, V, TW> = (ClientMessage<P,V,TW>,usize);
 pub enum ClientMessage<P : Peer, V : KeyVal, TW : WriteTransportStream> {
   /// Ping a peer (establishing connection and storing peer in peer manager
   /// parameter is challenge
-  PeerPing(Arc<P>, String),
+  PeerPing(Arc<P>, Vec<u8>),
   // - first is token for multiplexed threads
   // - second is challenge
   // - third is message signing
@@ -163,7 +163,7 @@ pub enum ClientMessage<P : Peer, V : KeyVal, TW : WriteTransportStream> {
   
   
   // signed challenge
-  PeerPong(String),
+  PeerPong(Vec<u8>),
   /// Find a peer, option on query depends on query mode and is used for error management (lessen
   /// or not the number of send query)
   PeerFind(P::Key, QueryHandle<P,V>, QueryMsg<P>),

@@ -484,13 +484,13 @@ unsafe impl Send for UnsignedOpenAccess {
 }
 
 impl PeerMgmtMeths<RSAPeer, MulKV> for UnsignedOpenAccess {
-  fn challenge (&self, _ : &RSAPeer) -> String{
-    "".to_string()
+  fn challenge (&self, _ : &RSAPeer) -> Vec<u8> {
+    Vec::new()
   }
-  fn signmsg   (&self, _ : &RSAPeer, _ : &String) -> String{
-    "".to_string()
+  fn signmsg (&self, _ : &RSAPeer, _ : &[u8]) -> Vec<u8> {
+    Vec::new()
   }
-  fn checkmsg  (&self, _ : &RSAPeer, _ : &String, _ : &String) -> bool{true}
+  fn checkmsg (&self, _ : &RSAPeer, _ : &[u8], _ : &[u8]) -> bool {true}
   fn accept<M : PeerMgmtMeths<RSAPeer, MulKV>, RT : RunningTypes<P=RSAPeer,V=MulKV,A=<RSAPeer as Peer>::Address,M=M>> (
       &self, 
       _ : &RSAPeer, 
@@ -631,20 +631,14 @@ mode : QueryMode::Asynch,
 
 // TODO PeerMgmtMeths to Vec<u8> !!!! here parse_str is very unsaf (si
 impl PeerMgmtMeths<RSAPeer, MulKV> for WotAccess {
-  fn challenge (&self, _ : &RSAPeer) -> String{
-    uuid::Uuid::new_v4().to_simple_string()
+  fn challenge (&self, _ : &RSAPeer) -> Vec<u8> {
+    uuid::Uuid::new_v4().as_bytes().to_vec()
   }
-  fn signmsg (&self, n : &RSAPeer, chal : &String) -> String{
-    match uuid::Uuid::parse_str(chal) {
-      Err(_) => "bad challenge result in bad signature".to_string(),
-        Ok(c) =>  n.content_sign(c.as_bytes()).to_hex(),
-    }
+  fn signmsg (&self, n : &RSAPeer, chal : &[u8]) -> Vec<u8> {
+    n.content_sign(chal)
   }
-  fn checkmsg (&self, n : &RSAPeer, chal : &String, sign : &String) -> bool{ 
-    match uuid::Uuid::parse_str(chal) {
-      Err(_) => false,
-        Ok(c) =>  n.content_check(c.as_bytes(), &sign.from_hex().unwrap()[..]), 
-    }
+  fn checkmsg (&self, n : &RSAPeer, chal : &[u8], sign : &[u8]) -> bool { 
+    n.content_check(chal, sign)
   }
 #[inline]
   fn accept<M : PeerMgmtMeths<RSAPeer, MulKV>, RT : RunningTypes<P=RSAPeer,V=MulKV,A=<RSAPeer as Peer>::Address,M=M>> (

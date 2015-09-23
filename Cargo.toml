@@ -47,7 +47,8 @@ optional = true
 
 [dependencies.coroutine]
 #version = "0.3.2"
-git = "https://github.com/rustcc/coroutine-rs.git"
+#git = "https://github.com/rustcc/coroutine-rs.git"
+path = "../mydht-dep/coroutine-rs/"
 optional = true
 
 

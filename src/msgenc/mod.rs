@@ -51,12 +51,12 @@ where <P as Peer>::Address : 'a,
 /// TODO ref variant for send !!!!
 pub enum ProtoMessage<P : Peer, V : KeyVal> {
   /// Our node pinging plus challenge and message signing
-  PING(P,String, String), 
+  PING(P,Vec<u8>, Vec<u8>), 
   /// Ping reply with signature with
   ///  - emitter
   ///  - signing of challenge
   ///  P is added for reping on lost PING, TODO could be remove and simply origin key in pong
-  PONG(P,String),
+  PONG(P,Vec<u8>),
   /// reply to query of propagate, if no queryid is used it is a node propagate
   STORENODE(Option<QueryID>, Option<DistantEnc<P>>), // reply to synch or asynch query - note no mix in query mode -- no signature, since we go with a ping before adding a node (ping is signed) TODO allow a signing with primitive only for this ?? and possible not ping afterwad
   /// reply to query of propagate, if no queryid is used it is a node propagate
@@ -78,8 +78,8 @@ use std::sync::Arc;
 
 #[derive(RustcEncodable,Debug)]
 pub enum ProtoMessage<'a,P : Peer + 'a, V : KeyVal + 'a> {
-  PING(&'a P,String, String), 
-  PONG(&'a P,String),
+  PING(&'a P,Vec<u8>, Vec<u8>), 
+  PONG(&'a P,Vec<u8>),
   STORENODE(Option<QueryID>, Option<DistantEnc<&'a P>>),
   STOREVALUE(Option<QueryID>, Option<DistantEnc<&'a V>>),
   STOREVALUEATT(Option<QueryID>, Option<DistantEncAtt<&'a V>>),

@@ -146,13 +146,13 @@ unsafe impl Send for DummyRules {
 }
 
 impl PeerMgmtMeths<Node, DummyKeyVal> for DummyRules{
-  fn challenge (&self, _ : &Node) -> String{
-    "dummychallenge not random at all".to_string()
+  fn challenge (&self, _ : &Node) -> Vec<u8> {
+    "dummychallenge not random at all".as_bytes().to_vec()
   }
-  fn signmsg   (&self, _ : &Node, _ : &String) -> String{
-    "dummy signature".to_string()
+  fn signmsg   (&self, _ : &Node, _ : &[u8]) -> Vec<u8> {
+    "dummy signature".as_bytes().to_vec()
   }
-  fn checkmsg  (&self, _ : &Node, _ : &String, _ : &String) -> bool{ true}
+  fn checkmsg  (&self, _ : &Node, _ : &[u8], _ : &[u8]) -> bool { true}
   // typically accept return either normal (no priority managed) or a int priority
  
   fn accept<M : PeerMgmtMeths<Node, DummyKeyVal>, RT : RunningTypes<P=Node,V=DummyKeyVal,A=<Node as Peer>::Address,M=M>>
@@ -171,13 +171,13 @@ unsafe impl Send for DummyRules2 {
 }
 
 impl PeerMgmtMeths<Node, DummyKeyVal> for DummyRules2 {
-  fn challenge (&self, _ : &Node) -> String{
-    "dummychallenge not random at all".to_string()
+  fn challenge (&self, _ : &Node) -> Vec<u8> {
+    "dummychallenge not random at all".as_bytes().to_vec()
   }
-  fn signmsg   (&self, _ : &Node, _ : &String) -> String{
-    "dummy signature".to_string()
+  fn signmsg   (&self, _ : &Node, _ : &[u8]) -> Vec<u8> {
+    "dummy signature".as_bytes().to_vec()
   }
-  fn checkmsg  (&self, _ : &Node, _ : &String, _ : &String) -> bool{ true}
+  fn checkmsg  (&self, _ : &Node, _ : &[u8], _ : &[u8]) -> bool {true}
 
 
   // typically accept return either normal (no priority managed) or a int priority

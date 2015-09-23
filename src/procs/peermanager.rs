@@ -128,7 +128,7 @@ fn peermanager_internal<RT : RunningTypes,
           match p.1 {
             PeerState::Ping(ref chal, ref ores, ref prio) => {
               // check auth with peer challenge
-              if rc.peerrules.checkmsg(&(*p.0),&chal,&sign) {
+              if rc.peerrules.checkmsg(&(*p.0),&chal[..],&sign) {
                 if heavyaccept {
                 // spawn accept if it is heavy accept to get prio (prio stored in ping is
                 // unchecked)

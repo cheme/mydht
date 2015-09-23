@@ -104,17 +104,19 @@ impl TestingRules {
 }
 
 impl<P : Peer, V : KeyVal> PeerMgmtMeths<P, V> for TestingRules {
-  fn challenge (&self, _ : &P) -> String {
+  fn challenge (&self, _ : &P) -> Vec<u8> {
     thread::sleep_ms(self.delay_ms_chal);
-    thread_rng().gen::<usize>().to_string()
+    let mut s = vec![0; 4]; // four bytes challenge
+    thread_rng().fill_bytes(&mut s);
+    s
   }
-  fn signmsg (&self, n : &P, chal : &String) -> String {
+  fn signmsg (&self, n : &P, chal : &[u8]) -> Vec<u8> {
     thread::sleep_ms(self.delay_ms_sign);
-    format!("{:?}, {}",n.get_key(), chal)
+    format!("{:?}, {:?}",n.get_key(), chal).into_bytes()
   }
-  fn checkmsg (&self, n : &P, chal : &String, sign : &String) -> bool {
+  fn checkmsg (&self, n : &P, chal : &[u8], sign : &[u8]) -> bool {
     thread::sleep_ms(self.delay_ms_check);
-    format!("{:?}, {}",n.get_key(), chal) == *sign
+    format!("{:?}, {:?}",n.get_key(), chal).into_bytes() == sign
   }
   fn accept<M : PeerMgmtMeths<P,V>, RT : RunningTypes<P=P,V=V,A=P::Address,M=M>>
   (&self, _ : &P, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
