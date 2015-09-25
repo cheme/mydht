@@ -1,7 +1,9 @@
 
 use rand::{thread_rng, Rng};
+use std::io::Write;
 use super::{
   Peer,
+  NoShadow,
   PeerMgmtMeths,
 };
 use procs::{
@@ -49,9 +51,8 @@ impl Peer for PeerTest {
   fn to_address(&self) -> Self::Address {
     self.address.clone()
   }
+  noshadow!();
 }
-
-
 
 
 #[derive(Debug,Clone)]
@@ -128,6 +129,8 @@ impl<P : Peer, V : KeyVal> PeerMgmtMeths<P, V> for TestingRules {
   (&self, n : &Arc<P>, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) {
     thread::sleep_ms(self.delay_ms_accept_hook);
   }
+
+
 }
 
 /// test for PeerMgmtMeths auth primitives (challenge, signmsg, checkmsg)

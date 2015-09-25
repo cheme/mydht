@@ -19,7 +19,8 @@ use std::fmt::{Formatter,Debug};
 use std::fmt::Error as FmtError;
 //use keyval::{AsKeyValIf};
 use keyval::{FileKeyVal};
-use peer::{Peer};
+use peer::Peer;
+use peer::Shadow;
 #[cfg(feature="openssl-impl")]
 use self::openssl::crypto::hash::{Hasher,Type};
 use std::io::Write;
@@ -595,10 +596,41 @@ pub fn test_oneresult () {
 
 }
 
+pub fn send_msg<'a,P : Peer + 'a, V : KeyVal + 'a, T : WriteTransportStream, E : MsgEnc, S : Shadow> (
+   m : &ProtoMessageSend<'a,P,V>, 
+   a : Option<&Attachment>, 
+   t : &mut T, 
+   e : &E,
+   s : &mut S,
+   smode : S::ShadowMode,
+  ) -> MDHTResult<()> 
+where <P as Peer>::Address : 'a,
+      <P as KeyVal>::Key : 'a,
+      <V as KeyVal>::Key : 'a {
+  try!(s.shadow_header(&smode).map(|v|
+    t.write_all(&v[..])).unwrap_or(Ok(())));
+  try!(e.encode_into(&mut StreamShadow(t,s,smode),m));
+  try!(e.attach_into(t,a));
+  try!(t.flush());
+  Ok(())
+}
+struct StreamShadow<'a, 'b, T : 'a + WriteTransportStream, S : 'b + Shadow>
+(&'a mut T, &'b mut S, <S as Shadow>::ShadowMode);
+
+impl<'a, 'b, T : 'a + WriteTransportStream, S : 'b + Shadow> Write for StreamShadow<'a,'b,T,S> {
+    fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+      self.1.shadow_iter (buf, self.0, &self.2)
+    }
+    fn flush(&mut self) -> IoResult<()> {
+      self.1.shadow_flush(self.0, &self.2)
+//      self.0.flush() flush already called in impl
+    }
+}
+ 
 
 // TODO return messg in result
 #[inline]
-pub fn send_msg<'a,P : Peer + 'a, V : KeyVal + 'a, T : WriteTransportStream, E : MsgEnc>(m : &ProtoMessageSend<'a,P,V>, a : Option<&Attachment>, t : &mut T, e : &E) -> bool 
+pub fn send_msg3<'a,P : Peer + 'a, V : KeyVal + 'a, T : WriteTransportStream, E : MsgEnc>(m : &ProtoMessageSend<'a,P,V>, a : Option<&Attachment>, t : &mut T, e : &E) -> bool 
 where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a,
       <V as KeyVal>::Key : 'a {

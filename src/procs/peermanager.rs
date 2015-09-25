@@ -128,7 +128,7 @@ fn peermanager_internal<RT : RunningTypes,
           match p.1 {
             PeerState::Ping(ref chal, ref ores, ref prio) => {
               // check auth with peer challenge
-              if rc.peerrules.checkmsg(&(*p.0),&chal[..],&sign) {
+              if rc.peerrules.checkmsg(&(*p.0),&chal,&sign) {
                 if heavyaccept {
                 // spawn accept if it is heavy accept to get prio (prio stored in ping is
                 // unchecked)
@@ -272,7 +272,7 @@ fn peermanager_internal<RT : RunningTypes,
             // No init of local since their is no added value to establish connection before
             // sending first frame (return clihandle does not shortcut peermanager).
             // paninc on none (but test avoid it)
-            (init_local(&clientmode, ows),None)
+            (init_local(&p,&clientmode, ows),None)
           } else {
             match init_client_info(&p,&rc,&rp,ows,clientmode,threadpool) {
               Ok(r) => (Some(r.0),r.1),
@@ -920,7 +920,7 @@ fn init_client_info<'a, RT : RunningTypes>
  -> MydhtResult<(ClientInfo<RT::P,RT::V,RT::T>, Option<ServerInfo>)> {
   match cmode {
     &ClientMode::Local(dospawn) => match ows {
-      Some (ws) => Ok((ClientInfo::Local(ClientSender::Local(ws)),None)),
+      Some (ws) => Ok((ClientInfo::Local(ClientSender::Local(ws,p.get_shadower())),None)),
       None => {
         // TODO duration in rules
         let (ws, ors) = try!(rc.transport.connectwith(&p.to_address(), Duration::seconds(5)));
@@ -934,9 +934,9 @@ fn init_client_info<'a, RT : RunningTypes>
 
         };
         if dospawn {
-          Ok((ClientInfo::LocalSpawn(ClientSender::LocalSpawn(Arc::new(Mutex::new(ws)))),osi))
+          Ok((ClientInfo::LocalSpawn(ClientSender::LocalSpawn(Arc::new(Mutex::new((ws,p.get_shadower()))))),osi))
         } else {
-          Ok((ClientInfo::Local(ClientSender::Local(ws)),osi))
+          Ok((ClientInfo::Local(ClientSender::Local(ws,p.get_shadower())),osi))
         }
       },
     },
@@ -947,7 +947,7 @@ fn init_client_info<'a, RT : RunningTypes>
       let rcsp = rc.clone();
       let rpsp = rp.clone();
 
-      thread::spawn (move || {client::start::<RT>(&psp, rcl, rcsp, rpsp, ows.map(|ws|ClientSender::Threaded(ws)), false)});
+      thread::spawn (move || {client::start::<RT>(&psp, rcl, rcsp, rpsp, ows.map(|ws|ClientSender::Threaded(ws,psp.get_shadower())), false)});
       Ok((ci,None))
     },
     &ClientMode::ThreadedMax(_) | &ClientMode::ThreadPool(_) => {
@@ -960,7 +960,7 @@ fn init_client_info<'a, RT : RunningTypes>
         let rcsp = rc.clone();
         let rpsp = rp.clone();
 
-        thread::spawn (move || {client::start::<RT>(&psp, rcl, rcsp, rpsp, ows.map(|ws|ClientSender::Threaded(ws)), true)});
+        thread::spawn (move || {client::start::<RT>(&psp, rcl, rcsp, rpsp, ows.map(|ws|ClientSender::Threaded(ws,psp.get_shadower())), true)});
         
         if thix < tp.1.len() {
           tp.1.get_mut(thix).map(|mut v|{
@@ -1028,10 +1028,10 @@ fn update_lastsent_conf<P : Peer> ( queryconf : &QueryMsg<P>,  peers : &Vec<Arc<
 }
 
 #[inline]
-pub fn init_local<P : Peer, V : KeyVal, T : Transport> (cm : &ClientMode, ows : Option<T::WriteStream>) -> Option<ClientInfo<P,V,T>> {
+pub fn init_local<P : Peer, V : KeyVal, T : Transport> (p : & Arc<P>, cm : &ClientMode, ows : Option<T::WriteStream>) -> Option<ClientInfo<P,V,T>> {
   match cm {
-    &ClientMode::Local(false) => ows.map(|ws|ClientInfo::Local(ClientSender::Local(ws))),
-    &ClientMode::Local(true) => ows.map(|ws|ClientInfo::LocalSpawn(ClientSender::LocalSpawn(Arc::new(Mutex::new(ws))))),
+    &ClientMode::Local(false) => ows.map(|ws|ClientInfo::Local(ClientSender::Local(ws,p.get_shadower()))),
+    &ClientMode::Local(true) => ows.map(|ws|ClientInfo::LocalSpawn(ClientSender::LocalSpawn(Arc::new(Mutex::new((ws,p.get_shadower())))))),
     _ => None,
   }
 }

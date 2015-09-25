@@ -210,6 +210,21 @@ macro_rules! derive_kvstore(($kstore:ident, $kv:ident, $k:ident,
   }
 ));
 
+
+
+#[macro_export]
+/// convenience macro for peer implementation without a shadow
+macro_rules! noshadow(() => (
+
+  type Shadow = NoShadow;
+  #[inline]
+  fn get_shadower (&self) -> Self::Shadow {
+    NoShadow
+  }
+));
+
+
+
 mod keyval;
 mod kvcache;
 mod peer;
@@ -245,6 +260,7 @@ pub use query::{QueryID,Query};
 
 pub mod dhtimpl {
   pub use peer::node::{Node};
+  pub use peer::NoShadow;
   #[cfg(feature="openssl-impl")]
   pub use wot::rsa_openssl::RSAPeer;
   #[cfg(feature="rust-crypto-impl")]

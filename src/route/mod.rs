@@ -3,7 +3,7 @@
 use std::sync::Mutex;
 use procs::mesgs::{ClientMessage,ClientMessageIx};
 use std::sync::mpsc::{Sender};
-use peer::{Peer,PeerState,PeerStateChange};
+use peer::{Peer,PeerState,PeerStateChange,Shadow};
 use keyval::KeyVal;
 use procs::RunningProcesses;
 use std::sync::Arc;
@@ -37,38 +37,43 @@ pub mod btkad;
 /// Stored info about client in peer management (in route transient cache).
 pub enum ClientInfo<P : Peer, V : KeyVal, T : Transport> {
   /// Stream is used locally
-  Local(ClientSender<<T as Transport>::WriteStream>),
+  Local(ClientSender<<T as Transport>::WriteStream,P::Shadow>),
   /// Stream is used locally, except for connection (need synchro), it run in a new transient thread : TODO should run in a coroutine as pool thread are overall better.
-  LocalSpawn(ClientSender<<T as Transport>::WriteStream>),
+  LocalSpawn(ClientSender<<T as Transport>::WriteStream,P::Shadow>),
   /// usize is only useful for client thread shared, first is client index in thread and second is
   /// thread index in pool
   Threaded(Sender<ClientMessageIx<P,V,T::WriteStream>>,usize,usize),
 
 }
 /// sender to distant peer TODO maybe local spawn is useless (if we want to spawn a pool is better)
-pub enum ClientSender<TW : WriteTransportStream> {
+pub enum ClientSender<TW : WriteTransportStream, S : Shadow> {
   // TODO rename because not only threaded : fuse
-  Threaded(TW),
-  Local(TW),
-  LocalSpawn(Arc<Mutex<TW>>),
+  Threaded(TW,S),
+  Local(TW, S),
+  LocalSpawn(Arc<Mutex<(TW,S)>>),
 }
 
-// TODO replace send_msg by this
-pub fn send_msg<'a, P : Peer + 'a, V : KeyVal + 'a, T : WriteTransportStream, E : MsgEnc>(m : &ProtoMessageSend<'a,P,V>, a : Option<&Attachment>, t : &mut ClientSender<T>, e : &E) -> bool 
+// TODO replace send_msg by this, TODO return result
+pub fn send_msg<'a, P : Peer + 'a, V : KeyVal + 'a, T : WriteTransportStream, E : MsgEnc>(m : &ProtoMessageSend<'a,P,V>, a : Option<&Attachment>, t : &mut ClientSender<T,P::Shadow>, e : &E, sm : <P::Shadow as Shadow>::ShadowMode) -> bool 
 where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a,
       <V as KeyVal>::Key : 'a {
  
   match t {
-    &mut ClientSender::Local(ref mut w) => {
-      utils::send_msg(m,a,w,e)
+    &mut ClientSender::Local(ref mut w, ref mut sh) => {
+      utils::send_msg(m,a,w,e,sh,sm).is_ok()
     },
-    &mut ClientSender::Threaded(ref mut w) => {
-      utils::send_msg(m,a,w,e)
+    &mut ClientSender::Threaded(ref mut w, ref mut sh) => {
+      utils::send_msg(m,a,w,e,sh,sm).is_ok()
     },
     &mut ClientSender::LocalSpawn(ref mut amutt) => {
       match amutt.lock() {
-        Ok(mut w) => utils::send_msg(m,a,&mut (*w),e),
+        Ok(mut w) => {
+          let mw = &mut(*w);
+          let wr = &mut mw.0;
+          let sh = &mut mw.1;
+          utils::send_msg(m,a,wr,e,sh,sm).is_ok()
+        },
         Err(m) => {
           error!("poisoned mutex for local client spawn send");
           false
@@ -113,14 +118,14 @@ pub enum ServerInfo {
 pub type PeerInfo<P, V, T> = (Arc<P>,PeerState,(Option<ServerInfo>, Option<ClientInfo<P,V,T>>));
 
 impl<P : Peer, V : KeyVal, T : Transport> ClientInfo<P,V,T> {
-  pub fn get_clone_sender (&self) ->  Option<ClientSender<<T as Transport>::WriteStream>> {
+  pub fn get_clone_sender (&self) ->  Option<ClientSender<<T as Transport>::WriteStream,P::Shadow>> {
     if let &ClientInfo::LocalSpawn(ClientSender::LocalSpawn(ref ws)) = self {
       Some(ClientSender::LocalSpawn(ws.clone()))
     } else {
       None
     }
   }
-  pub fn get_mut_sender<'a> (&'a mut self) -> Option<&'a mut ClientSender<<T as Transport>::WriteStream>> {
+  pub fn get_mut_sender<'a> (&'a mut self) -> Option<&'a mut ClientSender<<T as Transport>::WriteStream,P::Shadow>> {
     match self {
       &mut ClientInfo::Local(ref mut writer) => {
         Some(writer)
@@ -533,6 +538,5 @@ pub mod byte_rep {
       self == other
     }
   }
-
-
 }
+

@@ -67,12 +67,16 @@ mod test {
 
   impl Peer for NodeK2 {
     type Address = <Node as Peer>::Address;
+    type Shadow = <Node as Peer>::Shadow;
     #[inline]
     fn to_address(&self) -> <Node as Peer>::Address {
-        self.0.to_address()
+      self.0.to_address()
+    }
+    #[inline]
+    fn get_shadower (&self) -> Self::Shadow {
+      self.0.get_shadower()
     }
   }
-
 } 
 
 /// Storage for `KeyVal`

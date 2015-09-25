@@ -34,6 +34,8 @@ use super::{TrustedPeer,Truster,TrustRel,TrustedVal,PeerInfoRel};
 //use super::trustedpeer::{TrustedPeerToSignDec};
 use super::trustedpeer::{TrustedPeerToSignEnc, SendablePeerEnc, SendablePeerDec};
 use peer::Peer;
+use peer::Shadow;
+use peer::NoShadow;
 
 #[derive(Debug, PartialEq, Eq, Clone,RustcEncodable,RustcDecodable)]
 pub struct ECDSAPeer {
@@ -329,6 +331,6 @@ impl Peer for ECDSAPeer {
   fn to_address(&self) -> SocketAddr {
     self.address.0
   }
+  noshadow!(); // TODO implement same as RSAPeer
 }
-
 

@@ -1,6 +1,7 @@
 use std::net::{SocketAddr};
 use rustc_serialize::{Encoder,Encodable,Decoder};
 use peer::Peer;
+use peer::NoShadow;
 use std::string::String;
 use keyval::{KeyVal};
 use keyval::{Attachment,SettableAttachment};
@@ -30,12 +31,11 @@ impl KeyVal for Node {
 
 impl SettableAttachment for Node { }
 
-impl Peer for Node{
+impl Peer for Node {
   type Address = SocketAddr;
   fn to_address(&self) -> SocketAddr {
     self.address.0
   }
-
+  noshadow!();
 }
-
 

@@ -8,7 +8,7 @@ extern crate time;
 //use mydhtresult::Result as MDHTResult;
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 use rustc_serialize::hex::{ToHex};
-//use std::io::Result as IoResult;
+use std::io::Result as IoResult;
 use self::openssl::crypto::hash::{Hasher,Type};
 use self::openssl::crypto::pkey::{PKey};
 use std::fmt::{Formatter,Debug};
@@ -30,7 +30,7 @@ use keyval::{Attachment,SettableAttachment};
 use super::{TrustedPeer,Truster,TrustRel,TrustedVal,PeerInfoRel};
 //use super::trustedpeer::{TrustedPeerToSignDec};
 use super::trustedpeer::{TrustedPeerToSignEnc, SendablePeerEnc, SendablePeerDec};
-use peer::Peer;
+use peer::{Peer,Shadow};
 use bincode::rustc_serialize as bincode;
 use bincode::SizeLimit;
 
@@ -76,7 +76,7 @@ pub struct RSAPeer {
 
   ////// transient info
   
- pub addressdate : TimeSpecExt,
+  pub addressdate : TimeSpecExt,
   /// last known address.
   /// peers with incorrect address would not be returned in 
   /// findpeerrs but possibly return in findkv (for example in a wot
@@ -421,10 +421,66 @@ impl SettableAttachment for RSAPeer {}
 
 impl Peer for RSAPeer {
   type Address = SocketAddr;
+  type Shadow = RSAShadower;
   #[inline]
   fn to_address(&self) -> SocketAddr {
     self.address.0
   }
+  #[inline]
+  fn get_shadower (&self) -> Self::Shadow {
+    RSAShadower::new()
+  }
 }
 
 
+pub struct RSAShadower {
+  buf : Vec<u8>,
+  key : Vec<u8>,
+  /// key exchange payload to send in header for first shadowed frame
+  keyexch : Option<Vec<u8>>,
+
+}
+impl RSAShadower {
+  pub fn new() -> Self {
+    RSAShadower {
+      buf : Vec::new(),
+      key : Vec::new(),
+      keyexch : None,
+    }
+  }
+}
+impl Shadow for RSAShadower {
+  type ShadowMode = bool;
+  #[inline]
+  fn shadow_header (&mut self, m : &Self::ShadowMode) -> Option<Vec<u8>> {
+/*    if m {
+   //   let newkey : &[u8] = [];  // TODO get from keyexch if present
+      Some([1].to_vec())
+    } else {
+      Some([0].to_vec())
+    }
+    */
+None
+  }
+  #[inline]
+  fn shadow_iter<W : Write> (&mut self, m : &[u8], w : &mut W, _ : &Self::ShadowMode) -> IoResult<usize> {
+    // TODO use inner key to encrypt m, use internal buffer (right block size) run n time write n time
+    // Do not flush
+    w.write(m)
+  }
+  #[inline]
+  fn shadow_flush<W : Write> (&mut self, w : &mut W, _ : &Self::ShadowMode) -> IoResult<()> {
+    // TODO encrypt remaining content in buffer and write, + call to writer flush
+    w.flush()
+  }
+ 
+  #[inline]
+  fn default_message_mode () -> Self::ShadowMode {
+    true
+  }
+  #[inline]
+  fn default_auth_mode () -> Self::ShadowMode {
+    false
+  }
+
+}

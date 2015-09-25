@@ -2,11 +2,14 @@ use std::sync::Arc;
 use rustc_serialize::{Encoder,Encodable,Decoder};
 use std::string::String;
 use procs::{RunningProcesses,ArcRunningContext,RunningTypes};
+use msgenc::send_variant::ProtoMessage as ProtoMessageSend;
 use transport::{Address};
 use keyval::KeyVal;
 use utils::{OneResult,unlock_one_result};
 //use utils::{ret_one_result};
 use utils::TransientOption;
+use std::io::Write;
+use std::io::Result as IoResult;
 
 pub mod node;
 #[cfg(test)]
@@ -15,12 +18,66 @@ pub mod test;
 /// A peer is a special keyval with an attached address over the network
 pub trait Peer : KeyVal + 'static {
   type Address : Address;
-  // TODO rename to get_address or get_address_clone, here name is realy bad
+  type Shadow : Shadow;
+ // TODO rename to get_address or get_address_clone, here name is realy bad
   // + see if a ref returned would not be best (same limitation as get_key for composing types in
   // multi transport)
   fn to_address (&self) -> Self::Address;
+  /// instantiate a new shadower for this peer (shadower wrap over write stream and got a lifetime
+  /// of the connection).
+  fn get_shadower (&self) -> Self::Shadow;
 //  fn to_address (&self) -> SocketAddr;
 }
+
+/// for shadowing capability
+//Sync + Send + Clone + Debug + 'static {}
+pub trait Shadow : Send + 'static {
+  /// type of shadow to apply (most of the time this will be () or bool but some use case may
+  /// require 
+  /// multiple shadowing scheme, and therefore probably an enum type).
+  type ShadowMode;
+  /// get the header required for a shadow scheme : for instance the shadowmode representation and
+  /// the salt. The action also make the shadow iter method to use the right state (internal state
+  /// for shadow mode).
+  fn shadow_header (&mut self, &Self::ShadowMode) -> Option<Vec<u8>>;
+  /// Shadow of message block (to use in the writer), and write it in writer. The function maps
+  /// over write (see utils :: send_msg)
+  fn shadow_iter<W : Write> (&mut self, &[u8], &mut W, &Self::ShadowMode) -> IoResult<usize>;
+  /// flush at the end of message writing (useless to add content : reader could not read it),
+  /// usefull to emptied some block cyper buffer.
+  fn shadow_flush<W : Write> (&mut self, w : &mut W, &Self::ShadowMode) -> IoResult<()>;
+  /// all message but auth related one (PING  and PONG)
+  fn default_message_mode () -> Self::ShadowMode;
+  /// auth related messages (PING  and PONG)
+  fn default_auth_mode () -> Self::ShadowMode;
+}
+
+pub struct NoShadow;
+
+impl Shadow for NoShadow {
+  type ShadowMode = ();
+  #[inline]
+  fn shadow_header (&mut self, _ : &Self::ShadowMode) -> Option<Vec<u8>> {
+    None
+  }
+  #[inline]
+  fn shadow_iter<W : Write> (&mut self, m : &[u8], w : &mut W, _ : &Self::ShadowMode) -> IoResult<usize> {
+    w.write(m)
+  }
+  #[inline]
+  fn shadow_flush<W : Write> (&mut self, w : &mut W, _ : &Self::ShadowMode) -> IoResult<()> {
+    w.flush()
+  }
+  #[inline]
+  fn default_message_mode () -> Self::ShadowMode {
+    ()
+  }
+  #[inline]
+  fn default_auth_mode () -> Self::ShadowMode {
+    ()
+  }
+}
+
 
 #[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Clone)]
 /// State of a peer
@@ -126,12 +183,36 @@ pub trait PeerMgmtMeths<P : Peer, V : KeyVal> : Send + Sync + 'static {
   /// shared keyval secret in truststore usage), for now if this is needed peer need to be updated
   /// with the shared secret. TODO return a w.shadower
   fn shadow (&self, &P, Vec<u8>, Option<&P>, Option<&V>) -> Vec<u8>;
-  fn get_shadower (&self, &P, Vec<u8>, Option<&P>, Option<&V>) -> Vec<u8>;
   /// unshadow a message, co to shadow, to manage additional info that shadow may have added
   /// (especially if shadow apply multiple pattern of shadowing).
   /// We need to have shorter unshadowed slice (compression should not be implement in shadowing
   /// but in message encoding). TODO return a r.shadower, and maybe a shorter slice
   fn get_unshadower<'a> (&self, &P, &'a [u8]) -> (rshad, &'a [u8]);
 */
+  /// Resolve mode of shadowing to use for a peer and and a message. TODO might need ref to running
+  /// processes and contexts (or just our peer), but keep it simple for now
+  /// Default implementation relies on shadow message
+  fn get_shadower (&self, p : &P, m : &ProtoMessageSend<P,V>) -> <P::Shadow as Shadow>::ShadowMode {
+    match m {
+      &ProtoMessageSend::PING(..) |&ProtoMessageSend::PONG(..) => <P as Peer>::Shadow::default_auth_mode(),
+      _ => <P as Peer>::Shadow::default_message_mode(),
+    }
+  }
 }
+/*pub trait ShadowPipe<'a> : Write {
 
+}
+pub struct NoShadow<'a,W : 'a + Write>(&'a mut W);
+
+
+impl<'a,W : 'a + Write> ShadowPipe<'a> for NoShadow<'a,W> {
+}
+impl<'a,W : 'a + Write> Write for NoShadow<'a,W> {
+  fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+    self.0.write(buf)
+  }
+  fn flush(&mut self) -> IoResult<()> {
+    self.0.flush()
+  }
+}*/
+// new sendmsg use ref mut to peer to plug write_shadowed of peer and <F10>
