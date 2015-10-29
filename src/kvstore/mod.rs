@@ -73,8 +73,8 @@ mod test {
       self.0.to_address()
     }
     #[inline]
-    fn get_shadower (&self) -> Self::Shadow {
-      self.0.get_shadower()
+    fn get_shadower (&self, write : bool) -> Self::Shadow {
+      self.0.get_shadower(write)
     }
   }
 } 

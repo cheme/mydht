@@ -250,7 +250,7 @@ pub fn client_match <RT : RunningTypes>
           debug!("reconnection in client process ok");
           // for now reconnect is only for threaded : see start_local TODO local spawn could use this
           // use new shadower (using existing conn would be unsafe)
-          let mut cn = ClientSender::Threaded(n,p.get_shadower());
+          let mut cn = ClientSender::Threaded(n,p.get_shadower(true));
           // TODO send to peermgmet optional readTransportStream
           ok = send_msg($mess, $oa,&mut cn,&rc.msgenc,rc.peerrules.get_shadower(&(*p),&$mess));
           if ok {
@@ -351,7 +351,7 @@ pub fn mult_client_connect <RT : RunningTypes>
   ) -> MDHTResult<ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::Shadow>> {
   match ows {
     Some(ws) => {
-      let mut cn = ClientSender::Threaded(ws,p.get_shadower());
+      let mut cn = ClientSender::Threaded(ws,p.get_shadower(true));
       Ok(cn)
     },
     None => {
@@ -368,7 +368,7 @@ pub fn mult_client_connect <RT : RunningTypes>
             },
           };
  
-          let mut cn = ClientSender::Threaded(n,p.get_shadower());
+          let mut cn = ClientSender::Threaded(n,p.get_shadower(true));
           Ok(cn)
         },
         Err(e) => {

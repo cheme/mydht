@@ -1,16 +1,28 @@
 //! Web of trust components components implemented with Openssl primitive for RSA 2048 and key
 //! representation and content signing hash as SHA-512 of rsa key or original content.
 
+// TODO !!!! openssl binding for encryption are bad as it allocate a result each time, and in a
+// pipe it is useless TODO add encrypt(&[u8],&mut [u8]) to bindings!!!!
+// TODO test like tcp
+// TODO make it more generic by using an rsa impl component include into rsapeer (so that new peer
+// just include it in struct).
 
 extern crate openssl;
 extern crate time;
 
 //use mydhtresult::Result as MDHTResult;
+use std::io::Error as IoError;
+use std::io::ErrorKind as IoErrorKind;
+use std::slice::bytes::copy_memory;
 use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
 use rustc_serialize::hex::{ToHex};
 use std::io::Result as IoResult;
 use self::openssl::crypto::hash::{Hasher,Type};
 use self::openssl::crypto::pkey::{PKey};
+use self::openssl::crypto::symm::{Crypter,Mode};
+use self::openssl::crypto::symm::Type as SymmType;
+use rand::os::OsRng;
+use rand::Rng;
 use std::fmt::{Formatter,Debug};
 use std::fmt::Error as FmtError;
 //use std::str::FromStr;
@@ -18,6 +30,7 @@ use std::cmp::PartialEq;
 use std::cmp::Eq;
 use std::sync::Arc;
 use std::io::Write;
+use std::io::Read;
 use std::ops::Deref;
 use std::path::{PathBuf};
 //use self::time::Timespec;
@@ -33,9 +46,17 @@ use super::trustedpeer::{TrustedPeerToSignEnc, SendablePeerEnc, SendablePeerDec}
 use peer::{Peer,Shadow};
 use bincode::rustc_serialize as bincode;
 use bincode::SizeLimit;
+#[cfg(test)]
+use std::net::Ipv4Addr;
+#[cfg(test)]
+use utils;
+#[cfg(test)]
+use std::io::Cursor;
+
 
 static RSA_SIZE : usize = 2048;
 static HASH_SIGN : Type = Type::SHA512;
+static SHADOW_TYPE : SymmType = SymmType::AES_256_CBC;
 
 /// a TrustedPeer using RSA 2048 openssl implementation with sha 512 on content and to derive id.
 #[derive(Debug, PartialEq, Eq, Clone,RustcEncodable,RustcDecodable)]
@@ -254,6 +275,15 @@ impl<'a> TrustedVal<RSAPeer, PeerInfoRel> for RSAPeer
 
 impl RSAPeer {
 
+  fn ciph_cont(pkey : &PKey, to_ciph : &[u8]) -> Vec<u8> {
+    pkey.encrypt(to_ciph) // TODO check padding options and use encrypt_with_padding
+  }
+  fn unciph_cont(pkey : &PKey, to_ciph : &[u8]) -> Option<Vec<u8>> {
+    Some(pkey.decrypt(to_ciph)) // TODO what happen if no private key in pkey???
+  }
+
+
+
   fn sign_cont(pkey : &PKey, to_sign : &[u8]) -> Vec<u8> {
     let mut digest = Hasher::new(HASH_SIGN);
     match digest.write_all(to_sign) { // TODO return result<vec<u8>>
@@ -421,56 +451,257 @@ impl SettableAttachment for RSAPeer {}
 
 impl Peer for RSAPeer {
   type Address = SocketAddr;
-  type Shadow = RSAShadower;
+  type Shadow = AESShadower;
   #[inline]
   fn to_address(&self) -> SocketAddr {
     self.address.0
   }
   #[inline]
-  fn get_shadower (&self) -> Self::Shadow {
-    RSAShadower::new()
+  fn get_shadower (&self, write : bool) -> Self::Shadow {
+    AESShadower::new(&self, write)
   }
 }
 
 
-pub struct RSAShadower {
+pub struct AESShadower {
+  /// buffer for cyper uncypher
   buf : Vec<u8>,
+  /// index of content writen in buffer but not yet enciphered
+  bufix : usize,
+  crypter : Crypter,
+  /// Symetric key, renew on connect (aka new object)
   key : Vec<u8>,
-  /// key exchange payload to send in header for first shadowed frame
-  keyexch : Option<Vec<u8>>,
+  /// key to send
+  keyexch : Option<Arc<PKey>>,
 
 }
-impl RSAShadower {
-  pub fn new() -> Self {
-    RSAShadower {
-      buf : Vec::new(),
-      key : Vec::new(),
-      keyexch : None,
+
+// Crypter is not send but lets try
+unsafe impl Send for AESShadower {}
+
+const CIPHER_TAG_AES_256_CBC : u8 = 1;
+const AES_256_BLOCK_SIZE : usize = 16;
+const AES_256_KEY_SIZE : usize = 32;
+const CIPHER_TAG_NOPE : u8 = 0;
+
+
+/// currently only one scheme (still u8 at 1 in header to support more later).
+/// It is AES-256-CBC.
+impl AESShadower {
+
+  // TODO make it generic over peer (new fn needed)
+  pub fn new(dest : &RSAPeer, write : bool) -> Self {
+    let mut rng = OsRng::new().unwrap();
+
+  
+    let key = if write {
+      let mut s = vec![0; AES_256_KEY_SIZE];
+      rng.fill_bytes(&mut s);
+      s
+    } else {
+      Vec::new()
+    };
+
+
+    let buf =  vec![0; AES_256_BLOCK_SIZE];
+ 
+
+    let crypter = Crypter::new(SHADOW_TYPE);
+    crypter.pad(true);
+
+    let enckey = dest.get_pkey().1.clone();
+   
+
+    AESShadower {
+      buf : buf,
+      bufix : 0,
+      key : key,
+      crypter : crypter,
+      keyexch : Some(enckey),
     }
   }
 }
-impl Shadow for RSAShadower {
+
+
+impl Shadow for AESShadower {
   type ShadowMode = bool;
   #[inline]
-  fn shadow_header (&mut self, m : &Self::ShadowMode) -> Option<Vec<u8>> {
-/*    if m {
-   //   let newkey : &[u8] = [];  // TODO get from keyexch if present
-      Some([1].to_vec())
+  fn shadow_header<W : Write> (&mut self, w : &mut W, m : &Self::ShadowMode) -> IoResult<()> {
+
+    if *m {
+      // change salt each time (if to heavy a counter to change each n time
+      try!(w.write(&[CIPHER_TAG_AES_256_CBC]));
+      OsRng::new().unwrap().fill_bytes(&mut self.buf);
+      self.crypter.init(Mode::Encrypt,&self.key[..],&self.buf[..]);
+      try!(w.write(&self.buf[..]));
+      match self.keyexch {
+        Some(ref apk) => {
+          let enckey = RSAPeer::ciph_cont(&(*apk), &self.key[..]);
+        println!("{}",self.key.len()); // TODO check size of key
+        println!("{}",enckey.len()); // TODO check size of key
+      assert!(enckey.len() == 256);
+          try!(w.write(&enckey));
+        },
+        None => (),
+      }
+      self.keyexch = None;
     } else {
-      Some([0].to_vec())
+      try!(w.write(&[CIPHER_TAG_NOPE]));
     }
-    */
-None
+    Ok(())
   }
+
   #[inline]
-  fn shadow_iter<W : Write> (&mut self, m : &[u8], w : &mut W, _ : &Self::ShadowMode) -> IoResult<usize> {
-    // TODO use inner key to encrypt m, use internal buffer (right block size) run n time write n time
-    // Do not flush
-    w.write(m)
+  fn read_shadow_header<R : Read> (&mut self, r : &mut R) -> IoResult<Self::ShadowMode> {
+    let mut tag = [0];
+    try!(r.read(&mut tag));
+    if tag[0] == CIPHER_TAG_AES_256_CBC {
+      try!(r.read(&mut self.buf[..]));
+      match self.keyexch {
+        Some(ref apk) => {
+          let mut enckey = vec![0;256]; // enc from 32 to 256
+          try!(r.read(&mut enckey[..]));
+          // init key
+          let okey = RSAPeer::unciph_cont(&(*apk), &enckey[..]);
+          match okey {
+            Some(k) => self.key = k,
+            None => return Err(IoError::new (
+              IoErrorKind::Other,
+              "Cannot read Rsa Shadow key",
+            )),
+          }
+
+        },
+        None => {
+        },
+      }
+      self.keyexch = None;
+      self.crypter.init(Mode::Decrypt,&self.key[..],&self.buf[..]);
+      Ok(true)
+    } else {
+      Ok(false)
+    }
   }
+ 
   #[inline]
-  fn shadow_flush<W : Write> (&mut self, w : &mut W, _ : &Self::ShadowMode) -> IoResult<()> {
-    // TODO encrypt remaining content in buffer and write, + call to writer flush
+  fn shadow_iter<W : Write> (&mut self, m : &[u8], w : &mut W, sm : &Self::ShadowMode) -> IoResult<usize> {
+    if *sm {
+    // best case
+    if self.bufix == 0 && m.len() == AES_256_BLOCK_SIZE {
+      let r = self.crypter.update(m);
+      w.write(&r[..])
+    } else {
+      let mut has_next = true;
+      let mut mu = m;
+      let mut res = 0;
+      while has_next {
+        let nbufix = self.bufix + mu.len();
+        if nbufix < AES_256_BLOCK_SIZE {
+          has_next = false;
+          copy_memory(&mu[..], &mut self.buf[self.bufix..nbufix]);
+          res += mu.len();
+          self.bufix = nbufix;
+        } else {
+          let mix = self.buf.len() - self.bufix;
+          copy_memory(&mu[..mix], &mut self.buf[self.bufix..]); // TODO no need to copy if same length : update directly on mu then update mu
+          mu = &mu[mix..];
+          let r = self.crypter.update(&self.buf[..]);
+          res += try!(w.write(&r[..]));
+          res -= self.bufix;
+          self.bufix = 0;
+        }
+
+      }
+      Ok(res)
+    }
+    } else {
+      w.write(m)
+    }
+  }
+
+  #[inline]
+  fn read_shadow_iter<R : Read> (&mut self, r : &mut R, resbuf: &mut [u8], sm : &Self::ShadowMode) -> IoResult<usize> {
+    if *sm {
+      // is there something to write
+      if self.bufix == 0 {
+        let mut s = 0;
+        let mut has_next = true;
+        // try to fill buf
+        while has_next && self.bufix < AES_256_BLOCK_SIZE {
+          s = try!(r.read(&mut self.buf[self.bufix..]));
+          has_next = s != 0;
+          self.bufix += s;
+        }
+        let dec = if self.bufix == 0 {
+          let mut dec = self.crypter.finalize();
+          self.crypter.init(Mode::Decrypt,&self.key[..],&self.buf[..]); // only for next finalize to return 0
+          if dec.len() == 0 {
+            return Ok(0)
+          };
+          dec
+        } else {
+          // decode - call directly finalize as we have buf of blocksize
+          let mut dec = self.crypter.update(&self.buf[..self.bufix]);
+          if dec.len() == 0 {
+            // padding possible for last block
+        let mut rs = 0;
+        let mut has_next = true;
+        while has_next  {
+          s = try!(r.read(&mut self.buf[rs..]));
+          has_next = s != 0;
+          rs += s;
+        }
+ 
+            if rs > 0 {
+              dec = self.crypter.update(&self.buf[..rs]);
+            }
+            if dec.len() == 0 {
+              dec = self.crypter.finalize();
+              self.crypter.init(Mode::Decrypt,&self.key[..],&self.buf[..]); // only for next finalize to return 0
+            }
+          };
+           dec
+        };
+
+        assert!(dec.len() > 0 && dec.len() <= AES_256_BLOCK_SIZE );
+        if dec.len() == AES_256_BLOCK_SIZE {
+          self.buf = dec;
+          self.bufix = 0;
+        } else {
+          self.bufix = AES_256_BLOCK_SIZE - dec.len();
+          copy_memory(&dec[..],&mut self.buf[self.bufix..]);
+        }
+      }
+      let tow = AES_256_BLOCK_SIZE - self.bufix;
+      // write result
+      if resbuf.len() < tow {
+        copy_memory(&self.buf[self.bufix..self.bufix + resbuf.len()], &mut resbuf[..]);
+        self.bufix += resbuf.len();
+        Ok(resbuf.len())
+      } else {
+        copy_memory(&self.buf[self.bufix..], &mut resbuf[..tow]); // TODO case where buf size match and no copy
+        self.bufix = 0;
+        Ok(tow)
+      }
+    } else {
+      r.read(resbuf)
+    }
+  }
+ 
+  #[inline]
+  fn shadow_flush<W : Write> (&mut self, w : &mut W, sm : &Self::ShadowMode) -> IoResult<()> {
+    // encrypt remaining content in buffer and write, + call to writer flush
+    if *sm { 
+     if self.bufix > 0 {
+        let r = self.crypter.update(&self.buf[..self.bufix]);
+        try!(w.write(&r[..]));
+    }
+    // always finalize (padding)
+    let r2 = self.crypter.finalize();
+    if r2.len() > 0 {
+        try!(w.write(&r2[..]));
+    }
+    }
     w.flush()
   }
  
@@ -484,3 +715,118 @@ None
   }
 
 }
+#[cfg(test)]
+fn rsa_shadower_test (input_length : usize, write_buffer_length : usize,
+read_buffer_length : usize, smode : bool) {
+
+  let fromP = RSAPeer::new("from".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 9000));
+  let toP = RSAPeer::new("to".to_string(), None, utils::sa4(Ipv4Addr::new(127,0,0,1), 9001));
+  let mut inputb = vec![0;input_length];
+  OsRng::new().unwrap().fill_bytes(&mut inputb);
+  let mut output = Cursor::new(Vec::new());
+  let input = inputb;
+  let mut fromShad = toP.get_shadower(true);
+  let mut toShad = toP.get_shadower(false);
+
+  fromShad.shadow_header(&mut output, &smode).unwrap();
+  let mut ix = 0;
+  while ix < input_length {
+    if ix + write_buffer_length < input_length {
+      ix += fromShad.shadow_iter(&input[ix..ix + write_buffer_length], &mut output, &smode).unwrap();
+    } else {
+      ix += fromShad.shadow_iter(&input[ix..], &mut output, &smode).unwrap();
+    }
+  }
+  fromShad.shadow_flush(&mut output, &smode).unwrap();
+
+  let mut inputV = Cursor::new(output.into_inner());
+
+  let mode = toShad.read_shadow_header(&mut inputV).unwrap();
+  assert!(smode == mode);
+
+
+  let mut ix = 0;
+  let mut readbuf = vec![0;read_buffer_length];
+  while ix < input_length {
+    let l = toShad.read_shadow_iter(&mut inputV, &mut readbuf, &smode).unwrap();
+    assert!(l!=0);
+
+    println!("{:?}",&input[ix..ix + l]);
+    println!("{:?}",&readbuf[..l]);
+    assert!(&readbuf[..l] == &input[ix..ix + l]);
+    ix += l;
+  }
+
+  let l = toShad.read_shadow_iter(&mut inputV, &mut readbuf, &smode).unwrap();
+  assert!(l==0);
+
+}
+#[test]
+fn rsa_shadower1_test () {
+  let smode = false;
+  let input_length = 256;
+  let write_buffer_length = 256;
+  let read_buffer_length = 256;
+  rsa_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
+}
+
+#[test]
+fn rsa_shadower2_test () {
+  let smode = false;
+  let input_length = 7;
+  let write_buffer_length = 256;
+  let read_buffer_length = 256;
+  rsa_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
+}
+
+#[test]
+fn rsa_shadower3_test () {
+  let smode = false;
+  let input_length = 125;
+  let write_buffer_length = 12;
+  let read_buffer_length = 68;
+  rsa_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
+}
+#[test]
+fn rsa_shadower4_test () {
+  let smode = false;
+  let input_length = 125;
+  let write_buffer_length = 68;
+  let read_buffer_length = 12;
+  rsa_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
+}
+#[test]
+fn rsa_shadower5_test () {
+  let smode = true;
+  let input_length = AES_256_BLOCK_SIZE;
+  let write_buffer_length = AES_256_BLOCK_SIZE;
+  let read_buffer_length = AES_256_BLOCK_SIZE;
+  rsa_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
+}
+
+#[test]
+fn rsa_shadower6_test () {
+  let smode = true;
+  let input_length = 7;
+  let write_buffer_length = 256;
+  let read_buffer_length = 256;
+  rsa_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
+}
+
+#[test]
+fn rsa_shadower7_test () {
+  let smode = true;
+  let input_length = 125;
+  let write_buffer_length = 12;
+  let read_buffer_length = 68;
+  rsa_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
+}
+#[test]
+fn rsa_shadower8_test () {
+  let smode = true;
+  let input_length = 125;
+  let write_buffer_length = 68;
+  let read_buffer_length = 12;
+  rsa_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
+}
+

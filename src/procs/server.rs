@@ -239,30 +239,29 @@ pub fn servloop <RT : RunningTypes>
     let rcstart = rc.clone();
  
     let spserv = move |s, ows| {
-      let mut res = ();
-      match servermode {
+      Ok(match servermode {
         ServerMode::ThreadedOne(otimeout) => {
           let rp_thread = rp.clone();
           let rc_thread = rc.clone();
-          thread::spawn (move || {
+          ReaderHandle::Thread(thread::spawn (move || {
             let amut = Arc::new(Mutex::new(false));
             sphandler_res(request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::ThreadedOne(amut), otimeout,false));
-          });
+          }))
         },
         ServerMode::Local(true) => {
           let rp_thread = rp.clone();
           let rc_thread = rc.clone();
-          thread::spawn (move || {
-            sphandler_res(request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::Local, None, false));
-          });
+          ReaderHandle::LocalTh(thread::spawn (move || {
+            sphandler_res(request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::Local, None,false));
+          }))
         },
         ServerMode::Local(false) => {
-          res = try!(request_handler::<RT>(s, &rc, &rp, ows, ServerHandle::Local, None, false));
+          try!(request_handler::<RT>(s, &rc, &rp, ows, ServerHandle::Local, None, false));
+          ReaderHandle::Local
         },
         _ => panic!("Server Mult mode are unimplemented!!!"),//TODO mult thread mgmt
 
-      };
-      Ok(res)
+      })
     };
     // loop in transport receive function TODO if looping : start it from PeerManager thread
     rcstart.transport.start(spserv)

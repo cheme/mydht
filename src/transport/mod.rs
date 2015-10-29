@@ -47,8 +47,8 @@ pub enum ReaderHandle {
 /// possible handle when starting a server process to read
 pub enum ReaderHandle {
   Local, // Nothing, run locally
-  LocalTh, // run locally but in a thread
-  Thread(JoinHandle),
+  LocalTh(JoinHandle<()>), // run locally but in a thread
+  Thread(JoinHandle<()>),
   // Scoped // TODO?
 }
 
@@ -132,6 +132,13 @@ pub trait ReadTransportStream : Send + Read + 'static {
   /// (non managed so we can start another server fn (if first was spawn))
   #[inline]
   fn end_read_msg(&mut self) -> () {()}
+
+
+  // TODO for asymmetric coroutine usage the ref to the coroutine is needed and
+  // therefore a method like. Do not use associated type as call to completeInit
+  // will only be done dependantly on ReaderHandle (limitted nb of option,
+  // but could use an enum like ThContext).
+  // fn completeInit(&mut self, Option<CoroutineRef>);
 
 }
 

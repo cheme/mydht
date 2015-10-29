@@ -218,7 +218,7 @@ macro_rules! noshadow(() => (
 
   type Shadow = NoShadow;
   #[inline]
-  fn get_shadower (&self) -> Self::Shadow {
+  fn get_shadower (&self, _ : bool) -> Self::Shadow {
     NoShadow
   }
 ));

@@ -607,15 +607,18 @@ pub fn send_msg<'a,P : Peer + 'a, V : KeyVal + 'a, T : WriteTransportStream, E :
 where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a,
       <V as KeyVal>::Key : 'a {
-  try!(s.shadow_header(&smode).map(|v|
-    t.write_all(&v[..])).unwrap_or(Ok(())));
+  try!(s.shadow_header(t, &smode));
   try!(e.encode_into(&mut StreamShadow(t,s,smode),m));
-  try!(e.attach_into(t,a));
+  try!(e.attach_into(t,a)); // TODO shadow that to!!!
   try!(t.flush());
   Ok(())
 }
 struct StreamShadow<'a, 'b, T : 'a + WriteTransportStream, S : 'b + Shadow>
 (&'a mut T, &'b mut S, <S as Shadow>::ShadowMode);
+
+struct ReadStreamShadow<'a, 'b, T : 'a + ReadTransportStream, S : 'b + Shadow>
+(&'a mut T, &'b mut S, <S as Shadow>::ShadowMode);
+
 
 impl<'a, 'b, T : 'a + WriteTransportStream, S : 'b + Shadow> Write for StreamShadow<'a,'b,T,S> {
     fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
@@ -626,7 +629,14 @@ impl<'a, 'b, T : 'a + WriteTransportStream, S : 'b + Shadow> Write for StreamSha
 //      self.0.flush() flush already called in impl
     }
 }
- 
+
+impl<'a, 'b, T : 'a + ReadTransportStream, S : 'b + Shadow> Read for ReadStreamShadow<'a,'b,T,S> {
+
+  fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+    self.1.read_shadow_iter(self.0, buf, &self.2)
+  }
+}
+
 
 // TODO return messg in result
 #[inline]
@@ -639,6 +649,15 @@ where <P as Peer>::Address : 'a,
     && e.attach_into(t,a).is_ok()
     && t.flush().is_ok()
 }
+
+pub fn receive_msg_tmp2<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc, S : Shadow>(t : &mut T, e : &E, s : &mut S) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
+  let sm = try!(s.read_shadow_header(t));
+  let m = try!(e.decode_from(&mut ReadStreamShadow(t,s,sm)));
+  let oa = try!(e.attach_from(t)); // TODO decode
+  t.end_read_msg();
+  Ok((m,oa))
+}
+
 
 // TODO switch receive to this iface
 pub fn receive_msg_tmp<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc>(t : &mut T, e : &E) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
@@ -686,7 +705,7 @@ pub fn hash_buf_crypto(buff : &[u8], digest : &mut Digest) -> Vec<u8> {
   }else {
     (buff.len() - 1) / bbytes
   };
-  for i in (0 .. nbiter + 1) {
+  for i in 0 .. nbiter + 1 {
     let end = (i+1) * bbytes;
     if end < buff.len() {
       digest.input(&buff[i * bbytes .. end]);

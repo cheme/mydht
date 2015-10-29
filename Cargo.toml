@@ -16,7 +16,7 @@ authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
 [features]
 #default = ["striple-impl","openssl-impl","rust-crypto-impl","mio-impl"]
-default = ["striple-impl","rust-crypto-impl","with-extra-test","mio-impl","openssl-impl"]
+default = ["striple-impl","rust-crypto-impl","with-extra-test","openssl-impl"]
 #default = ["striple-impl","rust-crypto-impl","mio-impl","openssl-impl"]
 striple-impl = ["striple"]
 openssl-impl = ["openssl"]
@@ -27,14 +27,14 @@ with-extra-test = []
 [dependencies]
 log = "0.3.2"
 env_logger = "0.3.1"
-uuid = "0.1.17"
+uuid = "0.1.18"
 num = "0.1.27"
 rand = "0.3.11"
 bincode = "0.4.0"
 rustc-serialize = "0.3.16"
-time = "0.1.32"
+time = "0.1.33"
 byteorder = "0.3.13"
-#bit-vec = "0.4.1"
+#bit-vec = "0.4.2"
 vec_map = "0.3.0"
 
 [dependencies.bit-vec]
@@ -53,11 +53,11 @@ optional = true
 
 
 [dependencies.openssl]
-version = "0.6.5"
+version = "0.6.7"
 optional = true
 
 [dependencies.rust-crypto]
-version = "0.2.31"
+version = "0.2.33"
 optional = true
 
 [dependencies.striple]

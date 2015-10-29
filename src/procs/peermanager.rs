@@ -920,7 +920,7 @@ fn init_client_info<'a, RT : RunningTypes>
  -> MydhtResult<(ClientInfo<RT::P,RT::V,RT::T>, Option<ServerInfo>)> {
   match cmode {
     &ClientMode::Local(dospawn) => match ows {
-      Some (ws) => Ok((ClientInfo::Local(ClientSender::Local(ws,p.get_shadower())),None)),
+      Some (ws) => Ok((ClientInfo::Local(ClientSender::Local(ws,p.get_shadower(true))),None)),
       None => {
         // TODO duration in rules
         let (ws, ors) = try!(rc.transport.connectwith(&p.to_address(), Duration::seconds(5)));
@@ -934,9 +934,9 @@ fn init_client_info<'a, RT : RunningTypes>
 
         };
         if dospawn {
-          Ok((ClientInfo::LocalSpawn(ClientSender::LocalSpawn(Arc::new(Mutex::new((ws,p.get_shadower()))))),osi))
+          Ok((ClientInfo::LocalSpawn(ClientSender::LocalSpawn(Arc::new(Mutex::new((ws,p.get_shadower(true)))))),osi))
         } else {
-          Ok((ClientInfo::Local(ClientSender::Local(ws,p.get_shadower())),osi))
+          Ok((ClientInfo::Local(ClientSender::Local(ws,p.get_shadower(true))),osi))
         }
       },
     },
@@ -947,7 +947,7 @@ fn init_client_info<'a, RT : RunningTypes>
       let rcsp = rc.clone();
       let rpsp = rp.clone();
 
-      thread::spawn (move || {client::start::<RT>(&psp, rcl, rcsp, rpsp, ows.map(|ws|ClientSender::Threaded(ws,psp.get_shadower())), false)});
+      thread::spawn (move || {client::start::<RT>(&psp, rcl, rcsp, rpsp, ows.map(|ws|ClientSender::Threaded(ws,psp.get_shadower(true))), false)});
       Ok((ci,None))
     },
     &ClientMode::ThreadedMax(_) | &ClientMode::ThreadPool(_) => {
@@ -960,7 +960,7 @@ fn init_client_info<'a, RT : RunningTypes>
         let rcsp = rc.clone();
         let rpsp = rp.clone();
 
-        thread::spawn (move || {client::start::<RT>(&psp, rcl, rcsp, rpsp, ows.map(|ws|ClientSender::Threaded(ws,psp.get_shadower())), true)});
+        thread::spawn (move || {client::start::<RT>(&psp, rcl, rcsp, rpsp, ows.map(|ws|ClientSender::Threaded(ws,psp.get_shadower(true))), true)});
         
         if thix < tp.1.len() {
           tp.1.get_mut(thix).map(|mut v|{
@@ -1030,8 +1030,8 @@ fn update_lastsent_conf<P : Peer> ( queryconf : &QueryMsg<P>,  peers : &Vec<Arc<
 #[inline]
 pub fn init_local<P : Peer, V : KeyVal, T : Transport> (p : & Arc<P>, cm : &ClientMode, ows : Option<T::WriteStream>) -> Option<ClientInfo<P,V,T>> {
   match cm {
-    &ClientMode::Local(false) => ows.map(|ws|ClientInfo::Local(ClientSender::Local(ws,p.get_shadower()))),
-    &ClientMode::Local(true) => ows.map(|ws|ClientInfo::LocalSpawn(ClientSender::LocalSpawn(Arc::new(Mutex::new((ws,p.get_shadower())))))),
+    &ClientMode::Local(false) => ows.map(|ws|ClientInfo::Local(ClientSender::Local(ws,p.get_shadower(true)))),
+    &ClientMode::Local(true) => ows.map(|ws|ClientInfo::LocalSpawn(ClientSender::LocalSpawn(Arc::new(Mutex::new((ws,p.get_shadower(true))))))),
     _ => None,
   }
 }
