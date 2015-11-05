@@ -928,7 +928,8 @@ fn init_client_info<'a, RT : RunningTypes>
         let osi = match ors {
           None => None,
           Some(rs) => {
-            let sh = try!(start_listener(rs,&rc,&rp));
+            // shadower are not shared
+            let sh = try!(start_listener(rs,p.get_shadower(false),&rc,&rp));
             Some(serverinfo_from_handle(&sh))
           },
 

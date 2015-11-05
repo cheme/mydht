@@ -608,9 +608,10 @@ where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a,
       <V as KeyVal>::Key : 'a {
   try!(s.shadow_header(t, &smode));
-  try!(e.encode_into(&mut StreamShadow(t,s,smode),m));
-  try!(e.attach_into(t,a)); // TODO shadow that to!!!
-  try!(t.flush());
+  let mut sws = StreamShadow(t,s,smode);
+  try!(e.encode_into(&mut sws,m));
+  try!(e.attach_into(&mut sws,a)); // TODO shadow that to!!!
+  try!(sws.flush());
   Ok(())
 }
 struct StreamShadow<'a, 'b, T : 'a + WriteTransportStream, S : 'b + Shadow>
@@ -652,8 +653,12 @@ where <P as Peer>::Address : 'a,
 
 pub fn receive_msg_tmp2<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc, S : Shadow>(t : &mut T, e : &E, s : &mut S) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
   let sm = try!(s.read_shadow_header(t));
-  let m = try!(e.decode_from(&mut ReadStreamShadow(t,s,sm)));
-  let oa = try!(e.attach_from(t)); // TODO decode
+  let (m, oa) = { 
+    let mut srs = ReadStreamShadow(t,s,sm);
+    let m = try!(e.decode_from(&mut srs));
+    let oa = try!(e.attach_from(&mut srs));
+    (m, oa)
+  };
   t.end_read_msg();
   Ok((m,oa))
 }
@@ -668,7 +673,12 @@ pub fn receive_msg_tmp<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E :
 }
 
 #[inline]
-pub fn receive_msg<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc>(t : &mut T, e : &E) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
+pub fn receive_msg<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc, S : Shadow>(t : &mut T, e : &E, s : &mut S) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
+  receive_msg_tmp2(t,e,s).ok()
+}
+
+#[inline]
+pub fn receive_msg_old<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc>(t : &mut T, e : &E) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
   receive_msg_tmp(t,e).ok()
 }
 /*

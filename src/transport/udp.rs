@@ -13,6 +13,8 @@
 //! adapter). TODO this should be another transport since reader should be connected (could loop on
 //! it (default do_spawn_rec)).
 //!
+//! Currently no support of shadower and race condition on thread, as we need some persistence
+//! locally in the transport : TODO implement it
 //!
 
 use super::{
@@ -170,6 +172,10 @@ impl Transport for Udp {
           // TODO test with small size to see if full size here
           if size < buffsize {
             // let slice = &buff[0,size]
+            // TODO very unsafe (bug) : to remove as the buf can be send in another thread -> we need a
+            // persistence of buf for every 'from' value containing a buffer and a shadower. !!!
+            // consider tcp transport broken unless this is implemented (unless local and no thread
+            // plus shadower doing nothing)
             let r = unsafe {
               slice::from_raw_parts(buf.as_ptr(), size).to_vec()
             };

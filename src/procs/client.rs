@@ -362,7 +362,7 @@ pub fn mult_client_connect <RT : RunningTypes>
           match ors {
             None => (),
             Some(rs) => {
-              let sh = try!(start_listener(rs,&rc,&rp));
+              let sh = try!(start_listener(rs,p.get_shadower(false),&rc,&rp)); // note that we instanciate two different shadower : shadower are not shared : even if the same transport is used to send and receive, two shadower are used (so two keys if sim key in shadower), a get_shadower_pair with communication between thread could be use to use the same key but it will require new method from shadow to get pair of shadower and care on having key set by only one side of comm (client but seems racy at least).
               // send si to peermanager
               try!(rp.peers.send(PeerMgmtMessage::ServerInfoFromClient(p.clone(), serverinfo_from_handle(&sh))));
             },

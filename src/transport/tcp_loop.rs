@@ -60,6 +60,8 @@
 //!
 //!  TODO need testing on disconnect
 //!
+//! TODO currently no shadower, need to be reuse similarily to transport.
+//!
 
 
 

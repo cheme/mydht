@@ -158,7 +158,8 @@ pub fn resolve_server_mode <RT : RunningTypes> (rc : &ArcRunningContext<RT>) -> 
 // fn to start a server process out of transport reception (when connect with of transport return a
 // reader to.
 pub fn start_listener <RT : RunningTypes>
- (s : <RT::T as Transport>::ReadStream, 
+ (s : <RT::T as Transport>::ReadStream,
+  shad : <RT::P as Peer>::Shadow,
   rc : &ArcRunningContext<RT>, 
   rp : &RunningProcesses<RT>,
  ) -> IoResult<ServerHandle<RT::P,<RT::T as Transport>::ReadStream>>  {
@@ -171,7 +172,7 @@ pub fn start_listener <RT : RunningTypes>
       let sh = ServerHandle::ThreadedOne(amut);
       let sh_thread = sh.clone();
       thread::spawn (move || {
-        sphandler_res(request_handler::<RT> (s, &rc_thread, &rp_thread, None, sh_thread, otimeout,false));
+        sphandler_res(request_handler::<RT> (s, shad, &rc_thread, &rp_thread, None, sh_thread, otimeout,false));
       });
       Ok(sh)
     },
@@ -239,31 +240,42 @@ pub fn servloop <RT : RunningTypes>
     let rcstart = rc.clone();
  
     let spserv = move |s, ows| {
+      // TODO optional shad from tr or return it to transport -> in transport start send shadower
+      // which can be clone + involves shadower in transport but with transport keeping persistence
+      // of readstream we need that anyway + need ClientReceiver enum to use either ref or object
+      // (remove some unsafe code in tcp)
+      let shad = rc.me.get_shadower(false);
+      let ame = rc.me.clone();
+      let shadget = move || {
+         ame.get_shadower(false);
+      };
+
       Ok(match servermode {
         ServerMode::ThreadedOne(otimeout) => {
           let rp_thread = rp.clone();
           let rc_thread = rc.clone();
           ReaderHandle::Thread(thread::spawn (move || {
             let amut = Arc::new(Mutex::new(false));
-            sphandler_res(request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::ThreadedOne(amut), otimeout,false));
+            sphandler_res(request_handler::<RT>(s, shad, &rc_thread, &rp_thread, ows, ServerHandle::ThreadedOne(amut), otimeout,false));
           }))
         },
         ServerMode::Local(true) => {
           let rp_thread = rp.clone();
           let rc_thread = rc.clone();
           ReaderHandle::LocalTh(thread::spawn (move || {
-            sphandler_res(request_handler::<RT>(s, &rc_thread, &rp_thread, ows, ServerHandle::Local, None,false));
+            sphandler_res(request_handler::<RT>(s, shad, &rc_thread, &rp_thread, ows, ServerHandle::Local, None,false));
           }))
         },
         ServerMode::Local(false) => {
-          try!(request_handler::<RT>(s, &rc, &rp, ows, ServerHandle::Local, None, false));
+          try!(request_handler::<RT>(s, shad, &rc, &rp, ows, ServerHandle::Local, None, false));
           ReaderHandle::Local
         },
         _ => panic!("Server Mult mode are unimplemented!!!"),//TODO mult thread mgmt
 
       })
     };
-    // loop in transport receive function TODO if looping : start it from PeerManager thread
+
+        // loop in transport receive function TODO if looping : start it from PeerManager thread
     rcstart.transport.start(spserv)
 }
 
@@ -276,7 +288,8 @@ pub fn servloop <RT : RunningTypes>
 /// TODO add ows to send writer if we receive a message with a node (switch to none when sent),
 /// peeradd msg with this ows.
 fn request_handler <RT : RunningTypes>
- (mut s1 : <RT::T as Transport>::ReadStream, 
+ (mut s1 : <RT::T as Transport>::ReadStream,
+  mut shad1 : <RT::P as Peer>::Shadow,
   rc : &ArcRunningContext<RT>, 
   rp : &RunningProcesses<RT>,
   mut ows : Option<<RT::T as Transport>::WriteStream>,
@@ -304,13 +317,13 @@ fn request_handler <RT : RunningTypes>
   while doloop {
     // r is message and oa an optional attachmnet (in pair because a reference owhen disconnected
     // and not when connected).
-    let s = if !mult {
-      &mut s1
+    let (s, shad) = if !mult {
+      (&mut s1, &mut shad1)
     } else {
       // TODO update op value from table
       panic!("multip server not implemented");
     };
-    let (r, oa) = match receive_msg (s, &rc.msgenc) {
+    let (r, oa) = match receive_msg (s, &rc.msgenc, shad) {
       None => {
         info!("Serving connection lost or malformed message");
         op.as_ref().map(|p|{

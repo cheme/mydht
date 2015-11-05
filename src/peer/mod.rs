@@ -25,7 +25,7 @@ pub trait Peer : KeyVal + 'static {
   // multi transport)
   fn to_address (&self) -> Self::Address;
   /// instantiate a new shadower for this peer (shadower wrap over write stream and got a lifetime
-  /// of the connection).
+  /// of the connection). // TODO enum instead of bool!!
   fn get_shadower (&self, write : bool) -> Self::Shadow;
 //  fn to_address (&self) -> SocketAddr;
 }
