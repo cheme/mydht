@@ -14,7 +14,7 @@ use std::fs::walk_dir;
 use std::fs::remove_file;
 use std::fs::hard_link;
 use std::fs::copy;
-use std::fs::PathExt;
+//use std::fs::PathExt;
 use utils;
 use keyval::{FileKeyVal,KeyVal};
 use kvstore::KVStore;

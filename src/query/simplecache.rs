@@ -13,7 +13,7 @@ use mydhtresult::Result as MDHTResult;
 //use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
 use rustc_serialize::json;
 //use std::fs::{File};
-use std::fs::{copy,PathExt};
+use std::fs::{copy};
 use std::path::{PathBuf};
 //use utils::ArcKV;
 use std::marker::{PhantomData};
