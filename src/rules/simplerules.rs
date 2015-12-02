@@ -1,6 +1,6 @@
 use kvstore::{StoragePriority};
 use time::Duration;
-use query::cache::{CachePolicy};
+use kvstore::{CachePolicy};
 use query::{QueryPriority,QueryID};
 use rules::DHTRules as DHTRulesIf;
 //use peer::{PeerPriority};

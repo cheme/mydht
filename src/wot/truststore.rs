@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use keyval::{Key,KeyVal,Attachment,SettableAttachment};
 use kvstore::{KVStore,KVStoreRel,BoxedStore,BoxedStoreRel};
 use kvcache::{KVCache};
-use query::cache::CachePolicy;
+use kvstore::CachePolicy;
 use utils::ArcKV;
 use utils::TimeSpecExt;
 //use time::Timespec;
@@ -527,7 +527,7 @@ pub mod test {
   use num::traits::Bounded;
   use super::super::classictrust::ClassicWotTrust;
   use super::super::classictrust::TrustRules;
-  use query::simplecache::SimpleCache;
+  use simplecache::SimpleCache;
   use std::collections::HashMap;
   use super::super::rsa_openssl::RSAPeer;
   use std::net::Ipv4Addr; 

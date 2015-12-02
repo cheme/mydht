@@ -1,6 +1,10 @@
 //! Run existing mydht Tests over a udp transport (with true sockets)
 //!
-use msgenc::bincode::Bincode;
+
+#[cfg(test)]
+extern crate mydht_bincode;
+
+use self::mydht_bincode::Bincode;
 use msgenc::MsgEnc;
 use transport::Transport;
 use transport::udp::Udp;
@@ -17,7 +21,8 @@ use super::{
 };
 use rules::simplerules::{DhtRules};
 use peer::test::TestingRules;
-use peer::node::Node;
+#[cfg(test)]
+use node::Node;
 use DHT;
 use peer::PeerMgmtMeths;
 use procs::RunningTypes;

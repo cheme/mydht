@@ -4,15 +4,6 @@ name = "mydht"
 version = "0.0.1"
 authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
-#[[bin]]
-#name = 'dhtmain'
-#doc = false
-
-#[[example]]
-#name='fileshare'
-#path = "examples/fs.rs"
-
-
 
 [features]
 #default = ["striple-impl","openssl-impl","rust-crypto-impl","mio-impl"]
@@ -36,6 +27,17 @@ time = "0.1.33"
 byteorder = "0.3.13"
 #bit-vec = "0.4.2"
 vec_map = "0.3.0"
+
+[dependencies.mydht-base]
+path = "../mydht-base/"
+#git = "https://github.com/cheme/mydht-base.git"
+
+[dev-dependencies.mydht-basetest]
+path = "../mydht-basetest/"
+#git = "https://github.com/cheme/mydht-base.git"
+
+
+
 
 [dependencies.bit-vec]
 git = "https://github.com/cheme/bit-vec.git"
@@ -84,4 +86,9 @@ features = ["public_crypto","serialize","public_openssl","cryptoecdsa","opensslr
 
 #[dependencies.rustc-serialize]
 #git = "https://github.com/rust-lang/rustc-serialize.git"
+
+[dev-dependencies.mydht-bincode] # for udp test
+path = "../mydht-bincode/"
+#git = "https://github.com/cheme/mydht-bincode.git"
+
 

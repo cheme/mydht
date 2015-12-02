@@ -65,9 +65,9 @@ impl Udp {
 }
 
 //struct ReadUdpStreamVariant (VecDeque<u8>);
-struct ReadUdpStream (Vec<u8>);
+pub struct ReadUdpStream (Vec<u8>);
 
-struct UdpStream {
+pub struct UdpStream {
   sock : UdpSocket,  // we clone old io but streamreceive is not allowed
   with : SocketAddr, // old io could be clone , with new io manage protection ourselve
   //if define we can send overwhise it is send in server : panic!

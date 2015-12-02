@@ -170,7 +170,7 @@ mod test {
   use keyval::KeyVal;
   use std::sync::{Arc};
   use std::collections::VecDeque;
-  use peer::node::{Node};
+  use node::{Node};
   use utils;
   use utils::SocketAddrExt;
   use std::net::{Ipv4Addr,SocketAddr};

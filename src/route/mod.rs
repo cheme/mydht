@@ -27,10 +27,6 @@ use mydhtresult::ErrorKind;
 
 pub mod inefficientmap;
 
-pub mod knodetable;
-
-pub mod btkad;
-
 
 
 //pub type PeerInfo<P,V,T> = (Arc<P>, PeerPriority, Option<ClientChanel<P,V>>,PhantomData<T>);

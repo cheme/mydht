@@ -18,7 +18,8 @@ use super::{
   finddistantpeer,
 };
 use rules::simplerules::{DhtRules};
-use peer::node::Node;
+#[cfg(test)]
+use node::Node;
 
 use peer::test::TestingRules;
 use query::{QueryConf,QueryMode,QueryChunk,QueryPriority};

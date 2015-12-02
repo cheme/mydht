@@ -21,7 +21,7 @@ use time::Duration;
 use std::time::Duration as StdDuration;
 //use std::thread::Thread;
 //use peer::{Peer};
-use super::{Transport,ReadTransportStream,WriteTransportStream,ReaderHandle};
+use transport::{Transport,ReadTransportStream,WriteTransportStream,ReaderHandle};
 //use std::iter;
 //use utils;
 use num::traits::ToPrimitive;
@@ -101,22 +101,6 @@ impl Transport for Tcp {
     } else {
       Ok((s,None))
     }
-  }
-}
-
-impl WriteTransportStream for TcpStream {
-  fn disconnect(&mut self) -> IoResult<()> {
-    self.shutdown(Shutdown::Write)
-  }
-}
-impl ReadTransportStream for TcpStream {
-  fn disconnect(&mut self) -> IoResult<()> {
-    self.shutdown(Shutdown::Read)
-  }
-  /// this tcp runs in a separated thread and need to stop only depending on server loop
-  /// implementation (timeout error, error
-  fn rec_end_condition(&self) -> bool {
-    false
   }
 }
 

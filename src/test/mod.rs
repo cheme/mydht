@@ -7,7 +7,7 @@ use std::sync::{
 use std::thread;
 use DHT;
 use std::hash::Hash;
-use query::simplecache::SimpleCache;
+use simplecache::SimpleCache;
 use query::simplecache::SimpleCacheQuery;
 use route::inefficientmap::Inefficientmap;
 use transport::local_transport::{TransportTest};

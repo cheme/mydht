@@ -6,7 +6,7 @@ use std::sync::{Arc};
 //use rustc_serialize::{Encodable,Decodable};
 use keyval::KeyVal;
 use utils::{OneResult};
-use query::cache::CachePolicy;
+use kvstore::CachePolicy;
 use transport::{ReadTransportStream,WriteTransportStream};
 //use procs::RunningTypes;
 use procs::ClientHandle;
