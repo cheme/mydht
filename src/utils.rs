@@ -55,8 +55,6 @@ use mydhtresult::Result as MDHTResult;
 #[cfg(test)]
 use std::thread;
 
-pub static NULL_TIMESPEC : Timespec = Timespec{ sec : 0, nsec : 0};
-
  
 macro_rules! static_buff {
   ($bname:ident, $bname_size:ident, $bsize:expr) => (
@@ -65,118 +63,7 @@ macro_rules! static_buff {
   )
 }
 
-pub fn sa4(a: Ipv4Addr, p: u16) -> SocketAddr {
- SocketAddr::V4(SocketAddrV4::new(a, p))
-}
-pub fn sa6(a: Ipv6Addr, p: u16) -> SocketAddr {
- SocketAddr::V6(SocketAddrV6::new(a, p, 0, 0))
-}
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct ArcKV<KV : KeyVal> (pub Arc<KV>);
 
-impl<KV : KeyVal> Encodable for ArcKV<KV> {
-  fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-    // default to local without att
-    self.0.encode_kv(s, true, false)
-  }
-}
-
-impl<KV : KeyVal> Decodable for ArcKV<KV> {
-  fn decode<D:Decoder> (d : &mut D) -> Result<ArcKV<KV>, D::Error> {
-    // default to local without att
-    Self::decode_kv(d, true, false)
-  }
-}
-/*
-impl<KV : KeyVal> AsKeyValIf for ArcKV<KV> 
-  {
-  type KV = KV;
-  type BP = ();
-  fn as_keyval_if(& self) -> & Self::KV {
-    &(*self.0)
-  }
-  fn build_from_keyval(_ : (), kv : Self::KV) -> Self {
-    ArcKV::new(kv)
-  }
-  fn decode_bef<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<Self::BP, D::Error> {Ok(())}
-}
-*/
-impl<KV : KeyVal> ArcKV<KV> {
-  #[inline]
-  pub fn new(kv : KV) -> ArcKV<KV> {
-    ArcKV(Arc::new(kv))
-  }
-}
-
-impl<V : KeyVal> Deref for ArcKV<V> {
-  type Target = V;
-  fn deref<'a> (&'a self) -> &'a V {
-    &self.0
-  }
-}
-
-
-
-impl<KV : KeyVal> KeyVal for ArcKV<KV> {
-  type Key = <KV as KeyVal>::Key;
-  #[inline]
-  fn get_key(&self) -> <KV as KeyVal>::Key {
-    self.0.get_key()
-  }/*
-  #[inline]
-  fn get_key_ref<'a>(&'a self) -> &'a <KV as KeyVal>::Key {
-    self.0.get_key_ref()
-  }*/
-  #[inline]
-  fn get_attachment(&self) -> Option<&Attachment> {
-    self.0.get_attachment() 
-  }
-  #[inline]
-  fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> {
-    self.0.encode_kv(s, is_local, with_att)
-  }
-  #[inline]
-  fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<Self, D::Error> {
-    <KV as KeyVal>::decode_kv(d, is_local, with_att).map(|r|ArcKV::new(r))
-  }
-}
-
-impl<KV : KeyVal> SettableAttachment for ArcKV<KV> {
-  #[inline]
-  /// set attachment, 
-  fn set_attachment(& mut self, fi:&Attachment) -> bool {
-    // only solution : make unique and then new Arc : functional style : costy : a copy of every
-    // keyval with an attachment not serialized in it.
-    // Othewhise need a kvmut used for protomess only
-    // currently no use of weak pointer over our Arc, so when used after receiving a message
-    // (unique arc) no clone may occurs (see fn doc).
-    let kv = Arc::make_mut(&mut self.0);
-    kv.set_attachment(fi)
-  }
-
-}
-impl<V : FileKeyVal> FileKeyVal for ArcKV<V> {
-  #[inline]
-  fn name(&self) -> String {
-    self.0.name()
-  }
-
-  #[inline]
-  fn from_path(tmpf : PathBuf) -> Option<ArcKV<V>> {
-    <V as FileKeyVal>::from_path(tmpf).map(|v|ArcKV::new(v))
-  }
-}
-
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct TimeSpecExt(pub Timespec);
-impl Deref for TimeSpecExt {
-  type Target = Timespec;
-  #[inline]
-  fn deref<'a> (&'a self) -> &'a Timespec {
-    &self.0
-  }
-}
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Either<A,B> {
   Left(A),
@@ -217,19 +104,6 @@ impl<A,B> Either<A,B> {
 
 }
 
-impl Encodable for TimeSpecExt {
-  fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-    let pair = (self.0.sec,self.0.nsec);
-    pair.encode(s)
-  }
-}
-
-impl Decodable for TimeSpecExt {
-  fn decode<D:Decoder> (d : &mut D) -> Result<TimeSpecExt, D::Error> {
-    let tisp : Result<(i64,i32), D::Error>= Decodable::decode(d);
-    tisp.map(|(sec,nsec)| TimeSpecExt(Timespec{sec:sec,nsec:nsec}))
-  }
-}
 /*pub fn ref_and_then<T, U, F : FnOnce(&T) -> Option<U>>(o : &Option<T>, f : F) -> Option<U> {
   match o {
     &Some(ref x) => f(x),

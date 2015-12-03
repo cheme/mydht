@@ -1,7 +1,7 @@
 
 use rand::{thread_rng, Rng};
 use std::io::Write;
-use super::{
+use peer::{
   Peer,
   NoShadow,
   PeerMgmtMeths,
@@ -19,41 +19,10 @@ use keyval::{KeyVal};
 use keyval::{Attachment,SettableAttachment};
 use peer::PeerPriority;
 //use utils;
-use transport::LocalAdd;
+use mydht_basetest::transport::LocalAdd;
 
-
-
-#[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
-/// Node using an usize as address (for use with transport tests)
-pub struct PeerTest {
-  pub nodeid  : String,
-  pub address : LocalAdd,
-}
-
-impl KeyVal for PeerTest {
-  type Key = String;
-  #[inline]
-  fn get_key(& self) -> Self::Key {
-    self.nodeid.clone()
-  }
-/* 
-  #[inline]
-  fn get_key_ref<'a>(&'a self) -> &'a NodeID {
-    &self.nodeid
-  }*/
-  noattachment!();
-}
-
-impl SettableAttachment for PeerTest { }
-
-impl Peer for PeerTest {
-  type Address = LocalAdd;
-  fn to_address(&self) -> Self::Address {
-    self.address.clone()
-  }
-  noshadow!();
-}
-
+// reexport
+pub use mydht_basetest::peer::PeerTest;
 
 #[derive(Debug,Clone)]
 /// Testing rules, simplified to have no dependencies (rules should use crypto to auth).

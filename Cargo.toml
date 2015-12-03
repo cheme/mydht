@@ -6,10 +6,9 @@ authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
 
 [features]
-#default = ["striple-impl","openssl-impl","rust-crypto-impl","mio-impl"]
-default = ["striple-impl","rust-crypto-impl","with-extra-test","openssl-impl"]
-#default = ["striple-impl","rust-crypto-impl","mio-impl","openssl-impl"]
-striple-impl = ["striple"]
+#default = ["openssl-impl","rust-crypto-impl","mio-impl"]
+default = ["rust-crypto-impl","with-extra-test","openssl-impl"]
+#default = ["rust-crypto-impl","mio-impl","openssl-impl"]
 openssl-impl = ["openssl"]
 rust-crypto-impl = ["rust-crypto"]
 mio-impl = ["mio","coroutine"]
@@ -36,6 +35,18 @@ path = "../mydht-base/"
 path = "../mydht-basetest/"
 #git = "https://github.com/cheme/mydht-base.git"
 
+[dev-dependencies.mydht-inefficientmap]
+path = "../mydht-inefficientmap/"
+#git = "https://github.com/cheme/mydht-inefficientmap.git"
+
+[dev-dependencies.mydht-tcp]
+path = "../mydht-tcp/"
+#git = "https://github.com/cheme/mydht-tcp.git"
+
+[dev-dependencies.mydht-udp]
+path = "../mydht-udp/"
+#git = "https://github.com/cheme/mydht-udp.git"
+
 
 
 
@@ -49,7 +60,7 @@ optional = true
 
 [dependencies.coroutine]
 #version = "0.3.2"
-#git = "https://github.com/rustcc/coroutine-rs.git"
+#git = "https://github.com/cheme/coroutine-rs.git"
 path = "../../mydht-dep/coroutine-rs/"
 optional = true
 
@@ -61,13 +72,6 @@ optional = true
 [dependencies.rust-crypto]
 version = "0.2.33"
 optional = true
-
-[dependencies.striple]
-version = "0.0.1"
-git = "https://github.com/cheme/rust-striple.git"
-#path = "../../rust-striple/"
-optional = true
-features = ["public_crypto","serialize","public_openssl","cryptoecdsa","opensslrsa","opensslpbkdf2"]
 
 
 

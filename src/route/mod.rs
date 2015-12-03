@@ -24,8 +24,7 @@ use msgenc::send_variant::ProtoMessage as ProtoMessageSend;
 use mydhtresult::Error;
 use mydhtresult::ErrorKind;
 
-
-pub mod inefficientmap;
+pub use mydht_base::route::*;
 
 
 
@@ -204,25 +203,6 @@ impl ServerInfo {
 
   }
 }
-
-/// fn for updates of cache
-/// remove both client and server info (including server shutdown), leading to drop (and associated
-/// clean operation (multiplexing management, thead shutdown...) of both
-pub fn pi_remchan<A : Address, T : Transport<Address = A>, P : Peer<Address = A>, V : KeyVal> (pi : &mut PeerInfo<P,V,T>, t : & T) -> MydhtResult<()> {
-  let sercli = &mut pi.2;
-  sercli.1 = None;
-  match &sercli.0 {
-    &Some(ref si) => {
-      try!(si.shutdown(t,&(*pi.0)));
-    },
-    &None => (),
-  };
-
-  // drop may not be call at this point (possibly in query or in server (ended just before))
-  sercli.0 = None;
-
-  Ok(())
-}
 /// fn for updates of cache
 pub fn pi_upprio<P : Peer,V : KeyVal,T : Transport> (pi : &mut PeerInfo<P,V,T>,ostate : Option<PeerState>,och : Option<PeerStateChange>) -> MydhtResult<()> {
   match ostate {
@@ -286,7 +266,38 @@ pub trait Route<A:Address,P:Peer<Address = A>,V:KeyVal,T:Transport<Address = A>>
  
   // remove chan for node TODO refactor to two kind of status and auto rem when offline or blocked
   /// remove channel to process (use when a client process broke or normal shutdown).
-  fn remchan(&mut self, &P::Key, &T);
+
+/// remove both client and server info (including server shutdown), leading to drop (and associated
+/// clean operation (multiplexing management, thead shutdown...) of both
+  fn remchan(& mut self, nodeid : &P::Key, t : & T) where P::Key : Send {
+
+    self.get_node(nodeid).map(|&(ref o,_,ref d)|{
+      let p = &(**o);
+      match d {
+        &(ref d2,_) =>{
+          match d2 {
+            &Some(ref si) => {
+      si.shutdown(t,p).map_err(|e|{
+        error!("could not shutdown server for node {:?}",nodeid);
+      });
+
+            },
+            _ =>(),
+          }
+
+        },
+      }
+    });
+    // client shut on drop
+
+    self.update_infos(nodeid,|pi|{
+      pi.0 = None;
+      pi.1 = None;
+      Ok(())
+    });
+    // drop may not be call at this point (possibly in query or in server (ended just before))
+  }
+
 
   // TODO maybe return sender instead
   /// routing method to choose peer for a peer query (no offline or blocked peer)
@@ -412,127 +423,58 @@ use peer::{Peer, PeerPriority,PeerState,PeerStateChange};
   }
 }
 
-/// trait to use peer and content wich can be route depending upon a byte or bit representation of
-/// themselves (mainly in DHT routing)
-pub mod byte_rep {
 
-  use bit_vec::BitVec;
-  use std::borrow::Borrow;
-  use peer::Peer;
-  use std::sync::Arc;
-
-
-  /// need to contain a fix size u8 representation
-  pub trait DHTElem {
-  //  const KLEN : usize;
-    fn bits_ref (& self) -> & BitVec;
-    /// we do not use Eq or Bits compare as in some case (for example a keyval with long key but
-    /// short bits it may make sense to compare the long key in the bucket)
-    /// return true if equal
-    fn kelem_eq(&self, other : &Self) -> bool;
+impl <
+A:Address,
+P:Peer<Address = A>,
+V:KeyVal,
+T:Transport<Address = A>,
+RB :  RouteBase<A,P,V,T,ClientInfo<P,V,T>,ServerInfo>,
+> Route<A,P,V,T> for RouteFromBase<A,P,V,T,ClientInfo<P,V,T>,ServerInfo,RB> {
+  fn query_count_inc(& mut self, pnid : &P::Key){
+    self.0.query_count_inc(pnid)
   }
 
-  /// Convenience trait if bitvec representation for kelem is not stored in kelem (computed each time).
-  pub trait DHTElemBytes<'a> {
-    type Bytes : 'a + Borrow<[u8]>;
-  //  const KLENB : usize;
-    fn bytes_ref_keb (&'a self) -> Self::Bytes;
-    fn kelem_eq_keb(&self, other : &Self) -> bool;
+  fn query_count_dec(& mut self, pnid : &P::Key){
+    self.0.query_count_dec(pnid)
+  }
+ 
+  fn add_node(& mut self, pi : PeerInfo<P,V,T>) {
+    self.0.add_node(pi)
   }
 
-  // TODO test without HRTB : put
-  pub struct SimpleDHTElemBytes<KEB> (pub KEB, pub BitVec)
-    where for<'a> KEB : DHTElemBytes<'a>;
-
-  impl<KEB> SimpleDHTElemBytes<KEB>
-    where for<'a> KEB : DHTElemBytes<'a> {
-    pub fn new(v : KEB) -> SimpleDHTElemBytes<KEB> {
-      let bv = BitVec::from_bytes(v.bytes_ref_keb().borrow());
-      SimpleDHTElemBytes(v,bv)
-    }
+  fn update_priority(& mut self, nodeid : &P::Key, opri : Option<PeerState>, och : Option<PeerStateChange>) where P::Key : Send {
+    self.0.update_priority(nodeid,opri,och)
   }
 
-  impl<KEB> DHTElem for SimpleDHTElemBytes<KEB>
-    where for<'a> KEB : DHTElemBytes<'a> {
-  //  const KLEN : usize = <Self as DHTElemBytes<'a>>::KLENB;
-    fn bits_ref (& self) -> & BitVec {
-      &self.1
-    }
-    fn kelem_eq(&self, other : &Self) -> bool {
-      self.0.kelem_eq_keb(&other.0)
-    }
-  }
-
-  impl<'a, P : DHTElemBytes<'a>> DHTElemBytes<'a> for Arc<P> {
-    // return ing Vec<u8> is stupid but it is for testing
-    type Bytes = <P as DHTElemBytes<'a>>::Bytes;
-    fn bytes_ref_keb (&'a self) -> Self::Bytes {
-      (**self).bytes_ref_keb()
-    }
-    fn kelem_eq_keb(&self, other : &Self) -> bool {
-      (**self).kelem_eq_keb(other)
-    }
+  fn update_infos<F>(&mut self, nodeid : &P::Key, f : F) -> MydhtResult<bool> where F : FnOnce(&mut (Option<ServerInfo>, Option<ClientInfo<P,V,T>>)) -> MydhtResult<()> {
+    self.0.update_infos(nodeid,f)
   }
 
 
-
-  #[cfg(test)]
-  impl DHTElem for BitVec {
-    #[inline]
-    fn bits_ref (& self) -> & BitVec {
-      &self
-    }
-    #[inline]
-    fn kelem_eq(&self, other : &Self) -> bool {
-    self == other
-    }
+  fn get_node(& self, nid : &P::Key) -> Option<&PeerInfo<P,V,T>> {
+    self.0.get_node(nid)
   }
 
-
-  #[cfg(test)]
-  #[derive(Clone,PartialEq,Eq)]
-  pub struct KeyConflict {
-    pub key : BitVec,
-    pub content : BitVec,
+  fn has_node(& self, nid : &P::Key) -> bool {
+    self.0.has_node(nid)
+  }
+  fn get_closest_for_node(& self, nnid : &P::Key, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {
+    self.0.get_closest_for_node(nnid,nbnode,filter)
   }
 
-  #[cfg(test)]
-  impl DHTElem for KeyConflict {
-    #[inline]
-    fn bits_ref (& self) -> & BitVec {
-      &self.key
-    }
-    #[inline]
-    fn kelem_eq(&self, other : &Self) -> bool {
-      self.content == other.content
-    }
+  fn get_closest_for_query(& self, nnid : &V::Key, nbnode : u8, filter : &VecDeque<P::Key>) -> Vec<Arc<P>> {
+    self.0.get_closest_for_query(nnid,nbnode,filter)
   }
 
-
-
-  #[cfg(test)]
-  impl<'a> DHTElemBytes<'a> for Vec<u8> {
-    // return ing Vec<u8> is stupid but it is for testing
-    type Bytes = Vec<u8>;
-    fn bytes_ref_keb (&'a self) -> Self::Bytes {
-      self.clone()
-    }
-    fn kelem_eq_keb(&self, other : &Self) -> bool {
-      self == other
-    }
+  fn get_pool_nodes(& self, nbnode : usize) -> Vec<Arc<P>> {
+    self.0.get_pool_nodes(nbnode)
+  }
+  
+  fn commit_store(& mut self) -> bool{
+    self.0.commit_store()
   }
 
-  #[cfg(test)]
-  impl<'a, 'b> DHTElemBytes<'a> for &'b [u8] {
-    // using different lifetime is for test : for instance if we store a reference to a KeyVal
-    // (typical implementation in route (plus need algo to hash))
-    type Bytes = &'a [u8];
-    fn bytes_ref_keb (&'a self) -> Self::Bytes {
-       self
-    }
-    fn kelem_eq_keb(&self, other : &Self) -> bool {
-      self == other
-    }
-  }
 }
+
 

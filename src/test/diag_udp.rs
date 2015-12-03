@@ -3,11 +3,13 @@
 
 #[cfg(test)]
 extern crate mydht_bincode;
+extern crate mydht_udp;
+
 
 use self::mydht_bincode::Bincode;
 use msgenc::MsgEnc;
 use transport::Transport;
-use transport::udp::Udp;
+use self::mydht_udp::Udp;
 use utils::SocketAddrExt;
 use utils;
 use keyval::KeyVal;
@@ -32,7 +34,7 @@ use num::traits::ToPrimitive;
 use procs::ClientMode;
 
 #[cfg(test)]
-use transport::test::connect_rw_with_optional_non_managed;
+use mydht_basetest::transport::connect_rw_with_optional_non_managed;
 
 struct RunningTypesImpl<M : PeerMgmtMeths<Node, Node>, T : Transport, E : MsgEnc> (PhantomData<(M,T,E)>);
 

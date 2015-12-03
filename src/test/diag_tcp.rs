@@ -1,15 +1,18 @@
 //! Run existing mydht Tests over a tcp transport (with true sockets)
 //!
+//!
+
+extern crate mydht_tcp;
 use msgenc::json::Json;
 use msgenc::MsgEnc;
 use DHT;
-use transport::tcp::Tcp;
+use self::mydht_tcp::Tcp;
 use utils::SocketAddrExt;
 use utils;
 use transport::Transport;
 use std::net::{SocketAddr,Ipv4Addr};
 #[cfg(test)]
-use transport::test::connect_rw_with_optional;
+use mydht_basetest::transport::connect_rw_with_optional;
 use time::Duration;
 use super::{
   initpeers,

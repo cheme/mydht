@@ -12,22 +12,13 @@ use std::thread::JoinHandle;
 #[cfg(feature="mio-impl")]
 use coroutine::Handle as CoHandle;
 #[cfg(feature="mio-impl")]
-pub mod tcp_loop;
-pub mod tcp;
-pub mod udp;
+//pub mod tcp_loop;
+//pub mod tcp;
+//pub mod udp;
 pub type Attachment = PathBuf;
-#[cfg(test)]
-pub mod local_transport;
-#[cfg(test)]
-pub mod test;
 
 // reexport from base
 pub use mydht_base::transport::*;
 
 
-
-/// for testing purpose
-#[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
-pub struct LocalAdd (pub usize);
-impl Address for LocalAdd{}
 

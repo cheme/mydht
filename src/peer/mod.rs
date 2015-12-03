@@ -14,76 +14,9 @@ use std::io::Result as IoResult;
 
 #[cfg(test)]
 pub mod test;
-
 // reexport from base
 pub use mydht_base::peer::*;
 
-#[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Clone)]
-/// State of a peer
-pub enum PeerState {
-  /// accept running on peer return None, it may be nice to store on heavy accept but it is not
-  /// mandatory
-  Refused,
-  /// some invalid frame and others lead to block a peer, connection may be retry if address
-  /// changed for the peer
-  Blocked(PeerPriority),
-  /// This priority is more an internal state and should not be return by accept.
-  /// peers has not yet been ping or connection broke
-  Offline(PeerPriority),
- /// This priority is more an internal state and should not be return by accept.
-  /// sending ping with given challenge string, a PeerPriority is set if accept has been run
-  /// (lightweight accept) or Unchecked
-  Ping(Vec<u8>,TransientOption<OneResult<bool>>,PeerPriority),
-  /// Online node
-  Online(PeerPriority),
-}
-
-/// Ping ret one result return false as soon as we do not follow it anymore
-impl Drop for PeerState {
-    fn drop(&mut self) {
-        debug!("Drop of PeerState");
-        match self {
-          &mut PeerState::Ping(_,ref mut or,_) => {
-            or.0.as_ref().map(|r|unlock_one_result(&r,false)).is_some();
-            ()
-          },
-          _ => (),
-        }
-    }
-}
-
-
-impl PeerState {
-  pub fn get_priority(&self) -> PeerPriority {
-    match self {
-      &PeerState::Refused => PeerPriority::Unchecked,
-      &PeerState::Blocked(ref p) => p.clone(),
-      &PeerState::Offline(ref p) => p.clone(),
-      &PeerState::Ping(_,_,ref p) => p.clone(),
-      &PeerState::Online(ref p) => p.clone(),
-    }
-  }
-  pub fn new_state(&self, change : PeerStateChange) -> PeerState {
-    let pri = self.get_priority();
-    match change {
-      PeerStateChange::Refused => PeerState::Refused,
-      PeerStateChange::Blocked => PeerState::Blocked(pri),
-      PeerStateChange::Offline => PeerState::Offline(pri),
-      PeerStateChange::Online  => PeerState::Online(pri), 
-      PeerStateChange::Ping(chal,or)  => PeerState::Ping(chal,or,pri), 
-    }
-  }
-}
-
-#[derive(Debug,PartialEq,Clone)]
-/// Change to State of a peer
-pub enum PeerStateChange {
-  Refused,
-  Blocked,
-  Offline,
-  Online,
-  Ping(Vec<u8>, TransientOption<OneResult<bool>>),
-}
 
 
 /// Rules for peers. Usefull for web of trust for instance, or just to block some peers.

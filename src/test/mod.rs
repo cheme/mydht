@@ -1,6 +1,6 @@
 //! Tests, unitary tests are more likely to be found in their related package, here is global
 //! testing.
-
+extern crate mydht_inefficientmap;
 use std::sync::{
   Arc,
 };
@@ -9,9 +9,8 @@ use DHT;
 use std::hash::Hash;
 use simplecache::SimpleCache;
 use query::simplecache::SimpleCacheQuery;
-use route::inefficientmap::Inefficientmap;
-use transport::local_transport::{TransportTest};
-use transport::{LocalAdd};
+use self::mydht_inefficientmap::inefficientmap::Inefficientmap;
+use self::mydht_inefficientmap::inefficientmap::new as new_inmap;
 use rules::simplerules::{SimpleRules,DhtRules};
 use procs::{
   RunningContext, 
@@ -37,7 +36,8 @@ mod diag_tcp;
 #[cfg(feature="with-extra-test")]
 mod diag_udp;
 
-
+pub use mydht_basetest::local_transport::*;
+pub use mydht_basetest::transport::*;
 const DHTRULES_DEFAULT : DhtRules = DhtRules {
   randqueryid : false,
   // nbhop = prio * fact
@@ -197,7 +197,7 @@ where <RT:: P as KeyVal>::Key : Ord + Hash,
     let bpeers = nodes.clone().into_iter().filter(|i| (*i != *context.me && rng.gen_range(0,knownratio) == 0) ).map(|p|Arc::new(p)).collect();
 //        let mut noderng : &mut [PeerTest] = bpeers.as_slice();
     DHT::boot_server(Arc:: new(context),
-      move || Some(Inefficientmap::new()), 
+      move || Some(new_inmap()), 
       move || Some(SimpleCacheQuery::new(false)), 
       move || Some(SimpleCache::new(None)), 
       Vec::new(), 
@@ -261,7 +261,7 @@ where <RT:: P as KeyVal>::Key : Ord + Hash,
 
 //        let mut noderng : &mut [PeerTest] = bpeers.as_slice();
     DHT::boot_server(Arc:: new(context),
-        move || Some(Inefficientmap::new()), 
+        move || Some(new_inmap()), 
         move || Some(SimpleCacheQuery::new(false)), 
         move || Some(SimpleCache::new(None)), 
         Vec::new(), 
@@ -549,7 +549,7 @@ where <RT as RunningTypes>::M : Clone,
          enc.clone(),
          t,
         )), 
-        move || Some(Inefficientmap::new()), 
+        move || Some(new_inmap()), 
         move || Some(SimpleCacheQuery::new(false)), 
         move || Some(SimpleCache::new(None)), 
         bpeers.clone(), Vec::new(),

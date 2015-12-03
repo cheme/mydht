@@ -6,7 +6,7 @@
 #![feature(semaphore)]
 #![feature(deque_extras)]
 #![feature(socket_timeout)]
-#![feature(slice_bytes)] // in tcp_loop
+#![feature(slice_bytes)] // in wot
 
 #[macro_use] extern crate log;
 #[macro_use] extern crate mydht_base;
@@ -19,188 +19,9 @@ extern crate bit_vec;
 extern crate rand;
 #[cfg(feature="mio-impl")]
 extern crate coroutine;
+#[cfg(test)]
+extern crate mydht_basetest;
 
-
-#[macro_export]
-/// derive Keyval implementation for simple enum over * KeyVal
-/// $kv is enum name
-/// $k is enum key name
-/// $ix is u8 index use to serialize this variant
-/// $st is the enum name to use for this variant
-/// $skv is one of the possible subKeyval type name in enum
-macro_rules! derive_enum_keyval(($kv:ident {$($para:ident => $tra:ident , )*}, $k:ident, {$($ix:expr , $st:ident => $skv:ty,)*}) => (
-// enum for values
-  #[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
-  pub enum $kv<$( $para : $tra , )*> {
-    $( $st($skv), )* // TODO put Arc to avoid clone?? (or remove arc from interface)
-  }
-
-// enum for keys
-  #[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Hash,Clone,PartialOrd,Ord)]
-  pub enum $k {
-    $( $st(<$skv as KeyVal>::Key), )*
-  }
-  
-  // TODO split macro then use it splitted in wotstore  (for impl only)
-  
-  impl KeyVal for $kv {
-    type Key = $k;
-#[inline]
-    fn get_key(&self) -> $k {
-      match self {
-       $( &$kv::$st(ref f)  => $k::$st(f.get_key()), )*
-      }
-    }
-    /*
-#[inline]
-    fn get_key_ref<'a>(&'a self) -> &'a $k {
-      match self {
-       $( &$kv::$st(ref f)  => $k::$st(f.get_key_ref()), )*
-      }
-    }
-    */
-
-
-#[inline]
-    fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error>{
-      match self {
-        $( &$kv::$st(ref f) => {try!(s.emit_u8($ix));f.encode_kv(s, is_local, with_att)}, )*
-      }
-    }
-#[inline]
-    fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<$kv, D::Error>{
-      let ix = try!(d.read_u8());
-      match ix {
-        $( $ix => <$skv as KeyVal>::decode_kv(d, is_local, with_att).map(|v|$kv::$st(v)), )*
-        _  => panic!("error ix decode"),
-      }
-    }
-#[inline]
-    fn get_attachment(&self) -> Option<&Attachment>{
-      match self {
-        $( &$kv::$st(ref f)  => f.get_attachment(), )*
-      }
-    }
-  }
-
-  impl SettableAttachment for $kv {
-#[inline]
-    fn set_attachment(& mut self, fi:&Attachment) -> bool{
-      match self {
-        $( &mut $kv::$st(ref mut f)  => f.set_attachment(fi), )*
-      }
-    }
-  }
-
-));
-
-// dup of derive enum keyval used due to lack of possibility for parametric types in current macro
-macro_rules! derive_enum_keyval_inner(($kvt:ty , $kv:ident, $kt:ty, $k:ident, {$($ix:expr , $st:ident => $skv:ty,)*}) => (
-#[inline]
-    fn get_key(&self) -> $kt {
-      match self {
-       $( &$kv::$st(ref f)  => $k::$st(f.get_key()), )*
-      }
-    }
-    /*
-#[inline]
-    fn get_key_ref<'a>(&'a self) -> &'a $kt {
-      match self {
-       $( &$kv::$st(ref f)  => $k::$st(f.get_key_ref()), )*
-      }
-    }
-*/
-
-#[inline]
-    fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_path : bool) -> Result<(), S::Error>{
-      match self {
-        $( &$kv::$st(ref f) => {try!(s.emit_u8($ix));f.encode_kv(s, is_local, with_path)}, )*
-      }
-    }
-#[inline]
-    fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, with_path : bool) -> Result<$kvt, D::Error>{
-      let ix = try!(d.read_u8());
-      match ix {
-        $( $ix => <$skv as KeyVal>::decode_kv(d, is_local, with_path).map(|v|$kv::$st(v)), )*
-        _  => panic!("error ix decode"),
-      }
-    }
-#[inline]
-    fn get_attachment(&self) -> Option<&Attachment>{
-      match self {
-        $( &$kv::$st(ref f)  => f.get_attachment(), )*
-      }
-    }
-
-
-));
-
-macro_rules! derive_enum_setattach_inner(($kvt:ty , $kv:ident, $kt:ty, $k:ident, {$($ix:expr , $st:ident => $skv:ty,)*}) => (
-
-#[inline]
-    fn set_attachment(& mut self, fi:&Attachment) -> bool{
-      match self {
-        $( &mut $kv::$st(ref mut f)  => f.set_attachment(fi), )*
-      }
-    }
-
-));
-
-
-#[macro_export]
-/// derive kvstore to multiple independant kvstore implementation
-/// $kstore is kvstore name
-/// $kv is multiplexed keyvalue name
-/// $k is multipexed enum key name
-/// $ksubs is substorename for this kind of key : use for struct
-/// $sts is the keyval typename to use
-/// $ksub is substorename for this kind of key : use for impl (keyval may differ if some in the
-/// same storage)
-/// $st is the enum name to use for this variant : use for impl
-macro_rules! derive_kvstore(($kstore:ident, $kv:ident, $k:ident, 
-  {$($ksubs:ident => $sts:ty,)*}, 
-  {$($st:ident =>  $ksub:ident ,)*}
-  ) => (
-  pub struct $kstore {
-    $( pub $ksubs : $sts,)*
-  }
-  impl KVStore<$kv> for $kstore {
-    #[inline]
-    fn add_val(& mut self, v : $kv, stconf : (bool, Option<CachePolicy>)){
-      match v {
-        $( $kv::$st(ref st) => self.$ksub.add_val(st.clone(), stconf), )*
-      }
-    }
-    #[inline]
-    fn has_val(& self, k : &$k) -> bool {
-      match k {
-        $( &$k::$st(ref sk) =>
-         self.$ksub.has_val(sk), )*
-      }
-    }
-    #[inline]
- 
-    fn get_val(& self, k : &$k) -> Option<$kv> {
-      match k {
-        $( &$k::$st(ref sk) =>
-      self.$ksub.get_val(sk).map(|ask| $kv::$st((ask).clone())), )*
-      }
-    }
-    #[inline]
-    fn remove_val(& mut self, k : &$k) {
-      match k {
-        $( &$k::$st(ref sk) =>
-      self.$ksub.remove_val(sk), )*
-      }
-    }
-    #[inline]
-    fn commit_store(& mut self) -> bool{
-      let mut r = true;
-      $( r = self.$ksub.commit_store() && r; )*
-      r
-    }
-  }
-));
 
 mod kvcache{
 pub use mydht_base::kvcache::*;
@@ -235,7 +56,7 @@ mod transport;
 mod msgenc;
 pub mod utils;
 pub mod rules;
-pub mod wot;
+//pub mod wot;
 #[cfg(test)]
 mod test;
 
@@ -252,28 +73,28 @@ pub use msgenc::json::{Json};
 //pub use msgenc::bencode::{Bencode};
 //pub use msgenc::bincode::{Bincode};
 //pub use msgenc::bencode::{Bencode_bt_dht};
-pub use transport::tcp::{Tcp};
-pub use transport::udp::{Udp};
-pub use wot::{TrustedVal,Truster,TrustedPeer};
+//pub use transport::tcp::{Tcp};
+//pub use transport::udp::{Udp};
+//pub use wot::{TrustedVal,Truster,TrustedPeer};
 pub use query::{QueryID,Query};
 
 pub mod dhtimpl {
 //  pub use mydht_base::node::{Node};
   pub use peer::NoShadow;
-  #[cfg(feature="openssl-impl")]
-  pub use wot::rsa_openssl::RSAPeer;
-  #[cfg(feature="rust-crypto-impl")]
-  pub use wot::ecdsapeer::ECDSAPeer;
+  //#[cfg(feature="openssl-impl")]
+  //pub use wot::rsa_openssl::RSAPeer;
+  //#[cfg(feature="rust-crypto-impl")]
+  //pub use wot::ecdsapeer::ECDSAPeer;
 
-  pub use wot::trustedpeer::PeerSign;
+//  pub use wot::trustedpeer::PeerSign;
   pub use mydht_base::kvcache::{NoCache};
   pub use query::simplecache::{SimpleCacheQuery};
   pub use simplecache::{SimpleCache};
-  pub use route::inefficientmap::{Inefficientmap};
+  //pub use route::inefficientmap::{Inefficientmap};
 
   //pub use route::btkad::{BTKad};
-  pub use wot::truststore::{WotKV,WotK,WotStore};
-  pub use wot::classictrust::{TrustRules,ClassicWotTrust};
+//  pub use wot::truststore::{WotKV,WotK,WotStore};
+//  pub use wot::classictrust::{TrustRules,ClassicWotTrust};
 
   pub use rules::simplerules::{DhtRules,SimpleRules};
 
@@ -308,9 +129,6 @@ pub mod msgencif{
 pub mod testexp {
   pub mod common {
     pub use test::*;
-  }
-  pub mod transport {
-    pub use transport::test::*;
   }
 }
 
