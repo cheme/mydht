@@ -28,26 +28,24 @@ byteorder = "0.3.13"
 vec_map = "0.3.0"
 
 [dependencies.mydht-base]
-path = "../mydht-base/"
-#git = "https://github.com/cheme/mydht-base.git"
+#path = "../mydht-base/"
+git = "https://github.com/cheme/mydht-base.git"
 
 [dev-dependencies.mydht-basetest]
-path = "../mydht-basetest/"
-#git = "https://github.com/cheme/mydht-base.git"
+#path = "../mydht-basetest/"
+git = "https://github.com/cheme/mydht-basetest.git"
 
 [dev-dependencies.mydht-inefficientmap]
-path = "../mydht-inefficientmap/"
-#git = "https://github.com/cheme/mydht-inefficientmap.git"
+#path = "../mydht-inefficientmap/"
+git = "https://github.com/cheme/mydht-inefficientmap.git"
 
 [dev-dependencies.mydht-tcp]
-path = "../mydht-tcp/"
-#git = "https://github.com/cheme/mydht-tcp.git"
+#path = "../mydht-tcp/"
+git = "https://github.com/cheme/mydht-tcp.git"
 
 [dev-dependencies.mydht-udp]
-path = "../mydht-udp/"
-#git = "https://github.com/cheme/mydht-udp.git"
-
-
+#path = "../mydht-udp/"
+git = "https://github.com/cheme/mydht-udp.git"
 
 
 [dependencies.bit-vec]
@@ -59,9 +57,8 @@ version = "0.4.1"
 optional = true
 
 [dependencies.coroutine]
-#version = "0.3.2"
-#git = "https://github.com/cheme/coroutine-rs.git"
-path = "../../mydht-dep/coroutine-rs/"
+git = "https://github.com/cheme/coroutine-rs.git"
+#path = "../../mydht-dep/coroutine-rs/"
 optional = true
 
 
@@ -92,7 +89,7 @@ optional = true
 #git = "https://github.com/rust-lang/rustc-serialize.git"
 
 [dev-dependencies.mydht-bincode] # for udp test
-path = "../mydht-bincode/"
-#git = "https://github.com/cheme/mydht-bincode.git"
+#path = "../mydht-bincode/"
+git = "https://github.com/cheme/mydht-bincode.git"
 
 
