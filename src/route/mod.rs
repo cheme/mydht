@@ -359,6 +359,9 @@ pub trait Route<A:Address,P:Peer<Address = A>,V:KeyVal,T:Transport<Address = A>>
   /// Possible Serialize on quit
   fn commit_store(&mut self) -> bool;
 
+  /// Get random connected peers.
+  fn next_random_peers(&mut self, usize) -> Vec<Arc<P>>;
+
   #[inline]
   fn get_client_info<'a> (&'a self, pid : &<P as KeyVal>::Key) -> MydhtResult<&'a ClientInfo<P,V,T>> {
 
@@ -475,6 +478,9 @@ RB :  RouteBase<A,P,V,T,ClientInfo<P,V,T>,ServerInfo>,
     self.0.commit_store()
   }
 
+  fn next_random_peers(&mut self, nb : usize) -> Vec<Arc<P>> {
+    self.0.next_random_peers(nb)
+  }
 }
 
 

@@ -55,13 +55,6 @@ use mydhtresult::Result as MDHTResult;
 #[cfg(test)]
 use std::thread;
 
- 
-macro_rules! static_buff {
-  ($bname:ident, $bname_size:ident, $bsize:expr) => (
-    static $bname_size : usize = $bsize;
-    static $bname : &'static mut [u8; $bsize] = &mut [0u8; $bsize];
-  )
-}
 
 
 #[derive(Debug, PartialEq, Eq, Clone)]
