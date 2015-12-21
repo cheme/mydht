@@ -32,12 +32,16 @@ pub struct DhtRules {
   pub storeproxied : Option<usize>, // store only if less than nbhop // TODO implement other alternative (see comment)
   pub heavyaccept : bool,
   pub clientmode : ClientMode,
+  pub tunnellength : u8,
   // TODO further params : clientmode, heavy...
 }
 
 impl DHTRulesIf for SimpleRules {
 
-
+  #[inline]
+  fn tunnel_length(&self, _ : QueryPriority) -> u8 {
+    self.1.tunnellength
+  }
   #[inline]
   fn nbhop_dec (&self) -> u8 {
     1

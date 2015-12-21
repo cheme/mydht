@@ -57,6 +57,7 @@ const DHTRULES_DEFAULT : DhtRules = DhtRules {
   clientmode : ClientMode::ThreadedOne,
   // TODO client mode param + testing for local tcp and mult tcp in max 2 thread and in pool 2
   // thread
+  tunnellength : 3,
 };
 
 
@@ -108,14 +109,16 @@ fn simu_asynch_peer_discovery () {
 
 #[test]
 fn aproxy_peer_discovery () {
-  let nbpeer = 5;
+//  let nbpeer = 5;
+  let nbpeer = 2;
   let mut rules = DHTRULES_DEFAULT.clone();
   rules.nbhopfact = nbpeer - 1;
   let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::AProxy,
     chunk : QueryChunk::None,
-    hop_hist : Some((4,false)),
+    hop_hist : None,
+    //hop_hist : Some((4,false)),
   };
   peerconnect_test(&qconf, rcs)
 }
@@ -168,6 +171,7 @@ fn runningcontext1 (nbpeer : usize, dhtrules : DhtRules) -> Vec<RunningContext<R
     let peer = PeerTest {
          nodeid: "dummyID".to_string() + (&i.to_string()[..]), 
          address : LocalAdd(i),
+         keyshift : i as u8 + 1,
        };
 
     let context = RunningContext::new(
@@ -590,6 +594,7 @@ fn initpeers_test (nbpeer : usize, map : &[&[usize]], meths : TestingRules, rule
     let peer = PeerTest {
          nodeid: "dummyID".to_string() + (&i.to_string()[..]), 
          address : LocalAdd(i),
+         keyshift : i as u8 + 1,
     };
     nodes.push(peer);
   };
@@ -603,6 +608,7 @@ fn simpeer2hopfindval () {
     let val = PeerTest {
          nodeid: "to_find".to_string(),
          address : LocalAdd(999),
+         keyshift : 1000,
     };
 
     let mut rules = DHTRULES_DEFAULT.clone();
@@ -632,6 +638,7 @@ fn simpeer2hopstoreval () {
     let val = PeerTest {
          nodeid: "to_find".to_string(),
          address : LocalAdd(999),
+         keyshift : 1000,
     };
     let map : &[&[usize]] = &[&[],&[1,3],&[],&[3]];
 
@@ -663,6 +670,7 @@ fn testpeer2hopstoreval () {
     let val = PeerTest {
          nodeid: "to_find".to_string(),
          address : LocalAdd(999),
+         keyshift : 1000, 
     };
     let map : &[&[usize]] = &[&[2],&[3],&[4],&[]];
 

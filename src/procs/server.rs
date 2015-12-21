@@ -159,7 +159,6 @@ pub fn resolve_server_mode <RT : RunningTypes> (rc : &ArcRunningContext<RT>) -> 
 // reader to.
 pub fn start_listener <RT : RunningTypes>
  (s : <RT::T as Transport>::ReadStream,
-  shad : <RT::P as Peer>::Shadow,
   rc : &ArcRunningContext<RT>, 
   rp : &RunningProcesses<RT>,
  ) -> IoResult<ServerHandle<RT::P,<RT::T as Transport>::ReadStream>>  {
@@ -172,7 +171,7 @@ pub fn start_listener <RT : RunningTypes>
       let sh = ServerHandle::ThreadedOne(amut);
       let sh_thread = sh.clone();
       thread::spawn (move || {
-        sphandler_res(request_handler::<RT> (s, shad, &rc_thread, &rp_thread, None, sh_thread, otimeout,false));
+        sphandler_res(request_handler::<RT> (s, rc_thread.me.get_shadower(false), &rc_thread, &rp_thread, None, sh_thread, otimeout,false));
       });
       Ok(sh)
     },
@@ -246,9 +245,9 @@ pub fn servloop <RT : RunningTypes>
       // (remove some unsafe code in tcp)
       let shad = rc.me.get_shadower(false);
       let ame = rc.me.clone();
-      let shadget = move || {
+/*      let shadget = move || {
          ame.get_shadower(false);
-      };
+      };*/
 
       Ok(match servermode {
         ServerMode::ThreadedOne(otimeout) => {

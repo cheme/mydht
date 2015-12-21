@@ -115,8 +115,8 @@ pub fn basic_auth_test<P : Peer, R : PeerMgmtMeths<P,P>> (r : &R, p1 : &P, p2 : 
 
 #[test]
 fn test_testingrules () {
-  let p1 = PeerTest {nodeid: "dummyID1".to_string(), address : LocalAdd(0)};
-  let p2 = PeerTest {nodeid: "dummyID2".to_string(), address : LocalAdd(1)};
+  let p1 = PeerTest {nodeid: "dummyID1".to_string(), address : LocalAdd(0), keyshift: 1};
+  let p2 = PeerTest {nodeid: "dummyID2".to_string(), address : LocalAdd(1), keyshift: 2};
   let r = TestingRules::new_no_delay();
   basic_auth_test(&r,&p1,&p2);
 }

@@ -506,9 +506,8 @@ fn peermanager_internal<RT : RunningTypes,
               // asynch)
               if asyncproxy {
                   debug!("!!!AsyncResult returning {:?}", r); 
-               match queryconf.modeinfo.get_rec_node().map(|r|r.clone()) {
-                Some (ref recnode) => {
-                  let mess = ClientMessage::StoreNode(queryconf.modeinfo.to_qid(), r);
+               let recnode = queryconf.modeinfo.get_rec_node();
+                  let mess = ClientMessage::StoreNode(Some(queryconf.modeinfo.get_qid_clone()), r);
                   let nodeid = recnode.get_key();
                   let upd = !route.has_node(&nodeid) || match route.get_node(&nodeid) {
                     Some(&(_,PeerState::Offline(_), _)) => true,
@@ -530,9 +529,6 @@ fn peermanager_internal<RT : RunningTypes,
                   } else if ok {
                      send_local::<RT, T> (recnode, rc , route, rp, mess, localspawn,clientmode,threadpool);
                   };
-                },
-                _ => {error!("None query in none asynch peerfind");},
-              }
 
               } else {
                   debug!("None return to queryman, no proxy, releasing");
@@ -621,11 +617,10 @@ fn peermanager_internal<RT : RunningTypes,
        return Ok(false);
      },
      PeerMgmtMessage::StoreNode(qconf, result) => {
-       match qconf.modeinfo.get_rec_node().map(|r|r.clone()) {
-         Some (rec)  => {
+       let rec = qconf.modeinfo.get_rec_node();
            let nodeid = rec.get_key();
            if nodeid != rc.me.get_key() {
-             let mess = ClientMessage::StoreNode(qconf.modeinfo.to_qid(), result);
+             let mess = ClientMessage::StoreNode(Some(qconf.modeinfo.get_qid_clone()), result);
              // TODO this upd check should be only for asynch modes
              let upd = !route.has_node(&nodeid) || match route.get_node(&nodeid) {
                Some(&(_,PeerState::Offline(_), _)) => true,
@@ -649,20 +644,14 @@ fn peermanager_internal<RT : RunningTypes,
            } else {
              error!("local loop detected for store node");
            }
-         },
-         None => {
-           error!("Cannot proxied received store node to originator for conf {:?} ",qconf.modeinfo);
-         },
-       }
      },
      PeerMgmtMessage::StoreKV(qconf, result) => {
        // (query sync over clients(the query contains nothing)) // TODO factorize a fun
        // for proxied msg 
-       match qconf.modeinfo.get_rec_node().map(|r|r.clone()) {
-         Some (rec) => {
+       let rec = qconf.modeinfo.get_rec_node();
            let nodeid = rec.get_key();
            if nodeid != rc.me.get_key() {
-             let mess = ClientMessage::StoreKV(qconf.modeinfo.to_qid(), qconf.chunk, result);
+             let mess = ClientMessage::StoreKV(Some(qconf.modeinfo.get_qid_clone()), qconf.chunk, result);
              // TODO this upd check should be only for asynch modes
              let upd = !route.has_node(&nodeid) || match route.get_node(&nodeid) {
                Some(&(_,PeerState::Offline(_), _)) => true,
@@ -686,11 +675,6 @@ fn peermanager_internal<RT : RunningTypes,
            } else {
              error!("local loop detected for store kv {:?}", result);
            }
-         },
-         None => {
-           error!("Cannot proxied received store value to originator for conf {:?} ",qconf.modeinfo);
-         },
-       }
      },
   };
   Ok(true)
@@ -929,7 +913,7 @@ fn init_client_info<'a, RT : RunningTypes>
           None => None,
           Some(rs) => {
             // shadower are not shared
-            let sh = try!(start_listener(rs,p.get_shadower(false),&rc,&rp));
+            let sh = try!(start_listener(rs,&rc,&rp));
             Some(serverinfo_from_handle(&sh))
           },
 

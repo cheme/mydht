@@ -169,7 +169,7 @@ pub enum ClientMessage<P : Peer, V : KeyVal, TW : WriteTransportStream> {
   PeerFind(P::Key, QueryHandle<P,V>, QueryMsg<P>),
   /// find a `KeyVal`
   KVFind(V::Key, QueryHandle<P,V>, QueryMsg<P>),
-  /// reply to a find peer or propagate
+  /// reply to a find peer or propagate TODO change Option<QueryID> to QueryID
   StoreNode(Option<QueryID>, Option<Arc<P>>), // proxy a request and do some control if needed
   /// reply to a find keyval or propagate
   StoreKV(Option<QueryID>, QueryChunk, Option<V>), // proxy a request and do some control if needed
