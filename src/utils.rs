@@ -144,8 +144,8 @@ impl<'a, 'b, T : 'a + WriteTransportStream, S : 'b + Shadow> Write for StreamSha
       self.1.shadow_iter (buf, self.0, &self.2)
     }
     fn flush(&mut self) -> IoResult<()> {
-      self.1.shadow_flush(self.0, &self.2)
-//      self.0.flush() flush already called in impl
+      try!(self.1.shadow_flush(self.0, &self.2));
+      self.0.flush()
     }
 }
 

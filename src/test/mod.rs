@@ -109,16 +109,14 @@ fn simu_asynch_peer_discovery () {
 
 #[test]
 fn aproxy_peer_discovery () {
-//  let nbpeer = 5;
-  let nbpeer = 2;
+  let nbpeer = 5;
   let mut rules = DHTRULES_DEFAULT.clone();
   rules.nbhopfact = nbpeer - 1;
   let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::AProxy,
     chunk : QueryChunk::None,
-    hop_hist : None,
-    //hop_hist : Some((4,false)),
+    hop_hist : Some((4,false)),
   };
   peerconnect_test(&qconf, rcs)
 }
