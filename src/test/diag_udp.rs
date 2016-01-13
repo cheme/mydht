@@ -8,9 +8,11 @@ extern crate mydht_udp;
 
 use self::mydht_bincode::Bincode;
 use msgenc::MsgEnc;
-use transport::Transport;
+use transport::{
+  Transport,
+  SerSocketAddr,
+};
 use self::mydht_udp::Udp;
-use utils::SocketAddrExt;
 use utils;
 use keyval::KeyVal;
 use std::net::{SocketAddr,Ipv4Addr};
@@ -38,8 +40,8 @@ use mydht_basetest::transport::connect_rw_with_optional_non_managed;
 
 struct RunningTypesImpl<M : PeerMgmtMeths<Node, Node>, T : Transport, E : MsgEnc> (PhantomData<(M,T,E)>);
 
-impl<M : PeerMgmtMeths<Node, Node>, T : Transport<Address=SocketAddr>, E : MsgEnc> RunningTypes for RunningTypesImpl<M, T, E> {
-  type A = SocketAddr;
+impl<M : PeerMgmtMeths<Node, Node>, T : Transport<Address=SerSocketAddr>, E : MsgEnc> RunningTypes for RunningTypesImpl<M, T, E> {
+  type A = SerSocketAddr;
   type P = Node;
   type V = Node;
   type M = M;
@@ -52,8 +54,8 @@ impl<M : PeerMgmtMeths<Node, Node>, T : Transport<Address=SocketAddr>, E : MsgEn
 fn connect_rw () {
   let start_port = 60000;
 
-  let a1 = SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port));
-  let a2 = SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
+  let a1 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port));
+  let a2 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
   let tcp_transport_1 : Udp = Udp::new (&a1, 500, true).unwrap();
   let tcp_transport_2 : Udp = Udp::new (&a2, 500, true).unwrap();
 
@@ -64,8 +66,8 @@ fn connect_rw () {
 fn connect_rw_nospawn () {
   let start_port = 60100;
 
-  let a1 = SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port));
-  let a2 = SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
+  let a1 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port));
+  let a2 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
   let tcp_transport_1 : Udp = Udp::new (&a1, 500, false).unwrap();
   let tcp_transport_2 : Udp = Udp::new (&a2, 500, false).unwrap();
 
@@ -80,7 +82,7 @@ fn initpeers_udp<M : PeerMgmtMeths<Node, Node> + Clone> (start_port : u16, nbpee
     let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), start_port + i.to_u16().unwrap());
     let udp_transport = Udp::new(&addr,2048,true).unwrap(); // here udp with a json encoding with last sed over a few hop : we need a big buffer
     transports.push(udp_transport);
-    nodes.push(Node {nodeid: "NodeID".to_string() + &(i + 1).to_string()[..], address : SocketAddrExt(addr)});
+    nodes.push(Node {nodeid: "NodeID".to_string() + &(i + 1).to_string()[..], address : SerSocketAddr(addr)});
   };
   initpeers(nodes, transports, map, meths, rules,Bincode,sim)
 }
@@ -90,7 +92,7 @@ fn simpeer2hopfindval_udp () {
     let nbpeer = 4;
     // addr dummy (used as keyval so no ping validation)
     let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), 999);
-    let val = Node {nodeid: "to_find".to_string(), address : SocketAddrExt(addr)};
+    let val = Node {nodeid: "to_find".to_string(), address : SerSocketAddr(addr)};
 
 
 
@@ -121,7 +123,7 @@ fn testpeer2hopfindval_udp () {
     let nbpeer = 4;
     // addr dummy (used as keyval so no ping validation)
     let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), 999);
-    let val = Node {nodeid: "to_find".to_string(), address : SocketAddrExt(addr)};
+    let val = Node {nodeid: "to_find".to_string(), address : SerSocketAddr(addr)};
 
 
 

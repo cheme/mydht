@@ -17,7 +17,6 @@ use super::read_attachment;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use num::traits::ToPrimitive;
 use byteorder::Error as BOError;
-use super::BOErr;
 
 
 /// standard usage of rust serialize with json over proto messages no intemediatory type all content
@@ -76,7 +75,7 @@ where <P as Peer>::Address : 'a,
   }
 
   fn decode_from<R : Read, P : Peer, V : KeyVal>(&self, r : &mut R) -> MDHTResult<ProtoMessage<P,V>> {
-    let len = tryfor!(BOErr,r.read_u64::<LittleEndian>()).to_usize().unwrap();
+    let len = try!(r.read_u64::<LittleEndian>()) as usize;
     // TODO max len : easy overflow here
     if len > MAX_BUFF {
       return Err(Error(format!("Oversized protomessage, max length in bytes was {:?}", MAX_BUFF), ErrorKind::DecodingError, None));

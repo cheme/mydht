@@ -7,9 +7,11 @@ use msgenc::json::Json;
 use msgenc::MsgEnc;
 use DHT;
 use self::mydht_tcp::Tcp;
-use utils::SocketAddrExt;
 use utils;
-use transport::Transport;
+use transport::{
+  Transport,
+  SerSocketAddr,
+};
 use std::net::{SocketAddr,Ipv4Addr};
 #[cfg(test)]
 use mydht_basetest::transport::connect_rw_with_optional;
@@ -35,8 +37,8 @@ use keyval::KeyVal;
 
 struct RunningTypesImpl<M : PeerMgmtMeths<Node, Node>, T : Transport, E : MsgEnc> (PhantomData<(M,T,E)>);
 
-impl<M : PeerMgmtMeths<Node, Node>, T : Transport<Address=SocketAddr>, E : MsgEnc> RunningTypes for RunningTypesImpl<M, T, E> {
-  type A = SocketAddr;
+impl<M : PeerMgmtMeths<Node, Node>, T : Transport<Address=SerSocketAddr>, E : MsgEnc> RunningTypes for RunningTypesImpl<M, T, E> {
+  type A = SerSocketAddr;
   type P = Node;
   type V = Node;
   type M = M;
@@ -60,7 +62,7 @@ fn initpeers_tcp<M : PeerMgmtMeths<Node, Node> + Clone> (start_port : u16, nbpee
       true,//mult
     ).unwrap();
     transports.push(tcp_transport);
-    nodes.push(Node {nodeid: "NodeID".to_string() + &(i + 1).to_string()[..], address : SocketAddrExt(addr)});
+    nodes.push(Node {nodeid: "NodeID".to_string() + &(i + 1).to_string()[..], address : SerSocketAddr(addr)});
   };
   initpeers(nodes, transports, map, meths, rules,Json,sim)
 }
@@ -69,8 +71,8 @@ fn initpeers_tcp<M : PeerMgmtMeths<Node, Node> + Clone> (start_port : u16, nbpee
 fn connect_rw () {
   let start_port = 50000;
 
-  let a1 = SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port));
-  let a2 = SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
+  let a1 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port));
+  let a2 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
   let tcp_transport_1 : Tcp = Tcp::new (&a1, Duration::seconds(5), true).unwrap();
   let tcp_transport_2 : Tcp = Tcp::new (&a2, Duration::seconds(5), true).unwrap();
 
@@ -81,8 +83,8 @@ fn connect_rw () {
 fn connect_rw_dup () {
   let start_port = 50100;
 
-  let a1 = SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port));
-  let a2 = SocketAddrExt(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
+  let a1 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port));
+  let a2 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
   let tcp_transport_1 : Tcp = Tcp::new (&a1, Duration::seconds(5), false).unwrap();
   let tcp_transport_2 : Tcp = Tcp::new (&a2, Duration::seconds(5), false).unwrap();
 
