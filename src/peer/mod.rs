@@ -54,9 +54,10 @@ pub trait PeerMgmtMeths<P : Peer, V : KeyVal> : Send + Sync + 'static {
   /// Default implementation relies on shadow message
   fn get_shadower (&self, p : &P, m : &ProtoMessageSend<P,V>) -> <P::Shadow as Shadow>::ShadowMode {
     match m {
-      &ProtoMessageSend::PING(..) |&ProtoMessageSend::PONG(..) => <P as Peer>::Shadow::default_auth_mode(),
-      _ => <P as Peer>::Shadow::default_message_mode(),
+      &ProtoMessageSend::PING(..) |&ProtoMessageSend::PONG(..) => p.default_auth_mode(),
+      _ => p.default_message_mode(),
     }
   }
+
 }
 

@@ -6,8 +6,16 @@ extern crate time;
 extern crate openssl;
 extern crate bincode;
 
+extern crate readwrite_comp;
+
 // reexport from base
 pub use mydht_base::utils::*;
+pub use mydht_base::peer::{
+  ShadowReadOnce,
+  ShadowWriteOnce,
+  new_shadow_read_once,
+  new_shadow_write_once,
+};
 
 
 use num::bigint::{BigUint,RandBigInt};
@@ -125,80 +133,33 @@ pub fn send_msg<'a,P : Peer + 'a, V : KeyVal + 'a, T : WriteTransportStream, E :
 where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a,
       <V as KeyVal>::Key : 'a {
-  try!(s.shadow_header(t, &smode));
-  let mut sws = StreamShadow(t,s,smode);
-  try!(e.encode_into(&mut sws,m));
-  try!(e.attach_into(&mut sws,a)); // TODO shadow that to!!!
-  try!(sws.flush());
+  s.set_mode(smode); // TODO remove smode as parameter and set less frequently in code!!!
+  {
+    let mut sws = new_shadow_write_once(t,s);
+    try!(e.encode_into(&mut sws,m));
+    try!(e.attach_into(&mut sws,a)); // TODO shadow that to!!!
+    try!(sws.suspend()) // write end and flush
+  };
+  try!(t.flush());
   Ok(())
 }
-struct StreamShadow<'a, 'b, T : 'a + WriteTransportStream, S : 'b + Shadow>
-(&'a mut T, &'b mut S, <S as Shadow>::ShadowMode);
-
-struct ReadStreamShadow<'a, 'b, T : 'a + ReadTransportStream, S : 'b + Shadow>
-(&'a mut T, &'b mut S, <S as Shadow>::ShadowMode);
 
 
-impl<'a, 'b, T : 'a + WriteTransportStream, S : 'b + Shadow> Write for StreamShadow<'a,'b,T,S> {
-    fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
-      self.1.shadow_iter (buf, self.0, &self.2)
-    }
-    fn flush(&mut self) -> IoResult<()> {
-      try!(self.1.shadow_flush(self.0, &self.2));
-      self.0.flush()
-    }
-}
-
-impl<'a, 'b, T : 'a + ReadTransportStream, S : 'b + Shadow> Read for ReadStreamShadow<'a,'b,T,S> {
-
-  fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-    self.1.read_shadow_iter(self.0, buf, &self.2)
-  }
-}
-
-
-// TODO return messg in result
-#[inline]
-pub fn send_msg3<'a,P : Peer + 'a, V : KeyVal + 'a, T : WriteTransportStream, E : MsgEnc>(m : &ProtoMessageSend<'a,P,V>, a : Option<&Attachment>, t : &mut T, e : &E) -> bool 
-where <P as Peer>::Address : 'a,
-      <P as KeyVal>::Key : 'a,
-      <V as KeyVal>::Key : 'a {
- 
-  e.encode_into(t,m).is_ok()
-    && e.attach_into(t,a).is_ok()
-    && t.flush().is_ok()
-}
-
+/// TODO switch receive_msg to this interface
 pub fn receive_msg_tmp2<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc, S : Shadow>(t : &mut T, e : &E, s : &mut S) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
-  let sm = try!(s.read_shadow_header(t));
-  let (m, oa) = { 
-    let mut srs = ReadStreamShadow(t,s,sm);
-    let m = try!(e.decode_from(&mut srs));
-    let oa = try!(e.attach_from(&mut srs));
-    (m, oa)
-  };
-  t.end_read_msg();
+  let mut srs = new_shadow_read_once (t,s);
+  let m = try!(e.decode_from(&mut srs));
+  let oa = try!(e.attach_from(&mut srs));
+  try!(srs.read_end()); // not in drop to catch error
   Ok((m,oa))
 }
 
-
-// TODO switch receive to this iface
-pub fn receive_msg_tmp<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc>(t : &mut T, e : &E) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
-    let m = try!(e.decode_from(t));
-    let oa = try!(e.attach_from(t));
-    t.end_read_msg();
-    Ok((m,oa))
-}
 
 #[inline]
 pub fn receive_msg<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc, S : Shadow>(t : &mut T, e : &E, s : &mut S) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
   receive_msg_tmp2(t,e,s).ok()
 }
 
-#[inline]
-pub fn receive_msg_old<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc>(t : &mut T, e : &E) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
-  receive_msg_tmp(t,e).ok()
-}
 /*
 pub fn receive_msg<P : Peer, V : KeyVal, T : TransportStream, E : MsgEnc>(t : &mut T, e : &E) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
   let rs = t.streamread();
