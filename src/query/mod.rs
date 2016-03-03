@@ -46,7 +46,7 @@ pub enum QReply<P : Peer,V> {
   Dist(QueryMsg<P>,V),
 }
 
-type QRepLoc<V> = Arc<(Condvar, Mutex<V>)>;
+pub type QRepLoc<V> = Arc<(Condvar, Mutex<V>)>;
 
 #[derive(Clone)]
 /// in process if there is a query handle, the query is not in query manager and reply could be use
