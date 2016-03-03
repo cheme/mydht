@@ -7,7 +7,7 @@ authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
 [features]
 #default = ["openssl-impl","rust-crypto-impl","mio-impl"]
-default = ["rust-crypto-impl","with-extra-test","openssl-impl"]
+default = ["rust-crypto-impl","openssl-impl"]
 #default = ["rust-crypto-impl","mio-impl","openssl-impl"]
 openssl-impl = ["openssl"]
 rust-crypto-impl = ["rust-crypto"]
