@@ -13,6 +13,7 @@ openssl-impl = ["openssl"]
 rust-crypto-impl = ["rust-crypto"]
 mio-impl = ["mio","coroutine"]
 with-extra-test = []
+nightly = []
 
 [dependencies]
 log = "0.3.2"
