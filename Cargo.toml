@@ -33,7 +33,7 @@ git = "https://github.com/cheme/mydht-base.git"
 
 [dependencies.readwrite-comp]
 #path = "../readwrite-comp/"
-git = "https://github.com/cheme/readwrite.git"
+git = "https://github.com/cheme/readwrite-comp.git"
 
 [dev-dependencies.mydht-basetest]
 #path = "../mydht-basetest/"
