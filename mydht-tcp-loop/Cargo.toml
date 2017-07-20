@@ -1,0 +1,48 @@
+[package]
+
+name = "mydht-tcp-loop"
+version = "0.0.1"
+authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
+
+
+[features]
+default = ["with-extra-test"]
+with-extra-test = []
+
+[dependencies]
+log = "0.3.4"
+#env_logger = "0.3.2"
+#uuid = "0.1.18"
+num = "0.1.27"
+#rand = "0.3.11"
+#bincode = "0.5.0"
+#rustc-serialize = "0.3.16"
+time = "0.1.33"
+byteorder = "0.4.2"
+#bit-vec = "0.4.2"
+vec_map = "0.6.0"
+
+
+[dependencies.mydht-base]
+path = "../mydht-base/"
+#git = "https://github.com/cheme/mydht-base.git"
+features = ["mio-impl"]
+
+[dependencies.mydht-basetest]
+path = "../mydht-basetest/"
+#git = "https://github.com/cheme/mydht-basetest.git"
+#features = ["mio-impl"]
+
+#[dependencies.bit-vec]
+#git = "https://github.com/cheme/bit-vec.git"
+
+[dependencies.mio]
+version = "0.4.1"
+#git = "https://github.com/carllerche/mio.git"
+
+[dependencies.coroutine]
+version = "0.4.0"
+#git = "https://github.com/cheme/coroutine-rs.git"
+path = "../../mydht-dep/coroutine-rs/"
+#optional = true
+

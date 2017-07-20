@@ -1,0 +1,20 @@
+[package]
+
+name = "mydht-bincode"
+version = "0.0.1"
+authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
+
+[features]
+default = ["with-extra-test"]
+with-extra-test = []
+
+[dependencies]
+log = "0.3.4"
+bincode = "0.5.0"
+
+
+[dependencies.mydht-base]
+path = "../mydht-base/"
+#git = "https://github.com/cheme/mydht-base.git"
+
+

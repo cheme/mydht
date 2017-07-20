@@ -1,0 +1,90 @@
+[package]
+
+name = "mydht-"
+version = "0.0.1"
+authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
+
+#[[bin]]
+#name = 'dhtmain'
+#doc = false
+
+[features]
+default = ["with-extra-test"]
+with-extra-test = []
+
+[dependencies]
+log = "0.3.4"
+leveldb = "0.8.2"
+#env_logger = "0.3.2"
+#uuid = "0.1.18"
+#num = "0.1.27"
+#rand = "0.3.11"
+#bincode = "0.5.0"
+#rustc-serialize = "0.3.16"
+#time = "0.1.33"
+#byteorder = "0.4.2"
+#bit-vec = "0.4.2"
+#vec_map = "0.6.0"
+
+#[dependencies.mydht]
+#path = "../mydht/"
+#git = "https://github.com/cheme/mydht.git"
+
+[dependencies.mydht-base]
+path = "../mydht-base/"
+#git = "https://github.com/cheme/mydht-base.git"
+
+[dev-dependencies.mydht-basetest]
+path = "../mydht-basetest/"
+#git = "https://github.com/cheme/mydht-basetest.git"
+
+
+
+#[dependencies.bit-vec]
+#git = "https://github.com/cheme/bit-vec.git"
+
+#[dependencies.mio]
+#version = "0.4.1"
+#git = "https://github.com/carllerche/mio.git"
+#optional = true
+
+#[dependencies.coroutine]
+#version = "0.3.2"
+#git = "https://github.com/rustcc/coroutine-rs.git"
+#path = "../../mydht-dep/coroutine-rs/"
+#optional = true
+
+
+#[dependencies.openssl]
+#version = "0.6.7"
+#optional = true
+
+#[dependencies.rust-crypto]
+#version = "0.2.34"
+#optional = true
+
+#[dependencies.striple]
+#version = "0.0.1"
+#git = "https://github.com/cheme/rust-striple.git"
+#path = "../../rust-striple/"
+#optional = true
+#features = ["public_crypto","serialize","public_openssl","cryptoecdsa","opensslrsa","opensslpbkdf2"]
+
+
+
+
+#[dependencies.protobuf]
+#git = "https://github.com/stepancheg/rust-protobuf.git"
+
+#[dependencies.capnp]
+#git = "https://github.com/dwrensha/capnproto-rust.git"
+
+#[dependencies.rust-crypto]
+#git = "https://github.com/DaGenix/rust-crypto"
+
+#[dependencies.time]
+#git = "https://github.com/rust-lang/time.git"
+
+#[dependencies.rustc-serialize]
+#git = "https://github.com/rust-lang/rustc-serialize.git"
+

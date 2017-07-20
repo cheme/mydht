@@ -1,0 +1,23 @@
+[package]
+
+name = "mydht-udp"
+version = "0.0.1"
+authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
+
+
+[features]
+default = ["with-extra-test"]
+with-extra-test = []
+
+[dependencies]
+log = "0.3.4"
+num = "0.1.27"
+time = "0.1.33"
+byteorder = "0.4.2"
+
+[dependencies.mydht-base]
+path = "../mydht-base/"
+#git = "https://github.com/cheme/mydht-base.git"
+
+
+

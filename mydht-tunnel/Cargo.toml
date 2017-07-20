@@ -1,0 +1,13 @@
+[package]
+
+name = "mydht-tunnel"
+version = "0.0.1"
+authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
+
+
+[dependencies.tunnel]
+path = "../../tunnel/"
+#git = "https://github.com/cheme/tunnel.git"
+features = ["mydht-impl"]
+
+

@@ -1,0 +1,42 @@
+[package]
+
+name = "mydht-btkad"
+version = "0.0.1"
+authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
+
+#[[bin]]
+#name = 'dhtmain'
+#doc = false
+
+[features]
+default = ["with-extra-test"]
+with-extra-test = []
+
+[dependencies]
+log = "0.3.4"
+#env_logger = "0.3.2"
+#uuid = "0.1.18"
+#bincode = "0.5.0"
+#time = "0.1.33"
+#byteorder = "0.4.2"
+#bit-vec = "0.4.2"
+#vec_map = "0.6.0"
+
+[dev-dependencies]
+num = "0.1.27"
+rustc-serialize = "0.3.16"
+rand = "0.3.11"
+
+[dev-dependencies.mydht-basetest]
+path = "../mydht-basetest/"
+#git = "https://github.com/cheme/mydht-basetest.git"
+
+
+
+[dependencies.mydht-base]
+path = "../mydht-base/"
+#git = "https://github.com/cheme/mydht-base.git"
+
+[dependencies.bit-vec]
+git = "https://github.com/cheme/bit-vec.git"
+

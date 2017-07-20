@@ -1,0 +1,73 @@
+[package]
+
+name = "mydht-fs"
+version = "0.0.1"
+authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
+
+[[example]]
+name='test'
+path = "examples/test.rs"
+
+
+[[bin]]
+name = 'mydhtfs'
+doc = false
+
+[features]
+default = ["with-extra-test","openssl-impl"]
+openssl-impl = ["openssl"]
+with-extra-test = []
+
+[dependencies]
+log = "0.3.4"
+env_logger = "0.3.2"
+uuid = "0.1.18"
+num = "0.1.27"
+rand = "0.3.11"
+rustc-serialize = "0.3.16"
+time = "0.1.33"
+
+[dependencies.mydht]
+#git = "https://github.com/cheme/mydht.git"
+path = "../mydht/"
+
+[dependencies.mydht-wot]
+#git = "https://github.com/cheme/mydht-wot.git"
+path = "../mydht-wot/"
+
+
+[dependencies.mydht-tcp]
+#git = "https://github.com/cheme/mydht-tcp.git"
+path = "../mydht-tcp/"
+
+[dependencies.mydht-udp]
+#git = "https://github.com/cheme/mydht-udp.git"
+path = "../mydht-udp/"
+
+
+
+[dependencies.mydht-base] # for macro only 
+#git = "https://github.com/cheme/mydht-base.git"
+path = "../mydht-base/"
+
+[dependencies.mydht-filestore]
+#git = "https://github.com/cheme/mydht-filestore.git"
+path = "../mydht-filestore/"
+
+[dependencies.mydht-inefficientmap]
+#git = "https://github.com/cheme/mydht-inefficientmap.git"
+path = "../mydht-inefficientmap/"
+
+
+[dev-dependencies.mydht-basetest] # for example only
+#git = "https://github.com/cheme/mydht-basetest.git"
+path = "../mydht-basetest/"
+
+[dependencies.openssl] # currently the only choice... 
+version = "0.7.8"
+optional = true
+
+[dependencies.mydht-bincode]
+path = "../mydht-bincode/"
+#git = "https://github.com/cheme/mydht-bincode.git"
+
