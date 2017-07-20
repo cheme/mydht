@@ -30,27 +30,22 @@ vec_map = "0.6.0"
 
 [dependencies.mydht-base]
 path = "../mydht-base/"
-#git = "https://github.com/cheme/mydht.git"
 
 [dependencies.readwrite-comp]
-path = "../../readwrite-comp/"
-#git = "https://github.com/cheme/readwrite-comp.git"
+#path = "../../readwrite-comp/"
+git = "https://github.com/cheme/readwrite-comp.git"
 
 [dev-dependencies.mydht-basetest]
 path = "../mydht-basetest/"
-#git = "https://github.com/cheme/mydht.git"
 
 [dev-dependencies.mydht-inefficientmap]
 path = "../mydht-inefficientmap/"
-#git = "https://github.com/cheme/mydht.git"
 
 [dev-dependencies.mydht-tcp]
 path = "../mydht-tcp/"
-#git = "https://github.com/cheme/mydht.git"
 
 [dev-dependencies.mydht-udp]
 path = "../mydht-udp/"
-#git = "https://github.com/cheme/mydht.git"
 
 
 [dependencies.bit-vec]

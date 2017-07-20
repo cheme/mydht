@@ -21,8 +21,8 @@ rustc-serialize = "0.3.16"
 #vec_map = "0.6.0"
 
 [dependencies.readwrite-comp]
-path = "../readwrite-comp/"
-#git = "https://github.com/cheme/readwrite-comp.git"
+#path = "../readwrite-comp/"
+git = "https://github.com/cheme/readwrite-comp.git"
 
 [dependencies.mydht-base]
 path = "../mydht-base/"
