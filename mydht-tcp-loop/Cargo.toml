@@ -42,7 +42,7 @@ version = "0.4.1"
 
 [dependencies.coroutine]
 version = "0.4.0"
-#git = "https://github.com/cheme/coroutine-rs.git"
-path = "../../mydht-dep/coroutine-rs/"
+git = "https://github.com/cheme/coroutine-rs.git"
+#path = "../../mydht-dep/coroutine-rs/"
 #optional = true
 
