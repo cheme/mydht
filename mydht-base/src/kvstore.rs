@@ -1,4 +1,4 @@
-use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
+use serde::{Serializer,Serialize,Deserialize,Deserializer};
 use std::sync::{Arc};
 use keyval::{KeyVal,Key};
 use time::Timespec;
@@ -9,15 +9,19 @@ use time::Timespec;
 #[derive(Debug,Copy,Clone)]
 pub struct CachePolicy(pub Timespec);
 
-impl Decodable for CachePolicy {
-    fn decode<D:Decoder> (d : &mut D) -> Result<CachePolicy, D::Error> {
-        d.read_i64().and_then(|sec| d.read_i32().map(|nsec| CachePolicy(Timespec{sec : sec, nsec : nsec})))
+impl<'de> Deserialize<'de> for CachePolicy {
+    fn deserialize<D:Deserializer<'de>> (d : D) -> Result<CachePolicy, D::Error> {
+        //d.deserialize_i64().and_then(|sec| d.deserialize_i32().map(|nsec| CachePolicy(Timespec{sec : sec, nsec : nsec})))
+        let (sec,nsec) = <(i64,i32)>::deserialize(d)?;
+        Ok(CachePolicy(Timespec{sec : sec, nsec : nsec}))
     }
 }
 
-impl Encodable for CachePolicy {
-    fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
-        s.emit_i64(self.0.sec).and_then(|()| s.emit_i32(self.0.nsec))
+impl Serialize for CachePolicy {
+    fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
+    //    s.serialize_i64(self.0.sec).and_then(|_| s.serialize_i32(self.0.nsec))
+//        self.0.sec.serialize(s)?;
+        (self.0.sec,self.0.nsec).serialize(s)
     }
 }
 
@@ -77,7 +81,7 @@ pub trait KVStoreRel2<V : KeyVal<Key=(Self::K1,Self::K2)>> : KVStore<V> {
   fn remove_val(& mut self, &V::Key);
 } */
 
-#[derive(RustcDecodable,RustcEncodable,Debug,Clone,Copy)]
+#[derive(Deserialize,Serialize,Debug,Clone,Copy)]
 /// Storage priority (closely related to rules implementation)
 pub enum StoragePriority {
   /// local only

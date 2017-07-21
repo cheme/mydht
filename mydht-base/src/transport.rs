@@ -23,7 +23,8 @@ use std::error::Error as ErrorTrait;
 
 use std::thread::JoinHandle;
 
-use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
+use serde::{Serialize, Deserialize, Serializer, Deserializer};
+use serde::de::{DeserializeOwned};
 use std::fmt::Debug;
 use std::net::{SocketAddr};
 use std::net::Shutdown;
@@ -41,7 +42,7 @@ use std::net::{
   Ipv6Addr,
 };
 
-pub trait Address : Eq + Sync + Send + Clone + Debug + Encodable + Decodable + 'static {
+pub trait Address : Eq + Sync + Send + Clone + Debug + Serialize + DeserializeOwned + 'static {
 /*  /// for tunnel (otherwhise rust serialize is use on peer)
   fn write_as_bytes<W:Write> (&self, &mut W) -> IoResult<()>;
   /// for tunnel (otherwhise rust serialize is use on peer)
@@ -59,17 +60,21 @@ impl<A : Sync + Send + Clone + Debug + 'static> Address for A {
 */
 
 
-impl Encodable for SerSocketAddr {
-  fn encode<S:Encoder> (&self, s: &mut S) -> StdResult<(), S::Error> {
-    s.emit_str(&self.0.to_string()[..])
+impl Serialize for SerSocketAddr {
+  fn serialize<S:Serializer> (&self, s: S) -> StdResult<S::Ok, S::Error> {
+//    s.emit_str(&self.0.to_string()[..])
+     (&self.0.to_string()[..]).serialize(s)
   }
 }
 
-impl Decodable for SerSocketAddr {
-  fn decode<D:Decoder> (d : &mut D) -> StdResult<SerSocketAddr, D::Error> {
-    d.read_str().map(|ad| {
+impl<'de> Deserialize<'de> for SerSocketAddr {
+  fn deserialize<D:Deserializer<'de>> (d : D) -> StdResult<SerSocketAddr, D::Error> {
+
+    let ad = <&str>::deserialize(d)?;
+    Ok(SerSocketAddr(FromStr::from_str(&ad[..]).unwrap()))
+/*    d.read_str().map(|ad| {
       SerSocketAddr(FromStr::from_str(&ad[..]).unwrap())
-    })
+    })*/
   }
 }
 

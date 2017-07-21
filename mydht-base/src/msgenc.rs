@@ -5,7 +5,8 @@
 use keyval::{KeyVal,Attachment};
 use peer::{Peer};
 use query::{QueryID,QueryMsg};
-use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
+use serde::{Serializer,Serialize,Deserializer,Deserialize};
+use serde::de::{DeserializeOwned};
 use mydhtresult::Result as MDHTResult;
 use std::io::Write;
 use std::io::Read;
@@ -40,31 +41,32 @@ where <P as Peer>::Address : 'a,
 
 
 pub mod send_variant {
-use keyval::{KeyVal};
-use peer::{Peer};
-use query::{QueryID,QueryMsg};
-use rustc_serialize::{Encoder,Encodable};
-use super::{DistantEnc,DistantEncAtt};
+  use keyval::{KeyVal};
+  use peer::{Peer};
+  use query::{QueryID,QueryMsg};
+  use serde::{Serializer,Serialize};
+  use super::{DistantEnc,DistantEncAtt};
 
-#[derive(RustcEncodable,Debug)]
-pub enum ProtoMessage<'a,P : Peer + 'a, V : KeyVal + 'a> {
-  PING(&'a P,Vec<u8>, Vec<u8>), 
-  PONG(&'a P,Vec<u8>),
-  STORENODE(Option<QueryID>, Option<DistantEnc<&'a P>>),
-  STOREVALUE(Option<QueryID>, Option<DistantEnc<&'a V>>),
-  STOREVALUEATT(Option<QueryID>, Option<DistantEncAtt<&'a V>>),
-  FINDNODE(QueryMsg<P>, P::Key),
-  FINDVALUE(QueryMsg<P>, V::Key),
-  PROXY(Option<usize>), // No content as message decode will be done by reading following payload
+  #[derive(Serialize,Debug)]
+  pub enum ProtoMessage<'a,P : Peer + 'a, V : KeyVal + 'a> {
+    PING(&'a P,Vec<u8>, Vec<u8>), 
+    PONG(&'a P,Vec<u8>),
+    STORENODE(Option<QueryID>, Option<DistantEnc<&'a P>>),
+    STOREVALUE(Option<QueryID>, Option<DistantEnc<&'a V>>),
+    STOREVALUEATT(Option<QueryID>, Option<DistantEncAtt<&'a V>>),
+    FINDNODE(QueryMsg<P>, P::Key),
+    FINDVALUE(QueryMsg<P>, V::Key),
+    PROXY(Option<usize>), // No content as message decode will be done by reading following payload
+  }
+
 }
 
-}
 
 
-
-#[derive(RustcDecodable,Debug)]
+#[derive(Deserialize,Debug)]
 /// Messages between peers
 /// TODO ref variant for send !!!!
+#[serde(bound(deserialize = ""))]
 pub enum ProtoMessage<P : Peer, V : KeyVal> {
   /// Our node pinging plus challenge and message signing
   PING(P,Vec<u8>, Vec<u8>), 
@@ -93,29 +95,29 @@ pub struct DistantEnc<V> (pub V);
 /// Choice of an encoding with attachment
 pub struct DistantEncAtt<V> (pub V);
 
-impl<'a, V : KeyVal> Encodable for DistantEnc<&'a V>{
-  fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
+impl<'a, V : KeyVal> Serialize for DistantEnc<&'a V>{
+  fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
     // not local without attach
     self.0.encode_kv(s, false, false)
   }
 }
 
-impl<V : KeyVal> Decodable for DistantEnc<V> {
-  fn decode<D:Decoder> (d : &mut D) -> Result<DistantEnc<V>, D::Error> {
+impl<'de,V : KeyVal> Deserialize<'de> for DistantEnc<V> {
+  fn deserialize<D:Deserializer<'de>> (d : D) -> Result<DistantEnc<V>, D::Error> {
     // not local without attach
     <V as KeyVal>::decode_kv(d, false, false).map(|v|DistantEnc(v))
   }
 }
 
-impl<'a, V : KeyVal> Encodable for DistantEncAtt<&'a V>{
-  fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
+impl<'a, V : KeyVal> Serialize for DistantEncAtt<&'a V>{
+  fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
     // not local with attach
         self.0.encode_kv(s, false, true)
   }
 }
 
-impl<V : KeyVal>  Decodable for DistantEncAtt<V> {
-  fn decode<D:Decoder> (d : &mut D) -> Result<DistantEncAtt<V>, D::Error> {
+impl<'de,V : KeyVal>  Deserialize<'de> for DistantEncAtt<V> {
+  fn deserialize<D:Deserializer<'de>> (d : D) -> Result<DistantEncAtt<V>, D::Error> {
     // not local with attach
     <V as KeyVal>::decode_kv(d, false, true).map(|v|DistantEncAtt(v))
   }

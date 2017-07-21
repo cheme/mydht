@@ -7,7 +7,6 @@ use kvcache::{KVCache};
 use kvstore::{CachePolicy};
 use mydhtresult::Result as MDHTResult;
 //use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
-use rustc_serialize::json;
 //use std::fs::{File};
 use std::fs::{copy};
 use std::path::{PathBuf};
@@ -15,7 +14,7 @@ use std::path::{PathBuf};
 use std::marker::{PhantomData};
 use std::io::{SeekFrom,Write,Read,Seek};
 use std::fs::OpenOptions;
-
+use serde_json as json;
 //TODO rewrite with parameterization ok!! (generic simplecache)
 
 //pub trait Key : fmt::Debug + Hash + Eq + Clone + Send + Sync + Ord + 'static{}
@@ -141,7 +140,7 @@ impl<T : KeyVal, C : KVCache<<T as KeyVal>::Key, T>> SimpleCache<T,C>
         //let second: fn((&'a <T as KeyVal>::Key,&'a T)) -> &'a T = second;
         let l  = self.cache.len_c();
         let vser : Vec<&T> = self.cache.strict_fold_c(Vec::with_capacity(l),|mut v,p| {v.push(p.1);v});
-        try!(conffile.write(&json::encode(&vser).unwrap().into_bytes()[..]));
+        try!(conffile.write(&json::to_string(&vser).unwrap().into_bytes()[..]));
         Ok(())
       },
       None => Ok(()),
@@ -176,7 +175,7 @@ impl<V : KeyVal> SimpleCache<V,HashMap<<V as KeyVal>::Key, V>> where V::Key : Ha
           // TODO reput reading!!!!!!!!!!
           let mut jcont = String::new();
           p.read_to_string(&mut jcont).unwrap();
-          let vser : Vec<V> = json::decode(&jcont[..]).unwrap_or_else(|e|panic!("Invalid config {:?}\n quiting",e));
+          let vser : Vec<V> = json::from_str(&jcont[..]).unwrap_or_else(|e|panic!("Invalid config {:?}\n quiting",e));
           let map : HashMap<V::Key, V> = vser.into_iter().map(|v| (v.get_key(),v)).collect();
           map
         }

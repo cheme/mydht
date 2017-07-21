@@ -1,7 +1,7 @@
 
 
 // TODO implement : client mode in rules!!
-#[derive(Debug,PartialEq,Eq,RustcEncodable,RustcDecodable,Clone)]
+#[derive(Debug,PartialEq,Eq,Serialize,Deserialize,Clone)]
 pub enum ClientMode {
   /// client run from PeerManagement and does not loop
   /// - bool say if we spawn a thread or not

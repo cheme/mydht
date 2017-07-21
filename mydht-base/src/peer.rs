@@ -19,7 +19,8 @@ use readwrite_comp::{
   CompRState,
 };
 use std::fmt::Debug;
-use rustc_serialize::{Encodable, Decodable};
+use serde::{Serialize, Deserialize};
+use serde::de::DeserializeOwned;
 
 
 /// A peer is a special keyval with an attached address over the network
@@ -104,7 +105,7 @@ pub trait Shadow : ShadowBase {
   /// type of shadow to apply (most of the time this will be () or bool but some use case may
   /// require 
   /// multiple shadowing scheme, and therefore probably an enum type).
-  type ShadowMode : Clone + Eq + Encodable + Decodable + Debug;
+  type ShadowMode : Clone + Eq + Serialize + DeserializeOwned + Debug;
 
   fn set_mode(&mut self, Self::ShadowMode);
 
@@ -320,7 +321,7 @@ impl ExtRead for NoShadow {
 
 
 
-#[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Clone)]
+#[derive(Deserialize,Serialize,Debug,PartialEq,Clone)]
 /// State of a peer
 pub enum PeerPriority {
   /// peers is online but not already accepted
@@ -335,7 +336,7 @@ pub enum PeerPriority {
 
 
 
-#[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Clone)]
+#[derive(Deserialize,Serialize,Debug,PartialEq,Clone)]
 /// State of a peer
 pub enum PeerState {
   /// accept running on peer return None, it may be nice to store on heavy accept but it is not

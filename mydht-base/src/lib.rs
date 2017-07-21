@@ -3,8 +3,9 @@
 #![feature(box_patterns)]
 
 #[macro_use] extern crate log;
-extern crate rustc_serialize;
+#[macro_use] extern crate serde_derive;
 extern crate serde;
+extern crate serde_json;
 extern crate time;
 extern crate num;
 extern crate rand;
@@ -68,13 +69,13 @@ macro_rules! noshadow(() => (
 /// $skv is one of the possible subKeyval type name in enum
 macro_rules! derive_enum_keyval(($kv:ident {$($para:ident => $tra:ident , )*}, $k:ident, {$($ix:expr , $st:ident => $skv:ty,)*}) => (
 // enum for values
-  #[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
+  #[derive(Serialize,Deserialize,Debug,PartialEq,Eq,Clone)]
   pub enum $kv<$( $para : $tra , )*> {
     $( $st($skv), )* // TODO put Arc to avoid clone?? (or remove arc from interface)
   }
 
 // enum for keys
-  #[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Hash,Clone,PartialOrd,Ord)]
+  #[derive(Serialize,Deserialize,Debug,PartialEq,Eq,Hash,Clone,PartialOrd,Ord)]
   pub enum $k {
     $( $st(<$skv as KeyVal>::Key), )*
   }

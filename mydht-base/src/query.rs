@@ -10,7 +10,7 @@ pub type QueryPriority = u8; // TODO rules for getting number of hop from priori
 /// Query ID.
 pub type QueryID = usize;
 
-#[derive(RustcDecodable,RustcEncodable,Debug,Clone)]
+#[derive(Deserialize,Serialize,Debug,Clone)]
 /// keep trace of route to avoid loop when proxying
 pub enum LastSent<P : Peer> {
   LastSentHop(usize, VecDeque<P::Key>),
@@ -18,7 +18,8 @@ pub enum LastSent<P : Peer> {
 }
 
 
-#[derive(RustcDecodable,RustcEncodable,Debug,Clone)]
+#[derive(Deserialize,Serialize,Debug,Clone)]
+#[serde(bound(deserialize = ""))]
 ///  Main infos about a running query. Notably running mode, chunk config, no loop info, priorities
 ///  and remaing hop (on a new query it is the max number of hop) plus number of query (on each hop
 ///  number of peer where query should be forwarded).
@@ -54,7 +55,7 @@ impl<P : Peer> QueryMsg<P> {
 
 
 // variant of query mode to use as a configuration in application
-#[derive(RustcDecodable,RustcEncodable,Debug,Clone)]
+#[derive(Deserialize,Serialize,Debug,Clone)]
 /// Query Mode defines the way our DHT communicate, it is very important.
 /// Unless messageencoding does not serialize it, all query mode could be used. 
 /// For some application it could be relevant to forbid the reply to some query mode : 
@@ -72,7 +73,7 @@ pub enum QueryMode {
   /// query originator.
   AMix(u8),
 }
-#[derive(RustcDecodable,RustcEncodable,Debug,Clone)]
+#[derive(Deserialize,Serialize,Debug,Clone)]
 // TODO serialize without Paths : Deserialize to dummy path
 /// When KeyVal use an attachment we should use specific transport strategy.
 pub enum QueryChunk{
@@ -96,9 +97,9 @@ pub trait ChunkTable<V : KeyVal> {
 
 
 // variant of query mode to communicate with peers
-#[derive(RustcDecodable,RustcEncodable,Debug,Clone)]
+#[derive(Deserialize,Serialize,Debug,Clone)]
 /// QueryMode info to use in message between peers.
-pub enum QueryModeMsg<P : Peer> {
+pub enum QueryModeMsg<P> {
     /// The node to reply to, and the managed query id for this node (not our id).
     AProxy(Arc<P>, QueryID), // reply to preceding Node which keep a trace of this query  // TODO switc to arc node to avoid all clone
     /// The node to reply to, and the managed query id for this node (not our id).

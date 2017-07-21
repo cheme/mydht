@@ -1,5 +1,5 @@
 extern crate time;
-use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
+use serde::{Serializer,Serialize,Deserialize,Deserializer};
 use std::ops::Deref;
 use std::str::FromStr;
 use std::net::SocketAddr;
@@ -73,7 +73,8 @@ fn random_uuid(hash_size : usize) -> BigUint {
 
 /// serializable option type for transient fields in struct : like option but do not serialize and
 /// deserialize to none.
-/// Futhermore implement Debug, Show, Eq by not displaying and being allways equal
+/// Futhermore implement Debug, Show, Eq by not displaying and being allways equal TODO replace by
+/// serde derive annotation on field
 #[derive(Clone)]
 pub struct TransientOption<V> (pub Option<V>);
 impl<V> Debug for TransientOption<V> {
@@ -82,14 +83,14 @@ impl<V> Debug for TransientOption<V> {
   }
 }
 
-impl<V> Encodable for TransientOption<V> {
-  fn encode<S:Encoder> (&self, _: &mut S) -> Result<(), S::Error> {
-    Ok(())
+impl<V> Serialize for TransientOption<V> {
+  fn serialize<S:Serializer> (&self, s : S) -> Result<S::Ok, S::Error> {
+    s.serialize_unit()
   }
 }
 
-impl<V> Decodable for TransientOption<V> {
-  fn decode<D:Decoder> (_ : &mut D) -> Result<TransientOption<V>, D::Error> {
+impl<'de,V> Deserialize<'de> for TransientOption<V> {
+  fn deserialize<D:Deserializer<'de>> (_ : D) -> Result<TransientOption<V>, D::Error> {
     Ok(TransientOption(None))
   }
 }
@@ -394,15 +395,15 @@ pub fn sa6(a: Ipv6Addr, p: u16) -> SocketAddr {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct ArcKV<KV : KeyVal> (pub Arc<KV>);
 
-impl<KV : KeyVal> Encodable for ArcKV<KV> {
-  fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
+impl<KV : KeyVal> Serialize for ArcKV<KV> {
+  fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
     // default to local without att
     self.0.encode_kv(s, true, false)
   }
 }
 
-impl<KV : KeyVal> Decodable for ArcKV<KV> {
-  fn decode<D:Decoder> (d : &mut D) -> Result<ArcKV<KV>, D::Error> {
+impl<'de,KV : KeyVal> Deserialize<'de> for ArcKV<KV> {
+  fn deserialize<D:Deserializer<'de>> (d : D) -> Result<ArcKV<KV>, D::Error> {
     // default to local without att
     Self::decode_kv(d, true, false)
   }
@@ -418,7 +419,7 @@ impl<KV : KeyVal> AsKeyValIf for ArcKV<KV>
   fn build_from_keyval(_ : (), kv : Self::KV) -> Self {
     ArcKV::new(kv)
   }
-  fn decode_bef<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<Self::BP, D::Error> {Ok(())}
+  fn decode_bef<D:Deserializer> (d : &mut D, is_local : bool, with_att : bool) -> Result<Self::BP, D::Error> {Ok(())}
 }
 */
 impl<KV : KeyVal> ArcKV<KV> {
@@ -452,11 +453,11 @@ impl<KV : KeyVal> KeyVal for ArcKV<KV> {
     self.0.get_attachment() 
   }
   #[inline]
-  fn encode_kv<S:Encoder> (&self, s: &mut S, is_local : bool, with_att : bool) -> Result<(), S::Error> {
+  fn encode_kv<S:Serializer> (&self, s: S, is_local : bool, with_att : bool) -> Result<S::Ok, S::Error> {
     self.0.encode_kv(s, is_local, with_att)
   }
   #[inline]
-  fn decode_kv<D:Decoder> (d : &mut D, is_local : bool, with_att : bool) -> Result<Self, D::Error> {
+  fn decode_kv<'de,D:Deserializer<'de>> (d : D, is_local : bool, with_att : bool) -> Result<Self, D::Error> {
     <KV as KeyVal>::decode_kv(d, is_local, with_att).map(|r|ArcKV::new(r))
   }
 }
@@ -496,16 +497,16 @@ impl Deref for TimeSpecExt {
     &self.0
   }
 }
-impl Encodable for TimeSpecExt {
-  fn encode<S:Encoder> (&self, s: &mut S) -> Result<(), S::Error> {
+impl Serialize for TimeSpecExt {
+  fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
     let pair = (self.0.sec,self.0.nsec);
-    pair.encode(s)
+    pair.serialize(s)
   }
 }
 
-impl Decodable for TimeSpecExt {
-  fn decode<D:Decoder> (d : &mut D) -> Result<TimeSpecExt, D::Error> {
-    let tisp : Result<(i64,i32), D::Error>= Decodable::decode(d);
+impl<'de> Deserialize<'de> for TimeSpecExt {
+  fn deserialize<D:Deserializer<'de>> (d : D) -> Result<TimeSpecExt, D::Error> {
+    let tisp : Result<(i64,i32), D::Error>= Deserialize::deserialize(d);
     tisp.map(|(sec,nsec)| TimeSpecExt(Timespec{sec:sec,nsec:nsec}))
   }
 }
