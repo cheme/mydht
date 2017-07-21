@@ -34,7 +34,7 @@ use keyval::{FileKeyVal};
 use peer::Peer;
 use peer::Shadow;
 #[cfg(feature="openssl-impl")]
-use self::openssl::crypto::hash::{Hasher,Type};
+use self::openssl::hash::{Hasher,MessageDigest};
 use std::io::Write;
 use std::io::Read;
 #[cfg(feature="rust-crypto-impl")]
@@ -264,15 +264,15 @@ pub fn hash_file_crypto(f : &mut File, digest : &mut Digest) -> Vec<u8> {
 
 #[cfg(feature="openssl-impl")]
 pub fn hash_openssl(f : &mut File) -> Vec<u8> {
-  let mut digest = Hasher::new(Type::SHA256); // TODO in filestore parameter with a supported hash enum
+  let mut digest = Hasher::new(MessageDigest::sha256()).unwrap(); // TODO in filestore parameter with a supported hash enum // TODO return error
+  let bbytes = 256/8;
+  let mut vbuff = vec!(0;bbytes);
 //  let bsize = 64;
 //  let bbytes = ((bsize+7)/8);
-  let bbytes = 8;
 //  let ressize = 256;
 //  let outbytes = ((ressize+7)/8);
 //  let outbytes = 32;
-  let mut tmpvec : Vec<u8> = vec![0; bbytes];
-  let buf = tmpvec.as_mut_slice();
+  let buf = vbuff.as_mut_slice();
   match f.seek(SeekFrom::Start(0)) {
     Ok(_) => (),
     Err(e) => {
@@ -284,7 +284,7 @@ pub fn hash_openssl(f : &mut File) -> Vec<u8> {
   match f.read(buf) {
     Ok(nb) => {
       if nb == bbytes {
-        match digest.write_all(buf) {
+        match digest.update(buf) {
           Ok(_) => (),
           Err(e) => {
             error!("failure to create hash for file : {:?}",e);
@@ -294,7 +294,7 @@ pub fn hash_openssl(f : &mut File) -> Vec<u8> {
       } else {
         debug!("nb{:?}",nb);
         // truncate buff
-        match digest.write_all(&buf[..nb]) {
+        match digest.update(&buf[..nb]) {
           Ok(_) => (),
           Err(e) => {
             error!("failure to create hash for file : {:?}",e);
@@ -320,6 +320,6 @@ pub fn hash_openssl(f : &mut File) -> Vec<u8> {
     },
   };
  
-  digest.finish()
+  digest.finish().unwrap()
 }
 

@@ -20,6 +20,7 @@ use procs::{
 use peer::test::{
   TestingRules,
   PeerTest,
+  ShadowModeTest,
 };
 use keyval::KeyVal;
 use rand::{thread_rng,Rng};
@@ -170,6 +171,7 @@ fn runningcontext1 (nbpeer : usize, dhtrules : DhtRules) -> Vec<RunningContext<R
          nodeid: "dummyID".to_string() + (&i.to_string()[..]), 
          address : LocalAdd(i),
          keyshift : i as u8 + 1,
+         modesh : ShadowModeTest::SimpleShift,
        };
 
     let context = RunningContext::new(
@@ -593,6 +595,7 @@ fn initpeers_test (nbpeer : usize, map : &[&[usize]], meths : TestingRules, rule
          nodeid: "dummyID".to_string() + (&i.to_string()[..]), 
          address : LocalAdd(i),
          keyshift : i as u8 + 1,
+         modesh : ShadowModeTest::SimpleShift,
     };
     nodes.push(peer);
   };
@@ -607,6 +610,7 @@ fn simpeer2hopfindval () {
          nodeid: "to_find".to_string(),
          address : LocalAdd(999),
          keyshift : 1000,
+         modesh : ShadowModeTest::SimpleShift,
     };
 
     let mut rules = DHTRULES_DEFAULT.clone();
@@ -637,6 +641,7 @@ fn simpeer2hopstoreval () {
          nodeid: "to_find".to_string(),
          address : LocalAdd(999),
          keyshift : 1000,
+         modesh : ShadowModeTest::SimpleShift,
     };
     let map : &[&[usize]] = &[&[],&[1,3],&[],&[3]];
 
@@ -669,6 +674,7 @@ fn testpeer2hopstoreval () {
          nodeid: "to_find".to_string(),
          address : LocalAdd(999),
          keyshift : 1000, 
+         modesh : ShadowModeTest::SimpleShift,
     };
     let map : &[&[usize]] = &[&[2],&[3],&[4],&[]];
 

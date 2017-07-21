@@ -49,7 +49,6 @@ use std::net::UdpSocket;
 use std::io::Write;
 use std::io::Read;
 //use std::collections::VecDeque;
-use std::slice::bytes::copy_memory;
 
 // TODO retest after switch to new io
 
@@ -144,11 +143,11 @@ impl Read for ReadUdpStream {
     if l > 0 {
       if l > self.0.len() {
         let r = self.0.len();
-        copy_memory(&self.0[..], buf);
+        buf.copy_from_slice(&self.0[..]);
         self.0.clear();
         Ok(r)
       } else {
-        copy_memory(&self.0[..l], buf);
+        buf.copy_from_slice(&self.0[..l]);
         self.0 = (&self.0[l..]).to_vec();
         Ok(l)
       }   

@@ -7,7 +7,7 @@ use keyval::{KeyVal};
 use query::cache::QueryCache;
 use self::mesgs::{PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage,ClientMessage,ClientMessageIx};
 //use self::mesgs::{PeerMgmtMessage,PeerMgmtInitMessage,KVStoreMgmtMessage,QueryMgmtMessage,ClientMessage,ClientMessageIx};
-use std::sync::{Arc,Semaphore};
+use std::sync::{Arc,Condvar,Mutex};
 use std::sync::mpsc::channel;
 use std::thread;
 use route::Route;
@@ -281,12 +281,11 @@ impl<RT : RunningTypes> Clone for RunningProcesses<RT> {
 }
  
 
-// TODO replace f by Arc<Condvar>
 /// DHT infos
 pub struct DHT<RT : RunningTypes> {
   rp : RunningProcesses<RT>,
   rc : ArcRunningContext<RT>, 
-  f : Arc<Semaphore>
+  f : Arc<(Condvar,Mutex<isize>)>
 }
 
 
@@ -391,7 +390,11 @@ fn init_qmode<RT : RunningTypes> (rc : &ArcRunningContext<RT>, qm : &QueryMode) 
 impl<RT : RunningTypes> DHT<RT> {
   pub fn block (&self) {
     debug!("Blocking");
-    self.f.acquire();
+    let mut count = self.f.1.lock().unwrap();
+    while *count <= 0 {
+      count = self.f.0.wait(count).unwrap();
+    }
+    *count -= 1;
   }
   pub fn shutdown (&self) {
     debug!("Sending Shutdown");
@@ -517,7 +520,7 @@ pub fn boot_server
   thread::spawn (move ||{
     sphandler_res(querymanager::start::<RT,_,_>(&rquery, &cleantquery, &cleantpeer, &cleantkstor, querycache, cleandelay));
   });
-  let sem = Arc::new(Semaphore::new(-1)); // wait end of two process from shutdown TODO replace that by joinhandle wait!!!
+  let sem = Arc::new((Condvar::new(),Mutex::new(-1))); // wait end of two process from shutdown TODO replace that by joinhandle wait!!!
   
   let rp = RunningProcesses {
     peers : tpeer.clone(), 
@@ -539,7 +542,8 @@ pub fn boot_server
         panic!("peermanager failure");
       },
     };
-    semsp.release(); // TODO replace by join handle
+    *semsp.1.lock().unwrap() += 1;
+    semsp.0.notify_one(); // TODO replace by join handle
   });
   
   // starting kvstore process
@@ -556,7 +560,9 @@ pub fn boot_server
         panic!("kvmanager failure");
       },
     };
-    semsp2.release(); // TODO replace by join handle
+
+    *semsp2.1.lock().unwrap() += 1;
+    semsp2.0.notify_one(); // TODO replace by join handle
   });
   
   // starting socket listener process

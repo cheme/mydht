@@ -23,6 +23,7 @@ use mydht_basetest::transport::LocalAdd;
 
 // reexport
 pub use mydht_basetest::peer::PeerTest;
+pub use mydht_basetest::shadow::ShadowModeTest;
 
 #[derive(Debug,Clone)]
 /// Testing rules, simplified to have no dependencies (rules should use crypto to auth).
@@ -115,8 +116,8 @@ pub fn basic_auth_test<P : Peer, R : PeerMgmtMeths<P,P>> (r : &R, p1 : &P, p2 : 
 
 #[test]
 fn test_testingrules () {
-  let p1 = PeerTest {nodeid: "dummyID1".to_string(), address : LocalAdd(0), keyshift: 1};
-  let p2 = PeerTest {nodeid: "dummyID2".to_string(), address : LocalAdd(1), keyshift: 2};
+  let p1 = PeerTest {nodeid: "dummyID1".to_string(), address : LocalAdd(0), keyshift: 1, modesh : ShadowModeTest::SimpleShift};
+  let p2 = PeerTest {nodeid: "dummyID2".to_string(), address : LocalAdd(1), keyshift: 2, modesh : ShadowModeTest::SimpleShift};
   let r = TestingRules::new_no_delay();
   basic_auth_test(&r,&p1,&p2);
 }

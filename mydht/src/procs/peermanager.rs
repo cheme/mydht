@@ -3,7 +3,7 @@ use peer::{PeerMgmtMeths, PeerPriority,PeerState,PeerStateChange};
 use std::sync::mpsc::{Receiver};
 use procs::{client,ArcRunningContext,RunningProcesses,RunningTypes};
 use std::collections::{VecDeque};
-use std::sync::{Arc,Semaphore,Mutex};
+use std::sync::{Arc,Condvar,Mutex};
 use query::{LastSent,QueryMsg,QueryHandle,QueryModeMsg};
 use route::Route;
 use std::sync::mpsc::channel;

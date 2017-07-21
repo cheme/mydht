@@ -4,6 +4,7 @@
 
 #[macro_use] extern crate log;
 extern crate rustc_serialize;
+extern crate serde;
 extern crate time;
 extern crate num;
 extern crate rand;

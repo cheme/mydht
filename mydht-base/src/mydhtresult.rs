@@ -12,9 +12,7 @@ use std::sync::mpsc::SendError;
 use std::sync::mpsc::RecvError;
 
 use std::result::Result as StdResult;
-use bincode::rustc_serialize::EncodingError as BincError;
-use bincode::rustc_serialize::DecodingError as BindError;
-use byteorder::Error as BOError;
+use bincode::Error as BinError;
 /*use std::net::parser::AddrParseError as AddrError;
 
 impl From<AddrError> for Error {
@@ -35,24 +33,11 @@ pub trait Into<T> {
     fn into(self) -> T;
 }
 
-impl From<BOError> for Error {
-  #[inline]
-  fn from(e : BOError) -> Error {
-    Error(e.description().to_string(), ErrorKind::ExternalLib, Some(Box::new(e)))
-  }
-}
 
-
-impl From<BincError> for Error {
+impl From<BinError> for Error {
   #[inline]
-  fn from(e : BincError) -> Error {
+  fn from(e : BinError) -> Error {
     Error(e.description().to_string(), ErrorKind::EncodingError, Some(Box::new(e)))
-  }
-}
-impl From<BindError> for Error {
-  #[inline]
-  fn from(e : BindError) -> Error {
-    Error(e.description().to_string(), ErrorKind::DecodingError, Some(Box::new(e)))
   }
 }
 

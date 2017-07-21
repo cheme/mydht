@@ -16,7 +16,6 @@ use super::write_attachment;
 use super::read_attachment;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use num::traits::ToPrimitive;
-use byteorder::Error as BOError;
 
 
 /// standard usage of rust serialize with json over proto messages no intemediatory type all content

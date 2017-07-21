@@ -19,7 +19,6 @@ use std::io::{Seek,SeekFrom};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use num::traits::ToPrimitive;
 use mydht_base::utils;
-use byteorder::Error as BOError;
 use std::error::Error as StdError;
 use self::send_variant::ProtoMessage as ProtoMessageSend;
 
