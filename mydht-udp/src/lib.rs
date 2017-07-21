@@ -143,7 +143,7 @@ impl Read for ReadUdpStream {
     if l > 0 {
       if l > self.0.len() {
         let r = self.0.len();
-        buf.copy_from_slice(&self.0[..]);
+        buf[..r].copy_from_slice(&self.0[..]);
         self.0.clear();
         Ok(r)
       } else {
