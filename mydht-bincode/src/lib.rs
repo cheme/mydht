@@ -3,7 +3,7 @@
 extern crate bincode;
 
 
-//use rustc_serialize::{Encodable,Decodable};
+//use rustc_serialize::{Serialize,Decodable};
 use mydht_base::msgenc::MsgEnc;
 use mydht_base::keyval::{KeyVal,Attachment};
 use mydht_base::peer::{Peer};
@@ -16,30 +16,20 @@ use mydht_base::msgenc::read_attachment;
 use mydht_base::mydhtresult::Result as MDHTResult;
 use mydht_base::mydhtresult::{Error,ErrorKind};
 use mydht_base::msgenc::send_variant::ProtoMessage as ProtoMessageSend;
-use bincode::rustc_serialize as bincodeser;
-use bincode::SizeLimit;
+use bincode::Infinite;
 use std::error::Error as StdError;
 
 
 //use std::marker::Reflect;
-use bincode::rustc_serialize::EncodingError as BincError;
-use bincode::rustc_serialize::DecodingError as BindError;
+use bincode::Error as BinError;
 
-pub struct BincErr(BincError);
-impl From<BincErr> for Error {
+pub struct BinErr(BinError);
+impl From<BinErr> for Error {
   #[inline]
-  fn from(e : BincErr) -> Error {
-    Error(e.0.description().to_string(), ErrorKind::EncodingError, Some(Box::new(e.0)))
+  fn from(e : BinErr) -> Error {
+    Error(e.0.description().to_string(), ErrorKind::SerializingError, Some(Box::new(e.0)))
   }
 }
-pub struct BindErr(BindError);
-impl From<BindErr> for Error {
-  #[inline]
-  fn from(e : BindErr) -> Error {
-    Error(e.0.description().to_string(), ErrorKind::DecodingError, Some(Box::new(e.0)))
-  }
-}
-
 
 
 // full bencode impl
@@ -64,7 +54,7 @@ where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a,
       <V as KeyVal>::Key : 'a {
  
-     tryfor!(BincErr,bincodeser::encode_into(mesg, w, SizeLimit::Infinite));
+     tryfor!(BinErr,bincode::serialize_into(w, mesg, Infinite));
      Ok(())
   }
 
@@ -74,7 +64,7 @@ where <P as Peer>::Address : 'a,
   }
 
   fn decode_from<R : Read, P : Peer, V : KeyVal>(&self, r : &mut R) -> MDHTResult<ProtoMessage<P,V>> {
-    Ok(tryfor!(BindErr,bincodeser::decode_from(r, SizeLimit::Infinite)))
+    Ok(tryfor!(BinErr,bincode::deserialize_from(r, Infinite)))
   }
 
   fn attach_from<R : Read>(&self, r : &mut R) -> MDHTResult<Option<Attachment>> {
@@ -86,7 +76,7 @@ where <P as Peer>::Address : 'a,
           debug!("Reding an attached file");
           read_attachment(r).map(|a|Some(a))
       },
-      _ => return Err(Error("Invalid attachment description".to_string(), ErrorKind::DecodingError, None)),
+      _ => return Err(Error("Invalid attachment description".to_string(), ErrorKind::SerializingError, None)),
     }
   }
 

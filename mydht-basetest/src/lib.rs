@@ -2,7 +2,8 @@
 
 
 #[macro_use] extern crate log;
-extern crate rustc_serialize;
+#[macro_use] extern crate serde_derive;
+extern crate serde;
 #[macro_use] extern crate mydht_base;
 extern crate time;
 extern crate rand;

@@ -9,7 +9,7 @@
 use keyval::{KeyVal,Attachment};
 use peer::{Peer};
 use query::{QueryID,QueryMsg};
-use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
+use serde::{Serializer,Serialize,Deserializer,Deserialize};
 use mydhtresult::Result as MDHTResult;
 use std::io::Write;
 use std::io::Read;

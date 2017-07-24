@@ -24,7 +24,7 @@ use rand::Rng;
 #[derive(Clone)]
 pub struct ShadowTest (pub u8, pub u8, pub ShadowModeTest);
 
-#[derive(Debug,RustcDecodable,RustcEncodable,Clone,PartialEq,Eq)]
+#[derive(Debug,Deserialize,Serialize,Clone,PartialEq,Eq)]
 pub enum ShadowModeTest {
   NoShadow,
   SimpleShift,

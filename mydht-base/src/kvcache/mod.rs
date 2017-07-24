@@ -34,7 +34,7 @@ pub trait KVCache<K, V> : Sized + Cache<K,V> {
   /// fold without closure over all content
   fn strict_fold_c<'a, B, F>(&'a self, init: B, f: F) -> B where F: Fn(B, (&'a K, &'a V)) -> B, K : 'a, V : 'a;
   /// very permissive fold (allowing closure)
-  fn fold_c<'a, B, F>(&'a self, init: B, mut f: F) -> B where F: FnMut(B, (&'a K, &'a V)) -> B, K : 'a, V : 'a;
+  fn fold_c<'a, B, F>(&'a self, init: B, f: F) -> B where F: FnMut(B, (&'a K, &'a V)) -> B, K : 'a, V : 'a;
 
   // TODO lightweigh map (more lightweight than  fold (no fn mut), find name where result is a
   // Result () not a vec + default impl in trem of fold_c TODO a result for fail computation : work

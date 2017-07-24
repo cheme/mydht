@@ -9,12 +9,12 @@ use std::cmp::PartialEq;
 
 use keyval::{Attachment,SettableAttachment};
 
-use rustc_serialize::{Encodable, Encoder, Decoder};
+use serde::{Serialize, Serializer, Deserializer};
 
 
 
 // Testing only nodeK, with key different from id
-#[derive(RustcDecodable,RustcEncodable,Debug,Clone)]
+#[derive(Deserialize,Serialize,Debug,Clone)]
 struct NodeK2(Node,String);
 
 

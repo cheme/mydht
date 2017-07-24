@@ -20,7 +20,7 @@ use shadow::{
 // reexport
 pub use mydht_base::peer::*;
 
-#[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
+#[derive(Deserialize,Serialize,Debug,PartialEq,Eq,Clone)]
 /// Node using an usize as address (for use with transport tests)
 pub struct PeerTest {
   pub nodeid  : String,

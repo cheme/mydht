@@ -55,7 +55,7 @@ use std::fs;
 //use std::ffi::OsStr;
 use std::path::{Path,PathBuf};
 use self::time::Timespec;
-use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
+use serde::{Serializer,Serialize,Deserializer,Deserialize};
 //use rustc_serialize::hex::{ToHex,FromHex};
 use std::ops::Deref;
 use mydhtresult::Result as MDHTResult;

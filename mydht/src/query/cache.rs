@@ -10,7 +10,7 @@ use std::marker::PhantomData;
 use procs::mesgs::{PeerMgmtMessage};
 use peer::Peer;
 use keyval::KeyVal;
-use rustc_serialize::{Encoder,Encodable,Decoder,Decodable};
+use serde::{Serializer,Serialize,Deserializer,Deserialize};
 use transport::{ReadTransportStream,WriteTransportStream};
 use mydhtresult::Result as MDHTResult;
 use kvstore::CachePolicy;

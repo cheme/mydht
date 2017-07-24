@@ -37,7 +37,7 @@ pub trait Into<T> {
 impl From<BinError> for Error {
   #[inline]
   fn from(e : BinError) -> Error {
-    Error(e.description().to_string(), ErrorKind::EncodingError, Some(Box::new(e)))
+    Error(e.description().to_string(), ErrorKind::SerializingError, Some(Box::new(e)))
   }
 }
 
@@ -134,8 +134,7 @@ impl Display for Error {
 
 #[derive(Debug)]
 pub enum ErrorKind {
-  DecodingError,
-  EncodingError,
+  SerializingError,
   MissingFile,
   IOError,
   ExpectedError,

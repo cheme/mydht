@@ -1,5 +1,5 @@
 use std::net::{SocketAddr};
-use rustc_serialize::{Encoder,Encodable,Decoder};
+use serde::{Serializer,Serialize,Deserializer};
 use peer::Peer;
 use peer::{Shadow,NoShadow};
 use std::string::String;
@@ -11,7 +11,7 @@ use mydht_base::route::byte_rep::DHTElemBytes;
 
 
 
-#[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
+#[derive(Deserialize,Serialize,Debug,PartialEq,Eq,Clone)]
 pub struct Node {
   pub nodeid  : NodeID,
   pub address : SerSocketAddr,

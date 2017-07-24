@@ -266,7 +266,7 @@ pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A
 
 
 /// for testing purpose
-#[derive(RustcDecodable,RustcEncodable,Debug,PartialEq,Eq,Clone)]
+#[derive(Deserialize,Serialize,Debug,PartialEq,Eq,Clone)]
 pub struct LocalAdd (pub usize);
 
 impl Address for LocalAdd {

@@ -18,7 +18,7 @@ impl SimpleRules {
   }
 }
 // TODO redesign nbhop nbquery depending on prio put higher prio on big num
-#[derive(Debug,Clone,RustcDecodable,RustcEncodable)]
+#[derive(Debug,Clone,Deserialize,Serialize)]
 pub struct DhtRules {
   pub randqueryid : bool, // used to conf querycache : remnant from old code, still use in fs
   pub nbhopfact : u8, // nbhop is prio * fact or nbhopfact if normal // TODO invert prio (higher being 1)

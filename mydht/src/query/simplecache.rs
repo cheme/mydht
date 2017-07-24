@@ -11,7 +11,7 @@ use kvcache::{KVCache};
 use kvstore::CachePolicy;
 use mydhtresult::Result as MDHTResult;
 //use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
-use rustc_serialize::json;
+use serde_json as json;
 //use std::fs::{File};
 use std::fs::{copy};
 use std::path::{PathBuf};

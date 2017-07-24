@@ -1,6 +1,5 @@
-use rustc_serialize::json;
-use rustc_serialize::json::EncoderError as JSonEncError;
-use rustc_serialize::json::DecoderError as JSonDecError;
+use serde_json as json;
+use serde_json::error::Error as JSonError;
 //use rustc_serialize::{Encodable,Decodable};
 use super::MsgEnc;
 use keyval::{KeyVal,Attachment};
@@ -53,8 +52,7 @@ where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a,
       <V as KeyVal>::Key : 'a {
  
-    tryfor!(JSonEncErr,json::encode(mesg).map(|st|{
-      let bytes = st.into_bytes();
+    tryfor!(JSonErr,json::to_vec(mesg).map(|bytes|{
       try!(w.write_u64::<LittleEndian>(bytes.len().to_u64().unwrap()));
       w.write_all(&bytes[..])
     })).map_err(|e|e.into())
@@ -77,12 +75,12 @@ where <P as Peer>::Address : 'a,
     let len = try!(r.read_u64::<LittleEndian>()) as usize;
     // TODO max len : easy overflow here
     if len > MAX_BUFF {
-      return Err(Error(format!("Oversized protomessage, max length in bytes was {:?}", MAX_BUFF), ErrorKind::DecodingError, None));
+      return Err(Error(format!("Oversized protomessage, max length in bytes was {:?}", MAX_BUFF), ErrorKind::SerializingError, None));
     };
     let mut vbuf = vec![0; len];
     try!(r.read(&mut vbuf[..]));
     // TODO this is likely break at the first utf8 char : test it
-    Ok(tryfor!(JSonDecErr,json::decode(&(*String::from_utf8_lossy(&mut vbuf[..])))))
+    Ok(tryfor!(JSonErr,json::from_slice(&mut vbuf[..])))
   }
 
   fn attach_from<R : Read>(&self, r : &mut R) -> MDHTResult<Option<Attachment>> {
@@ -94,7 +92,7 @@ where <P as Peer>::Address : 'a,
           debug!("Reding an attached file");
           read_attachment(r).map(|a|Some(a))
       },
-      _ => Err(Error("Invalid attachment description".to_string(), ErrorKind::DecodingError, None)),
+      _ => Err(Error("Invalid attachment description".to_string(), ErrorKind::SerializingError, None)),
     }
   }
 
@@ -102,18 +100,11 @@ where <P as Peer>::Address : 'a,
 }
 
 
-pub struct JSonEncErr(JSonEncError);
-impl From<JSonEncErr> for Error {
+pub struct JSonErr(JSonError);
+impl From<JSonErr> for Error {
   #[inline]
-  fn from(e : JSonEncErr) -> Error {
-    Error(e.0.description().to_string(), ErrorKind::EncodingError, Some(Box::new(e.0)))
-  }
-}
-pub struct JSonDecErr(JSonDecError);
-impl From<JSonDecErr> for Error {
-  #[inline]
-  fn from(e : JSonDecErr) -> Error {
-    Error(e.0.description().to_string(), ErrorKind::DecodingError, Some(Box::new(e.0)))
+  fn from(e : JSonErr) -> Error {
+    Error(e.0.description().to_string(), ErrorKind::SerializingError, Some(Box::new(e.0)))
   }
 }
 

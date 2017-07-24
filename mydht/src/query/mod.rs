@@ -1,5 +1,5 @@
 use std::sync::{Arc,Mutex,Condvar};
-use rustc_serialize::{Encoder,Encodable,Decoder};
+use serde::{Serializer,Serialize,Deserializer};
 //use peer::{PeerPriority};
 use time::Duration;
 use time::{self,Timespec};
