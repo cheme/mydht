@@ -1,7 +1,8 @@
 #[macro_use] extern crate log;
 #[macro_use] extern crate mydht_base;
 extern crate bincode;
-
+#[cfg(test)]
+extern crate mydht_basetest;
 
 //use rustc_serialize::{Serialize,Decodable};
 use mydht_base::msgenc::MsgEnc;
@@ -18,7 +19,6 @@ use mydht_base::mydhtresult::{Error,ErrorKind};
 use mydht_base::msgenc::send_variant::ProtoMessage as ProtoMessageSend;
 use bincode::Infinite;
 use std::error::Error as StdError;
-
 
 //use std::marker::Reflect;
 use bincode::Error as BinError;
@@ -53,7 +53,7 @@ impl MsgEnc for Bincode {
 where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a,
       <V as KeyVal>::Key : 'a {
- 
+  
      tryfor!(BinErr,bincode::serialize_into(w, mesg, Infinite));
      Ok(())
   }
@@ -82,4 +82,7 @@ where <P as Peer>::Address : 'a,
 
 }
 
-
+#[test]
+fn test_binc_apeer () {
+  mydht_basetest::msgenc::test_peer_enc(Bincode);
+}

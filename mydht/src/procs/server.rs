@@ -386,6 +386,7 @@ fn request_handler_internal <RT : RunningTypes>
   match r {
 
     ProtoMessage::PING(from, chal, sig) => {
+
       // check ping authenticity
       if rc.peerrules.checkmsg(&from,&chal,&sig) {
 

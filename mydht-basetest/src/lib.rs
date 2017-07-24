@@ -24,4 +24,5 @@ pub mod transport;
 pub mod peer;
 pub mod shadow;
 pub mod bytes_wr;
+pub mod msgenc;
 

@@ -86,6 +86,37 @@ fn initpeers_udp<M : PeerMgmtMeths<Node, Node> + Clone> (start_port : u16, nbpee
   };
   initpeers(nodes, transports, map, meths, rules,Bincode,sim)
 }
+#[test]
+fn simpeer1hopfindval_udp () {
+    let nbpeer = 2;
+    // addr dummy (used as keyval so no ping validation)
+    let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), 999);
+    let val = Node {nodeid: "to_find".to_string(), address : SerSocketAddr(addr)};
+
+
+
+    let map : &[&[usize]] = &[&[],&[1]];
+
+    let mut startport = 75440;
+    let prio = 1;
+
+    let mut rules = DHTRULES_DEFAULT.clone();
+    rules.clientmode = ClientMode::Local(true);
+    rules.nbhopfact = 3;
+    let peers = initpeers_udp(startport,nbpeer, map, TestingRules::new_no_delay(), rules, Some(2000));
+    let ref dest = peers.get(nbpeer -1).unwrap().1;
+    for conf in ALLTESTMODE.iter(){
+      let queryconf = QueryConf {
+        mode : conf.clone(), 
+        chunk : QueryChunk::None, 
+        hop_hist : Some((7,false))
+      };
+      assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
+      let res = peers.get(0).unwrap().1.find_val(val.get_key().clone(), &queryconf, prio,StoragePriority::NoStore, 1).pop().unwrap_or(None);
+      assert_eq!(res, Some(val.clone()));
+    }
+}
+
 
 #[test]
 fn simpeer2hopfindval_udp () {

@@ -70,7 +70,7 @@ impl Serialize for SerSocketAddr {
 impl<'de> Deserialize<'de> for SerSocketAddr {
   fn deserialize<D:Deserializer<'de>> (d : D) -> StdResult<SerSocketAddr, D::Error> {
 
-    let ad = <&str>::deserialize(d)?;
+    let ad = <String>::deserialize(d)?;
     Ok(SerSocketAddr(FromStr::from_str(&ad[..]).unwrap()))
 /*    d.read_str().map(|ad| {
       SerSocketAddr(FromStr::from_str(&ad[..]).unwrap())

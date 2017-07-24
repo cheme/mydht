@@ -49,7 +49,7 @@ pub mod send_variant {
 
   #[derive(Serialize,Debug)]
   pub enum ProtoMessage<'a,P : Peer + 'a, V : KeyVal + 'a> {
-    PING(&'a P,Vec<u8>, Vec<u8>), 
+    PING(&'a P,Vec<u8>, Vec<u8>), // TODO vec to &[u8]??
     PONG(&'a P,Vec<u8>),
     STORENODE(Option<QueryID>, Option<DistantEnc<&'a P>>),
     STOREVALUE(Option<QueryID>, Option<DistantEnc<&'a V>>),
