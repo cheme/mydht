@@ -1,7 +1,7 @@
 use std::net::{SocketAddr};
 use serde::{Serializer,Serialize,Deserializer};
 use peer::Peer;
-use peer::{Shadow,NoShadow};
+use peer::{ShadowBase,ShadowW,ShadowR,NoShadow};
 use std::string::String;
 use keyval::{KeyVal};
 use keyval::{Attachment,SettableAttachment};

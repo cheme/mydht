@@ -171,7 +171,7 @@ pub fn start_listener <RT : RunningTypes>
       let sh = ServerHandle::ThreadedOne(amut);
       let sh_thread = sh.clone();
       thread::spawn (move || {
-        sphandler_res(request_handler::<RT> (s, rc_thread.me.get_shadower(false), &rc_thread, &rp_thread, None, sh_thread, otimeout,false));
+        sphandler_res(request_handler::<RT> (s, rc_thread.me.get_shadower_r(), &rc_thread, &rp_thread, None, sh_thread, otimeout,false));
       });
       Ok(sh)
     },
@@ -243,7 +243,7 @@ pub fn servloop <RT : RunningTypes>
       // which can be clone + involves shadower in transport but with transport keeping persistence
       // of readstream we need that anyway + need ClientReceiver enum to use either ref or object
       // (remove some unsafe code in tcp)
-      let shad = rc.me.get_shadower(false);
+      let shad = rc.me.get_shadower_r();
       let ame = rc.me.clone();
 /*      let shadget = move || {
          ame.get_shadower(false);
@@ -288,7 +288,7 @@ pub fn servloop <RT : RunningTypes>
 /// peeradd msg with this ows.
 fn request_handler <RT : RunningTypes>
  (mut s1 : <RT::T as Transport>::ReadStream,
-  mut shad1 : <RT::P as Peer>::Shadow,
+  mut shad1 : <RT::P as Peer>::ShadowR,
   rc : &ArcRunningContext<RT>, 
   rp : &RunningProcesses<RT>,
   mut ows : Option<<RT::T as Transport>::WriteStream>,

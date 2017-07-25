@@ -1,19 +1,29 @@
 
+#[cfg(test)]
+use readwrite_comp::{ExtWrite,ExtRead};
 
+#[cfg(test)]
+use std::io::{Write,Read};
+
+#[cfg(test)]
+use rand::thread_rng;
+#[cfg(test)]
+use rand::Rng;
+#[cfg(test)]
+use std::io::Cursor;
 use keyval::{KeyVal};
 use keyval::{Attachment,SettableAttachment};
 //use utils;
 use transport::LocalAdd;
 use mydht_base::route::byte_rep::{
     DHTElemBytes,
-  };
+};
 use shadow::{
   ShadowTest,
+  shadower_test,
 };
-
 use shadow::{
   ShadowModeTest,
-  shadower_test,
 };
 
 
@@ -47,25 +57,27 @@ impl SettableAttachment for PeerTest { }
 
 impl Peer for PeerTest {
   type Address = LocalAdd;
-  type Shadow = ShadowTest;
+  type ShadowW = ShadowTest;
+  type ShadowR = ShadowTest;
   fn get_address(&self) -> &Self::Address {
     &self.address
   }
 
   #[inline]
-  fn get_shadower (&self, _ : bool) -> Self::Shadow {
+  fn get_shadower_w (&self) -> Self::ShadowW {
     ShadowTest(self.keyshift,0,self.modesh.clone()) // default to no shadow
   }
-  fn default_auth_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {
-    ShadowModeTest::NoShadow
-  }
-  fn default_message_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {
-    ShadowModeTest::SimpleShift
-  }
-  fn default_header_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {
-    ShadowModeTest::SimpleShiftNoHead
+  #[inline]
+  fn get_shadower_r (&self) -> Self::ShadowR {
+    ShadowTest(self.keyshift,0,self.modesh.clone()) // default to no shadow
   }
 
+  fn default_auth_mode(&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {
+    ShadowModeTest::NoShadow
+  }
+  fn default_message_mode(&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {
+    ShadowModeTest::SimpleShift
+  }
 }
 
 impl<'a> DHTElemBytes<'a> for PeerTest {
@@ -98,10 +110,73 @@ read_buffer_length : usize, smode : ShadowModeTest) {
     modesh : smode.clone(),
   };
  
-  shadower_test(to_p,input_length,write_buffer_length,read_buffer_length,smode);
+  shadower_test(to_p.clone(),input_length,write_buffer_length,read_buffer_length,smode.clone());
+  // non std
+  shadower_sym(to_p,input_length,write_buffer_length,read_buffer_length,smode);
 
 }
+#[cfg(test)]
+pub fn shadower_sym (to_p : PeerTest, input_length : usize, write_buffer_length : usize,
+read_buffer_length : usize, smode : ShadowModeTest) 
+{
 
+  let mut inputb = vec![0;input_length];
+  thread_rng().fill_bytes(&mut inputb);
+  let mut output = Cursor::new(Vec::new());
+  let input = inputb;
+  let mut from_shad = to_p.get_shadower_w();
+  from_shad.set_mode(smode.clone());
+  let mut to_shad = to_p.get_shadower_r();
+  to_shad.set_mode(smode.clone());
+
+  // sim test
+  let sim_shad = ShadowTest::new_shadow_sim().unwrap();
+  let mut ix = 0;
+  let k = {
+    let mut wkey = Cursor::new(Vec::new());
+    sim_shad.send_shadow_simkey(&mut wkey).unwrap();
+    wkey.into_inner()
+  };
+  let mut ki = Cursor::new(&k[..]);
+  let mut shad_sim_w =  ShadowTest::init_from_shadow_simkey(&mut ki).unwrap();
+  let mut ki = Cursor::new(&k[..]);
+  let mut shad_sim_r =  ShadowTest::init_from_shadow_simkey(&mut ki).unwrap();
+  let k2 = {
+    let mut wkey = Cursor::new(Vec::new());
+    shad_sim_r.send_shadow_simkey(&mut wkey).unwrap();
+    wkey.into_inner()
+  };
+  assert_eq!(k,k2);
+ 
+  while ix < input_length {
+    if ix + write_buffer_length < input_length {
+      ix += shad_sim_w.write_into(&mut output, &input[ix..ix + write_buffer_length]).unwrap();
+    } else {
+      ix += shad_sim_w.write_into(&mut output, &input[ix..]).unwrap();
+    }
+  }
+  let el = output.get_ref().len();
+  shad_sim_w.write_end(&mut output).unwrap();
+  shad_sim_w.flush_into(&mut output).unwrap();
+  output.flush().unwrap();
+  let el = output.get_ref().len();
+  ix = 0;
+  let mut readbuf = vec![0;read_buffer_length];
+
+  let mut input_v = Cursor::new(output.into_inner());
+  while ix < input_length {
+    let l = shad_sim_r.read_from(&mut input_v, &mut readbuf).unwrap();
+    assert!(l!=0);
+
+    assert!(&readbuf[..l] == &input[ix..ix + l]);
+    ix += l;
+  }
+
+  let l = shad_sim_r.read_from(&mut input_v, &mut readbuf).unwrap();
+  assert!(l==0);
+  shad_sim_r.read_end(&mut input_v).unwrap();
+
+}
 #[test]
 fn shadower1_test () {
   let smode = ShadowModeTest::NoShadow;

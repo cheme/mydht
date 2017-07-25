@@ -32,7 +32,9 @@ use std::fmt::Error as FmtError;
 //use keyval::{AsKeyValIf};
 use keyval::{FileKeyVal};
 use peer::Peer;
-use peer::Shadow;
+use peer::ShadowW;
+use peer::ShadowR;
+use peer::ShadowBase;
 #[cfg(feature="openssl-impl")]
 use self::openssl::hash::{Hasher,MessageDigest};
 use std::io::Write;
@@ -122,7 +124,7 @@ pub fn random_bytes(size : usize) -> Vec<u8> {
 
 
 
-pub fn send_msg<'a,P : Peer + 'a, V : KeyVal + 'a, T : WriteTransportStream, E : MsgEnc, S : Shadow> (
+pub fn send_msg<'a,P : Peer + 'a, V : KeyVal + 'a, T : WriteTransportStream, E : MsgEnc, S : ShadowW> (
    m : &ProtoMessageSend<'a,P,V>, 
    a : Option<&Attachment>, 
    t : &mut T, 
@@ -146,7 +148,7 @@ where <P as Peer>::Address : 'a,
 
 
 /// TODO switch receive_msg to this interface
-pub fn receive_msg_tmp2<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc, S : Shadow>(t : &mut T, e : &E, s : &mut S) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
+pub fn receive_msg_tmp2<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc, S : ShadowR>(t : &mut T, e : &E, s : &mut S) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
   let mut srs = new_shadow_read_once (t,s);
   let m = try!(e.decode_from(&mut srs));
   let oa = try!(e.attach_from(&mut srs));
@@ -156,7 +158,7 @@ pub fn receive_msg_tmp2<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E 
 
 
 #[inline]
-pub fn receive_msg<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc, S : Shadow>(t : &mut T, e : &E, s : &mut S) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
+pub fn receive_msg<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc, S : ShadowR>(t : &mut T, e : &E, s : &mut S) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
   receive_msg_tmp2(t,e,s).ok()
 }
 

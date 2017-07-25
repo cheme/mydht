@@ -5,23 +5,34 @@ version = "0.0.1"
 authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
 [feature]
+default = ["mydht-impl"]
+tunnel-impl = ["tunnel"]
+mydht-impl = ["mydht-base","mydht-basetest"]
 nightly = []
 
 [dependencies]
 log = "~0.3.4"
 rand = "~0.3.11"
+serde = { version = "~1.0.10", features = ["rc"]}
+serde_derive = "~1.0.10"
+hex = "~0.2.0"
 
 [dependencies.readwrite-comp]
-#path = "../readwrite-comp/"
+#path = "../../../readwrite-comp/"
 git = "https://github.com/cheme/readwrite-comp.git"
 
 [dependencies.mydht-base]
 path = "../mydht-base/"
 
+[dependencies.tunnel]
+git = "https://github.com/cheme/tunnel.git"
+#path = "../../../mydht-base/"
+optional = true
+
 [dev-dependencies.mydht-basetest]
 path = "../mydht-basetest/"
 
 [dependencies.openssl]
-version = "~0.7.6"
+version = "~0.9.15"
 #path = "../../mydht-dep/rust-openssl/openssl/"
 #git = "https://github.com/cheme/rust-openssl.git"

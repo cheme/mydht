@@ -31,7 +31,7 @@ pub fn start<RT : RunningTypes>
   rcl : Receiver<ClientMessageIx<RT::P,RT::V,<RT::T as Transport>::WriteStream>>,
   rc : ArcRunningContext<RT>,
   rp : RunningProcesses<RT>,
-  mut osend : Option<ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::Shadow>>,
+  mut osend : Option<ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::ShadowW>>,
   mult : bool,
   ) -> bool {
   match start_local(p,&rc,&rp,Either::Left((osend,rcl,mult))) {
@@ -98,16 +98,16 @@ pub fn start_local <RT : RunningTypes>
   rc : &ArcRunningContext<RT>,
   rp : &RunningProcesses<RT>,
   params : Either<
-    (Option<ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::Shadow>>,
+    (Option<ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::ShadowW>>,
      Receiver<ClientMessageIx<RT::P,RT::V,<RT::T as Transport>::WriteStream>>,
      bool),
-    (Option<&mut ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::Shadow>>,
+    (Option<&mut ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::ShadowW>>,
      ClientMessage<RT::P,RT::V,<RT::T as Transport>::WriteStream>)
   >,
   ) -> MDHTResult<bool> {
   let mut ok = true;
   // connect
-  let mut onewsend : Option<ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::Shadow>> = 
+  let mut onewsend : Option<ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::ShadowW>> = 
     if params.left_ref().map_or(false, |l|l.0.is_none()) 
     || params.right_ref().map_or(false,|r|r.0.is_none()) {
     // TODO duration from rules!!!
@@ -120,7 +120,7 @@ pub fn start_local <RT : RunningTypes>
   // loop on rcl
   match params { // TODO orcl depend on presence of message (plus either of sender : do Either<(rcl, sender),(&mut sender, msg)> for message
       Either::Right((osend, m)) => {
-          let sc0 : &mut ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::Shadow> = match osend {
+          let sc0 : &mut ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::ShadowW> = match osend {
             None => match &mut onewsend {
               &mut None => {
                 debug!("cannot connect with peer returning false");
@@ -137,7 +137,7 @@ pub fn start_local <RT : RunningTypes>
       },
       Either::Left((osend, r, mult)) => {
         let mut sc = Vec::new();
-        let sc0 : ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::Shadow> = match osend {
+        let sc0 : ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::ShadowW> = match osend {
           None => match onewsend {
             None => {
               debug!("cannot connect with peer returning false");
@@ -235,8 +235,8 @@ pub fn client_match <RT : RunningTypes>
   rp : &RunningProcesses<RT>,
   m : ClientMessage<RT::P,RT::V,<RT::T as Transport>::WriteStream>,
   managed : bool,
-  s : &mut ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::Shadow>,
-  ) -> MDHTResult<(bool, Option<ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::Shadow>>)> {
+  s : &mut ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::ShadowW>,
+  ) -> MDHTResult<(bool, Option<ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::ShadowW>>)> {
   let mut ok;
   let mut newcon = None;
   macro_rules! sendorconnect(($mess:expr,$oa:expr) => (
@@ -250,7 +250,7 @@ pub fn client_match <RT : RunningTypes>
           debug!("reconnection in client process ok");
           // for now reconnect is only for threaded : see start_local TODO local spawn could use this
           // use new shadower (using existing conn would be unsafe)
-          let mut cn = ClientSender::Threaded(n,p.get_shadower(true));
+          let mut cn = ClientSender::Threaded(n,p.get_shadower_w());
           // TODO send to peermgmet optional readTransportStream
           ok = send_msg($mess, $oa,&mut cn,&rc.msgenc,rc.peerrules.get_shadower(&(*p),&$mess));
           if ok {
@@ -348,10 +348,10 @@ pub fn mult_client_connect <RT : RunningTypes>
   rc : &ArcRunningContext<RT>,
   rp : &RunningProcesses<RT>,
   ows : Option<<RT::T as Transport>::WriteStream>,
-  ) -> MDHTResult<ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::Shadow>> {
+  ) -> MDHTResult<ClientSender<<RT::T as Transport>::WriteStream,<RT::P as Peer>::ShadowW>> {
   match ows {
     Some(ws) => {
-      let mut cn = ClientSender::Threaded(ws,p.get_shadower(true));
+      let mut cn = ClientSender::Threaded(ws,p.get_shadower_w());
       Ok(cn)
     },
     None => {
@@ -368,7 +368,7 @@ pub fn mult_client_connect <RT : RunningTypes>
             },
           };
  
-          let mut cn = ClientSender::Threaded(n,p.get_shadower(true));
+          let mut cn = ClientSender::Threaded(n,p.get_shadower_w());
           Ok(cn)
         },
         Err(e) => {

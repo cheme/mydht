@@ -52,7 +52,7 @@ pub trait PeerMgmtMeths<P : Peer, V : KeyVal> : Send + Sync + 'static {
   /// Resolve mode of shadowing to use for a peer and and a message. TODO might need ref to running
   /// processes and contexts (or just our peer), but keep it simple for now
   /// Default implementation relies on shadow message
-  fn get_shadower (&self, p : &P, m : &ProtoMessageSend<P,V>) -> <P::Shadow as Shadow>::ShadowMode {
+  fn get_shadower (&self, p : &P, m : &ProtoMessageSend<P,V>) -> <P::ShadowW as ShadowBase>::ShadowMode {
     match m {
       &ProtoMessageSend::PING(..) |&ProtoMessageSend::PONG(..) => p.default_auth_mode(),
       _ => p.default_message_mode(),

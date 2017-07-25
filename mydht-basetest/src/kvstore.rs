@@ -3,7 +3,7 @@
 //! TODO seems pretty useless : remove??
 use keyval::KeyVal;
 use node::{Node,NodeID};
-use peer::{Peer,Shadow};
+use peer::{Peer,ShadowW,ShadowR,ShadowBase};
 use std::cmp::Eq;
 use std::cmp::PartialEq;
 
@@ -42,25 +42,26 @@ impl KeyVal for NodeK2 {
 
   impl Peer for NodeK2 {
     type Address = <Node as Peer>::Address;
-    type Shadow = <Node as Peer>::Shadow;
+    type ShadowW = <Node as Peer>::ShadowW;
+    type ShadowR = <Node as Peer>::ShadowR;
     #[inline]
     fn get_address(&self) -> &<Node as Peer>::Address {
       self.0.get_address()
     }
     #[inline]
-    fn get_shadower (&self, write : bool) -> Self::Shadow {
-      self.0.get_shadower(write)
+    fn get_shadower_r (&self) -> Self::ShadowR {
+      self.0.get_shadower_r()
     }
-    fn default_auth_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {
+    #[inline]
+    fn get_shadower_w (&self) -> Self::ShadowW {
+      self.0.get_shadower_w()
+    }
+    fn default_auth_mode(&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {
      self.0.default_auth_mode() 
     }
-    fn default_message_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {
+    fn default_message_mode(&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {
        self.0.default_message_mode() 
     }
-    fn default_header_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {
-       self.0.default_header_mode() 
-    }
-
 
   }
 

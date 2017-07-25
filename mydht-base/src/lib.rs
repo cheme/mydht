@@ -1,5 +1,4 @@
 
-#![feature(associated_consts)]
 #![feature(box_patterns)]
 
 #[macro_use] extern crate log;
@@ -44,19 +43,20 @@ macro_rules! noattachment(() => (
 /// convenience macro for peer implementation without a shadow
 macro_rules! noshadow(() => (
 
-  type Shadow = NoShadow;
+  type ShadowR = NoShadow;
+  type ShadowW = NoShadow;
   #[inline]
-  fn get_shadower (&self, _ : bool) -> Self::Shadow {
+  fn get_shadower_w (&self) -> Self::ShadowW {
     NoShadow
   }
   #[inline]
-  fn default_auth_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {()}
+  fn get_shadower_r (&self) -> Self::ShadowR {
+    NoShadow
+  }
   #[inline]
-  fn default_message_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {()}
+  fn default_auth_mode(&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {()}
   #[inline]
-  fn default_header_mode(&self) -> <Self::Shadow as Shadow>::ShadowMode {()}
-
-
+  fn default_message_mode(&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {()}
 ));
 
 
