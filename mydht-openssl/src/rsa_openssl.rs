@@ -4,18 +4,25 @@
 #[cfg(test)]
 extern crate mydht_basetest;
 
+
+use std::fmt;
 use std::cmp::min;
 use std::marker::PhantomData;
 //use mydhtresult::Result as MDHTResult;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
 use serde::{Serializer,Serialize,Deserializer,Deserialize};
+use serde::de::{Visitor, SeqAccess, MapAccess,Unexpected,DeserializeOwned};
+use serde::de;
+use serde::ser::SerializeStruct;
 use std::io::Result as IoResult;
 use openssl::hash::{Hasher,MessageDigest};
 use openssl::pkey::{PKey};
+use openssl::rsa::Rsa;
 use openssl::rsa;
 use openssl::symm::{Crypter,Mode};
 use openssl::symm::Cipher as SymmType;
+use openssl::symm::Cipher;
 use rand::os::OsRng;
 use rand::Rng;
 use std::fmt::{Formatter,Debug};
@@ -32,9 +39,10 @@ use std::ops::Deref;
 use readwrite_comp::{
   ExtRead,
   ExtWrite,
+  ReadDefImpl,
 };
 use mydht_base::keyval::{KeyVal};
-use mydht_base::peer::{ShadowBase,Shadow,ShadowSim};
+use mydht_base::peer::{ShadowBase,ShadowW,ShadowR};
 #[cfg(test)]
 use mydht_base::keyval::{Attachment,SettableAttachment};
 #[cfg(test)]
@@ -58,7 +66,7 @@ use mydht_base::tunnel::{
 /// Additional funtionalites over openssl lib PKey
 /// last bool allow serializing private key (it defaults to false and revert to false at each
 /// access)
-pub struct PKeyExt<RT : OpenSSLConf>(pub Vec<u8>,pub Arc<PKey>,pub bool,pub PhantomData<RT>);
+pub struct PKeyExt<RT : OpenSSLConf>(pub Vec<u8>,pub Arc<Rsa>,pub bool,pub PhantomData<RT>);
 /*#[derive(Clone,Serialize,Deserialize)]
 pub enum KeyType {
   RSA,
@@ -66,21 +74,15 @@ pub enum KeyType {
   DH,
   DSA,
 }*/
+
 impl<RT : OpenSSLConf> Debug for PKeyExt<RT> {
   fn fmt (&self, f : &mut Formatter) -> Result<(),FmtError> {
     if self.2 {
       write!(f, "public : {:?} \n private : *********", self.0.to_hex())
     } else {
-      self.2 = false;
-      write!(f, "public : {:?} \n private : {:?}", self.0.to_hex(), self.1.save_priv().to_hex())
+      //self.2 = false;
+      write!(f, "public : {:?} \n private : {:?}", self.0.to_hex(), self.1.private_key_to_der().unwrap_or(Vec::new()).to_hex())
     }
-  }
-}
-impl<RT : OpenSSLConf> Deref for PKeyExt<RT> {
-  type Target = PKey;
-  #[inline]
-  fn deref<'a> (&'a self) -> &'a PKey {
-    &self.1
   }
 }
 /// seems ok (a managed pointer to c struct with drop implemented)
@@ -89,83 +91,145 @@ unsafe impl<RT : OpenSSLConf> Send for PKeyExt<RT> {}
 unsafe impl<RT : OpenSSLConf> Sync for PKeyExt<RT> {}
 
 impl<RT : OpenSSLConf> Serialize for PKeyExt<RT> {
-  fn serialize<S:Serializer> (&self, s: &mut S) -> Result<S::Ok, S::Error> {
-    s.emit_struct("pkey",2, |s| {
-/*      s.emit_struct_field("type", 0, |s|{
-        self.3.encode(s)
-      })?;*/
-      s.emit_struct_field("publickey", 0, |s|{
-        self.0.encode(s)
-      })?;
-      if self.2 {
-        s.emit_struct_field("privatekey", 1, |s|{
-          self.1.save_priv().encode(s)
-        })?;
-      } else {
-        self.2 = false;
-        s.emit_struct_field("privatekey", 1, |s|{
-          Vec::new().encode(s)
-        })?;
-
-      }
-    })
+  fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
+    let mut state = s.serialize_struct("pkey",2)?;
+    state.serialize_field("publickey", &self.0)?;
+    state.serialize_field("privatekey", &self.1.private_key_to_der().unwrap_or(Vec::new()))?;
+    state.end()
   }
 }
 
 impl<'de, RT : OpenSSLConf> Deserialize<'de> for PKeyExt<RT> {
-  fn deserialize<D:Deserializer<'de>> (d : &mut D) -> Result<PKeyExt<RT>, D::Error> {
-    d.read_struct("pkey",2, |d| {
-/*      let ktype : Result<KeyType, D::Error> = d.read_struct_field("type", 0, |d|{
-        Deserialize::decode(d)
-      });*/
- 
-      let publickey : Result<Vec<u8>, D::Error> = d.read_struct_field("publickey", 0, |d|{
-        Deserialize::decode(d)
-      });
-      let privatekey : Result<Vec<u8>, D::Error>= d.read_struct_field("privatekey", 1, |d|{
-        Deserialize::decode(d)
-      });
-      publickey.and_then(move |puk| privatekey.map (move |prk| {
-        let mut res = PKey::new();
-        res.load_pub(&puk[..]);
-        if prk.len() > 0 {
-          res.load_priv(&prk[..]);
+  fn deserialize<D:Deserializer<'de>> (d : D) -> Result<PKeyExt<RT>, D::Error> {
+        enum Field { Pub, Priv };
+
+        impl<'de> Deserialize<'de> for Field {
+            fn deserialize<D>(deserializer: D) -> Result<Field, D::Error>
+                where D: Deserializer<'de>
+            {
+                struct FieldVisitor;
+
+                impl<'de> Visitor<'de> for FieldVisitor {
+                    type Value = Field;
+
+                    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                        formatter.write_str("`publickey` or `privatekey`")
+                    }
+
+                    fn visit_str<E>(self, value: &str) -> Result<Field, E>
+                        where E: de::Error
+                    {
+                        match value {
+                            "publickey" => Ok(Field::Pub),
+                            "privatekey" => Ok(Field::Priv),
+                            _ => Err(de::Error::unknown_field(value, FIELDS)),
+                        }
+                    }
+                }
+
+                deserializer.deserialize_identifier(FieldVisitor)
+            }
         }
-        PKeyExt(puk, Arc::new(res), false, PhantomData::new())
-      }))
-    })
+
+        struct PKeyVisitor<RT>(PhantomData<RT>);
+
+        impl<'de,RT : OpenSSLConf> Visitor<'de> for PKeyVisitor<RT> {
+            type Value = PKeyExt<RT>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("struct pkey")
+            }
+
+            fn visit_seq<V>(self, mut seq: V) -> Result<Self::Value, V::Error>
+                where V: SeqAccess<'de>
+            {
+                let publickey : &[u8] = seq.next_element()?
+                              .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+                let privatekey : &[u8] = seq.next_element()?
+                               .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+                let pk = if privatekey.len() > 0 {
+                  Rsa::private_key_from_der(privatekey).map_err(|_|
+                    de::Error::invalid_value(Unexpected::Bytes(privatekey),&" array byte not pkey"))?
+                } else {
+                  Rsa::public_key_from_der(publickey).map_err(|_|
+                    de::Error::invalid_value(Unexpected::Bytes(publickey),&" array byte not pkey"))?
+                };
+                Ok(PKeyExt(publickey.to_vec(), Arc::new(pk), false, PhantomData))
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<PKeyExt<RT>, V::Error>
+                where V: MapAccess<'de>
+            {
+                let mut publickey = None;
+                let mut privatekey = None;
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Pub => {
+                            if publickey.is_some() {
+                                return Err(de::Error::duplicate_field("publickey"));
+                            }
+                            publickey = Some(map.next_value()?);
+                        }
+                        Field::Priv => {
+                            if privatekey.is_some() {
+                                return Err(de::Error::duplicate_field("privatekey"));
+                            }
+                            privatekey = Some(map.next_value()?);
+                        }
+                    }
+                }
+
+                let publickey : &[u8] = publickey.ok_or_else(|| de::Error::missing_field("publickey"))?;
+                let privatekey : &[u8] = privatekey.ok_or_else(|| de::Error::missing_field("privatekey"))?;
+                let pk = if privatekey.len() > 0 {
+                  Rsa::private_key_from_der(privatekey).map_err(|_|
+                    de::Error::invalid_value(Unexpected::Bytes(privatekey),&" array byte not pkey"))?
+                } else {
+                  Rsa::public_key_from_der(publickey).map_err(|_|
+                    de::Error::invalid_value(Unexpected::Bytes(publickey),&" array byte not pkey"))?
+                };
+                Ok(PKeyExt(publickey.to_vec(), Arc::new(pk), false, PhantomData))
+
+            }
+        }
+
+        const FIELDS: &'static [&'static str] = &["publickey", "privatekey"];
+        d.deserialize_struct("pkey", FIELDS, PKeyVisitor(PhantomData))
   }
 }
 
 impl<RT : OpenSSLConf> PartialEq for PKeyExt<RT> {
-  fn eq (&self, other : &PKeyExt) -> bool {
-    self.0.public_eq(&other.0)
+  fn eq (&self, other : &PKeyExt<RT>) -> bool {
+    self.0 == other.0
   }
 }
 
 impl<RT : OpenSSLConf> Eq for PKeyExt<RT> {}
 
-
 /// This trait allows any keyval having a rsa pkey and any symm cipher to implement Shadow 
-pub trait OpenSSLConf {
-  const HASH_SIGN : MessageDigest;
-  const HASH_KEY : MessageDigest;
-  const RSA_SIZE : usize;
+pub trait OpenSSLConf : 'static + Sized {
+  fn HASH_SIGN() -> MessageDigest;
+  fn HASH_KEY() -> MessageDigest;
+  const RSA_SIZE : u32;
 //  const KEY_TYPE : KeyType; Only RSA allows encoding data for openssl (currently)
-  const SHADOW_TYPE : SymmType;
+  fn SHADOW_TYPE() -> SymmType;
   const CRYPTER_KEY_ENC_SIZE : usize;
   const CRYPTER_KEY_DEC_SIZE : usize;
-  const CRYPTER_BUFF_SIZE : usize;
-  const CRYPTER_KEY_SIZE : usize;
 
-  fn get_pkey<'a>(&'a self) -> &'a PKeyExt;
-  fn get_pkey_mut<'a>(&'a mut self) -> &'a mut PKeyExt;
+  const CRYPTER_ASYM_BUFF_SIZE_ENC : usize;
+  const CRYPTER_ASYM_BUFF_SIZE_DEC : usize;
+  fn  CRYPTER_BUFF_SIZE() -> usize;
+//  const CRYPTER_KEY_SIZE : usize;
+/*
+  fn get_pkey<'a>(&'a self) -> &'a PKeyExt<Self>;
+  fn get_pkey_mut<'a>(&'a mut self) -> &'a mut PKeyExt<Self>;
   fn derive_key (&self, key : &[u8]) -> IoResult<Vec<u8>> {
-    let mut digest = Hasher::new(Self::HASH_KEY);
+    let mut digest = Hasher::new(Self::HASH_KEY)?;
     digest.write_all(&self.get_pkey().0[..])?;
-    digest.finish()
+    let md = digest.finish2()?;
+    Ok(md.to_vec())
   }
-
+*/
 
 /*  #[inline]
   fn ossl_content_sign (&self, to_sign : &[u8]) -> Vec<u8> {
@@ -225,23 +289,23 @@ pub struct OSSLSymR<RT : OpenSSLConf>(pub OSSLSym<RT>);
 impl<RT : OpenSSLConf> OSSLSym<RT> {
   pub fn new_key() -> IoResult<Vec<u8>> {
     let mut rng = OsRng::new()?;
-    let ivl = <RT as OpenSSLConf>::SHADOW_TYPE.iv_len();
-    let kl = <RT as OpenSSLConf>::SHADOW_TYPE.key_len();
+    let ivl = <RT as OpenSSLConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
+    let kl = <RT as OpenSSLConf>::SHADOW_TYPE().key_len();
     let mut s = vec![0; ivl + kl];
     rng.fill_bytes(&mut s);
-    s
+    Ok(s)
   }
   pub fn new (key : Vec<u8>, send : bool) -> IoResult<OSSLSym<RT>> {
-    let ivl = <RT as OpenSSLConf>::SHADOW_TYPE.iv_len();
-    let kl = <RT as OpenSSLConf>::SHADOW_TYPE.key_len();
-    let bufsize = <RT as OpenSSLConf>::CRYPTER_BUFF_SIZE; + <RT as OpenSSLConf>::SHADOW_TYPE.block_size();
+    let ivl = <RT as OpenSSLConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
+    let kl = <RT as OpenSSLConf>::SHADOW_TYPE().key_len();
+    let bufsize = <RT as OpenSSLConf>::CRYPTER_BUFF_SIZE();// + <RT as OpenSSLConf>::SHADOW_TYPE.block_size();
     assert!(key.len() == ivl + kl); // TODO replace panic by io error
     let mode = if send {
       Mode::Encrypt
     } else {
       Mode::Decrypt
     };
-    let crypter = {
+    let mut crypter = {
       let (iv,k) = key[..].split_at(kl);
       let piv = if iv.len() == 0 {
         None
@@ -249,11 +313,11 @@ impl<RT : OpenSSLConf> OSSLSym<RT> {
         Some(iv)
       };
       Crypter::new(
-        <RT as OpenSSLConf>::SHADOW_TYPE,
+        <RT as OpenSSLConf>::SHADOW_TYPE(),
         mode,
         k,
-        iv)?
-    };
+        piv)
+    }?;
     crypter.pad(true);
     Ok(OSSLSym {
       crypter : crypter,
@@ -264,19 +328,31 @@ impl<RT : OpenSSLConf> OSSLSym<RT> {
     })
   }
 }
+
+impl<RT : OpenSSLConf> OSSLSymR<RT> {
+  pub fn new (key : Vec<u8>) -> IoResult<OSSLSymR<RT>> { 
+    Ok(OSSLSymR(OSSLSym::new(key,false)?))
+  }
+}
+impl<RT : OpenSSLConf> OSSLSymW<RT> {
+  pub fn new (key : Vec<u8>) -> IoResult<OSSLSymW<RT>> { 
+    Ok(OSSLSymW(OSSLSym::new(key,true)?))
+  }
+
+}
 impl<RT : OpenSSLConf> ExtRead for OSSLSymR<RT> {
 
   fn read_header<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
     Ok(())
   }
   fn read_from<R : Read>(&mut self, r : &mut R, buf : &mut[u8]) -> IoResult<usize> {
-    let bs = <RT as OpenSSLConf>::SHADOW_TYPE.block_size();
+    let bs = <RT as OpenSSLConf>::SHADOW_TYPE().block_size();
     assert!(buf.len() > bs);
-    let sread = min(buf.len() - bs, self.buff.len());
-    let ir = r.read(&mut self.buff[..sread])?;
+    let sread = min(buf.len() - bs, self.0.buff.len());
+    let ir = r.read(&mut self.0.buff[..sread])?;
     if ir != 0 {
-      self.finalize = false;
-      let iu = self.crypter.update(&self.buff[..ir], buf)?;
+      self.0.finalize = false;
+      let iu = self.0.crypter.update(&self.0.buff[..ir], buf)?;
       if iu == 0 {
         // avoid returning 0 if possible
         self.read_from(r, buf)
@@ -284,9 +360,9 @@ impl<RT : OpenSSLConf> ExtRead for OSSLSymR<RT> {
         Ok(iu)
       }
     } else {
-      if !self.finalize {
-        self.finalize = true;
-        self.finalize(buf)
+      if !self.0.finalize {
+        self.0.finalize = true;
+        Ok(self.0.crypter.finalize(buf)?)
       } else {
         Ok(0)
       }
@@ -299,31 +375,31 @@ impl<RT : OpenSSLConf> ExtRead for OSSLSymR<RT> {
 }
 impl<RT : OpenSSLConf> ExtWrite for OSSLSymW<RT> {
   fn write_header<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
-    self.finalize = false;
+    self.0.finalize = false;
     Ok(())
   }
   fn write_into<W : Write>(&mut self, w : &mut W, cont : &[u8]) -> IoResult<usize> {
 
-    let bs = <RT as OpenSSLConf>::SHADOW_TYPE.block_size();
-    let swrite = min(cont.len(), self.buff.len() - bs);
-    let iu = self.crypter.update(&cont[..swrite], &mut self.buff[..])?;
+    let bs = <RT as OpenSSLConf>::SHADOW_TYPE().block_size();
+    let swrite = min(cont.len(), self.0.buff.len() - bs);
+    let iu = self.0.crypter.update(&cont[..swrite], &mut self.0.buff[..])?;
     if iu != 0 {
-      w.write_all(&self.buff[..iu])?;
+      w.write_all(&self.0.buff[..iu])?;
     }
-    Ok(swrite);
+    Ok(swrite)
 
   }
   #[inline]
-  fn flush_into<W : Write>(&mut self, _ : &mut W) -> IoResult<()> {
+  fn flush_into<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
     Ok(())
   }
   fn write_end<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
-    if !self.finalize {
-      let i = self.crypter.finalize(&mut self.buff[..]);
-      self.finalize = true;
+    if !self.0.finalize {
+      let i = self.0.crypter.finalize(&mut self.0.buff[..])?;
+      self.0.finalize = true;
       if i > 0 {
-        w.write_all(&self.buff[..i])
-      }
+        w.write_all(&self.0.buff[..i])
+      } else { Ok(()) }
     } else {
       // TODO add a warning (write end call twice)
       Ok(())
@@ -336,28 +412,185 @@ pub struct OSSLMixR<RT : OpenSSLConf> {
   sym : Option<OSSLSymR<RT>>,
   _p : PhantomData<RT>,
 }
-TODO impl extr and shadow r with mode ()
-impl<RT : OpenSSLConf> ExtRead for OSSLMixR<RT> {
-}
-pub struct OSSLMixW<RT : OpenSSLConf> {
-  keyexch : PKeyExt<RT>,
-  sym : OSSLSymW<RT>,
-  _p : PhantomData<RT>,
+
+impl<RT : OpenSSLConf> OSSLMixR<RT> {
+  pub fn new (pk : PKeyExt<RT>) -> OSSLMixR<RT> {
+    OSSLMixR {
+      keyexch : pk,
+      sym : None,
+      _p : PhantomData,
+    }
+  }
 }
 
+impl<RT : OpenSSLConf> ExtRead for OSSLMixR<RT> {
+
+  fn read_header<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
+    let is = <RT as OpenSSLConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
+    let ks = <RT as OpenSSLConf>::SHADOW_TYPE().key_len();
+
+    // TODO if other use out of header put in osslmixr
+    let mut ivk = vec![0;is + ks];
+    if is > 0 {
+      r.read_exact(&mut ivk[..is])?;
+    }
+    // allways reinit sym crypter (not the case in previous impl
+    //if self.key.len() == 0 {
+    let mut enckey = vec![0;<RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE]; // enc from 32 to 256
+    r.read_exact(&mut enckey[..])?;
+       /*let mut s = 0;
+       while s < enckey.len() {
+         let r =  try!(r.read(&mut enckey[s..]));
+            if r == 0 {
+                return Err(IoError::new (
+                  IoErrorKind::Other,
+                  "Cannot read Rsa Shadow key",
+                ));
+            };
+            s += r;
+          }*/
+        // init key
+     let kdl = self.keyexch.1.private_decrypt(&enckey[..],&mut ivk[is..],rsa::NO_PADDING)?;
+
+     if kdl != ks {
+       return Err(IoError::new (
+         IoErrorKind::Other,
+         "Cannot read Rsa Shadow key",
+       ));
+     }
+     let sym = OSSLSymR::new(ivk)?;
+     self.sym = Some(sym);
+     Ok(())
+  }
+  fn read_from<R : Read>(&mut self, r : &mut R, buf : &mut[u8]) -> IoResult<usize> {
+    match self.sym {
+      Some(ref mut s) => s.read_from(r,buf),
+      None => Err(IoError::new (
+         IoErrorKind::Other,
+         "Non initialize sym cipher",
+       )),
+    }
+  }
+  fn read_exact_from<R : Read>(&mut self, r : &mut R, buf : &mut[u8]) -> IoResult<()> {
+    match self.sym {
+      Some(ref mut s) => s.read_exact_from(r,buf),
+      None => Err(IoError::new (
+         IoErrorKind::Other,
+         "Non initialize sym cipher",
+       )),
+    }
+  }
+  fn read_end<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
+    Ok(())
+  }
+}
+pub struct OSSLMixW<RT : OpenSSLConf> {
+  dest : PKeyExt<RT>,
+  sym : Option<OSSLSymW<RT>>,
+  _p : PhantomData<RT>,
+}
+impl<RT : OpenSSLConf> OSSLMixW<RT> {
+  pub fn new (pk : PKeyExt<RT>) -> IoResult<OSSLMixW<RT>> {
+    Ok(OSSLMixW {
+      dest : pk,
+      sym : None,
+      _p : PhantomData,
+    })
+  }
+}
+
+
 impl<RT : OpenSSLConf> ExtWrite for OSSLMixW<RT> {
+  fn write_header<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
+    let is = <RT as OpenSSLConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
+    let ks = <RT as OpenSSLConf>::SHADOW_TYPE().key_len();
+    let ivk = <OSSLSym<RT>>::new_key()?;
+    w.write_all(&ivk[..is])?;
+    let mut enckey = vec![0;<RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE];
+    let ekeyl = self.dest.1.public_encrypt(&ivk[is..], &mut enckey[..], rsa::NO_PADDING)?;
+    assert!(ekeyl == <RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE);
+    w.write_all(&enckey[..])?;
+    
+    let sym = OSSLSymW::new(ivk)?;
+    self.sym = Some(sym);
+    Ok(())
+  }
+
+  fn write_into<W : Write>(&mut self, w : &mut W, cont : &[u8]) -> IoResult<usize> {
+    match self.sym {
+      Some(ref mut s) => s.write_into(w,cont),
+      None => Err(IoError::new (
+         IoErrorKind::Other,
+         "Non initialize sym cipher",
+       )),
+    }
+  }
+  fn write_all_into<W : Write>(&mut self, w : &mut W, cont : &[u8]) -> IoResult<()> {
+    match self.sym {
+      Some(ref mut s) => s.write_all_into(w,cont),
+      None => Err(IoError::new (
+         IoErrorKind::Other,
+         "Non initialize sym cipher",
+       )),
+    }
+  }
+
+  fn flush_into<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
+    match self.sym {
+      Some(ref mut s) => s.flush_into(w),
+      None => Err(IoError::new (
+         IoErrorKind::Other,
+         "Non initialize sym cipher",
+       )),
+    }
+  }
+ 
+  fn write_end<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
+    match self.sym {
+      Some(ref mut s) => s.write_end(w),
+      None => Err(IoError::new (
+         IoErrorKind::Other,
+         "Non initialize sym cipher",
+       )),
+    }
+  }
+
 }
 
 /// Shadower based upon openssl symm and pky
 pub struct OSSLShadowerR<RT : OpenSSLConf> {
     inner : OSSLMixR<RT>,
     mode : ASymSymMode,
+    asymbufs : Option<(Vec<u8>,usize,Vec<u8>,usize)>,
 }
+
+impl<RT : OpenSSLConf> OSSLShadowerR<RT> {
+  pub fn new (pk : PKeyExt<RT>) -> IoResult<Self> {
+     Ok(OSSLShadowerR {
+      inner : OSSLMixR::new(pk),
+      mode : ASymSymMode::None,
+      asymbufs : None,
+    })
+  }
+}
+impl<RT : OpenSSLConf> OSSLShadowerW<RT> {
+  pub fn new (pk : PKeyExt<RT>) -> IoResult<Self> {
+     Ok(OSSLShadowerW {
+      inner : OSSLMixW::new(pk)?,
+      mode : ASymSymMode::None,
+      asymbufs : None,
+    })
+  }
+}
+
+
 pub struct OSSLShadowerW<RT : OpenSSLConf> {
     inner : OSSLMixW<RT>,
     mode : ASymSymMode,
+    asymbufs : Option<(Vec<u8>,usize,Vec<u8>,usize)>,
 }
 
+#[derive(PartialEq,Eq,Debug,Clone,Serialize,Deserialize)]
 pub enum ASymSymMode {
   ASymSym,
   ASymOnly,
@@ -367,71 +600,197 @@ pub enum ASymSymMode {
 unsafe impl<RT : OpenSSLConf> Send for OSSLShadowerW<RT> {}
 unsafe impl<RT : OpenSSLConf> Send for OSSLShadowerR<RT> {}
 
-impl<RT : OpenSSLConf> ExtRead for OSSLShadower<RT> {
+impl<RT : OpenSSLConf> ExtRead for OSSLShadowerR<RT> {
   #[inline]
   fn read_header<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
     let mut tag = [0];
     try!(r.read(&mut tag));
+
     if tag[0] == SMODE_ENABLE {
-      try!(r.read_exact(&mut self.buf[..]));
-      if self.key.len() == 0 {
-          let mut enckey = vec![0;<RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE]; // enc from 32 to 256
-          let mut s = 0;
-          while s < enckey.len() {
-            let r =  try!(r.read(&mut enckey[s..]));
-            if r == 0 {
-                return Err(IoError::new (
-                  IoErrorKind::Other,
-                  "Cannot read Rsa Shadow key",
-                ));
-            };
-            s += r;
-          }
-          // init key
-          let k = (*self.keyexch).decrypt(&enckey[..]);
-          if k.len() == 0 {
-             return Err(IoError::new (
-                  IoErrorKind::Other,
-                  "Cannot read Rsa Shadow key",
-               ));
-          }
-
-          self.key = k
-      }
-      
-      self.crypter.init(Mode::Decrypt,&self.key[..],&self.buf[..]);
-        self.bufix = 0;
-        self.mode = ASymSymMode::ASymSym;
-        if self.buf.len() != <RT as OpenSSLConf>::SHADOW_TYPE.block_size() {
-          self.buf = vec![0;<RT as OpenSSLConf>::SHADOW_TYPE.block_size()];
-        }
-
-      Ok(())
+      self.mode = ASymSymMode::ASymSym;
+      self.inner.read_header(r)?;
     } else if tag[0] == SMODE_ASYM_ONLY_ENABLE {
-        self.mode = ASymSymMode::ASymOnly;
-        if self.buf.len() != <RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE {
-          self.buf = vec![0;<RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE];
-        };
-        self.bufix = 0;
-      Ok(())
+      self.mode = ASymSymMode::ASymOnly;
+      if self.asymbufs == None {
+        let benc = vec![0;<RT as OpenSSLConf>::CRYPTER_ASYM_BUFF_SIZE_ENC];
+        let bdec = vec![0;<RT as OpenSSLConf>::CRYPTER_ASYM_BUFF_SIZE_DEC];
+        self.asymbufs = Some((benc,0,bdec,0));
+      }
     } else {
-        self.mode = ASymSymMode::None;
-      Ok(())
+      self.mode = ASymSymMode::None;
     }
+    Ok(())
   }
  
   #[inline]
   fn read_from<R : Read>(&mut self, r : &mut R, buf : &mut[u8]) -> IoResult<usize> {
-    self.read_shadow_iter_sim (r, buf)
+    match self.mode {
+      ASymSymMode::ASymSym => {
+        self.inner.read_from(r,buf)
+      },
+      ASymSymMode::ASymOnly => {
+        if let Some((ref mut benc, ref mut decixstart, ref mut bdec, ref mut decixend)) = self.asymbufs {
+          if decixend == decixstart {
+            *decixstart = 0;
+            *decixend = 0;
+            // no content to return, produce
+            let mut encix = 0;
+            while {
+              let s = r.read(&mut benc[encix..])?;
+              encix += s;
+              s != 0
+            } { }
+            if encix == 0 {
+              return Ok(0)
+            }
+            *decixend = self.inner.keyexch.1.private_decrypt(&benc[..encix], &mut bdec[..], rsa::PKCS1_PADDING)?;
+          }
+      
+          let tocopy = min(buf.len(), *decixend - *decixstart);
+          buf[..tocopy].clone_from_slice(&bdec[*decixstart..*decixstart + tocopy]);
+          *decixstart += tocopy;
+          Ok(tocopy)
+        } else {
+         Err(IoError::new (
+          IoErrorKind::Other,
+          "Asym buf reader",
+          ))
+        }
+      },
+      ASymSymMode::None => {
+        r.read(buf)
+      },
+    }
+  }
+   #[inline]
+  fn read_exact_from<R : Read>(&mut self, r : &mut R, buf : &mut[u8]) -> IoResult<()> {
+    match self.mode {
+      ASymSymMode::ASymSym => {
+        self.inner.read_exact_from(r,buf)
+      },
+      ASymSymMode::ASymOnly => {
+        // default trait impl
+        let mut def = ReadDefImpl(self);
+        def.read_exact_from(r,buf)
+      },
+      ASymSymMode::None => {
+        r.read_exact(buf)
+      },
+    }
   }
  
   #[inline]
-  fn read_end<R : Read>(&mut self, _ : &mut R) -> IoResult<()> {
-    self.bufix = 0;
+  fn read_end<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
+    match self.mode {
+      ASymSymMode::ASymSym => self.inner.read_end(r)?,
+      ASymSymMode::ASymOnly => (),
+      ASymSymMode::None => (),
+    }
     Ok(())
   }
 }
 
+impl<RT : OpenSSLConf> ExtWrite for OSSLShadowerW<RT> {
+
+  fn write_header<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
+    match self.mode {
+      ASymSymMode::ASymSym => {
+        w.write(&[SMODE_ENABLE])?;
+        self.inner.write_header(w)?;
+      },
+      ASymSymMode::ASymOnly => {
+        w.write(&[SMODE_ASYM_ONLY_ENABLE])?;
+        if self.asymbufs == None {
+          let benc = vec![0;<RT as OpenSSLConf>::CRYPTER_ASYM_BUFF_SIZE_ENC];
+          let bdec = vec![0;<RT as OpenSSLConf>::CRYPTER_ASYM_BUFF_SIZE_DEC];
+          self.asymbufs = Some((benc,0,bdec,0));
+        }
+      },
+      ASymSymMode::None => {
+        w.write(&[SMODE_DISABLE])?;
+      },
+    }
+    Ok(())
+  }
+
+  fn write_into<W : Write>(&mut self, w : &mut W, cont : &[u8]) -> IoResult<usize> {
+    match self.mode {
+      ASymSymMode::ASymSym => {
+        self.inner.write_into(w,cont)
+      },
+      ASymSymMode::ASymOnly => {
+        self.flush_into(w)?;
+        if let Some((ref mut benc, _, ref mut bdec, ref mut decixend)) = self.asymbufs {
+          let tocopy = min(bdec.len() - *decixend, cont.len());
+          bdec[*decixend..*decixend + tocopy].clone_from_slice(&cont[..tocopy]);
+          *decixend += tocopy;
+      
+          Ok(tocopy)
+        } else {
+         Err(IoError::new (
+          IoErrorKind::Other,
+          "Asym buf reader",
+          ))
+        }
+      },
+      ASymSymMode::None => {
+        w.write(cont)
+      },
+    }
+  }
+
+  fn flush_into<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
+    match self.mode {
+      ASymSymMode::ASymSym => self.inner.flush_into(w)?,
+      ASymSymMode::ASymOnly => {
+        if let Some((ref mut benc, _, ref mut bdec, ref mut decixend)) = self.asymbufs {
+          // do not flush midbuffer with padding,warn use in write_into
+          if *decixend == bdec.len() {
+            let encix = self.inner.dest.1.public_encrypt(&bdec[..], &mut benc[..], rsa::PKCS1_PADDING)?;
+            *decixend = 0;
+            w.write_all(&benc[..encix])?;
+          }
+        } else {
+         return Err(IoError::new (
+          IoErrorKind::Other,
+          "Asym buf reader",
+          ))
+        }
+      },
+      ASymSymMode::None => (),
+    }
+
+    Ok(())
+  }
+ 
+  fn write_end<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
+    match self.mode {
+      ASymSymMode::ASymSym => self.inner.write_end(w)?,
+      ASymSymMode::ASymOnly => {
+        self.flush_into(w)?;
+        if let Some((ref mut benc, _, ref mut bdec, ref mut decixend)) = self.asymbufs {
+          // do not flush midbuffer with padding,warn use in write_into
+          if *decixend != 0 {
+            let encix = self.inner.dest.1.public_encrypt(&bdec[..*decixend], &mut benc[..], rsa::PKCS1_PADDING)?;
+            *decixend = 0;
+            w.write_all(&benc[..encix])?;
+          }
+        } else {
+         return Err(IoError::new (
+          IoErrorKind::Other,
+          "Asym buf reader",
+          ))
+        }
+      },
+      ASymSymMode::None => (),
+    }
+    Ok(())
+  }
+
+}
+
+impl<RT : OpenSSLConf> ShadowW for OSSLShadowerW<RT> {}
+impl<RT : OpenSSLConf> ShadowR for OSSLShadowerR<RT> {}
 
 // TODO if bincode get include use it over ASYMSYMMode isnstead of those three constant
 const SMODE_ASYM_ONLY_ENABLE : u8 = 2;
@@ -443,242 +802,38 @@ const SMODE_DISABLE : u8 = 0;
 
 impl<RT : OpenSSLConf> PKeyExt<RT> {
 
-}
-/// currently only one scheme (still u8 at 1 in header to support more later).
-/// Finalize is called on write_end.
-impl<RT : OpenSSLConf> OSSLShadower<RT> {
- 
-  pub fn new(dest : &PKeyExt, _ : bool) -> Self {
+  pub fn new(pk : Arc<Rsa>) -> Self {
 
-    let buf =  vec![0; <RT as OpenSSLConf>::CRYPTER_BLOCK_SIZE];
- 
-
-    let crypter = Crypter::new(RT::SHADOW_TYPE);
-    crypter.pad(true);
-    let enckey = dest.1.clone();
-    OSSLShadower {
-      buf : buf,
-      bufix : 0,
-      // sim key to use len 0 until exchanged
-      key : Vec::new(), // 0 length sim key until exchanged
-      crypter : crypter,
-      finalize : false,
-      // asym key to established simkey
-      keyexch : enckey,
-      mode : ASymSymMode::ASymSym, // default to ASymSym
-      _p : PhantomData,
-    }
+    let pubk = pk.public_key_to_der().unwrap();
+    PKeyExt(pubk,pk,false,PhantomData)
   }
-
-
-
-  #[inline]
-  fn crypt (&mut self, m : &[u8], sym : bool) -> Vec<u8> {
-    if sym {
-      self.crypter.update(m)
-    } else {
-      (*self.keyexch).encrypt(m)
-    }
-  }
-  #[inline]
-  fn crypt_buf (&mut self, bix : usize, sym : bool) -> Vec<u8> {
-    if sym {
-      self.crypter.update(&self.buf[..bix])
-    } else {
-      (*self.keyexch).encrypt(&self.buf[..bix])
-    }
-  }
-  #[inline]
-  fn buf_size (&mut self, w : bool) -> usize {
-    if let ASymSymMode::ASymOnly = self.mode {
-      if w {
-        <RT as OpenSSLConf>::CRYPTER_KEY_DEC_SIZE
-      } else {
-        <RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE
-      }
-    } else {
-      <RT as OpenSSLConf>::SHADOW_TYPE::block_size() 
-    }
-  }
-
-  /// warning iter sim does not use a salt, please add one if needed (common use case is one key
-  /// per message and salt is useless)
-  /// TODO add try everywhere plus check if readwrite ext is not better indexwise
-  fn shadow_iter_sim<W : Write> (&mut self, m : &[u8], w : &mut W) -> IoResult<usize> {
-
-    match self.mode {
-    ASymSymMode::ASymSym | ASymSymMode::ASymOnly => {
-      let sym = self.mode == ASymSymMode::ASymSym;
-      let bsize = self.buf_size(true);
-    // best case
-    if self.bufix == 0 && m.len() == bsize {
-      let r = self.crypt(m,sym);
-      w.write(&r[..])
-    } else {
-      let mut has_next = true;
-      let mut mu = m;
-      let mut res = 0;
-      while has_next {
-        let nbufix = self.bufix + mu.len();
-        if nbufix < bsize {
-          has_next = false;
-          self.buf[self.bufix..nbufix].clone_from_slice(&mu[..]);
-          res += mu.len();
-          self.bufix = nbufix;
-        } else {
-          let mix = self.buf.len() - self.bufix;
-          self.buf[self.bufix..].clone_from_slice(&mu[..mix]); // TODO no need to copy if same length : update directly on mu then update mu
-          mu = &mu[mix..];
-          let r = self.crypt_buf(bsize,sym);
-          try!(w.write_all(&r[..]));
-          res += mix;
-          self.bufix = 0;
-        }
-      }
-      Ok(res)
-    }
-    },
-    ASymSymMode::None => {
-      w.write(m)
-    },
-    }
-  }
-
-  #[inline]
-  fn decrypt_buf (&mut self, ix : usize, sym : bool) -> Vec<u8> {
-    if sym {
-      self.crypter.update(&self.buf[..ix])
-    } else {
-      (*self.keyexch).decrypt(&self.buf[..ix])
-    }
-  }
- #[inline]
-  fn dfinalize (&mut self, sym : bool) -> Vec<u8> {
-    if sym {
-      self.crypter.finalize()
-    } else {
-      Vec::new()
-    }
-  }
-
-
-  /// same as write no salt (key should be unique or read a salt
-  fn read_shadow_iter_sim<R : Read> (&mut self, r : &mut R, resbuf: &mut [u8]) -> IoResult<usize> {
-    match self.mode {
-    ASymSymMode::ASymSym | ASymSymMode::ASymOnly => {
-      let bsize = self.buf_size(false);
-      let sym = self.mode == ASymSymMode::ASymSym;
-   
-/*      if self.bufix == self.buf.len() {
-        return Ok(0); // has been finalized
-      }*/
-     // feed buffer (one block length) if empty
-      if resbuf.len() != 0 && self.bufix == 0 {
-        if self.finalize {
-          return Ok(0);
-        }
- 
-        let mut s = 1;
-        // try to fill buf
-        while s != 0 {
-          s = try!(r.read(&mut self.buf[self.bufix..]));
-          self.bufix += s;
-        }
-        let dec = if self.bufix < bsize {
-          // nothing to read, finalize
-          let dec = self.dfinalize(sym);
-          self.finalize = true;
-//          self.crypter.init(Mode::Decrypt,&self.key[..],&self.buf[..]); // only for next finalize to return 0
-          if dec.len() == 0 {
-            return Ok(0)
-          };
-          dec
-        } else {
-          // decode - call directly finalize as we have buf of blocksize
-          let bix = self.bufix;
-          let dec = self.decrypt_buf(bix,sym);
-          if dec.len() == 0 {
-            self.bufix = 0;
-            return self.read_shadow_iter_sim(r, resbuf);
-          };
-          dec
-        };
-
-        assert!(dec.len() > 0 && dec.len() <= bsize );
-        if dec.len() == bsize {
-          self.buf = dec;
-          self.bufix = 0;
-        } else {
-          self.bufix = bsize - dec.len();
-          self.buf[self.bufix..].clone_from_slice(&dec[..]);
-        }
-      }
-      let tow = bsize - self.bufix;
-      // write result
-      if resbuf.len() < tow {
-        let l = self.bufix + resbuf.len();
-        resbuf[..].clone_from_slice(&self.buf[self.bufix..l]);
-        self.bufix += resbuf.len();
-        Ok(resbuf.len())
-      } else {
-        resbuf[..tow].clone_from_slice(&self.buf[self.bufix..]); // TODO case where buf size match and no copy
-        self.bufix = 0;
-        Ok(tow)
-      }
-    },
-    ASymSymMode::None => {
-      r.read(resbuf)
-    },
-    }
- 
-  }
-  fn c_finalize<W : Write> (&mut self, w : &mut W) -> IoResult<()> {
-    // encrypt remaining content in buffer and write, + call to writer flush
-    match self.mode {
-    ASymSymMode::ASymSym | ASymSymMode::ASymOnly => {
-      let sym = self.mode == ASymSymMode::ASymSym;
-      if self.bufix > 0 {
-        let bix = self.bufix;
-        let r = self.crypt_buf(bix,sym);
-        try!(w.write(&r[..]));
-      }
-      // always finalize (padding)
-      let r2 = self.dfinalize(sym);
-      if r2.len() > 0 {
-        try!(w.write(&r2[..]));
-      }
-      self.finalize = false;
-    },
-    _ => (),
-    }
-    //w.flush()
-    Ok(())
+  pub fn derive_key (&self) -> IoResult<Vec<u8>> {
+      let mut digest = Hasher::new(<RT as OpenSSLConf>::HASH_KEY())?;
+      digest.write_all(&self.0[..])?;
+      let md = digest.finish2()?;
+      Ok(md.to_vec())
   }
 
 
 }
 
-impl<RT : OpenSSLConf> Shadow for OSSLShadower<RT> {
+impl<RT : OpenSSLConf> ShadowBase for OSSLShadowerR<RT> {
   type ShadowMode = ASymSymMode; // TODO shadowmode allowing head to be RSA only
 
   #[inline]
   fn set_mode (&mut self, sm : Self::ShadowMode) {
     self.mode = sm;
-    match self.mode {
-    ASymSymMode::ASymSym => {
-        if self.buf.len() != <RT as OpenSSLConf>::CRYPTER_BLOCK_SIZE {
-          self.buf = vec![0;<RT as OpenSSLConf>::CRYPTER_BLOCK_SIZE];
-        }
-    },
-    ASymSymMode::ASymOnly => {
-        // set_mode is for write (read is read from header)
-        if self.buf.len() != <RT as OpenSSLConf>::CRYPTER_KEY_DEC_SIZE {
-          self.buf = vec![0;<RT as OpenSSLConf>::CRYPTER_KEY_DEC_SIZE];
-        }
-    },
-    _ => (),
-    }
- 
+  }
+  #[inline]
+  fn get_mode (&self) -> Self::ShadowMode {
+    self.mode.clone()
+  }
+}
+impl<RT : OpenSSLConf> ShadowBase for OSSLShadowerW<RT> {
+  type ShadowMode = ASymSymMode;
+  #[inline]
+  fn set_mode (&mut self, sm : Self::ShadowMode) {
+    self.mode = sm;
   }
   #[inline]
   fn get_mode (&self) -> Self::ShadowMode {
@@ -686,190 +841,24 @@ impl<RT : OpenSSLConf> Shadow for OSSLShadower<RT> {
   }
 }
 
-impl<RT : OpenSSLConf> ShadowSim for OSSLShadower<RT> {
-  fn send_shadow_simkey<W : Write>(w : &mut W, m : <Self as Shadow>::ShadowMode ) -> IoResult<()> {
-    match m {
-
-    ASymSymMode::ASymSym => {
-      try!(w.write(&[SMODE_ENABLE]));
-      let k = OSSLShadower::<RT>::static_shadow_simkey();
-      try!(w.write(&k[..]));
-      let salt = OSSLShadower::<RT>::static_shadow_salt();
-      try!(w.write(&salt[..]));
-    },
-    ASymSymMode::ASymOnly => {
-      try!(w.write(&[SMODE_ASYM_ONLY_ENABLE]));
-    },
-    ASymSymMode::None => {
-      try!(w.write(&[SMODE_DISABLE]));
-    },
-    }
-    Ok(())
-  }
- 
-  fn init_from_shadow_simkey<R : Read>(r : &mut R, _ : <Self as Shadow>::ShadowMode, write : bool) -> IoResult<Self> {
-    let mut res = Self::new_empty();
-    let mut tag = [0];
-    try!(r.read(&mut tag));
-    if tag[0]  == SMODE_DISABLE {
-      res.mode = ASymSymMode::None;
-      Ok(res)
-    } else {
-      res.mode = ASymSymMode::ASymSym;
-      let mut enckey = vec![0;<RT as OpenSSLConf>::CRYPTER_KEY_SIZE]; // enc from 32 to 256
-      try!(r.read(&mut enckey[..]));
-      let mut salt = vec![0;<RT as OpenSSLConf>::CRYPTER_BLOCK_SIZE]; // enc from 32 to 256
-      try!(r.read(&mut salt[..]));
-      if write {
-        res.crypter.init(Mode::Encrypt,&enckey[..],&salt[..]);
-      } else {
-        res.crypter.init(Mode::Decrypt,&enckey[..],&salt[..]);
-      };
-      if res.buf.len() != <RT as OpenSSLConf>::CRYPTER_BLOCK_SIZE {
-          res.buf = vec![0;<RT as OpenSSLConf>::CRYPTER_BLOCK_SIZE];
-      }
-      res.crypter.pad(true);
-      res.key = enckey;
-      res.buf = salt;
-      res.bufix = 0;
-      Ok(res)
-    }
-  }
-}
 
 
-impl<RT : OpenSSLConf> ExtWrite for OSSLShadower<RT> {
-  #[inline]
-  fn write_header<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
-    match self.mode {
-    ASymSymMode::ASymSym => {
- 
-      // change salt each time (if to heavy a counter to change each n time
-      try!(w.write(&[SMODE_ENABLE]));
-      OsRng::new().unwrap().fill_bytes(&mut self.buf);
-      try!(w.write(&self.buf[..]));
-    if self.key.len() == 0 { // TODO renew of simkey on write end??
-      self.key = Self::static_shadow_simkey();
-      let enckey = (*self.keyexch).encrypt(&self.key[..]);
- 
-      assert!(enckey.len() == <RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE);
-          try!(w.write(&enckey));
-    }
-
-      self.crypter.init(Mode::Encrypt,&self.key[..],&self.buf[..]);
-      self.bufix = 0;
-    },
-    ASymSymMode::None => {
-
-      try!(w.write(&[SMODE_DISABLE]));
-    },
-    ASymSymMode::ASymOnly => {
-      try!(w.write(&[SMODE_ASYM_ONLY_ENABLE]));
-      self.bufix = 0;
-    },
-    }
-    Ok(())
-  }
-
-  #[inline]
-  fn write_into<W : Write>(&mut self, w : &mut W, cont : &[u8]) -> IoResult<usize> {
-    self.shadow_iter_sim (cont, w)
-  }
-
-  #[inline]
-  fn flush_into<W : Write>(&mut self, _ : &mut W) -> IoResult<()> {
-    Ok(())
-  }
- 
-  #[inline]
-  fn write_end<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
-    if let ASymSymMode::None = self.mode {
-      //w.flush()
-      Ok(())
-    } else {
-      self.c_finalize(w)
-    }
-  }
-
-}
 
 
-impl<RT : OpenSSLConf> ExtRead for OSSLShadower<RT> {
-  #[inline]
-  fn read_header<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
-    let mut tag = [0];
-    try!(r.read(&mut tag));
-    if tag[0] == SMODE_ENABLE {
-      try!(r.read_exact(&mut self.buf[..]));
-      if self.key.len() == 0 {
-          let mut enckey = vec![0;<RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE]; // enc from 32 to 256
-          let mut s = 0;
-          while s < enckey.len() {
-            let r =  try!(r.read(&mut enckey[s..]));
-            if r == 0 {
-                return Err(IoError::new (
-                  IoErrorKind::Other,
-                  "Cannot read Rsa Shadow key",
-                ));
-            };
-            s += r;
-          }
-          // init key
-          let k = (*self.keyexch).decrypt(&enckey[..]);
-          if k.len() == 0 {
-             return Err(IoError::new (
-                  IoErrorKind::Other,
-                  "Cannot read Rsa Shadow key",
-               ));
-          }
 
-          self.key = k
-      }
-      
-      self.crypter.init(Mode::Decrypt,&self.key[..],&self.buf[..]);
-        self.bufix = 0;
-        self.mode = ASymSymMode::ASymSym;
-        if self.buf.len() != <RT as OpenSSLConf>::CRYPTER_BLOCK_SIZE {
-          self.buf = vec![0;<RT as OpenSSLConf>::CRYPTER_BLOCK_SIZE];
-        }
 
-      Ok(())
-    } else if tag[0] == SMODE_ASYM_ONLY_ENABLE {
-        self.mode = ASymSymMode::ASymOnly;
-        if self.buf.len() != <RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE {
-          self.buf = vec![0;<RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE];
-        };
-        self.bufix = 0;
-      Ok(())
-    } else {
-        self.mode = ASymSymMode::None;
-      Ok(())
-    }
-  }
-  #[inline]
-  fn read_from<R : Read>(&mut self, r : &mut R, buf : &mut[u8]) -> IoResult<usize> {
-    self.read_shadow_iter_sim (r, buf)
-  }
- 
-  #[inline]
-  fn read_end<R : Read>(&mut self, _ : &mut R) -> IoResult<()> {
-    self.bufix = 0;
-    Ok(())
-  }
-}
-
-#[cfg(feature="mydht-impl")]
+#[cfg(feature="mydhtimpl")]
 #[cfg(test)]
 pub mod mydhttest {
   use super::*;
 
-#[derive(Debug, PartialEq, Eq, Clone,Serialize,Deserialize)]
+#[derive(Debug,PartialEq,Eq,Clone,Serialize,Deserialize)]
 /// Same as RSAPeer from mydhtwot but transport agnostic
 pub struct RSAPeerTest<I> {
   /// key to use to identify peer, derived from publickey it is shorter
   key : Vec<u8>,
   /// is used as id/key TODO maybe two publickey use of a master(in case of compromition)
-  publickey : PKeyExt,
+  publickey : PKeyExt<RSAPeerConf>,
 
   pub address : LocalAdd,
 
@@ -878,32 +867,26 @@ pub struct RSAPeerTest<I> {
   
 }
 
-#[cfg(feature="mydht-impl")]
-#[cfg(test)]
 impl<I> RSAPeerTest<I> {
-  pub fn new (address : usize, info : I) -> RSAPeerTest<I> {
-    let mut pkey = PKey::new();
-    pkey.gen(<RSAPeerTest as OpenSSLConf>::RSA_SIZE);
+  pub fn new (address : usize, info : I) -> IoResult<RSAPeerTest<I>> {
+    let pkeyrsa = Rsa::generate(<RSAPeerConf as OpenSSLConf>::RSA_SIZE)?;
 
-    let private = pkey.save_priv();
-    let public  = pkey.save_pub();
+    let pkeyext = PKeyExt::new(Arc::new(pkeyrsa));
+    let key = pkeyext.derive_key()?;
 
-    let mut digest = Hasher::new(<RSAPeerTest as OpenSSLConf>::HASH_SIGN);
-    digest.write_all(&public[..]).unwrap(); // digest should not panic
-    let key = digest.finish();
-
-    RSAPeerTest {
+    Ok(RSAPeerTest {
       key : key,
-      publickey : PKeyExt(public, Arc::new(pkey)),
+      publickey : pkeyext,
       address : LocalAdd(address),
-      peerinfo : I,
-    }
+      peerinfo : info,
+    })
   }
 }
 
-#[cfg(feature="mydht-impl")]
-#[cfg(test)]
-impl<I> KeyVal for RSAPeerTest<I> {
+pub trait KVContent : 'static + Send + Sync + Eq + Clone + Debug + Serialize + DeserializeOwned {}
+impl KVContent for () {}
+
+impl<I : KVContent> KeyVal for RSAPeerTest<I> {
   type Key = Vec<u8>;
 
   #[inline]
@@ -911,74 +894,79 @@ impl<I> KeyVal for RSAPeerTest<I> {
     self.key.clone()
   }
   #[inline]
-  fn encode_kv<S:Serializer> (&self, _: &mut S, _ : bool, _ : bool) -> Result<(), S::Error> {
+  fn encode_kv<S:Serializer> (&self, _: S, _ : bool, _ : bool) -> Result<S::Ok, S::Error> {
     panic!("not used in tests");
   }
   #[inline]
-  fn decode_kv<'de,D:Deserializer<'de>> (_ : D, _ : bool, _ : bool) -> Result<RSAPeerTest, D::Error> {
+  fn decode_kv<'de,D:Deserializer<'de>> (_ : D, _ : bool, _ : bool) -> Result<RSAPeerTest<I>, D::Error> {
     panic!("not used in tests");
   }
   noattachment!();
 }
+#[derive(Clone)]
+pub struct RSAPeerConf;
 
-#[cfg(feature="mydht-impl")]
-#[cfg(test)]
-impl<I> OpenSSLConf for RSAPeerTest<I> {
-  const HASH_SIGN : MessageDigest = MessageDigest::sha512();
-  const RSA_SIZE : usize = 2048;
+impl OpenSSLConf for RSAPeerConf {
+  #[inline]
+  fn HASH_SIGN() -> MessageDigest { MessageDigest::sha512() }
+  #[inline]
+  fn HASH_KEY() -> MessageDigest { MessageDigest::sha512() }
+  const RSA_SIZE : u32 = 2048;
 //  const KEY_TYPE : KeyType = KeyType::RSA;
-  const SHADOW_TYPE : SymmType = SymmType::aes_256_cbc();
-  const CRYPTER_KEY_SIZE : usize = 32;
+  #[inline]
+  fn SHADOW_TYPE() -> Cipher { Cipher::aes_256_cbc()}
+//  const CRYPTER_KEY_SIZE : usize = 32;
+  /// size must allow no padding
   const CRYPTER_KEY_ENC_SIZE : usize = 256;
+  /// size must allow no padding
   const CRYPTER_KEY_DEC_SIZE : usize = 214;
+  #[inline]
+  fn CRYPTER_BUFF_SIZE() -> usize { Self::SHADOW_TYPE().block_size() }// TODO try bigger
 
-#[inline]
-  fn get_pkey<'a>(&'a self) -> &'a PKeyExt {
-    &self.publickey
-  }
-#[inline]
-  fn get_pkey_mut<'a>(&'a mut self) -> &'a mut PKeyExt {
-    &mut self.publickey
-  }
+  /// padding is use
+  const CRYPTER_ASYM_BUFF_SIZE_ENC : usize = 256;
+  /// padding is use
+  const CRYPTER_ASYM_BUFF_SIZE_DEC : usize = 214;
 }
 
-#[cfg(feature="mydht-impl")]
-#[cfg(test)]
 impl<I> SettableAttachment for RSAPeerTest<I> {}
 
-#[cfg(feature="mydht-impl")]
-#[cfg(test)]
-impl<I> Peer for RSAPeerTest<I> {
+impl<I : KVContent> Peer for RSAPeerTest<I> {
   type Address = LocalAdd;
-  type Shadow = OSSLShadower<RSAPeerTest>;
+  type ShadowW = OSSLShadowerW<RSAPeerConf>;
+  type ShadowR = OSSLShadowerR<RSAPeerConf>;
   #[inline]
-  fn to_address(&self) -> LocalAdd {
-    self.address.clone()
+  fn get_address(&self) -> &LocalAdd {
+    &self.address
+  }
+ 
+  #[inline]
+  fn get_shadower_r (&self) -> Self::ShadowR {
+    OSSLShadowerR::new(self.publickey.clone()).unwrap() // TODO change peer trait
   }
   #[inline]
-  fn get_shadower (&self, write : bool) -> Self::Shadow {
-    OSSLShadower::new(self.get_pkey(), write)
+  fn get_shadower_w (&self) -> Self::ShadowW {
+    OSSLShadowerW::new(self.publickey.clone()).unwrap() // TODO change peer trait
   }
+
   #[inline]
-  fn default_message_mode (&self) -> <Self::Shadow as Shadow>::ShadowMode {
+  fn default_message_mode (&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {
     ASymSymMode::ASymSym
   }
-  #[inline]
-  fn default_header_mode (&self) -> <Self::Shadow as Shadow>::ShadowMode {
+/*  #[inline]
+  fn default_header_mode (&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {
     ASymSymMode::ASymOnly
-  }
+  }*/
   #[inline]
-  fn default_auth_mode (&self) ->  <Self::Shadow as Shadow>::ShadowMode {
+  fn default_auth_mode (&self) ->  <Self::ShadowW as ShadowBase>::ShadowMode {
     ASymSymMode::None
   }
 }
 
-#[cfg(feature="mydht-impl")]
-#[cfg(test)]
 fn rsa_shadower_test (input_length : usize, write_buffer_length : usize,
 read_buffer_length : usize, smode : ASymSymMode) {
 
-  let to_p = RSAPeerTest::new(1);
+  let to_p = RSAPeerTest::new(1,()).unwrap();
   shadower_test(to_p,input_length,write_buffer_length,read_buffer_length,smode);
 
 }
@@ -1022,9 +1010,9 @@ fn rsa_shadower4_test () {
 #[test]
 fn rsa_shadower5_test () {
   let smode = ASymSymMode::ASymSym;
-  let input_length = <RSAPeerTest as OpenSSLConf>::SHADOW_TYPE.block_size();
-  let write_buffer_length = <RSAPeerTest as OpenSSLConf>::SHADOW_TYPE.block_size();
-  let read_buffer_length = <RSAPeerTest as OpenSSLConf>::SHADOW_TYPE.block_size();
+  let input_length = RSAPeerConf::SHADOW_TYPE().block_size();
+  let write_buffer_length = RSAPeerConf::SHADOW_TYPE().block_size();
+  let read_buffer_length = RSAPeerConf::SHADOW_TYPE().block_size();
   rsa_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
 }
 
@@ -1058,9 +1046,9 @@ fn rsa_shadower8_test () {
 fn rsa_shadower9_test () {
   let smode = ASymSymMode::ASymOnly;
   //let input_length = <RSAPeerTest as OpenSSLConf>::CRYPTER_BLOCK_SIZE;
-  let input_length = <RSAPeerTest as OpenSSLConf>::SHADOW_TYPE.block_size();
-  let write_buffer_length = <RSAPeerTest as OpenSSLConf>::SHADOW_TYPE.block_size();
-  let read_buffer_length = <RSAPeerTest as OpenSSLConf>::SHADOW_TYPE.block_size();
+  let input_length = RSAPeerConf::SHADOW_TYPE().block_size();
+  let write_buffer_length = RSAPeerConf::SHADOW_TYPE().block_size();
+  let read_buffer_length = RSAPeerConf::SHADOW_TYPE().block_size();
   rsa_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
 }
 #[test]
@@ -1091,14 +1079,14 @@ fn rsa_shadowerc_test () {
 }
 
 #[cfg(test)]
-fn peer_tests () -> Vec<RSAPeerTest> {
+fn peer_tests () -> Vec<RSAPeerTest<()>> {
 [ 
-  RSAPeerTest::new(1),
-  RSAPeerTest::new(2),
-  RSAPeerTest::new(3),
-  RSAPeerTest::new(4),
-  RSAPeerTest::new(5),
-  RSAPeerTest::new(6),
+  RSAPeerTest::new(1,()).unwrap(),
+  RSAPeerTest::new(2,()).unwrap(),
+  RSAPeerTest::new(3,()).unwrap(),
+  RSAPeerTest::new(4,()).unwrap(),
+  RSAPeerTest::new(5,()).unwrap(),
+  RSAPeerTest::new(6,()).unwrap(),
 ].to_vec()
 }
 
@@ -1136,23 +1124,22 @@ fn tunnel_fourhop_publictunnel_3() {
 }
 */
 }
-
+/*
 #[cfg(test)]
 pub mod commontest {
 use super::*;
 #[test]
 fn asym_test () {
-    let mut pkey = PKey::new();
-    pkey.gen(2048);
+    let mut pkey = Rsa::generate(2048);
     let input = [1,2,3,4,5];
-    let out = pkey.encrypt(&input);
-    let in2 = pkey.decrypt(&out);
+    let out = pkey.public_encrypt(&input);
+    let in2 = pkey.private_decrypt(&out);
     assert_eq!(&input[..],&in2[..]);
-    let out = pkey.encrypt(&input);
-    let in2 = pkey.decrypt(&out);
+    let out = pkey.public_encrypt(&input);
+    let in2 = pkey.private_decrypt(&out);
     assert_eq!(&input[..],&in2[..]);
-    let out = pkey.encrypt(&input);
-    let in2 = pkey.decrypt(&out);
+    let out = pkey.public_encrypt(&input);
+    let in2 = pkey.private_decrypt(&out);
     assert_eq!(&input[..],&in2[..]);
     let input_length = 500;
     let buff = 214; // max buf l TODO check in impl
@@ -1162,12 +1149,12 @@ fn asym_test () {
 //    let mut tot = 0;
     while ix < input_length {
     let out = if ix + buff < input_length {
-      pkey.encrypt(&inputb[ix..ix + buff])
+      pkey.public_encrypt(&inputb[ix..ix + buff])
     } else {
-      pkey.encrypt(&inputb[ix..])
+      pkey.public_encrypt(&inputb[ix..])
     };
 //    tot += out.len();
-    let in2 = pkey.decrypt(&out);
+    let in2 = pkey.private_decrypt(&out);
     if ix + buff < input_length {
     assert_eq!(&inputb[ix..ix + buff],&in2[..]);
     } else {
@@ -1180,4 +1167,4 @@ fn asym_test () {
  
   }
 
-}
+}*/

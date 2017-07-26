@@ -4,10 +4,10 @@ name = "mydht-openssl"
 version = "0.0.1"
 authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
-[feature]
-default = ["mydht-impl"]
-tunnel-impl = ["tunnel"]
-mydht-impl = ["mydht-base","mydht-basetest"]
+[features]
+default = ["mydhtimpl"]
+tunnelimpl = ["tunnel"]
+mydhtimpl = ["mydht-base"]
 nightly = []
 
 [dependencies]
@@ -23,6 +23,7 @@ git = "https://github.com/cheme/readwrite-comp.git"
 
 [dependencies.mydht-base]
 path = "../mydht-base/"
+optional = true
 
 [dependencies.tunnel]
 git = "https://github.com/cheme/tunnel.git"
