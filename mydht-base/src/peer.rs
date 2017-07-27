@@ -67,39 +67,22 @@ pub trait ShadowBase : Send + 'static + Sized {
   fn get_mode(&self) -> Self::ShadowMode;
 
 }
-// TODO remove inner function (extread is enough)
 pub trait ShadowR : ShadowBase + ExtRead {
-  #[inline]
-  fn read_shadow_header<R : Read> (&mut self, r : &mut R) -> IoResult<()> {
-    self.read_header(r)
-  }
-  #[inline]
-  fn read_shadow_iter<R : Read> (&mut self, r : &mut R, buf: &mut [u8]) -> IoResult<usize> {
-    self.read_from(r, buf)
-  }
 }
-// TODO remove inner function (extread is enough)
+/// for write head :
+/// get the header required for a shadow scheme : for instance the shadowmode representation and
+/// the salt. The action also make the shadow iter method to use the right state (internal state
+/// for shadow mode). TODO refactor to directly write in a Writer??
+/// for write into :
+/// Shadow of message block (to use in the writer), and write it in writer. The function maps
+/// over write (see utils :: send_msg)
+/// for write flush :
+/// flush at the end of message writing (useless to add content : reader could not read it),
+/// usefull to emptied some block cyper buffer, it does not flush the writer which should be
+/// flush manually (allow using multiple shadower in messages such as tunnel).
+/// for write end :
+/// for a lot of shadow it include finalize with padding and need to be use
 pub trait ShadowW : ShadowBase + ExtWrite {
-  #[inline]
-  /// get the header required for a shadow scheme : for instance the shadowmode representation and
-  /// the salt. The action also make the shadow iter method to use the right state (internal state
-  /// for shadow mode). TODO refactor to directly write in a Writer??
-  fn shadow_header<W : Write> (&mut self, w : &mut W) -> IoResult<()> {
-    self.write_header(w)
-  }
-  #[inline]
-  /// Shadow of message block (to use in the writer), and write it in writer. The function maps
-  /// over write (see utils :: send_msg)
-  fn shadow_iter<W : Write> (&mut self, cont : &[u8], w : &mut W) -> IoResult<usize> {
-    self.write_into(w, cont)
-  }
-  #[inline]
-  /// flush at the end of message writing (useless to add content : reader could not read it),
-  /// usefull to emptied some block cyper buffer, it does not flush the writer which should be
-  /// flush manually (allow using multiple shadower in messages such as tunnel).
-  fn shadow_flush<W : Write> (&mut self, w : &mut W) -> IoResult<()> {
-    self.flush_into(w)
-  }
 }
 
 /*
@@ -163,6 +146,7 @@ impl<'a, S : 'a + ShadowW, W : 'a + Write> MShadowWriteOnce<'a,S,W> {
   }
 }
 
+// TODO checck if replacable by ReadWriteComp WriteExt else TODO write_end or switch to ExtWrite
 impl<'a, S : 'a + ShadowW, W : 'a + Write> Write for MShadowWriteOnce<'a,S,W> {
   fn write(&mut self, cont: &[u8]) -> IoResult<usize> {
     if !(self.3)[0] {
@@ -170,31 +154,31 @@ impl<'a, S : 'a + ShadowW, W : 'a + Write> Write for MShadowWriteOnce<'a,S,W> {
       if self.0.len() > 1 {
       if let Some((f,last)) = self.0.split_first_mut() {
       let mut el = MShadowWriteOnce(last, (),self.2, &mut self.3[1..]); 
-      try!(f.shadow_header(&mut el));
+      try!(f.write_header(&mut el));
       }} else {
-        try!((self.0).get_mut(0).unwrap().shadow_header(self.2));
+        try!((self.0).get_mut(0).unwrap().write_header(self.2));
       }
       (self.3)[0] = true;
     }
     if self.0.len() > 1 {
     if let Some((f,last)) = self.0.split_first_mut() {
       let mut el = MShadowWriteOnce(last,(), self.2, &mut self.3[1..]); 
-      return f.shadow_iter(cont, &mut el);
+      return f.write_into(&mut el,cont);
     }
     }
     // last
-    (self.0).get_mut(0).unwrap().shadow_iter(cont, self.2)
+    (self.0).get_mut(0).unwrap().write_into(self.2, cont)
   }
   fn flush(&mut self) -> IoResult<()> {
     if self.0.len() > 1 {
     if let Some((f,last)) = self.0.split_first_mut()  {
       let mut el = MShadowWriteOnce(last, (),self.2, &mut self.3[1..]); 
-      try!(f.shadow_flush(&mut el));
+      try!(f.flush_into(&mut el));
       return el.flush();
     }
     }
     // last do not flush writer
-    (self.0).get_mut(0).unwrap().shadow_flush(self.2)
+    (self.0).get_mut(0).unwrap().flush_into(self.2)
  
   }
 }
@@ -239,19 +223,20 @@ impl<'a, S : 'a + Shadow, W : 'a + Write> Write for ShadowWriteOnce<'a,S,W> {
   }
 }*/
 
+// TODO missing write end usage
 impl<'a, S : 'a + ShadowW> Write for ShadowWriteOnceL<'a,S> {
 
   fn write(&mut self, cont: &[u8]) -> IoResult<usize> {
     if !self.3 {
-      try!(self.0.shadow_header(&mut self.2));
+      try!(self.0.write_header(&mut self.2));
       self.3 = true;
     }
-    self.0.shadow_iter(cont, &mut self.2)
+    self.0.write_into(&mut self.2, cont)
   }
  
   /// flush does not flush the first inner writer
   fn flush(&mut self) -> IoResult<()> {
-    try!(self.0.shadow_flush(&mut self.2));
+    try!(self.0.flush_into(&mut self.2));
     if !self.4 {
       self.2.flush()
     } else {

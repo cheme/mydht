@@ -220,22 +220,22 @@ where <<P as Peer>::ShadowW as ShadowBase>::ShadowMode : Eq
 
   // message test
   output = Cursor::new(Vec::new());
-  from_shad.shadow_header(&mut output).unwrap();
+  from_shad.write_header(&mut output).unwrap();
   ix = 0;
   while ix < input_length {
     if ix + write_buffer_length < input_length {
-      ix += from_shad.shadow_iter(&input[ix..ix + write_buffer_length], &mut output).unwrap();
+      ix += from_shad.write_into(&mut output,&input[ix..ix + write_buffer_length]).unwrap();
     } else {
-      ix += from_shad.shadow_iter(&input[ix..], &mut output).unwrap();
+      ix += from_shad.write_into(&mut output, &input[ix..]).unwrap();
     }
   }
   from_shad.write_end(&mut output).unwrap();
-  from_shad.shadow_flush(&mut output).unwrap();
+  from_shad.flush_into(&mut output).unwrap();
   output.flush().unwrap();
 
   input_v = Cursor::new(output.into_inner());
 
-  to_shad.read_shadow_header(&mut input_v).unwrap();
+  to_shad.read_header(&mut input_v).unwrap();
   let mode = to_shad.get_mode();
   assert!(smode == mode);
 
@@ -243,14 +243,14 @@ where <<P as Peer>::ShadowW as ShadowBase>::ShadowMode : Eq
   ix = 0;
   let mut readbuf = vec![0;read_buffer_length];
   while ix < input_length {
-    let l = to_shad.read_shadow_iter(&mut input_v, &mut readbuf).unwrap();
+    let l = to_shad.read_from(&mut input_v, &mut readbuf).unwrap();
     assert!(l!=0);
 //panic!("{:?},{:?}",l,readbuf.len());
     assert_eq!(&readbuf[..l], &input[ix..ix + l]);
     ix += l;
   }
 
-  let l = to_shad.read_shadow_iter(&mut input_v, &mut readbuf).unwrap();
+  let l = to_shad.read_from(&mut input_v, &mut readbuf).unwrap();
   assert_eq!(l,0);
 
 }

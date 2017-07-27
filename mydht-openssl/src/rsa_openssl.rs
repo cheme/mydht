@@ -5,6 +5,7 @@
 extern crate mydht_basetest;
 
 
+use mydht_base::keyval::Key as KVContent;
 use std::fmt;
 use std::cmp::{max,min};
 use std::marker::PhantomData;
@@ -67,6 +68,7 @@ use mydht_base::tunnel::{
 /// last bool allow serializing private key (it defaults to false and revert to false at each
 /// access)
 pub struct PKeyExt<RT : OpenSSLConf>(pub Vec<u8>,pub Arc<Rsa>,pub bool,pub PhantomData<RT>);
+pub struct PKeyExtSerPri<RT : OpenSSLConf>(pub PKeyExt<RT>);
 /*#[derive(Clone,Serialize,Deserialize)]
 pub enum KeyType {
   RSA,
@@ -90,11 +92,27 @@ unsafe impl<RT : OpenSSLConf> Send for PKeyExt<RT> {}
 /// used in arc
 unsafe impl<RT : OpenSSLConf> Sync for PKeyExt<RT> {}
 
+impl<RT : OpenSSLConf> Serialize for PKeyExtSerPri<RT> {
+  fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
+    let mut state = s.serialize_struct("pkey",2)?;
+    state.serialize_field("publickey", &self.0)?;
+    let a : Vec<u8> = Vec::new(); // TODO replace by empty vec cst(multiple place)
+    state.serialize_field("privatekey", &a)?;
+    state.end()
+  }
+}
+
+
 impl<RT : OpenSSLConf> Serialize for PKeyExt<RT> {
   fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
     let mut state = s.serialize_struct("pkey",2)?;
     state.serialize_field("publickey", &self.0)?;
-    state.serialize_field("privatekey", &self.1.private_key_to_der().unwrap_or(Vec::new()))?;
+    let pk = if self.2 {
+      Vec::new()
+    } else {
+      self.1.private_key_to_der().unwrap_or(Vec::new())
+    };
+    state.serialize_field("privatekey", &pk)?;
     state.end()
   }
 }
@@ -207,7 +225,7 @@ impl<RT : OpenSSLConf> PartialEq for PKeyExt<RT> {
 impl<RT : OpenSSLConf> Eq for PKeyExt<RT> {}
 
 /// This trait allows any keyval having a rsa pkey and any symm cipher to implement Shadow 
-pub trait OpenSSLConf : 'static + Sized {
+pub trait OpenSSLConf : KVContent {
   fn HASH_SIGN() -> MessageDigest;
   fn HASH_KEY() -> MessageDigest;
   const RSA_SIZE : u32;
@@ -933,8 +951,6 @@ impl<I> RSAPeerTest<I> {
   }
 }
 
-pub trait KVContent : 'static + Send + Sync + Eq + Clone + Debug + Serialize + DeserializeOwned {}
-impl KVContent for () {}
 
 impl<I : KVContent> KeyVal for RSAPeerTest<I> {
   type Key = Vec<u8>;
@@ -953,7 +969,8 @@ impl<I : KVContent> KeyVal for RSAPeerTest<I> {
   }
   noattachment!();
 }
-#[derive(Clone)]
+
+#[derive(PartialEq,Eq,Debug,Clone,Serialize,Deserialize)]
 pub struct RSAPeerConf;
 
 impl OpenSSLConf for RSAPeerConf {
