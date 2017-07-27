@@ -6,7 +6,7 @@ extern crate mydht_basetest;
 
 
 use std::fmt;
-use std::cmp::min;
+use std::cmp::{max,min};
 use std::marker::PhantomData;
 //use mydhtresult::Result as MDHTResult;
 use std::io::Error as IoError;
@@ -298,7 +298,7 @@ impl<RT : OpenSSLConf> OSSLSym<RT> {
   pub fn new (key : Vec<u8>, send : bool) -> IoResult<OSSLSym<RT>> {
     let ivl = <RT as OpenSSLConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
     let kl = <RT as OpenSSLConf>::SHADOW_TYPE().key_len();
-    let bufsize = <RT as OpenSSLConf>::CRYPTER_BUFF_SIZE();// + <RT as OpenSSLConf>::SHADOW_TYPE.block_size();
+    let mut bufsize = <RT as OpenSSLConf>::CRYPTER_BUFF_SIZE() + <RT as OpenSSLConf>::SHADOW_TYPE().block_size();
     assert!(key.len() == ivl + kl); // TODO replace panic by io error
     let mode = if send {
       Mode::Encrypt
@@ -306,7 +306,7 @@ impl<RT : OpenSSLConf> OSSLSym<RT> {
       Mode::Decrypt
     };
     let mut crypter = {
-      let (iv,k) = key[..].split_at(kl);
+      let (iv,k) = key[..].split_at(ivl);
       let piv = if iv.len() == 0 {
         None
       } else {
@@ -322,7 +322,7 @@ impl<RT : OpenSSLConf> OSSLSym<RT> {
     Ok(OSSLSym {
       crypter : crypter,
       key : key,
-      finalize : false,
+      finalize : true,
       buff : vec![0;bufsize],
       _p : PhantomData,
     })
@@ -349,9 +349,11 @@ impl<RT : OpenSSLConf> ExtRead for OSSLSymR<RT> {
     let bs = <RT as OpenSSLConf>::SHADOW_TYPE().block_size();
     assert!(buf.len() > bs);
     let sread = min(buf.len() - bs, self.0.buff.len());
+
     let ir = r.read(&mut self.0.buff[..sread])?;
     if ir != 0 {
       self.0.finalize = false;
+    panic!("dd {:?}-{:?}",ir,buf.len());
       let iu = self.0.crypter.update(&self.0.buff[..ir], buf)?;
       if iu == 0 {
         // avoid returning 0 if possible
@@ -375,7 +377,6 @@ impl<RT : OpenSSLConf> ExtRead for OSSLSymR<RT> {
 }
 impl<RT : OpenSSLConf> ExtWrite for OSSLSymW<RT> {
   fn write_header<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
-    self.0.finalize = false;
     Ok(())
   }
   fn write_into<W : Write>(&mut self, w : &mut W, cont : &[u8]) -> IoResult<usize> {
@@ -383,6 +384,7 @@ impl<RT : OpenSSLConf> ExtWrite for OSSLSymW<RT> {
     let bs = <RT as OpenSSLConf>::SHADOW_TYPE().block_size();
     let swrite = min(cont.len(), self.0.buff.len() - bs);
     let iu = self.0.crypter.update(&cont[..swrite], &mut self.0.buff[..])?;
+    self.0.finalize = false;
     if iu != 0 {
       w.write_all(&self.0.buff[..iu])?;
     }
@@ -428,9 +430,10 @@ impl<RT : OpenSSLConf> ExtRead for OSSLMixR<RT> {
   fn read_header<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
     let is = <RT as OpenSSLConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
     let ks = <RT as OpenSSLConf>::SHADOW_TYPE().key_len();
+    let ksbuf = max(ks, self.keyexch.1.size());
 
     // TODO if other use out of header put in osslmixr
-    let mut ivk = vec![0;is + ks];
+    let mut ivk = vec![0;is + ksbuf];
     if is > 0 {
       r.read_exact(&mut ivk[..is])?;
     }
@@ -450,7 +453,7 @@ impl<RT : OpenSSLConf> ExtRead for OSSLMixR<RT> {
             s += r;
           }*/
         // init key
-     let kdl = self.keyexch.1.private_decrypt(&enckey[..],&mut ivk[is..],rsa::NO_PADDING)?;
+     let kdl = self.keyexch.1.private_decrypt(&enckey[..],&mut ivk[is..],rsa::PKCS1_PADDING)?;
 
      if kdl != ks {
        return Err(IoError::new (
@@ -458,6 +461,7 @@ impl<RT : OpenSSLConf> ExtRead for OSSLMixR<RT> {
          "Cannot read Rsa Shadow key",
        ));
      }
+     ivk.truncate(is + ks);
      let sym = OSSLSymR::new(ivk)?;
      self.sym = Some(sym);
      Ok(())
@@ -507,7 +511,7 @@ impl<RT : OpenSSLConf> ExtWrite for OSSLMixW<RT> {
     let ivk = <OSSLSym<RT>>::new_key()?;
     w.write_all(&ivk[..is])?;
     let mut enckey = vec![0;<RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE];
-    let ekeyl = self.dest.1.public_encrypt(&ivk[is..], &mut enckey[..], rsa::NO_PADDING)?;
+    let ekeyl = self.dest.1.public_encrypt(&ivk[is..], &mut enckey[..], rsa::PKCS1_PADDING)?;
     assert!(ekeyl == <RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE);
     w.write_all(&enckey[..])?;
     
@@ -613,7 +617,7 @@ impl<RT : OpenSSLConf> ExtRead for OSSLShadowerR<RT> {
       self.mode = ASymSymMode::ASymOnly;
       if self.asymbufs == None {
         let benc = vec![0;<RT as OpenSSLConf>::CRYPTER_ASYM_BUFF_SIZE_ENC];
-        let bdec = vec![0;<RT as OpenSSLConf>::CRYPTER_ASYM_BUFF_SIZE_DEC];
+        let bdec = vec![0;max(<RT as OpenSSLConf>::CRYPTER_ASYM_BUFF_SIZE_DEC,<RT as OpenSSLConf>::CRYPTER_ASYM_BUFF_SIZE_ENC)];
         self.asymbufs = Some((benc,0,bdec,0));
       }
     } else {
