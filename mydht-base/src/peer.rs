@@ -67,6 +67,7 @@ pub trait ShadowBase : Send + 'static + Sized {
   fn get_mode(&self) -> Self::ShadowMode;
 
 }
+// TODO remove inner function (extread is enough)
 pub trait ShadowR : ShadowBase + ExtRead {
   #[inline]
   fn read_shadow_header<R : Read> (&mut self, r : &mut R) -> IoResult<()> {
@@ -77,6 +78,7 @@ pub trait ShadowR : ShadowBase + ExtRead {
     self.read_from(r, buf)
   }
 }
+// TODO remove inner function (extread is enough)
 pub trait ShadowW : ShadowBase + ExtWrite {
   #[inline]
   /// get the header required for a shadow scheme : for instance the shadowmode representation and

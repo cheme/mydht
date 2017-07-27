@@ -245,7 +245,7 @@ where <<P as Peer>::ShadowW as ShadowBase>::ShadowMode : Eq
   while ix < input_length {
     let l = to_shad.read_shadow_iter(&mut input_v, &mut readbuf).unwrap();
     assert!(l!=0);
-
+//panic!("{:?},{:?}",l,readbuf.len());
     assert_eq!(&readbuf[..l], &input[ix..ix + l]);
     ix += l;
   }

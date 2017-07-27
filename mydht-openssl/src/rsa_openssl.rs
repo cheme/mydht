@@ -284,8 +284,23 @@ pub struct OSSLSym<RT : OpenSSLConf> {
 }
 
 pub struct OSSLSymW<RT : OpenSSLConf>(pub OSSLSym<RT>);
-pub struct OSSLSymR<RT : OpenSSLConf>(pub OSSLSym<RT>);
+pub struct OSSLSymR<RT : OpenSSLConf>{
+  sym : OSSLSym<RT>,
+  underbuf : Option<Vec<u8>>,
+  suix : usize,
+  euix : usize
+}
 
+impl<RT : OpenSSLConf> OSSLSymR<RT> {
+  fn from_read_sym(sym : OSSLSym<RT>) -> Self {
+    OSSLSymR {
+      sym : sym,
+      underbuf : None,
+      suix : 0,
+      euix : 0, 
+    }
+  }
+}
 impl<RT : OpenSSLConf> OSSLSym<RT> {
   pub fn new_key() -> IoResult<Vec<u8>> {
     let mut rng = OsRng::new()?;
@@ -331,7 +346,7 @@ impl<RT : OpenSSLConf> OSSLSym<RT> {
 
 impl<RT : OpenSSLConf> OSSLSymR<RT> {
   pub fn new (key : Vec<u8>) -> IoResult<OSSLSymR<RT>> { 
-    Ok(OSSLSymR(OSSLSym::new(key,false)?))
+    Ok(OSSLSymR::from_read_sym(OSSLSym::new(key,false)?))
   }
 }
 impl<RT : OpenSSLConf> OSSLSymW<RT> {
@@ -346,28 +361,59 @@ impl<RT : OpenSSLConf> ExtRead for OSSLSymR<RT> {
     Ok(())
   }
   fn read_from<R : Read>(&mut self, r : &mut R, buf : &mut[u8]) -> IoResult<usize> {
-    let bs = <RT as OpenSSLConf>::SHADOW_TYPE().block_size();
-    assert!(buf.len() > bs);
-    let sread = min(buf.len() - bs, self.0.buff.len());
-
-    let ir = r.read(&mut self.0.buff[..sread])?;
-    if ir != 0 {
-      self.0.finalize = false;
-    panic!("dd {:?}-{:?}",ir,buf.len());
-      let iu = self.0.crypter.update(&self.0.buff[..ir], buf)?;
-      if iu == 0 {
-        // avoid returning 0 if possible
-        self.read_from(r, buf)
-      } else {
-        Ok(iu)
-      }
+    if self.euix > self.suix {
+      let rem = self.euix - self.suix;
+      let tocopy = min(buf.len(),rem);
+      &mut buf[..tocopy].clone_from_slice(&self.underbuf.as_mut().unwrap()[self.suix..self.suix + tocopy]);
+      self.suix += tocopy;
+      Ok(tocopy)
     } else {
-      if !self.0.finalize {
-        self.0.finalize = true;
-        Ok(self.0.crypter.finalize(buf)?)
+      let bs = <RT as OpenSSLConf>::SHADOW_TYPE().block_size();
+  //    assert!(buf.len() > bs);
+      let (tot,rec) = {
+        let dest = if buf.len() > bs {
+          &mut buf[..]
+        } else {
+          if self.underbuf.is_none() {
+            // default to double block size
+            self.underbuf = Some(vec![0;bs + bs]);
+          }
+          &mut self.underbuf.as_mut().unwrap()[..]
+        };
+        let sread = min(dest.len() - bs, self.sym.buff.len());
+
+        let ir = r.read(&mut self.sym.buff[..sread])?;
+        if ir != 0 {
+          self.sym.finalize = false;
+          let iu = self.sym.crypter.update(&self.sym.buff[..ir], dest)?;
+          if iu == 0 {
+            (0,true)
+          } else {
+            (iu,false)
+          }
+        } else {
+          if !self.sym.finalize {
+            self.sym.finalize = true;
+            (self.sym.crypter.finalize(dest)?,false)
+          } else {
+            (0,false)
+          }
+        }
+      };
+      if buf.len() <= bs && tot > 0 {
+        self.euix = tot;
+        self.suix = 0;
+        let tocopy = min(buf.len(),tot);
+        buf.clone_from_slice(&self.underbuf.as_mut().unwrap()[self.suix..tocopy]);
+        self.suix += tocopy;
+        Ok(tocopy)
       } else {
-        Ok(0)
-      }
+      if rec {
+        //recurse
+        self.read_from(r,buf)
+      } else {
+        Ok(tot)
+      }}
     }
   }
   fn read_end<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
