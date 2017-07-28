@@ -14,55 +14,32 @@ extern crate serde;
 use serde::{Serializer,Serialize,Deserializer,Deserialize};
 
 //use mydhtresult::Result as MDHTResult;
-use std::io::Error as IoError;
-use std::io::ErrorKind as IoErrorKind;
 use std::io::Result as IoResult;
-use openssl::hash::{Hasher,MessageDigest};
 use openssl::pkey::{PKey};
 use openssl::rsa::Rsa;
-use openssl::memcmp;
 use openssl::sign::Signer;
-use openssl::rsa;
-use openssl::symm::{Crypter,Mode};
-use openssl::symm::Cipher as SymmType;
-use openssl::symm::Cipher;
 
 use std::marker::PhantomData;
-use rand::os::OsRng;
-use rand::Rng;
-use std::fmt::{Formatter,Debug};
-use std::fmt::Error as FmtError;
 //use std::str::FromStr;
-use std::cmp::PartialEq;
-use std::cmp::Eq;
 use std::sync::Arc;
-use std::io::Write;
-use std::io::Read;
-use std::ops::Deref;
 use std::path::{PathBuf};
 //use self::time::Timespec;
 
 use mydht_base::keyval::{KeyVal};
 use mydht_base::keyval::KeyVal as KVCont;
-use std::net::{SocketAddr};
 use mydht_base::transport::{SerSocketAddr};
 use mydht_base::utils::{TimeSpecExt};
 use mydht_base::keyval::{Attachment,SettableAttachment};
-use mydht_base::peer::{Peer,ShadowW,ShadowR,ShadowBase};
+use mydht_base::peer::{Peer,ShadowBase};
+#[cfg(feature="wot")]
 use bincode::SizeLimit;
 use mydht_openssl::rsa_openssl::PKeyExt;
 use mydht_openssl::rsa_openssl::{
   OpenSSLConf,
-OSSLShadowerW,
-OSSLShadowerR,
-ASymSymMode,
+  OSSLShadowerW,
+  OSSLShadowerR,
+  ASymSymMode,
 };
-#[cfg(test)]
-use std::net::Ipv4Addr;
-#[cfg(test)]
-use mydht_base::utils;
-#[cfg(test)]
-use std::io::Cursor;
 
 
 /// a TrustedPeer using RSA 2048 openssl implementation with sha 512 on content and to derive id.
@@ -117,7 +94,7 @@ pub struct RSAPeer<RT : OpenSSLConf, I : KVCont> {
 
   pub extend : I,
   ////// local info 
-  
+  #[serde(skip)]
   conf : PhantomData<RT>,
 }
 
@@ -127,7 +104,7 @@ impl<RT : OpenSSLConf, I : KVCont> TrustedPeer for RSAPeer<RT,I> {}
 impl<RT : OpenSSLConf, I : KVCont> RSAPeer<RT,I> {
 
   // shitty method TODO do not use as is (to_sign could be big and no way to bufferize)
-  fn sign_cont(pkey : &PKey, to_sign : &[u8]) -> IoResult<Vec<u8>> {
+  pub fn sign_cont(pkey : &PKey, to_sign : &[u8]) -> IoResult<Vec<u8>> {
     let mut signer = Signer::new(RT::HASH_SIGN(), &pkey)?;
     signer.update(to_sign)?;
     Ok(signer.finish()?)
@@ -159,7 +136,7 @@ impl<RT : OpenSSLConf, I : KVCont> RSAPeer<RT,I> {
       )
   }
   #[cfg(not(feature="wot"))]
-  pub fn inner_sign_peer (name : &String, date : &TimeSpecExt, extendsign : &I) -> IoResult<Vec<u8>> {
+  pub fn inner_sign_peer (_ : &String, _ : &TimeSpecExt, _ : &I) -> IoResult<Vec<u8>> {
     // TODO ?
     Ok(Vec::new())
   }
@@ -194,8 +171,6 @@ impl<RT : OpenSSLConf, I : KVCont> RSAPeer<RT,I> {
 
   /// update signable info
   pub fn update_info (&mut self, name : String, extendsign : I) -> IoResult<bool> {
-    // pkey gen
-    let pkey = &self.publickey.1;
 
     let now = TimeSpecExt(time::get_time());
     let sign = Self::inner_sign_peer(&name, &now, &extendsign)?;
@@ -230,14 +205,14 @@ impl<RT : OpenSSLConf, I : KVCont> KeyVal for RSAPeer<RT,I> {
   #[inline]
   fn encode_kv<S:Serializer> (&self, s: S, is_local : bool, _ : bool) -> Result<S::Ok, S::Error> {
     if is_local {
-      RSAPeerSerPri(self).serialize() 
+      RSAPeerSerPri::from_rsa_peer(self).serialize(s) 
     } else {
       self.serialize(s)
     }
   }
 
   #[inline]
-  fn decode_kv<'de,D:Deserializer<'de>> (d : D, is_local : bool, _ : bool) -> Result<Self, D::Error> {
+  fn decode_kv<'de,D:Deserializer<'de>> (d : D, _ : bool, _ : bool) -> Result<Self, D::Error> {
       <RSAPeer<RT,I>>::deserialize(d)
   }
   
@@ -279,4 +254,37 @@ impl<RT : OpenSSLConf, I : KVCont> Peer for RSAPeer<RT,I> {
   }
 }
 
+/// temp struct for serializing with private key (we could use a wrapper but using this struct
+/// allows using serde_derive
+#[derive(Serialize)]
+#[serde(rename = "RSAPeer")]
+pub struct RSAPeerSerPri<'a, RT : OpenSSLConf + 'a, I : KVCont + 'a> {
+  key : &'a Vec<u8>,
+  publickey : &'a PKeyExt<RT>,
+  name : &'a String,
+  date : &'a TimeSpecExt,
+  peersign : &'a Vec<u8>,
+  signedextend : &'a I,
+  addressdate : &'a TimeSpecExt,
+  address : &'a SerSocketAddr,
+  extend : &'a I,
+  #[serde(skip)]
+  conf : PhantomData<RT>,
+}
 
+impl<'a, RT : OpenSSLConf + 'a, I : KVCont + 'a> RSAPeerSerPri<'a, RT, I> {
+  fn from_rsa_peer(or : &'a RSAPeer<RT,I>) -> Self {
+    RSAPeerSerPri {
+      key : &or.key,
+      publickey : &or.publickey,
+      name : &or.name,
+      date : &or.date,
+      peersign : &or.peersign,
+      signedextend : &or.signedextend,
+      addressdate : &or.addressdate,
+      address : &or.address,
+      extend : &or.extend,
+      conf : PhantomData,
+    }
+  }
+}

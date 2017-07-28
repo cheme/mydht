@@ -103,6 +103,10 @@ impl<RT : OpenSSLConf> Serialize for PKeyExtSerPri<RT> {
 }
 
 
+// TODO try #[serde(skip_serializing_if = "path")] with path fn(&self)-> bool, but need to tag
+// presence for deserialize so represent as an enum either public or private (no need for
+// conditional in this case)
+
 impl<RT : OpenSSLConf> Serialize for PKeyExt<RT> {
   fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
     let mut state = s.serialize_struct("pkey",2)?;
