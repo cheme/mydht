@@ -7,6 +7,7 @@
 #![feature(deque_extras)]
 #![feature(socket_timeout)]
 #![feature(slice_bytes)] // in wot
+#![feature(fn_traits)]
 
 #[macro_use] extern crate log;
 #[macro_use] extern crate mydht_base;
@@ -19,6 +20,8 @@ extern crate bincode;
 extern crate byteorder;
 extern crate bit_vec;
 extern crate rand;
+extern crate futures;
+extern crate futures_cpupool;
 #[cfg(feature="mio-impl")]
 extern crate coroutine;
 #[cfg(test)]
@@ -51,6 +54,7 @@ mod node{
 
 
 mod peer;
+mod pool;
 mod procs;
 mod query;
 mod route;

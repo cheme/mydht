@@ -61,6 +61,7 @@ impl Error {
     }
   }
 }
+unsafe impl Send for Error {}
 
 impl ErrorTrait for Error {
   
