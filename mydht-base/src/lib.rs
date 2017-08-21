@@ -11,6 +11,7 @@ extern crate rand;
 extern crate bit_vec;
 extern crate byteorder;
 extern crate bincode;
+extern crate mio;
 extern crate readwrite_comp;
 /*
 #[macro_export]

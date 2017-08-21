@@ -11,7 +11,7 @@ default = ["rust-crypto-impl","with-extra-test","openssl-impl"]
 #default = ["rust-crypto-impl","mio-impl","openssl-impl"]
 openssl-impl = ["openssl"]
 rust-crypto-impl = ["rust-crypto"]
-mio-impl = ["mio","coroutine"]
+mio-impl = ["coroutine"]
 with-extra-test = []
 nightly = []
 
@@ -31,6 +31,7 @@ byteorder = "~1.1.0"
 vec_map = "~0.8.0"
 futures = "~0.1.14"
 futures-cpupool = "~0.1.5"
+mio = "~0.6.10"
 
 [dependencies.mydht-base]
 path = "../mydht-base/"
@@ -55,10 +56,6 @@ path = "../mydht-udp/"
 [dependencies.bit-vec]
 git = "https://github.com/cheme/bit-vec.git"
 
-[dependencies.mio]
-version = "0.4.1"
-#git = "https://github.com/carllerche/mio.git"
-optional = true
 
 [dependencies.coroutine]
 git = "https://github.com/cheme/coroutine-rs.git"

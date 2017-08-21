@@ -59,7 +59,7 @@ fn connect_rw () {
   let tcp_transport_1 : Udp = Udp::new (&a1, 500, true).unwrap();
   let tcp_transport_2 : Udp = Udp::new (&a2, 500, true).unwrap();
 
-  connect_rw_with_optional_non_managed(tcp_transport_1,tcp_transport_2,&a1,&a2,false,false,false);
+  connect_rw_with_optional_non_managed(tcp_transport_1,tcp_transport_2,&a1,&a2,false,false,false,false);
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn connect_rw_nospawn () {
   let tcp_transport_1 : Udp = Udp::new (&a1, 500, false).unwrap();
   let tcp_transport_2 : Udp = Udp::new (&a2, 500, false).unwrap();
 
-  connect_rw_with_optional_non_managed(tcp_transport_1,tcp_transport_2,&a1,&a2,false,false,true);
+  connect_rw_with_optional_non_managed(tcp_transport_1,tcp_transport_2,&a1,&a2,false,false,true,false);
 }
 
 fn initpeers_udp<M : PeerMgmtMeths<Node, Node> + Clone> (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : M, rules : DhtRules, sim : Option<u32>) -> Vec<(Node, DHT<RunningTypesImpl<M,Udp,Bincode>>)>{

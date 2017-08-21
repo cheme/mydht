@@ -45,6 +45,16 @@ impl From<BinError> for Error {
 #[derive(Debug)]
 pub struct Error(pub String, pub ErrorKind, pub Option<Box<ErrorTrait>>);
 
+#[derive(Debug,Clone,Eq,PartialEq,Copy)]
+pub enum ErrorLevel {
+  /// end program
+  Panic,
+  /// end current action but do not halt program (propagate or shut action (close connection or
+  /// retry connect...)
+  ShutAction,
+  /// error is expected and should not end process
+  Ignore,
+}
 /*pub fn from_io_error<T>(r : StdResult<T, IoError>) -> Result<T> {
   r.map_err(|e| From::from(e))
 }*/
@@ -59,6 +69,10 @@ impl Error {
       None => 
     Error(msg, kind, None),
     }
+  }
+
+  pub fn level(&self) -> ErrorLevel {
+    self.1.level()
   }
 }
 unsafe impl Send for Error {}
@@ -133,10 +147,11 @@ impl Display for Error {
   }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Eq,PartialEq)]
 pub enum ErrorKind {
   SerializingError,
   MissingFile,
+  MissingStartConf,
   IOError,
   ExpectedError,
   ChannelSendError,
@@ -147,6 +162,18 @@ pub enum ErrorKind {
   MutexError,
   Bug, // something that should algorithmically not happen
   ExternalLib,
+}
+
+impl ErrorKind {
+  fn level(&self) -> ErrorLevel {
+    match *self {
+      ErrorKind::MissingStartConf 
+        | ErrorKind::Bug
+        => ErrorLevel::Panic,
+      ErrorKind::ExpectedError => ErrorLevel::Ignore,
+      _ => ErrorLevel::ShutAction,
+    }
+  }
 }
 
 #[derive(Debug)]

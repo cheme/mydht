@@ -7,6 +7,7 @@ extern crate serde;
 #[macro_use] extern crate mydht_base;
 extern crate time;
 extern crate rand;
+extern crate mio;
 extern crate readwrite_comp;
 pub mod node;
 mod utils {

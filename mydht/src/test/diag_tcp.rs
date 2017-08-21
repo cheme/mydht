@@ -76,7 +76,7 @@ fn connect_rw () {
   let tcp_transport_1 : Tcp = Tcp::new (&a1, Duration::seconds(5), true).unwrap();
   let tcp_transport_2 : Tcp = Tcp::new (&a2, Duration::seconds(5), true).unwrap();
 
-  connect_rw_with_optional(tcp_transport_1,tcp_transport_2,&a1,&a2,true);
+  connect_rw_with_optional(tcp_transport_1,tcp_transport_2,&a1,&a2,true,false);
 }
 
 #[test]
@@ -88,7 +88,7 @@ fn connect_rw_dup () {
   let tcp_transport_1 : Tcp = Tcp::new (&a1, Duration::seconds(5), false).unwrap();
   let tcp_transport_2 : Tcp = Tcp::new (&a2, Duration::seconds(5), false).unwrap();
 
-  connect_rw_with_optional(tcp_transport_1,tcp_transport_2,&a1,&a2,false);
+  connect_rw_with_optional(tcp_transport_1,tcp_transport_2,&a1,&a2,false,false);
 }
 
 #[test]

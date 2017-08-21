@@ -1,6 +1,7 @@
 #[cfg(feature="mio-impl")]
 extern crate coroutine;
 
+use mio::{Poll,Token,Ready,PollOpt};
 use std::ops::Deref;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::str::FromStr;
@@ -30,6 +31,7 @@ use std::fmt::Debug;
 use std::net::{SocketAddr};
 use std::net::Shutdown;
 use std::net::{TcpStream};
+use mio::net::TcpStream as MioStream;
 #[cfg(feature="mio-impl")]
 use self::coroutine::Handle as CoHandle;
 
@@ -135,31 +137,42 @@ fn test_addr_socket () {
   assert!(SocketAddr::read_as_bytes (&mut cursor).unwrap() == s2);
 }
 */
-
+pub trait Registerable {
+  /// registration on main io loop when possible (if not return false)
+  fn register(&self, &Poll, Token, Ready, PollOpt) -> Result<bool>;
+  /// async reregister
+  fn reregister(&self, &Poll, Token, Ready, PollOpt) -> Result<bool>;
+ 
+}
 /// transport must be sync (in running type), it implies that it is badly named as transport must
 /// only contain enough information to instantiate needed component (even not sync) in the start
 /// method (plus connect with required info). Some sync may still be needed for connect (sync with
 /// instanciated component in start).
-pub trait Transport : Send + Sync + 'static {
+pub trait Transport : Send + Sync + 'static + Registerable {
   type ReadStream : ReadTransportStream;
   type WriteStream : WriteTransportStream;
   type Address : Address;
  
-  /// should we spawn a new thread for reception
-  /// default to threaded mode
+  /// TODO remove (loop spawner are used : replace by spawner type)
   fn do_spawn_rec(&self) -> SpawnRecMode {SpawnRecMode::Threaded}
- 
+  
 
   /// depending on impl method should send stream to peermgmt as a writestream (for instance tcp socket are
   /// read/write).
   /// D fn will not start every time (only if WriteStream created), and is only to transmit stream
   /// to either peermanager or as query (waiting for auth).
+  /// TODO remove
   fn start<C> (&self, C) -> Result<()>
     where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<ReaderHandle>;
+
+  /// transport listen for incomming connection
+  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>, Self::Address)>;
 
   /// Sometimes : for instance with tcp, the writestream is the same as the read stream,
   /// if we expect to use the same (and not open two socket), receive watching process should be
   /// start.
+  ///
+  /// TODO remove duration timeout (not for all transport)
   fn connectwith(&self, &Self::Address, Duration) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)>;
 
   /// Disconnect an active connection in case we have a no spawn transport model (eg deregister a
@@ -188,15 +201,17 @@ pub enum SpawnRecMode {
 
 // TODO add clone constraint with possibility to panic!("clone is not allowed : local send
 // threads are not possible")
-pub trait WriteTransportStream : Send + Write + 'static {
+pub trait WriteTransportStream : Send + Write + 'static + Registerable {
   // most of the time unneeded
   /// simply result in check connectivity false
   fn disconnect(&mut self) -> IoResult<()>;
 //  fn checkconnectivity(&self) -> bool;
 }
 
-pub trait ReadTransportStream : Send + Read + 'static {
-  
+pub trait ReadTransportStream : Send + Read + 'static + Registerable {
+
+
+
   /// should end read loop
   fn disconnect(&mut self) -> IoResult<()>;
 
@@ -205,16 +220,11 @@ pub trait ReadTransportStream : Send + Read + 'static {
   // (false would mean something is abnormal and peer may be removed)
  // fn checkconnectivity(&self) -> bool;
 
-  /// Receive loop unless RecTermCondition return true
-  /// to decide if receive loop on a ReadStream should end.
-  /// For instance disconnected transport should allways return true,
-  /// when connected receiving tcp stream should loop unless it is unconnected.
-  /// Could only be used to run action post receive.
+  /// TODO remove
   fn rec_end_condition(&self) -> bool;
 
 
-  /// Call after each msg successfull reading : usefull for some transport
-  /// (non managed so we can start another server fn (if first was spawn))
+  /// TODO remove
   #[inline]
   fn end_read_msg(&mut self) -> () {()}
 
@@ -257,6 +267,15 @@ pub enum ReaderHandle {
   Thread(JoinHandle<()>),
   // Scoped // TODO?
 }
+impl Registerable for TcpStream {
+
+  fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+  fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+}
 
 impl WriteTransportStream for TcpStream {
   fn disconnect(&mut self) -> IoResult<()> {
@@ -267,8 +286,34 @@ impl ReadTransportStream for TcpStream {
   fn disconnect(&mut self) -> IoResult<()> {
     self.shutdown(Shutdown::Read)
   }
-  /// this tcp runs in a separated thread and need to stop only depending on server loop
-  /// implementation (timeout error, error
+  /// TODO remove
+  fn rec_end_condition(&self) -> bool {
+    false
+  }
+}
+impl Registerable for MioStream {
+
+  fn register(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
+    p.register(self, t, r, po)?;
+    Ok(true)
+  }
+  fn reregister(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
+    p.reregister(self, t, r, po)?;
+    Ok(true)
+  }
+}
+
+
+impl WriteTransportStream for MioStream {
+  fn disconnect(&mut self) -> IoResult<()> {
+    self.shutdown(Shutdown::Write)
+  }
+}
+impl ReadTransportStream for MioStream {
+  fn disconnect(&mut self) -> IoResult<()> {
+    self.shutdown(Shutdown::Read)
+  }
+  /// TODO remove
   fn rec_end_condition(&self) -> bool {
     false
   }

@@ -1,5 +1,4 @@
 //! Test primitives for transports.
-//!
 
 extern crate byteorder;
 use std::thread;
@@ -16,10 +15,31 @@ use std::io::{
 };
 use time::Duration;
 use std::sync::Arc;
-use mydht_base::mydhtresult::Result;
+use mydht_base::mydhtresult::{
+  Result,
+  ErrorKind as MdhtErrorKind,
+  ErrorLevel as MdhtErrorLevel,
+};
 use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
-pub fn connect_rw_with_optional<A : Address, T : Transport<Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_optional : bool)
+pub fn sync_tr_start<T : Transport,C>(transport : Arc<T>,c : C) -> Result<()> 
+    where C : Send + 'static + Fn(<T as Transport>::ReadStream,Option<<T as Transport>::WriteStream>) -> Result<ReaderHandle>
+{
+    thread::spawn(move ||{
+      loop {
+        match transport.accept() {
+          Ok((rs, ows, _)) => {c(rs,ows).unwrap();},
+          Err(e) => if e.level() != MdhtErrorLevel::Ignore {
+            break;
+          } else if e.level() == MdhtErrorLevel::Panic {
+            panic!("Mpsc failure on client reception, ignoring : {}",e);
+          },
+        }
+      }
+    });
+    Ok(())
+}
+pub fn connect_rw_with_optional<A : Address, T : Transport<Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_optional : bool, async : bool)
 {
 //  assert!(t1.do_spawn_rec().1 == true); // managed so we can receive multiple message : test removed due to hybrid transport lik tcp_loop where it is usefull to test those properties
   let mess_to = "hello world".as_bytes();
@@ -94,9 +114,15 @@ pub fn connect_rw_with_optional<A : Address, T : Transport<Address=A>> (t1 : T, 
   let at2 = Arc::new(t2);
   let at2c = at2.clone();
 
-  thread::spawn(move|| {at1c.start(readhandler).unwrap();});
-  thread::spawn(move|| {at2c.start(readhandler2).unwrap();});
+  if async {
+    panic!("TODO implement async loop test");
+  } else {
+  //thread::spawn(move|| {at1c.start(readhandler).unwrap();});
+  sync_tr_start(at1c,readhandler).unwrap();
+  //thread::spawn(move|| {at2c.start(readhandler2).unwrap();});
+  sync_tr_start(at2c,readhandler2).unwrap();
 //  thread::sleep_ms(3000);
+  }
   let cres = at2.connectwith(a1, Duration::milliseconds(300));
   assert!(cres.as_ref().is_ok(),"{:?}", cres.as_ref().err());
   let (mut ws, mut ors) = cres.unwrap();
@@ -142,7 +168,7 @@ pub fn connect_rw_with_optional<A : Address, T : Transport<Address=A>> (t1 : T, 
 
 
 
-pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_connect_rs : bool, with_recv_ws : bool, variant : bool)
+pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_connect_rs : bool, with_recv_ws : bool, variant : bool, async : bool)
 {
   let mess_to = "hello world".as_bytes();
   let mess_to_2 = "hello2".as_bytes();
@@ -212,10 +238,15 @@ pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A
   let at1c = at1.clone();
   let at2 = Arc::new(t2);
   let at2c = at2.clone();
-
-  thread::spawn(move|| {at1c.start(readhandler).unwrap();});
-  thread::spawn(move|| {at2c.start(readhandler2).unwrap();});
+  if async {
+    panic!("TODO implement async loop test");
+  } else {
+//  thread::spawn(move|| {at1c.start(readhandler).unwrap();});
+  sync_tr_start(at1c,readhandler).unwrap();
+//  thread::spawn(move|| {at2c.start(readhandler2).unwrap();});
+  sync_tr_start(at2c,readhandler2).unwrap();
 //  thread::sleep_ms(3000);
+  }
   let cres = at2.connectwith(a1, Duration::milliseconds(300));
   assert!(cres.as_ref().is_ok(),"{:?}", cres.as_ref().err());
   let (mut ws, mut ors) = cres.unwrap();

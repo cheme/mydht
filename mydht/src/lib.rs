@@ -1,5 +1,4 @@
 #![feature(custom_derive)]
-#![feature(associated_consts)]
 #![feature(fs_walk)]
 #![feature(path_ext)]
 #![feature(convert)]
@@ -26,7 +25,7 @@ extern crate futures_cpupool;
 extern crate coroutine;
 #[cfg(test)]
 extern crate mydht_basetest;
-
+extern crate mio;
 
 mod kvcache{
 pub use mydht_base::kvcache::*;

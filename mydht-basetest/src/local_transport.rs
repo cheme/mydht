@@ -26,6 +26,7 @@
 //! several frames (sync in transport with its rec)) we act like managed, and managed transport test should
 //! be used.
 
+use mio::{Poll,Token,Ready,PollOpt};
 use std::sync::mpsc::{Sender,Receiver};
 use std::sync::mpsc;
 use std::sync::{Arc,Mutex};
@@ -33,9 +34,9 @@ use std::io::Result as IoResult;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
 use std::io::{Read,Write};
-use mydht_base::mydhtresult::Result;
+use mydht_base::mydhtresult::{Result,Error,ErrorKind};
 use time::Duration;
-use mydht_base::transport::{Transport,Address,ReadTransportStream,WriteTransportStream,SpawnRecMode,ReaderHandle};
+use mydht_base::transport::{Transport,Address,ReadTransportStream,WriteTransportStream,SpawnRecMode,ReaderHandle,Registerable,};
 #[cfg(test)]
 use transport as ttest;
 use transport::LocalAdd;
@@ -99,6 +100,24 @@ impl TransportTest {
 }
 
 pub struct LocalReadStream(Receiver<Arc<Vec<u8>>>,Vec<u8>,bool,bool);
+impl Registerable for LocalReadStream {
+  fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+  fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+}
+impl Registerable for LocalWriteStream {
+  fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+  fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+}
+
+
 
 impl ReadTransportStream for LocalReadStream {
   fn disconnect(&mut self) -> IoResult<()> {
@@ -125,6 +144,15 @@ impl WriteTransportStream for LocalWriteStream {
 
 pub struct LocalWriteStream(usize,usize,usize,Sender<(usize,usize,usize,Arc<Vec<u8>>)>,bool);
 
+impl Registerable for TransportTest {
+  /// TODO mio transport test (use registration)
+  fn register(&self, _ : &Poll, _: Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+  fn reregister(&self, _ : &Poll, _: Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+}
 /// default dospawn impl : it is a managed transport.
 impl Transport for TransportTest {
   /// chanel from transport receiving (loop on connection)
@@ -133,6 +161,7 @@ impl Transport for TransportTest {
   type WriteStream = LocalWriteStream;
   /// index in transport dir
   type Address = LocalAdd;
+
   fn start<C> (&self, readhandler : C) -> Result<()>
     where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<ReaderHandle> {
       // lock mutex indefinitely but it is the only occurence
@@ -200,6 +229,62 @@ impl Transport for TransportTest {
       //Ok(())
   }
 
+  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>, Self::Address)> {
+
+    let r = self.recv.lock().unwrap();
+    let (addr, nbcon_from, nbcon_with, content) = r.recv()?;
+            if content.len() > 0 {
+              assert!(nbcon_with == 0 || nbcon_from == 0);
+              let (clis,nbcon) = if nbcon_with == 0 {
+                (self.cli_from.lock().unwrap(),nbcon_from)
+              } else {
+                (self.cli_with.lock().unwrap(),nbcon_with)
+              };
+              match clis.get(addr) {
+                Some(ref s) => {
+                  try!(s.get(nbcon - 1).unwrap().send(content));
+                  Err(Error("Test transport send : ignore".to_string(), ErrorKind::ExpectedError, None))
+                },
+                _ => {
+                  if self.managed {
+                    error!("received message but no connection established");
+                    panic!("received message but no connection established");
+                  } else {
+                    // TODO useless channel ... 
+                    let (_,r) = mpsc::channel();
+                    // bad clone but for test... cf TODO chanel : local read stream should be enum
+                    let rs = LocalReadStream(r,(*content).clone(),true,self.managed);
+                    Ok((rs,None, LocalAdd(addr)))
+                  }
+                },
+              }
+            } else {
+              // new connection // TODO Not if !managed (all on connection 0)
+              
+              assert!(nbcon_with == 0);
+              // no connection message when not managed
+              assert!(self.managed);
+              let (locread, connb) = 
+              {
+                let (s,r) = mpsc::channel();
+                let mut clis = self.cli_from.lock().unwrap();
+                let mut cur = clis.get_mut(addr).unwrap();
+                cur.push(s);
+                let nbcon = cur.len();
+                assert!(nbcon == nbcon_from);
+                (LocalReadStream(r,Vec::new(),true,self.managed), nbcon)
+              };
+
+              let locwrite = if self.multiplex {
+                let dest = self.dir.lock().unwrap().get(addr).unwrap().clone();
+                Some(LocalWriteStream(self.address, 0, connb, dest.clone(),true))
+              } else {
+                None
+              };
+              Ok((locread,locwrite, LocalAdd(addr)))
+            }
+
+  }
   fn connectwith(&self, address : &Self::Address, _ : Duration) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
     
     let (locread,connb) =  if self.managed {
@@ -329,7 +414,7 @@ fn test_connect_rw () {
  let t2 = trs.pop().unwrap();
  let t1 = trs.pop().unwrap();
 
- ttest::connect_rw_with_optional (t1 , t2 , a1 , a2, multiplex); 
+ ttest::connect_rw_with_optional (t1 , t2 , a1 , a2, multiplex,false); 
 }
 #[test]
 fn test_connect_rw_dup () {
@@ -340,7 +425,7 @@ fn test_connect_rw_dup () {
  let t2 = trs.pop().unwrap();
  let t1 = trs.pop().unwrap();
 
- ttest::connect_rw_with_optional (t1 , t2 , a1 , a2, multiplex); 
+ ttest::connect_rw_with_optional (t1 , t2 , a1 , a2, multiplex,false); 
 }
 #[test]
 fn test_connect_rw_nonmanaged () {
@@ -351,6 +436,6 @@ fn test_connect_rw_nonmanaged () {
  let t2 = trs.pop().unwrap();
  let t1 = trs.pop().unwrap();
 
- ttest::connect_rw_with_optional_non_managed (t1 , t2 , a1 , a2, multiplex,multiplex,false); 
+ ttest::connect_rw_with_optional_non_managed (t1 , t2 , a1 , a2, multiplex,multiplex,false,false); 
 }
 

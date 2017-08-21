@@ -26,7 +26,9 @@ extern crate byteorder;
 extern crate mydht_base;
 extern crate time;
 extern crate num;
+extern crate mio;
 
+use mio::{Poll,Token,Ready,PollOpt};
 use mydht_base::transport::{
   Transport,
   ReadTransportStream,
@@ -34,14 +36,16 @@ use mydht_base::transport::{
   SpawnRecMode,
   ReaderHandle,
   SerSocketAddr,
+  Registerable,
 };
 //use super::{Attachment};
 use std::io::Result as IoResult;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
-use mydht_base::mydhtresult::Result;
 use std::net::SocketAddr;
 use time::Duration;
+
+use mydht_base::mydhtresult::{Result,Error,ErrorKind};
 //use peer::Peer;
 //use std::iter;
 use std::slice;
@@ -156,12 +160,21 @@ impl Read for ReadUdpStream {
     }
   }
 }
-
+impl Registerable for Udp {
+  fn register(&self, _ : &Poll, _: Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+  fn reregister(&self, _ : &Poll, _: Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+ 
+}
 impl Transport for Udp {
   type ReadStream = ReadUdpStream;
   type WriteStream = UdpStream;
   type Address = SerSocketAddr;
   
+
   fn do_spawn_rec(&self) -> SpawnRecMode {
     if self.spawn {
       SpawnRecMode::LocalSpawn
@@ -202,6 +215,23 @@ impl Transport for Udp {
     };
     //Ok(())
   }
+  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>, Self::Address)> {
+    let mut tmpvec : Vec<u8> = vec![0; self.buffsize];
+    let buf = tmpvec.as_mut_slice();
+    let (size,ad) = self.sock.recv_from(buf)?;
+          if size < self.buffsize {
+            // TODO test safe approach
+            let r = unsafe {
+              slice::from_raw_parts(buf.as_ptr(), size).to_vec()
+            };
+            Ok((ReadUdpStream(r), None,SerSocketAddr(ad)))
+         } else {
+            error!("Datagram on udp transport with size {:?} over buff {:?}, lost datagram", size, self.buffsize);
+            Err(Error("Udp Oversized datagram".to_string(), ErrorKind::ExpectedError, None))
+          }
+   
+  }
+
 
   /// does not return a read handle as udp is unconnected (variant with read buf synch would need to
   /// be returned).
@@ -219,6 +249,23 @@ impl Transport for Udp {
 
 }
 
+
+impl Registerable for UdpStream {
+  fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+  fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+}
+impl Registerable for ReadUdpStream {
+  fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+  fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+}
 
 
 /// Nothing is really done since udp is disconnected

@@ -12,6 +12,8 @@ extern crate byteorder;
 extern crate mydht_base;
 extern crate time;
 extern crate num;
+extern crate mio;
+use mio::{Poll,Token,Ready,PollOpt};
 use num::traits::ToPrimitive;
 //use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::net::{TcpListener};
@@ -28,7 +30,7 @@ use std::time::Duration as StdDuration;
 //use std::thread::Thread;
 //use peer::{Peer};
 //use mydht_base::transport::{ReadTransportStream,WriteTransportStream};
-use mydht_base::transport::{Transport,ReaderHandle,SerSocketAddr};
+use mydht_base::transport::{Transport,ReaderHandle,SerSocketAddr,Registerable};
 //use std::iter;
 //use utils;
 //use super::Attachment;
@@ -60,7 +62,14 @@ impl Tcp {
 
   }
 }
-
+impl Registerable for Tcp {
+  fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+  fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+    Ok(false)
+  }
+}
 impl Transport for Tcp {
   type ReadStream = TcpStream;
   type WriteStream = TcpStream;
@@ -96,6 +105,23 @@ impl Transport for Tcp {
     };
     Ok(())
   }
+ 
+  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>, Self::Address)> {
+    let (s,ad) = self.listener.accept()?;
+    debug!("Initiating socket exchange : ");
+    debug!("  - From {:?}", s.local_addr());
+    debug!("  - With {:?}", s.peer_addr());
+    try!(s.set_read_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs)));
+    try!(s.set_write_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs)));
+    if self.mult {
+//            try!(s.set_keepalive (self.streamtimeout.num_seconds().to_u32()));
+        let rs = try!(s.try_clone());
+        Ok((s,Some(rs),SerSocketAddr(ad)))
+    } else {
+        Ok((s,None,SerSocketAddr(ad)))
+    }
+  }
+
   fn connectwith(&self,  p : &SerSocketAddr, _ : Duration) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
     // connect TODO new api timeout (third param)
     //let s = TcpStream::connect_timeout(p, self.connecttimeout);
