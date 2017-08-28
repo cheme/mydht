@@ -50,6 +50,12 @@ use mydht_base::transport::{SerSocketAddr};
 #[cfg(feature="with-extra-test")]
 #[cfg(test)]
 use mydht_basetest::transport::connect_rw_with_optional;
+#[cfg(test)]
+use mydht_basetest::transport::{
+  reg_mpsc_recv_test as reg_mpsc_recv_test_base,
+  reg_connect_2 as reg_connect_2_base,
+  reg_rw_testing,
+};
 #[cfg(feature="with-extra-test")]
 #[cfg(test)]
 use mydht_basetest::transport::connect_rw_with_optional_non_managed;
@@ -170,5 +176,62 @@ fn connect_rw () {
   connect_rw_with_optional(tcp_transport_1,tcp_transport_2,&a1,&a2,true,true);
 }
 
+#[test]
+fn reg_mpsc_recv_test() {
+  let start_port = 40010;
+  let a1 = SerSocketAddr(sa4(Ipv4Addr::new(127,0,0,1), start_port));
+  let t = Tcp::new (&a1, Some(StdDuration::from_secs(5)), true).unwrap();
+  reg_mpsc_recv_test_base(t);
+}
 
 
+#[test]
+fn reg_connect_2() {
+  let start_port = 40020;
+  let a0 = SerSocketAddr(sa4(Ipv4Addr::new(127,0,0,1), start_port));
+  let t0 = Tcp::new (&a0, Some(StdDuration::from_secs(5)), true).unwrap();
+  let a1 = SerSocketAddr(sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
+  let t1 = Tcp::new (&a1, Some(StdDuration::from_secs(5)), true).unwrap();
+  let a2 = SerSocketAddr(sa4(Ipv4Addr::new(127,0,0,1), start_port+2));
+  let t2 = Tcp::new (&a2, Some(StdDuration::from_secs(5)), true).unwrap();
+  reg_connect_2_base(&a0,t0,t1,t2);
+}
+
+#[test]
+fn reg_rw_state1() {
+  reg_rw_state(40030,120,120,120,2);
+}
+#[test]
+fn reg_rw_state2() {
+  reg_rw_state(40040,240,120,120,2);
+}
+#[test]
+fn reg_rw_state3() {
+  reg_rw_state(40050,240,250,50,2);
+}
+#[test]
+fn reg_rw_state4() {
+  reg_rw_state(40060,240,50,250,2);
+}
+
+
+
+
+#[cfg(test)]
+fn reg_rw_state(start_port : u16, content_size : usize, read_buf : usize, write_buf : usize, nbmess : usize ) {
+  let a0 = SerSocketAddr(sa4(Ipv4Addr::new(127,0,0,1), start_port));
+  let t0 = Tcp::new (&a0, Some(StdDuration::from_secs(5)), true).unwrap();
+  let a1 = SerSocketAddr(sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
+  let t1 = Tcp::new (&a1, Some(StdDuration::from_secs(5)), true).unwrap();
+  // content, read buf size , write buf size, and nb send
+  reg_rw_testing(a0,t0,a1,t1,content_size,read_buf,write_buf,nbmess);
+}
+
+
+#[test]
+fn reg_conn_rw_1() {
+  let content_size = 123;
+  let buf_read_size = 20;
+  let buf_write_size = 20;
+
+}

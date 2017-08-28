@@ -93,7 +93,11 @@ impl ErrorTrait for Error {
 impl From<IoError> for Error {
   #[inline]
   fn from(e : IoError) -> Error {
-    Error(e.description().to_string(), ErrorKind::IOError, Some(Box::new(e)))
+    if let IoErrorKind::WouldBlock = e.kind() {
+      Error("".to_string(), ErrorKind::ExpectedError, None)
+    } else {
+      Error(e.description().to_string(), ErrorKind::IOError, Some(Box::new(e)))
+    }
   }
 }
 

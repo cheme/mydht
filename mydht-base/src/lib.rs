@@ -31,7 +31,65 @@ macro_rules! tryfor(($ty:ident, $expr:expr) => (
   try!(($expr).map_err(|e|$ty(e)))
 
 ));
- 
+
+#[macro_export]
+/// same as try for mydht result which panic for panic level and break loop for ignore level
+macro_rules! try_breakloop { ($x:expr, $arg:tt, $inner:expr) => ({
+  let mut iter = 0;
+  loop {
+    let a = match $x {
+      Ok(r) => r,
+      Err(e) => if e.level() == MdhtErrorLevel::Ignore {
+        break;
+      } else if e.level() == MdhtErrorLevel::Panic {
+        panic!($arg,e);
+      } else {
+        return Err(e)
+      },
+    };
+    $inner(a)?;
+  }
+  });
+}
+
+#[macro_export]
+/// same as try for mydht result which panic for panic level and skip iter loop for ignore level
+macro_rules! try_infiniteloop { ($x:expr, $arg:tt, $inner:expr) => ({
+  loop {
+    let a = match $x {
+      Ok(r) => r,
+      Err(e) => if e.level() == MdhtErrorLevel::Ignore {
+        continue;
+      } else if e.level() == MdhtErrorLevel::Panic {
+        panic!($arg,e);
+      } else {
+        return Err(e)
+      },
+    };
+    $inner(a)?;
+  }
+  });
+}
+
+#[macro_export]
+/// level try, panic on panic, None on ignore, Some on Success and return Err in parent function for
+/// other levels.
+macro_rules! try_ignore { ($x:expr, $arg:tt) => ({
+    match $x {
+      Ok(r) => Some(r),
+      Err(e) => if e.level() == MdhtErrorLevel::Ignore {
+        None
+      } else if e.level() == MdhtErrorLevel::Panic {
+        panic!($arg,e);
+      } else {
+        return Err(e)
+      },
+    }
+  });
+}
+
+
+
 #[macro_export]
 /// Automatic define for KeyVal without attachment
 macro_rules! noattachment(() => (
