@@ -108,12 +108,17 @@ pub fn channel_reg<T> () -> (MpscSend<T>,MpscRec<T>) {
 
 /// TODO should be a enum with os (fourth first option are exclusive)
 struct CacheEntry<T : Transport, RR, WR> {
-  ors : Option<T::ReadStream>,
-  ows : Option<T::WriteStream>,
-  rr : Option<RR>,
-  wr : Option<WR>,
+  state : CacheEntryState<T,RR,WR>,
   os : Option<usize>,
   ad : T::Address,
+}
+
+enum CacheEntryState<T : Transport, RR, WR> {
+  ORS(T::ReadStream),
+  OWS(T::WriteStream),
+  RR(RR),
+  WR(WR),
+  Empty,
 }
 
 #[inline]
@@ -168,11 +173,7 @@ where
                   assert!(true == rs.register(&poll, Token(read_token + START_STREAM_IX), Ready::readable(),
                     PollOpt::edge())?);
                   read_entry.insert(CacheEntry {
-                    ors : Some(rs),
-                    ows : None,
-                    rr : None,
-                    wr : None,
-                    //os : ow.map(|t|(t.0).0),
+                    state : CacheEntryState::ORS(rs),
                     os : None,
                     ad : ad,
                   });
@@ -186,10 +187,7 @@ where
                     assert!(true == ws.register(&poll, Token(write_token + START_STREAM_IX), Ready::writable(),
                       PollOpt::edge())?);
                     write_entry.insert(CacheEntry {
-                      ors : None,
-                      ows : Some(ws),
-                      rr : None,
-                      wr : None,
+                      state : CacheEntryState::OWS(ws),
                       os : Some(read_token),
                       ad : wad.unwrap(),
                     });
@@ -209,21 +207,34 @@ where
 //                      PollOpt::edge())?);
               },
               tok => if let Some(ca) = cache.get_mut(tok.0 - START_STREAM_IX) {
-
-                if ca.ors.is_some() {
-                  let ors = mem::replace(&mut ca.ors, None);
-                  ca.rr = Some(read_cl(None,ors,&transport,ended.clone())?);
-                } else if ca.ows.is_some() {
-                  let ows = mem::replace(&mut ca.ows, None);
-                  ca.wr = Some(write_cl(None,ows,&transport)?);
-                } else if ca.rr.is_some() {
-                  let rr = mem::replace(&mut ca.rr, None);
-                  ca.rr = Some(read_cl(rr,None,&transport,ended.clone())?);
-                } else if ca.wr.is_some() {
-                  let wr = mem::replace(&mut ca.wr, None);
-                  ca.wr = Some(write_cl(wr,None,&transport)?);
-                } else {
-                  unreachable!();
+                match ca.state {
+                  CacheEntryState::ORS(_) => {
+                    let state = mem::replace(&mut ca.state, CacheEntryState::Empty);
+                    if let CacheEntryState::ORS(rs) = state {
+                      ca.state = CacheEntryState::RR(read_cl(None,Some(rs),&transport,ended.clone())?);
+                    }
+                  },
+                  CacheEntryState::OWS(_) => {
+                    let state = mem::replace(&mut ca.state, CacheEntryState::Empty);
+                    if let CacheEntryState::OWS(ws) = state {
+                      ca.state = CacheEntryState::WR(write_cl(None,Some(ws),&transport)?);
+                    }
+                  },
+                  CacheEntryState::RR(_) => {
+                    let state = mem::replace(&mut ca.state, CacheEntryState::Empty);
+                    if let CacheEntryState::RR(rr) = state {
+                      ca.state = CacheEntryState::RR(read_cl(Some(rr),None,&transport,ended.clone())?);
+                    }
+                  },
+                  CacheEntryState::WR(_) => {
+                    let state = mem::replace(&mut ca.state, CacheEntryState::Empty);
+                    if let CacheEntryState::WR(wr) = state {
+                      ca.state = CacheEntryState::WR(write_cl(Some(wr),None,&transport)?);
+                    }
+                  },
+                  CacheEntryState::Empty => {
+                    unreachable!()
+                  },
                 }
               } else {
                 panic!("Unregistered token polled");
@@ -672,11 +683,17 @@ impl<'a,RS : ReadTransportStream> RsState<'a,RS> {
 impl<T : Transport> CacheEntry<T, (Vec<u8>,usize,T::ReadStream), (Vec<u8>,usize,T::WriteStream)> {
   /// non blocking send up to wouldblock
   pub fn send(&mut self, bufsize : usize) -> Result<()> {
-    WsState(self.wr.as_mut().unwrap()).send(bufsize)// panic if wrong state
+    match self.state {
+      CacheEntryState::WR(ref mut wr) => WsState(wr).send(bufsize),
+      _ => panic!("wrong state for send"),
+    }
   }
   /// non blocking recv up to wouldblock
   pub fn recv(&mut self, bufsize : usize) -> Result<()> {
-    RsState(self.rr.as_mut().unwrap()).recv(bufsize)// panic if wrong state
+    match self.state {
+      CacheEntryState::RR(ref mut rr) => RsState(rr).recv(bufsize),
+      _ => panic!("wrong state for recv"),
+    }
   }
 }
 
@@ -684,29 +701,29 @@ impl<T : Transport> CacheEntry<T, (Vec<u8>,usize,T::ReadStream), (Vec<u8>,usize,
 fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<CacheEntry<T,(Vec<u8>,usize,T::ReadStream),(Vec<u8>,usize,T::WriteStream)>>, t : &T) -> Result<()> {
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
-        let c = cache.iter().any(|(_,e)|e.ad == ad && (e.ows.is_some() || e.wr.is_some()));
+        let c = cache.iter().any(|(_,e)|e.ad == ad && match e.state {
+          CacheEntryState::OWS(_) | CacheEntryState::WR(_) => true,
+          _ => false,
+        });
         if c {
           // do nothing (no connection closed here)
         } else {
           let (ws,ors) = t.connectwith(&ad, Duration::seconds(5)).unwrap();
           let ork = if ors.is_some() {
             Some(cache.insert(CacheEntry {
-              ors : ors,
-              ows : None,
-              rr : None,
-              wr : None,
+              state : CacheEntryState::ORS(ors.unwrap()),
               os : None,
               ad : ad.clone(),
             }))
           } else {
             // try update
-            cache.iter().position(|(_,e)|e.ad == ad && (e.ors.is_some() || e.rr.is_some()))
+            cache.iter().position(|(_,e)|e.ad == ad && match e.state {
+              CacheEntryState::ORS(_) | CacheEntryState::RR(_) => true,
+              _ => false,
+            })
           };
           let vkey = cache.insert(CacheEntry {
-            ors : None,
-            ows : Some(ws),
-            rr : None,
-            wr : None,
+            state : CacheEntryState::OWS(ws),
             os : ork,
             ad : ad,
           });
@@ -714,14 +731,21 @@ fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cach
         };
       },
       SimpleLoopCommand::SendTo(ad, content, bufsize) => {
-        let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.ad == ad && (e.ows.is_some() || e.wr.is_some())).unwrap();
-        if c.ows.is_some() {
-          let ws = mem::replace(&mut c.ows,None).unwrap();
-          c.wr = Some((content, 0, ws));
-        } else if c.wr.is_some() {
-          c.wr.as_mut().map(|a|a.0.extend_from_slice(&content[..]));
-        } else {
-          panic!("failed write : not connected")
+        let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.ad == ad  && match e.state {
+          CacheEntryState::OWS(_) | CacheEntryState::WR(_) => true,
+          _ => false,
+        }).unwrap();
+        match c.state {
+          CacheEntryState::OWS (_) => {
+            let state = mem::replace(&mut c.state,CacheEntryState::Empty);
+            if let CacheEntryState::OWS(ws) = state {
+              c.state = CacheEntryState::WR((content,0,ws));
+            }
+          },
+          CacheEntryState::WR (ref mut wr) => {
+            wr.0.extend_from_slice(&content[..]);
+          },
+          _ => panic!("failed write : not connected"),
         };
         c.send(bufsize)?;
       },
@@ -731,8 +755,7 @@ fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cach
  //       let (_, ref mut e) = cache.iter_mut().find(|&(_, ref e)|e.ad == ad && (e.rr.is_some())).unwrap();
         // no filter on address as it is write stream address and not listener
         for (_, ref mut e) in cache.iter_mut() {
-          if e.rr.is_some() {
-            let &mut (ref mut c, _,_) = e.rr.as_mut().unwrap();
+          if let CacheEntryState::RR((ref mut c, _, _)) = e.state {
             if c[..expect.len()] == expect[..] {
               *c = c.split_off(expect.len());
               ended.fetch_add(1,Ordering::Relaxed);
