@@ -56,6 +56,7 @@ use mydht_basetest::transport::{
   reg_connect_2 as reg_connect_2_base,
   reg_rw_testing,
   reg_rw_corout_testing,
+  reg_rw_cpupool_testing,
 };
 #[cfg(feature="with-extra-test")]
 #[cfg(test)]
@@ -239,19 +240,46 @@ fn reg_rw_corout(start_port : u16, content_size : usize, read_buf : usize, write
 
 #[test]
 fn reg_rw_corout1() {
-  reg_rw_corout(40030,120,120,120,2);
+  reg_rw_corout(40070,120,120,120,2);
 }
 #[test]
 fn reg_rw_corout2() {
-  reg_rw_corout(40040,240,120,120,2);
+  reg_rw_corout(40080,240,120,120,2);
 }
 #[test]
 fn reg_rw_corout3() {
-  reg_rw_corout(40050,240,250,50,3);
+  reg_rw_corout(40090,240,250,50,3);
 }
 #[test]
 fn reg_rw_corout4() {
-  reg_rw_corout(40060,240,50,250,2);
+  reg_rw_corout(40100,240,50,250,2);
+}
+
+#[cfg(test)]
+fn reg_rw_cpupool(start_port : u16, content_size : usize, read_buf : usize, write_buf : usize, nbmess : usize, poolsize : usize ) {
+  let a0 = SerSocketAddr(sa4(Ipv4Addr::new(127,0,0,1), start_port));
+  let t0 = Tcp::new (&a0, Some(StdDuration::from_secs(5)), true).unwrap();
+  let a1 = SerSocketAddr(sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
+  let t1 = Tcp::new (&a1, Some(StdDuration::from_secs(5)), true).unwrap();
+  // content, read buf size , write buf size, and nb send
+  reg_rw_cpupool_testing(a0,t0,a1,t1,content_size,read_buf,write_buf,nbmess,poolsize);
+}
+
+#[test]
+fn reg_rw_cpupool1() {
+  reg_rw_cpupool(40110,120,120,120,2,2);
+}
+#[test]
+fn reg_rw_cpupool2() {
+  reg_rw_cpupool(40120,240,120,120,2,2);
+}
+#[test]
+fn reg_rw_cpupool3() {
+  reg_rw_cpupool(40130,240,250,50,20,2);
+}
+#[test]
+fn reg_rw_cpupool4() {
+  reg_rw_cpupool(40140,240,50,250,2,3);
 }
 
 
