@@ -1,8 +1,15 @@
 //! Test primitives for transports.
-
 extern crate byteorder;
 extern crate mio;
 extern crate slab;
+extern crate coroutine;
+use std::cell::RefCell;
+use std::cell::RefMut;
+use std::rc::Rc;
+use self::coroutine::asymmetric::{
+  Handle as CoRHandle,
+  Coroutine,
+};
 use std::cmp::max;
 use std::cmp::min;
 use std::thread;
@@ -18,6 +25,7 @@ use std::io::{
   Write,
   Read,
   Error as IoError,
+  ErrorKind as IoErrorKind,
   Result as IoResult,
 };
 use std::sync::Arc;
@@ -122,9 +130,9 @@ enum CacheEntryState<T : Transport, RR, WR> {
 }
 
 #[inline]
-fn spawn_loop_async<M : 'static + Send, TC, T : Transport, RR, WR, FR, FW>(transport : T, read_cl : FR, write_cl : FW, controller : TC, ended : Arc<AtomicUsize>) -> Result<MpscSend<M>> 
+fn spawn_loop_async<M : 'static + Send, TC, T : Transport, RR, WR, FR, FW>(transport : T, read_cl : FR, write_cl : FW, controller : TC, ended : Arc<AtomicUsize>, exp : Vec<u8>, connect_done : Arc<AtomicUsize>) -> Result<MpscSend<M>> 
 where 
-  FR : 'static + Send + Fn(Option<RR>,Option<T::ReadStream>,&T,Arc<AtomicUsize>) -> Result<RR>,
+  FR : 'static + Send + Fn(Option<RR>,Option<T::ReadStream>,&T,Arc<AtomicUsize>,Vec<u8>) -> Result<RR>,
   FW : 'static + Send + Fn(Option<WR>,Option<T::WriteStream>,&T) -> Result<WR>,
   //for<'a> TC : 'static + Send + Fn(M, &'a mut Slab<CacheEntry<T,RR,WR>>) -> Result<()>,
   TC : 'static + Send + Fn(M, &mut Slab<CacheEntry<T,RR,WR>>,&T) -> Result<()>,
@@ -132,14 +140,14 @@ where
 
   let (sender,receiver) = channel_reg();
   thread::spawn(move||
-    loop_async(receiver, transport,read_cl, write_cl, controller,ended).unwrap());
+    loop_async(receiver, transport,read_cl, write_cl, controller,ended, exp, connect_done).unwrap());
   Ok(sender)
 }
 
 /// currently only for full async (listener, read stream and write stream)
-fn loop_async<M, TC, T : Transport, RR, WR, FR, FW>(receiver : MpscRec<M>, transport : T,read_cl : FR, write_cl : FW, controller : TC,ended : Arc<AtomicUsize>) -> Result<()> 
+fn loop_async<M, TC, T : Transport, RR, WR, FR, FW>(receiver : MpscRec<M>, transport : T,read_cl : FR, write_cl : FW, controller : TC,ended : Arc<AtomicUsize>, exp : Vec<u8>, connect_done : Arc<AtomicUsize>) -> Result<()> 
 where 
-  FR : Fn(Option<RR>,Option<T::ReadStream>,&T,Arc<AtomicUsize>) -> Result<RR>,
+  FR : Fn(Option<RR>,Option<T::ReadStream>,&T,Arc<AtomicUsize>,Vec<u8>) -> Result<RR>,
   FW : Fn(Option<WR>,Option<T::WriteStream>,&T) -> Result<WR>,
   TC : Fn(M, &mut Slab<CacheEntry<T,RR,WR>>, &T) -> Result<()>,
 {
@@ -196,7 +204,7 @@ where
                   cache[read_token].os = Some(write_token);
                   Ok(())
                 }).unwrap_or(Ok(()))?;
-
+                connect_done.fetch_add(1,Ordering::Relaxed);
                 Ok(())
               });
               
@@ -211,7 +219,7 @@ where
                   CacheEntryState::ORS(_) => {
                     let state = mem::replace(&mut ca.state, CacheEntryState::Empty);
                     if let CacheEntryState::ORS(rs) = state {
-                      ca.state = CacheEntryState::RR(read_cl(None,Some(rs),&transport,ended.clone())?);
+                      ca.state = CacheEntryState::RR(read_cl(None,Some(rs),&transport,ended.clone(),exp.clone())?);
                     }
                   },
                   CacheEntryState::OWS(_) => {
@@ -223,7 +231,7 @@ where
                   CacheEntryState::RR(_) => {
                     let state = mem::replace(&mut ca.state, CacheEntryState::Empty);
                     if let CacheEntryState::RR(rr) = state {
-                      ca.state = CacheEntryState::RR(read_cl(Some(rr),None,&transport,ended.clone())?);
+                      ca.state = CacheEntryState::RR(read_cl(Some(rr),None,&transport,ended.clone(),exp.clone())?);
                     }
                   },
                   CacheEntryState::WR(_) => {
@@ -243,7 +251,6 @@ where
       }
   };
 
-  Ok(())
 }
 
 
@@ -536,7 +543,7 @@ impl Address for LocalAdd {
 
 pub fn reg_mpsc_recv_test<T : Transport>(t : T) {
 
-  let transport_reg_r = |_ : Option<()>, _ : Option<T::ReadStream>, _ : &T, _| {Ok(())};
+  let transport_reg_r = |_ : Option<()>, _ : Option<T::ReadStream>, _ : &T,_,_| {Ok(())};
   let transport_reg_w = |_ : Option<()>, _ : Option<T::WriteStream>, _ : &T| {Ok(())};
   let current_ix = Arc::new(AtomicUsize::new(0));
   let next_it = Arc::new(AtomicBool::new(false));
@@ -560,7 +567,8 @@ pub fn reg_mpsc_recv_test<T : Transport>(t : T) {
     Ok(())
   };
 
-  let sender = spawn_loop_async(t, transport_reg_r, transport_reg_w, controller, current_ix.clone()).unwrap();
+  let connect_done = Arc::new(AtomicUsize::new(0));
+  let sender = spawn_loop_async(t, transport_reg_r, transport_reg_w, controller, current_ix.clone(),Vec::new(),connect_done).unwrap();
   for i in 0 .. nbit {
       sender.send(i).unwrap()
   }
@@ -587,7 +595,7 @@ pub fn reg_connect_2<T : Transport>(fromadd : &T::Address, t : T, c0 : T, c1 : T
   let sp_nit = next_it.clone();
   let transport_reg_w = |_ : Option<()>, _ : Option<T::WriteStream>, _ : &T| {Ok(())};
 
-  let transport_reg_r = move |_ : Option<()>, ors : Option<T::ReadStream>, _ : &T,_| {
+  let transport_reg_r = move |_ : Option<()>, ors : Option<T::ReadStream>, _ : &T,_,_| {
 
     // just check connection ok
     let mut buf = vec![0;1];
@@ -605,7 +613,8 @@ pub fn reg_connect_2<T : Transport>(fromadd : &T::Address, t : T, c0 : T, c1 : T
     Ok(())
   };
   
-  spawn_loop_async(t, transport_reg_r, transport_reg_w, controller,notused).unwrap();
+  let connect_done = Arc::new(AtomicUsize::new(0));
+  spawn_loop_async(t, transport_reg_r, transport_reg_w, controller,notused,Vec::new(),connect_done.clone()).unwrap();
 
   let mut ws0 = c0.connectwith(fromadd, Duration::seconds(5)).unwrap();
 
@@ -658,6 +667,9 @@ impl<'a,WS : WriteTransportStream> WsState<'a,WS> {
     Ok(())
   }
 }
+
+
+
 struct RsState<'a, RS : ReadTransportStream> (&'a mut(Vec<u8>,usize,RS));
 impl<'a,RS : ReadTransportStream> RsState<'a,RS> {
   pub fn recv(&mut self, bufsize : usize) -> Result<()> {
@@ -697,6 +709,99 @@ impl<T : Transport> CacheEntry<T, (Vec<u8>,usize,T::ReadStream), (Vec<u8>,usize,
   }
 }
 
+fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<CacheEntry<T,CoRHandle,(Rc<RefCell<Vec<u8>>>,CoRHandle)>>, t : &T) -> Result<()> {
+    match command {
+      SimpleLoopCommand::ConnectWith(ad) => {
+        let c = cache.iter().any(|(_,e)|e.ad == ad && match e.state {
+          CacheEntryState::OWS(_) | CacheEntryState::WR(_) => true,
+          _ => false,
+        });
+        if c {
+          // do nothing (no connection closed here)
+        } else {
+          let (ws,ors) = t.connectwith(&ad, Duration::seconds(5)).unwrap();
+          let ork = if ors.is_some() {
+            Some(cache.insert(CacheEntry {
+              state : CacheEntryState::ORS(ors.unwrap()),
+              os : None,
+              ad : ad.clone(),
+            }))
+          } else {
+            // try update
+            cache.iter().position(|(_,e)|e.ad == ad && match e.state {
+              CacheEntryState::ORS(_) | CacheEntryState::RR(_) => true,
+              _ => false,
+            })
+          };
+          let vkey = cache.insert(CacheEntry {
+            state : CacheEntryState::OWS(ws),
+            os : ork,
+            ad : ad,
+          });
+          ork.map(|rix|cache[rix].os=Some(vkey));
+        };
+      },
+      SimpleLoopCommand::SendTo(ad, content, bufsize) => {
+        let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.ad == ad  && match e.state {
+          CacheEntryState::OWS(_) | CacheEntryState::WR(_) => true,
+          _ => false,
+        }).unwrap();
+        match c.state {
+          CacheEntryState::OWS (_) => {
+            corout_ows(&mut c.state, content, bufsize);
+          },
+          CacheEntryState::WR (ref mut wr) => {
+            wr.0.borrow_mut().extend_from_slice(&content[..]);
+            wr.1.resume(0).unwrap();
+          },
+          _ => panic!("failed write : not connected"),
+        };
+      },
+      SimpleLoopCommand::Expect(ad, expect,ended) => {
+        panic!("no expect");
+      },
+    };
+    Ok(()) 
+}
+
+fn corout_ows<T : Transport>(cstate : &mut CacheEntryState<T,CoRHandle,(Rc<RefCell<Vec<u8>>>,CoRHandle)>, content : Vec<u8>, bufsize : usize) {
+  let state = mem::replace(cstate,CacheEntryState::Empty);
+  if let CacheEntryState::OWS(ws) = state {
+    let st = corout_ows2(ws, content,bufsize);
+    *cstate = CacheEntryState::WR(st);
+  }
+}
+
+fn corout_ows2<TW : 'static + Write>(mut ws : TW, content : Vec<u8>, bufsize : usize) 
+  -> (Rc<RefCell<Vec<u8>>>,CoRHandle) {
+    let buf = Rc::new(RefCell::new(content));
+    let bc = buf.clone();
+    let mut cohandle = Coroutine::spawn(move|corout,_| {
+      let mut it = 0;
+      loop {
+        let mut blen = 0;
+        while blen == 0 {
+          blen = buf.borrow().len();
+          if blen == 0 {
+            corout.yield_with(0);
+          }
+        }
+        let iw = WriteCorout(&mut ws,corout).write(&buf.borrow()[..min(bufsize,blen)]).unwrap();
+        it += 1;
+        if iw > 0 {
+          let mut bmut = buf.borrow_mut();
+          bmut.reverse();
+          let l = bmut.len(); // need recount as write could switch context
+          bmut.truncate(l - iw);
+          bmut.reverse();
+          //RefMut::map(bmut,|rm|rm = a);
+        }
+      }
+
+    });
+    cohandle.resume(0).unwrap();
+    (bc,cohandle)
+}
 
 fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<CacheEntry<T,(Vec<u8>,usize,T::ReadStream),(Vec<u8>,usize,T::WriteStream)>>, t : &T) -> Result<()> {
     match command {
@@ -793,7 +898,131 @@ fn transport_reg_r_testing<T : Transport>(ocr : Option<(Vec<u8>,usize,T::ReadStr
   }
   Ok(state)
 }
+
+fn transport_corout_w_testing<T : Transport>(ocw : Option<(Rc<RefCell<Vec<u8>>>,CoRHandle)>, ows : Option<T::WriteStream>, _ : &T,bufsize : usize) -> Result<(Rc<RefCell<Vec<u8>>>,CoRHandle)> {
+  match ocw {
+    Some(mut s) => {
+      if s.0.borrow().len() > 0 {
+        s.1.resume(0).unwrap();
+      }
+      return Ok(s);
+    },
+    None => match ows {
+      Some(ws) => {
+        let s = corout_ows2(ws,Vec::new(),bufsize);
+        return Ok(s);
+      },
+      None => panic!("uinint corout"),
+    },
+  }
+}
+
+fn transport_corout_r_testing<T : Transport>(ocr : Option<CoRHandle>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>, expected : Vec<u8>) -> Result<CoRHandle> {
+  match ocr {
+    Some(mut s) => {
+      s.resume(0).unwrap();
+      return Ok(s);
+    },
+    None => (),
+  };
+  let mut co_handle = Coroutine::spawn(move |corout,_|{
+    let mut rs = ors.unwrap();
+    let mut nbread : usize = 0;
+    let mut buf = vec![0;contentsize];
+    while nbread < contentsize {
+      nbread += ReadCorout(&mut rs, corout).read(&mut buf[nbread..min(nbread + bufsize,contentsize)]).unwrap();
+    };
+    assert!(&buf[..] == &expected[..], "left : {:?}, right : {:?}",&buf[..],&expected[..]);
+    ended.fetch_add(1,Ordering::Relaxed);
+    0
+  });
+  co_handle.resume(0).unwrap();
+  Ok(co_handle)
+}
   
+
+pub fn reg_rw_corout_testing<T : Transport>(fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize) {
+  let mut contents = Vec::with_capacity(nbmess);
+  let mut all_r = vec![0;nbmess * content_size];
+  for im in 0 .. nbmess {
+    let mut content = vec![0;content_size];
+    for i in 0..content_size {
+      let v = (i + im) as u8;
+      content[i]= v;
+      all_r[im * content_size + i] = v;
+    }
+    contents.push(content);
+  }
+  
+  let ended_expect = Arc::new(AtomicUsize::new(0));
+  let ended_expectf = Arc::new(AtomicUsize::new(0));
+  let connect_done = Arc::new(AtomicUsize::new(0));
+  //spawn_loop_async(tto, transport_reg_r1, transport_reg_w1, controller1).unwrap();
+  //spawn_loop_async(tfrom, transport_reg_r_testing, transport_reg_w_testing, controller2).unwrap();
+  let tomsg = spawn_loop_async(tto, move |a,b,c,cended,all_r|
+                               transport_corout_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended, all_r), move |a,b,c| transport_corout_w_testing(a,b,c,write_buf_size), simple_command_controller_corout,ended_expect.clone(),all_r,connect_done.clone()).unwrap();
+  let frommsg = spawn_loop_async(tfrom, move |a,b,c,cended,all_r| 
+                                transport_corout_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended, all_r), move |a,b,c| transport_corout_w_testing(a,b,c,write_buf_size), simple_command_controller_corout,ended_expectf.clone(),Vec::new(),connect_done.clone()).unwrap();
+
+  // send and receive commands
+  frommsg.send(SimpleLoopCommand::ConnectWith(toadd.clone())).unwrap();
+  while connect_done.load(Ordering::Relaxed) != 1 { }
+  for content in contents.iter() {
+    frommsg.send(SimpleLoopCommand::SendTo(toadd.clone(),content.clone(),write_buf_size)).unwrap();
+  }
+
+  while ended_expect.load(Ordering::Relaxed) != 1 { }
+
+}
+
+
+pub struct WriteCorout<'a,W : 'a + Write> (&'a mut W, &'a mut Coroutine);
+impl<'a,W : Write> Write for WriteCorout<'a,W> {
+ fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+   loop {
+     match self.0.write(buf) {
+       Ok(r) => return Ok(r),
+       Err(e) => if let IoErrorKind::WouldBlock = e.kind() {
+         self.1.yield_with(0);
+       } else {
+         return Err(e);
+       },
+     }
+   }
+ }
+ fn flush(&mut self) -> IoResult<()> {
+   loop {
+     match self.0.flush() {
+       Ok(r) => return Ok(r),
+       Err(e) => if let IoErrorKind::WouldBlock = e.kind() {
+         self.1.yield_with(0);
+       } else {
+         return Err(e);
+       },
+     }
+   }
+ }
+ // no write_all impl as default write all would require state
+ //fn write_all(&mut self, buf: &[u8]) -> IoResult<()> { .. }
+
+}
+
+pub struct ReadCorout<'a,R : 'a + Read> (&'a mut R, &'a mut Coroutine);
+impl<'a,R : Read> Read for ReadCorout<'a,R> {
+  fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+    loop {
+      match self.0.read(buf) {
+        Ok(r) => return Ok(r),
+        Err(e) => if let IoErrorKind::WouldBlock = e.kind() {
+          self.1.yield_with(0);
+        } else {
+          return Err(e);
+        },
+      }
+    }
+  }
+}
+
 
 pub fn reg_rw_testing<T : Transport>(fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize,nbmess:usize) {
   let mut contents = Vec::with_capacity(nbmess);
@@ -806,13 +1035,15 @@ pub fn reg_rw_testing<T : Transport>(fromadd : T::Address, tfrom : T, toadd : T:
   }
   
   let ended_expect = Arc::new(AtomicUsize::new(0));
+  let connect_done = Arc::new(AtomicUsize::new(0));
   //spawn_loop_async(tto, transport_reg_r1, transport_reg_w1, controller1).unwrap();
   //spawn_loop_async(tfrom, transport_reg_r_testing, transport_reg_w_testing, controller2).unwrap();
-  let tomsg = spawn_loop_async(tto, move |a,b,c,cended| transport_reg_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended), move |a,b,c| transport_reg_w_testing(a,b,c,write_buf_size), simple_command_controller,ended_expect.clone()).unwrap();
-  let frommsg = spawn_loop_async(tfrom, move |a,b,c,cended| transport_reg_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended), move |a,b,c| transport_reg_w_testing(a,b,c,write_buf_size), simple_command_controller,ended_expect.clone()).unwrap();
+  let tomsg = spawn_loop_async(tto, move |a,b,c,cended,all_r| transport_reg_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended), move |a,b,c| transport_reg_w_testing(a,b,c,write_buf_size), simple_command_controller,ended_expect.clone(),Vec::new(),connect_done.clone()).unwrap();
+  let frommsg = spawn_loop_async(tfrom, move |a,b,c,cended,all_r| transport_reg_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended), move |a,b,c| transport_reg_w_testing(a,b,c,write_buf_size), simple_command_controller,ended_expect.clone(),Vec::new(),connect_done.clone()).unwrap();
 
   // send and receive commands
   frommsg.send(SimpleLoopCommand::ConnectWith(toadd.clone())).unwrap();
+  while connect_done.load(Ordering::Relaxed) != 1 { }
   for content in contents.iter() {
     frommsg.send(SimpleLoopCommand::SendTo(toadd.clone(),content.clone(),write_buf_size)).unwrap();
   }
@@ -826,4 +1057,5 @@ pub fn reg_rw_testing<T : Transport>(fromadd : T::Address, tfrom : T, toadd : T:
   }
   while ended_expect.load(Ordering::Relaxed) != nbmess { }
 }
+
 
