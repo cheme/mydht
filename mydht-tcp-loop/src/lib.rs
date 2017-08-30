@@ -57,6 +57,7 @@ use mydht_basetest::transport::{
   reg_rw_testing,
   reg_rw_corout_testing,
   reg_rw_cpupool_testing,
+  reg_rw_threadpark_testing,
 };
 #[cfg(feature="with-extra-test")]
 #[cfg(test)]
@@ -283,11 +284,32 @@ fn reg_rw_cpupool4() {
 }
 
 
+#[cfg(test)]
+fn reg_rw_threadpark(start_port : u16, content_size : usize, read_buf : usize, write_buf : usize, nbmess : usize ) {
+  let a0 = SerSocketAddr(sa4(Ipv4Addr::new(127,0,0,1), start_port));
+  let t0 = Tcp::new (&a0, Some(StdDuration::from_secs(5)), true).unwrap();
+  let a1 = SerSocketAddr(sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
+  let t1 = Tcp::new (&a1, Some(StdDuration::from_secs(5)), true).unwrap();
+  // content, read buf size , write buf size, and nb send
+ reg_rw_threadpark_testing(a0,t0,a1,t1,content_size,read_buf,write_buf,nbmess);
+}
+
 
 #[test]
-fn reg_conn_rw_1() {
-  let content_size = 123;
-  let buf_read_size = 20;
-  let buf_write_size = 20;
-
+fn reg_rw_threadpark1() {
+  reg_rw_threadpark(40210,120,120,120,2);
 }
+#[test]
+fn reg_rw_threadpark2() {
+  reg_rw_threadpark(40220,240,120,120,2);
+}
+#[test]
+fn reg_rw_threadpark3() {
+  reg_rw_threadpark(40230,240,250,50,20);
+}
+#[test]
+fn reg_rw_threadpark4() {
+  reg_rw_threadpark(40240,240,50,250,2);
+}
+
+

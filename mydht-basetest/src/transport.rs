@@ -13,6 +13,7 @@ use self::futures_cpupool::CpuFuture;
 use std::cell::RefCell;
 use std::cell::RefMut;
 use std::rc::Rc;
+use std::thread::JoinHandle;
 use self::coroutine::asymmetric::{
   Handle as CoRHandle,
   Coroutine,
@@ -785,6 +786,81 @@ fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<
 }
 
 
+fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<CacheEntry<T,JoinHandle<()>,(Sender<Vec<u8>>,JoinHandle<()>)>>, t : &T) -> Result<()> {
+    match command {
+      SimpleLoopCommand::ConnectWith(ad) => {
+        let c = cache.iter().any(|(_,e)|e.ad == ad && match e.state {
+          CacheEntryState::OWS(_) | CacheEntryState::WR(_) => true,
+          _ => false,
+        });
+        if c {
+          // do nothing (no connection closed here)
+        } else {
+          let (ws,ors) = t.connectwith(&ad, Duration::seconds(5)).unwrap();
+          let ork = if ors.is_some() {
+            Some(cache.insert(CacheEntry {
+              state : CacheEntryState::ORS(ors.unwrap()),
+              os : None,
+              ad : ad.clone(),
+            }))
+          } else {
+            // try update
+            cache.iter().position(|(_,e)|e.ad == ad && match e.state {
+              CacheEntryState::ORS(_) | CacheEntryState::RR(_) => true,
+              _ => false,
+            })
+          };
+          let vkey = cache.insert(CacheEntry {
+            state : CacheEntryState::OWS(ws),
+            os : ork,
+            ad : ad,
+          });
+          ork.map(|rix|cache[rix].os=Some(vkey));
+        };
+      },
+      SimpleLoopCommand::SendTo(ad, content, bufsize) => {
+        let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.ad == ad  && match e.state {
+          CacheEntryState::OWS(_) | CacheEntryState::WR(_) => true,
+          _ => false,
+        }).unwrap();
+        match c.state {
+          CacheEntryState::OWS(_) => {
+            let state = mem::replace(&mut c.state, CacheEntryState::Empty);
+            if let CacheEntryState::OWS(ws) = state {
+              let mut ces = thread_park_w_spawn(ws,bufsize);
+              ces.0.send(content).unwrap();
+              /*if ces.2.is_some() {
+                if let Some(ref isstart) = ces.2.as_ref() {
+                  // block until thread start to avoid racy situation when starting thread -> block
+                  // loop on thread creation : in code use Builder for thread spawn to catch error
+                  loop {
+                    if isstart.load(Ordering::Relaxed) {
+                      break;
+                    } else {
+                      thread::yield_now();
+                    }
+                  }
+                }
+                ces.2 = None;
+              }*/
+              ces.1.thread().unpark();
+              c.state = CacheEntryState::WR(ces); 
+            }
+          },
+          CacheEntryState::WR (ref mut ca) => {
+            ca.0.send(content).unwrap();
+            ca.1.thread().unpark();
+          },
+          _ => panic!("failed write : not connected"),
+        };
+      },
+      SimpleLoopCommand::Expect(ad, expect,ended) => {
+        panic!("no expect");
+      },
+    };
+    Ok(()) 
+}
+
 fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<CacheEntry<T,CoRHandle,(Rc<RefCell<Vec<u8>>>,CoRHandle)>>, t : &T,_ : Arc<CpuPool>) -> Result<()> {
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
@@ -1005,6 +1081,46 @@ fn transport_cpupool_w_testing<W : 'static + Send,T>(ocw : Option<CpuFuture<W,Er
     },
   }
 }
+fn thread_park_w_spawn<W : 'static + Send + Write>(ws : W, bufsize : usize) -> (Sender<Vec<u8>>,JoinHandle<()>) {
+  let (s,r) = channel();
+  let h = thread::Builder::new().spawn(move || {
+    let mut ws = ws;
+    loop {
+    let to_send : Vec<u8> = match r.try_recv() {
+        Ok(t) => t,
+        Err(e) => if let TryRecvError::Empty = e {
+          thread::park();
+          continue;
+        } else {
+          panic!("th park mpsc error : {:?}",e);
+        },
+    };
+    let mut i = 0;
+    while i < to_send.len() {
+      let nbr = WriteThreadparkPool(&mut ws).write(&to_send[i..min(i + bufsize,to_send.len())]).unwrap();
+      i += nbr;
+    }
+  }}).unwrap();
+  return (s,h);
+}
+
+fn transport_threadpark_w_testing<W : 'static + Send + Write,T>(ocw : Option<(Sender<Vec<u8>>,JoinHandle<()>)>, ows : Option<W>, _ : &T,bufsize : usize) -> Result<(Sender<Vec<u8>>,JoinHandle<()>)> {
+  match ocw {
+    Some(mut s) => {
+      s.1.thread().unpark();
+      return Ok(s);
+    },
+    None => match ows {
+      Some(ws) => Ok(thread_park_w_spawn(ws,bufsize)),
+      None => panic!("uinint thpark"),
+    },
+  }
+
+}
+
+
+
+
 
 
 fn transport_corout_r_testing<T : Transport>(ocr : Option<CoRHandle>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>, expected : Vec<u8>) -> Result<CoRHandle> {
@@ -1049,6 +1165,26 @@ fn transport_cpupool_r_testing<T : Transport>(ocr : Option<CpuFuture<(),Error>>,
     ok(())
   });
   Ok(cpufut)
+}
+fn transport_threadpark_r_testing<T : Transport>(ocr : Option<JoinHandle<()>>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>, expected : Vec<u8>) -> Result<JoinHandle<()>> {
+  match ocr {
+    Some(mut s) => {
+      s.thread().unpark();
+      return Ok(s);
+    },
+    None => (),
+  };
+  let handle = thread::spawn(move || {
+    let mut rs = ors.unwrap();
+    let mut nbread : usize = 0;
+    let mut buf = vec![0;contentsize];
+    while nbread < contentsize {
+      nbread += ReadThreadparkPool(&mut rs).read(&mut buf[nbread..min(nbread + bufsize,contentsize)]).unwrap();
+    };
+    assert!(&buf[..] == &expected[..], "left : {:?}, right : {:?}",&buf[..],&expected[..]);
+    ended.fetch_add(1,Ordering::Relaxed);
+  });
+  Ok(handle)
 }
   
 
@@ -1138,8 +1274,8 @@ impl<'a,R : Read> Read for ReadCpuPool<'a,R> {
       match self.0.read(buf) {
         Ok(r) => return Ok(r),
         Err(e) => if let IoErrorKind::WouldBlock = e.kind() {
-//          self.1.yield_with(0);
-//          Do nothing TODO consider parking thread
+          // do nothing, ease thread switch
+          thread::yield_now();
         } else {
           return Err(e);
         },
@@ -1154,7 +1290,7 @@ impl<'a,W : Write> Write for WriteCpuPool<'a,W> {
      match self.0.write(buf) {
        Ok(r) => return Ok(r),
        Err(e) => if let IoErrorKind::WouldBlock = e.kind() {
-//         self.1.yield_with(0); TODO park?
+          thread::yield_now();
        } else {
          return Err(e);
        },
@@ -1166,7 +1302,53 @@ impl<'a,W : Write> Write for WriteCpuPool<'a,W> {
      match self.0.flush() {
        Ok(r) => return Ok(r),
        Err(e) => if let IoErrorKind::WouldBlock = e.kind() {
-//         self.1.yield_with(0);
+          thread::yield_now();
+       } else {
+         return Err(e);
+       },
+     }
+   }
+ }
+ // no write_all impl as default write all would require state
+ //fn write_all(&mut self, buf: &[u8]) -> IoResult<()> { .. }
+
+}
+
+pub struct ReadThreadparkPool<'a,R : 'a + Read> (&'a mut R);
+impl<'a,R : Read> Read for ReadThreadparkPool<'a,R> {
+  fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+    loop {
+      match self.0.read(buf) {
+        Ok(r) => return Ok(r),
+        Err(e) => if let IoErrorKind::WouldBlock = e.kind() {
+          thread::park();
+        } else {
+          return Err(e);
+        },
+      }
+    }
+  }
+}
+pub struct WriteThreadparkPool<'a,W : 'a + Write> (&'a mut W);
+impl<'a,W : Write> Write for WriteThreadparkPool<'a,W> {
+ fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+   loop {
+     match self.0.write(buf) {
+       Ok(r) => return Ok(r),
+       Err(e) => if let IoErrorKind::WouldBlock = e.kind() {
+          thread::park();
+       } else {
+         return Err(e);
+       },
+     }
+   }
+ }
+ fn flush(&mut self) -> IoResult<()> {
+   loop {
+     match self.0.flush() {
+       Ok(r) => return Ok(r),
+       Err(e) => if let IoErrorKind::WouldBlock = e.kind() {
+          thread::park();
        } else {
          return Err(e);
        },
@@ -1241,6 +1423,42 @@ pub fn reg_rw_cpupool_testing<T : Transport>(fromadd : T::Address, tfrom : T, to
 
   let frommsg = spawn_loop_async(tfrom, move |a,b,c,cended,all_r,cpp1| 
                                 transport_cpupool_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended, all_r,cpp1), move |a,b,c,cpp2| transport_cpupool_w_testing(a,b,c,write_buf_size,cpp2), move|c,ca,t,cpp3|simple_command_controller_cpupool(c,ca,t,cpp3),ended_expectf.clone(),Vec::new(),connect_done.clone(),cpp).unwrap();
+
+  // send and receive commands
+  frommsg.send(SimpleLoopCommand::ConnectWith(toadd.clone())).unwrap();
+  while connect_done.load(Ordering::Relaxed) != 1 { }
+  for content in contents.iter() {
+    frommsg.send(SimpleLoopCommand::SendTo(toadd.clone(),content.clone(),write_buf_size)).unwrap();
+  }
+
+  while ended_expect.load(Ordering::Relaxed) != 1 { }
+
+}
+pub fn reg_rw_threadpark_testing<T : Transport>(fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize) {
+
+  let mut contents = Vec::with_capacity(nbmess);
+  let mut all_r = vec![0;nbmess * content_size];
+  for im in 0 .. nbmess {
+    let mut content = vec![0;content_size];
+    for i in 0..content_size {
+      let v = (i + im) as u8;
+      content[i]= v;
+      all_r[im * content_size + i] = v;
+    }
+    contents.push(content);
+  }
+  
+  let cpupool = Arc::new(CpuPool::new(1));
+  let ended_expect = Arc::new(AtomicUsize::new(0));
+  let ended_expectf = Arc::new(AtomicUsize::new(0));
+  let connect_done = Arc::new(AtomicUsize::new(0));
+  let cpp = cpupool.clone();
+  let tomsg = spawn_loop_async(tto, move |a,b,c,cended,all_r,_|
+                               transport_threadpark_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended, all_r), move |a,b,c,_| transport_threadpark_w_testing(a,b,c,write_buf_size), move|c,ca,t,_|simple_command_controller_threadpark(c,ca,t),ended_expect.clone(),all_r,connect_done.clone(),cpp).unwrap();
+  let cpp = cpupool.clone();
+
+  let frommsg = spawn_loop_async(tfrom, move |a,b,c,cended,all_r,_| 
+                                transport_threadpark_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended, all_r), move |a,b,c,_| transport_threadpark_w_testing(a,b,c,write_buf_size), move|c,ca,t,_|simple_command_controller_threadpark(c,ca,t),ended_expectf.clone(),Vec::new(),connect_done.clone(),cpp).unwrap();
 
   // send and receive commands
   frommsg.send(SimpleLoopCommand::ConnectWith(toadd.clone())).unwrap();
