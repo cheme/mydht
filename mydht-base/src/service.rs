@@ -22,6 +22,7 @@ use mydhtresult::{
   ErrorLevel as MdhtErrorLevel,
 };
 use std::mem::replace;
+use std::collections::vec_deque::VecDeque;
 
 /// TODO duration before restart (in conjonction with nb loop)
 /// The service struct can have an inner State (mutable in call).
@@ -126,7 +127,15 @@ impl<S> SpawnHandle<S> for BlockingSameThread<S> {
   }
 }
 
-
+/// Local spawn send, could be use for non thread spawn (not Send)
+/// Not for local coroutine as Rc is required in this case
+impl<'a, C> SpawnSend<C> for &'a mut VecDeque<C> {
+  const CAN_SEND : bool = true;
+  fn send(&mut self, c : C) -> Result<()> {
+    self.push_front(c);
+    Ok(())
+  }
+}
 /// Should not be use, except for very specific case or debugging.
 /// It blocks the main loop during process (run on the same thread).
 //pub struct Blocker<S : Service>(PhantomData<S>);

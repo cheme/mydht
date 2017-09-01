@@ -8,6 +8,7 @@ use mydhtresult::{
 use service::{
   Service,
   Spawner,
+  SpawnSend,
 };
 use std::rc::Rc;
 use std::cell::Cell;
@@ -94,8 +95,7 @@ impl<MC : MyDHTConf> MyDHT<MC> {
   }
 }
 
-type SpawnerRefs<S : Spawner> = (<S as Spawner>::Handle,<S as Spawner>::Send); 
-
+type SpawnerRefs<S,D,SP : Spawner<S,D>> = (SP::Handle,SP::Send); 
 pub trait MyDHTConf : 'static + Send + Sized {
 
   /// Name of the main thread
@@ -120,14 +120,16 @@ pub trait MyDHTConf : 'static + Send + Sized {
   /// Dynamic rules for the dht
   type DHTRules : DHTRules;
   /// loop slab implementation
-  type Slab : SlabCache<SlabEntry<Self::Transport,SpawnerRefs<Self::ReadSpawn>, SpawnerRefs<Self::WriteSpawn>,Self::PeerRef>>;
+  type Slab : SlabCache<SlabEntry<Self::Transport,SpawnerRefs<Self::ReadService,Self::ReadDest,Self::ReadSpawn>, SpawnerRefs<Self::WriteService,Self::WriteDest,Self::WriteSpawn>,Self::PeerRef>>;
   /// local cache for peer
   type PeerCache : KVCache<<Self::Peer as KeyVal>::Key,PeerCache<Self::PeerRef>>;
 
-  type ReadSpawn : Spawner<Self::ReadService>; 
-  type WriteSpawn : Spawner<Self::WriteService>;
+  type ReadDest : SpawnSend<<Self::ReadService as Service>::CommandOut>;
+  type ReadSpawn : Spawner<Self::ReadService,Self::ReadDest>; 
+  type WriteDest : SpawnSend<<Self::WriteService as Service>::CommandOut>;
+  type WriteSpawn : Spawner<Self::WriteService,Self::WriteDest>;
   // TODO temp for type check , hardcode it after on transport service (not true for kvstore service) the service contains the read stream!!
-  // type ReadService : Service;
+  type ReadService : Service;
   // TODO call to read and write in service will use ReadYield and WriteYield wrappers containing
   // the spawn yield (cf sample implementation in transport tests).
   type WriteService : Service;
