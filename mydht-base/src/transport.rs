@@ -3,7 +3,11 @@ extern crate coroutine;
 
 use mio::{Poll,Token,Ready,PollOpt};
 use std::ops::Deref;
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{
+  LittleEndian,
+  ReadBytesExt,
+  WriteBytesExt
+};
 use std::str::FromStr;
 use std::io::Result as IoResult;
 use std::result::Result as StdResult;
@@ -44,6 +48,27 @@ use std::net::{
   SocketAddrV6,
   Ipv6Addr,
 };
+
+//use utils::Ref;
+
+/// entry discribing the read or write stream
+pub struct SlabEntry<T : Transport, RR, WR, P> {
+  /// state for the stream
+  pub state : SlabEntryState<T,RR,WR>,
+  /// corresponding read or write stream slab index
+  pub os : Option<usize>,
+  pub peer : P,
+}
+
+pub enum SlabEntryState<T : Transport, RR, WR> 
+{
+  ReadStream(T::ReadStream),
+  WriteStream(T::WriteStream),
+  ReadSpawned(RR),
+  WriteSpawned(WR),
+  Empty,
+}
+
 
 pub trait Address : Eq + Sync + Send + Clone + Debug + Serialize + DeserializeOwned + 'static {
 /*  /// for tunnel (otherwhise rust serialize is use on peer)

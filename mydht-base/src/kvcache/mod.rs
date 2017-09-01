@@ -25,6 +25,12 @@ pub trait Cache<K, V> {
   /// Remove value
   fn remove_val_c(& mut self, &K) -> Option<V>;
 }
+
+/// usize key cache with key creation on insertion
+pub trait SlabCache<E> : 'static + Send + KVCache<usize, E> {
+  fn insert(&mut self, val: E) -> usize;
+}
+
 /// cache base trait to use in storage (transient or persistant) relative implementations
 pub trait KVCache<K, V> : Sized + Cache<K,V> {
   /// update value, possibly inplace (depending upon impl (some might just get value modify it and

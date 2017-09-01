@@ -164,7 +164,7 @@ impl Registerable for Tcp {
     Ok(true)
   }
 }
- 
+/*tttttttttt 
 #[cfg(feature="with-extra-test")]
 #[test]
 fn connect_rw () {
@@ -177,7 +177,7 @@ fn connect_rw () {
   // TODO test with spawn rewrite test without start but 
 
   connect_rw_with_optional(tcp_transport_1,tcp_transport_2,&a1,&a2,true,true);
-}
+}*/
 
 #[test]
 fn reg_mpsc_recv_test() {

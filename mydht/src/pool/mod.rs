@@ -194,18 +194,11 @@ pub fn spawn_loop<T : Transport, P, TC : TransportCache<T,P>>(transport : T, mut
   Ok(sender)
 }
 
-/// trait alias for transport (implemented for all kvcache) TODO could be only Cache (cf cache
-/// storage next refacto) + additional slab fn
 /// last bool true if asynch and registered
 pub trait TransportCache<T : Transport, P> : 'static + Send + KVCache<usize, (StreamType<T>, Option<usize>, Option<Arc<P>>, bool)> {
   fn insert(&mut self, val: (StreamType<T>, Option<usize>, Option<Arc<P>>,bool)) -> usize;
 }
 //impl<T : Transport, P, K : 'static + Send + KVCache<usize, (StreamType<T>, Option<usize>, Option<Arc<P>>)>> TransportCache<T,P> for K {}
-struct PeerCache<P> {
-  peer : Arc<P>,
-  read : Option<usize>,
-  write : Option<usize>,
-}
 enum StreamType<T : Transport> {
   Read(<T as Transport>::ReadStream),
   Write(<T as Transport>::WriteStream),

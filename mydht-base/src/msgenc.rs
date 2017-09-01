@@ -50,6 +50,8 @@ pub mod send_variant {
   #[derive(Serialize,Debug)]
   pub enum ProtoMessage<'a,P : Peer + 'a, V : KeyVal + 'a> {
     PING(&'a P,Vec<u8>, Vec<u8>), // TODO vec to &[u8]??
+    /// reply contain peer for update of distant peer info, for instance its listener address for a
+    /// tcp transport.
     PONG(&'a P,Vec<u8>),
     STORENODE(Option<QueryID>, Option<DistantEnc<&'a P>>),
     STOREVALUE(Option<QueryID>, Option<DistantEnc<&'a V>>),

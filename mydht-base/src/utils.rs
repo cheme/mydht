@@ -14,7 +14,7 @@ use std::fs::{self,File};
 use std::io::Result as IoResult;
 //use rand::Rng;
 use rand::thread_rng;
-
+use std::rc::Rc;
 use std::sync::{Arc,Mutex,Condvar};
 use std::fmt::{Formatter,Debug};
 use std::fmt::Error as FmtError;
@@ -24,7 +24,6 @@ use keyval::KeyVal;
 use keyval::FileKeyVal;
 use keyval::Attachment;
 use keyval::SettableAttachment;
-
 #[cfg(not(feature="openssl-impl"))]
 #[cfg(feature="rust-crypto-impl")]
 use std::io::{
@@ -42,8 +41,119 @@ use self::crypto::digest::Digest;
 use self::openssl::crypto::hash::{Hasher,Type};
 #[cfg(test)]
 use std::thread;
+use std::marker::Send;
+use std::borrow::Borrow;
 
 pub static NULL_TIMESPEC : Timespec = Timespec{ sec : 0, nsec : 0};
+
+/// trait to allow variant of Reference in mydht. Most of the time if threads are involved (depends on
+/// Spawner used) and Peer struct is big enough we use Arc.
+/// Note that Ref is semantically wrong it should be val. The ref here expect inner immutability.
+///
+pub trait Ref<T> : Borrow<T>  {
+  type Send : ToRef<T>;
+  /// get_sendable may involve a full copy or not (Ref is immutable)
+  fn get_sendable(&self) -> Self::Send;
+}
+
+pub trait ToRef<T> : Send + Sized {
+  type Ref : Ref<T,Send=Self>;
+  fn to_ref(self) -> Self::Ref;
+}
+
+/// Arc is used to share peer or key val between threads
+/// useless if no threads in spawners.
+#[derive(Clone,Eq,PartialEq)]
+pub struct ArcRef<T>(Arc<T>);
+
+impl<T> Borrow<T> for ArcRef<T> {
+  #[inline]
+  fn borrow(&self) -> &T {
+    self.0.borrow()
+  }
+}
+
+impl<T : Send + Sync> Ref<T> for ArcRef<T> {
+  type Send = ArcRef<T>;
+  #[inline]
+  fn get_sendable(&self) -> Self::Send {
+    ArcRef(self.0.clone())
+  }
+}
+
+impl<T : Send + Sync> ToRef<T> for ArcRef<T> {
+  type Ref = ArcRef<T>;
+  #[inline]
+  fn to_ref(self) -> Self::Ref {
+    self
+  }
+}
+
+/// Rc is used locally (the content size is not meaningless), a copy of the content is done if
+/// threads are used.
+#[derive(Clone,Eq,PartialEq)]
+pub struct RcRef<T>(Rc<T>);
+
+#[derive(Clone,Eq,PartialEq)]
+pub struct ToRcRef<T>(T);
+
+impl<T> Borrow<T> for RcRef<T> {
+  #[inline]
+  fn borrow(&self) -> &T {
+    self.0.borrow()
+  }
+}
+
+impl<T : Send + Clone> Ref<T> for RcRef<T> {
+  type Send = ToRcRef<T>;
+  #[inline]
+  fn get_sendable(&self) -> Self::Send {
+    let t : &T = self.0.borrow();
+    ToRcRef(t.clone())
+  }
+}
+
+impl<T : Send + Clone> ToRef<T> for ToRcRef<T> {
+  type Ref = RcRef<T>;
+  #[inline]
+  fn to_ref(self) -> Self::Ref {
+    RcRef(Rc::new(self.0))
+  }
+}
+
+/// Content is always cloned when sending (copyied in various struct) but also when at multiple
+/// location : only for small contents
+#[derive(Clone,Eq,PartialEq)]
+pub struct CloneRef<T>(T);
+
+#[derive(Clone,Eq,PartialEq)]
+pub struct ToCloneRef<T>(T);
+
+impl<T> Borrow<T> for CloneRef<T> {
+  #[inline]
+  fn borrow(&self) -> &T {
+    &self.0
+  }
+}
+
+impl<T : Send + Clone> Ref<T> for CloneRef<T> {
+  type Send = ToCloneRef<T>;
+  #[inline]
+  fn get_sendable(&self) -> Self::Send {
+    ToCloneRef(self.0.clone())
+  }
+}
+
+impl<T : Send + Clone> ToRef<T> for ToCloneRef<T> {
+  type Ref = CloneRef<T>;
+  #[inline]
+  fn to_ref(self) -> Self::Ref {
+    CloneRef(self.0)
+  }
+}
+
+
+
 
 pub fn is_in_tmp_dir(f : &Path) -> bool {
 //  Path::new(os::tmpdir().to_string()).is_ancestor_of(f)

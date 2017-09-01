@@ -42,6 +42,10 @@ pub use mydht_base::kvstore::*;
 mod mydhtresult{
 pub use mydht_base::mydhtresult::*;
 }
+mod service{
+pub use mydht_base::service::*;
+}
+
 
 
 #[cfg(test)]

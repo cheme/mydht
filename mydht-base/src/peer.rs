@@ -25,6 +25,10 @@ use serde::de::DeserializeOwned;
 
 /// A peer is a special keyval with an attached address over the network
 pub trait Peer : KeyVal + 'static {
+  /// Address of the peer, this is the last low level address for which the peer is known to reply.
+  /// This address may not be the address to which we are connected, with a tcp connection, it is
+  /// the address with the listener port, not the port use by the stream : thus it is publish on
+  /// handshake
   type Address : Address;
   type ShadowW : ShadowW;
   type ShadowR : ShadowR<ShadowMode = <Self::ShadowW as ShadowBase>::ShadowMode> ;

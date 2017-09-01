@@ -30,6 +30,7 @@ mod client;
 mod peermanager;
 mod kvmanager;
 mod querymanager;
+mod mainloop;
 
 /// utility trait to avoid lot of parameters in each struct / fn
 /// kinda aliasing
