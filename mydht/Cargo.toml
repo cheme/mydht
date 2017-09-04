@@ -6,12 +6,11 @@ authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
 
 [features]
-#default = ["openssl-impl","rust-crypto-impl","mio-impl"]
+#default = ["openssl-impl","rust-crypto-impl"]
 default = ["rust-crypto-impl","with-extra-test","openssl-impl"]
-#default = ["rust-crypto-impl","mio-impl","openssl-impl"]
+#default = ["rust-crypto-impl","openssl-impl"]
 openssl-impl = ["openssl"]
 rust-crypto-impl = ["rust-crypto"]
-mio-impl = ["coroutine"]
 with-extra-test = []
 nightly = []
 
@@ -55,12 +54,6 @@ path = "../mydht-udp/"
 
 [dependencies.bit-vec]
 git = "https://github.com/cheme/bit-vec.git"
-
-
-[dependencies.coroutine]
-git = "https://github.com/cheme/coroutine-rs.git"
-#path = "../../mydht-dep/coroutine-rs/"
-optional = true
 
 
 [dependencies.openssl]

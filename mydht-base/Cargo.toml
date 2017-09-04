@@ -8,7 +8,6 @@ authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 [features]
 default = ["with-extra-test","rust-crypto"]
 openssl-impl = ["openssl"]
-mio-impl = ["coroutine"]
 rust-crypto-impl = ["rust-crypto"]
 with-extra-test = []
 nightly = []
@@ -29,20 +28,17 @@ mio = "~0.6.10"
 #bit-vec = "~0.4.2"
 #vec_map = "~0.8.0"
 
+coroutine = "~0.8.0"
+spin = "~0.4.5"
+futures = "~0.1.15"
+futures-cpupool = "~0.1.5"
+
 [dependencies.bit-vec]
 git = "https://github.com/cheme/bit-vec.git"
 
 [dependencies.readwrite-comp]
 #path = "../../../readwrite-comp/"
 git = "https://github.com/cheme/readwrite-comp.git"
-
-
-[dependencies.coroutine]
-#version = "~0.8.0"
-git = "https://github.com/rustcc/coroutine-rs.git"
-#path = "../../../mydht-dep/coroutine-rs/"
-optional = true
-
 
 [dependencies.openssl] # currently only for hash_default... TODO rem
 version = "~0.9.15"
