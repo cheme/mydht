@@ -117,14 +117,16 @@ impl<'a,W : Write, Y : SpawnerYield> Write for WriteYield<'a,W,Y> {
 
 
 
+/// marker trait for service allowing restart (yield should return `YieldReturn::Return`).
+/// if ignore level error (eg async wouldblock) is send should we report as a failure or ignore and restart with
+/// state later (for instance if a register async stream token is available again in a epoll).
+/// This depend on the inner implementation : if it could suspend on error and restart latter
+/// with same state parameter.
+pub trait ServiceRestartable {}
+
 /// TODO duration before restart (in conjonction with nb loop)
 /// The service struct can have an inner State (mutable in call).
 pub trait Service {
-  /// if ignore level error (eg async wouldblock) is send should we report as a failure or ignore and restart with
-  /// state later (for instance if a register async stream token is available again in a epoll).
-  /// This depend on the inner implementation : if it could suspend on error and restart latter
-  /// with same state parameter.
-  const RESTARTABLE : bool;
   /// If state contains all info needed to restart the service at the point it return a mydhterror
   /// of level ignore (wouldblock), set this to true; most of the time it should be set to false
   /// (safer).
@@ -139,6 +141,7 @@ pub trait Service {
   /// restartable, an error is returned (if input is expected) : use const for testing before call
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : S) -> Result<Self::CommandOut>;
 }
+
 
 pub trait Spawner<S : Service, D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<<S as Service>::CommandIn>> {
   type Handle : SpawnHandle<S,R>;
@@ -315,7 +318,6 @@ impl<S : Service, D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<S::Co
 }
 
 
-
 pub struct RestartSpawn<S : Service,D : SpawnSend<<S as Service>::CommandOut>, SP : Spawner<S,D,R>, R : SpawnRecv<S::CommandIn>> {
   spawner : SP,
   service : S,
@@ -331,7 +333,7 @@ pub enum RestartSameThread<S : Service,D : SpawnSend<<S as Service>::CommandOut>
   Empty,
 }
 
-impl<S : Service,D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<S::CommandIn>>
+impl<S : Service + ServiceRestartable,D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<S::CommandIn>>
   SpawnHandle<S,R> for 
   RestartSameThread<S,D,RestartOrError,R> {
   #[inline]
@@ -384,7 +386,8 @@ impl<S : Service,D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<S::Com
 /// where it is known to restart
 pub struct RestartOrError;
 
-impl<S : Service, D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<S::CommandIn>> Spawner<S,D,R> for RestartOrError {
+/// Only for Restartable service
+impl<S : Service + ServiceRestartable, D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<S::CommandIn>> Spawner<S,D,R> for RestartOrError {
   type Handle = RestartSameThread<S,D,Self,R>;
   type Yield = NoYield;
   fn spawn (

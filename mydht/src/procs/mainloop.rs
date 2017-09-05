@@ -9,6 +9,7 @@ use service::{
   Service,
   Spawner,
   SpawnSend,
+  SpawnRecv,
 };
 use std::rc::Rc;
 use std::cell::Cell;
@@ -95,7 +96,7 @@ impl<MC : MyDHTConf> MyDHT<MC> {
   }
 }
 
-type SpawnerRefs<S,D,SP : Spawner<S,D>> = (SP::Handle,SP::Send); 
+type SpawnerRefs<S,D,F,SP : Spawner<S,D,F>> = (SP::Handle,F); 
 pub trait MyDHTConf : 'static + Send + Sized {
 
   /// Name of the main thread
@@ -120,19 +121,22 @@ pub trait MyDHTConf : 'static + Send + Sized {
   /// Dynamic rules for the dht
   type DHTRules : DHTRules;
   /// loop slab implementation
-  type Slab : SlabCache<SlabEntry<Self::Transport,SpawnerRefs<Self::ReadService,Self::ReadDest,Self::ReadSpawn>, SpawnerRefs<Self::WriteService,Self::WriteDest,Self::WriteSpawn>,Self::PeerRef>>;
+  type Slab : SlabCache<SlabEntry<Self::Transport,SpawnerRefs<Self::ReadService,Self::ReadDest,Self::ReadFrom,Self::ReadSpawn>, SpawnerRefs<Self::WriteService,Self::WriteDest,Self::WriteFrom,Self::WriteSpawn>,Self::PeerRef>>;
   /// local cache for peer
   type PeerCache : KVCache<<Self::Peer as KeyVal>::Key,PeerCache<Self::PeerRef>>;
 
+  type ReadFrom : SpawnRecv<<Self::ReadService as Service>::CommandIn>;
   type ReadDest : SpawnSend<<Self::ReadService as Service>::CommandOut>;
-  type ReadSpawn : Spawner<Self::ReadService,Self::ReadDest>; 
+  type ReadSpawn : Spawner<Self::ReadService,Self::ReadDest,Self::ReadFrom>; 
   type WriteDest : SpawnSend<<Self::WriteService as Service>::CommandOut>;
-  type WriteSpawn : Spawner<Self::WriteService,Self::WriteDest>;
+  type WriteFrom : SpawnRecv<<Self::WriteService as Service>::CommandIn>;
+  type WriteSpawn : Spawner<Self::WriteService,Self::WriteDest,Self::WriteFrom>;
   // TODO temp for type check , hardcode it after on transport service (not true for kvstore service) the service contains the read stream!!
   type ReadService : Service;
   // TODO call to read and write in service will use ReadYield and WriteYield wrappers containing
   // the spawn yield (cf sample implementation in transport tests).
   type WriteService : Service;
+
   /// Start the main loop
   #[inline]
   fn start_loop(self : Self) -> Result<Sender<MainLoopCommand<Self>>> {
