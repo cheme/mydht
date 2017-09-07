@@ -37,6 +37,7 @@ mod diag_tcp;
 #[cfg(feature="with-extra-test")]
 mod diag_udp;
 
+mod mainloop;
 pub use mydht_basetest::local_transport::*;
 pub use mydht_basetest::transport::*;
 const DHTRULES_DEFAULT : DhtRules = DhtRules {

@@ -186,7 +186,7 @@ where
                   read_entry.insert(SlabEntry {
                     state : SlabEntryState::ReadStream(rs),
                     os : None,
-                    peer : ad,
+                    peer : Some(ad),
                   });
                   read_token
                 };
@@ -200,7 +200,7 @@ where
                     write_entry.insert(SlabEntry {
                       state : SlabEntryState::WriteStream(ws),
                       os : Some(read_token),
-                      peer : wad.unwrap(),
+                      peer : wad,
                     });
                     write_token
                   };
@@ -715,7 +715,7 @@ impl<'a,T : Transport> SlabEntryInnerState<'a,T, (Vec<u8>,usize,T::ReadStream), 
 fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,CpuFuture<(),Error>,CpuFuture<T::WriteStream,Error>,T::Address>>, t : &T, cpupool : Arc<CpuPool>) -> Result<()> {
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
-        let c = cache.iter().any(|(_,e)|e.peer == ad && match e.state {
+        let c = cache.iter().any(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
           SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         });
@@ -727,11 +727,11 @@ fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<
             Some(cache.insert(SlabEntry {
               state : SlabEntryState::ReadStream(ors.unwrap()),
               os : None,
-              peer : ad.clone(),
+              peer : Some(ad.clone()),
             }))
           } else {
             // try update
-            cache.iter().position(|(_,e)|e.peer == ad && match e.state {
+            cache.iter().position(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
               SlabEntryState::ReadStream(_) | SlabEntryState::ReadSpawned(_) => true,
               _ => false,
             })
@@ -739,13 +739,13 @@ fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<
           let vkey = cache.insert(SlabEntry {
             state : SlabEntryState::WriteStream(ws),
             os : ork,
-            peer : ad,
+            peer : Some(ad),
           });
           ork.map(|rix|cache[rix].os=Some(vkey));
         };
       },
       SimpleLoopCommand::SendTo(ad, content, bufsize) => {
-        let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.peer == ad && match e.state {
+        let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.peer.as_ref() == Some(&ad) && match e.state {
           SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         }).unwrap();
@@ -785,7 +785,7 @@ fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<
 fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,JoinHandle<()>,(Sender<Vec<u8>>,JoinHandle<()>),T::Address>>, t : &T) -> Result<()> {
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
-        let c = cache.iter().any(|(_,e)|e.peer == ad && match e.state {
+        let c = cache.iter().any(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
           SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         });
@@ -797,11 +797,11 @@ fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopComma
             Some(cache.insert(SlabEntry {
               state : SlabEntryState::ReadStream(ors.unwrap()),
               os : None,
-              peer : ad.clone(),
+              peer : Some(ad.clone()),
             }))
           } else {
             // try update
-            cache.iter().position(|(_,e)|e.peer == ad && match e.state {
+            cache.iter().position(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
               SlabEntryState::ReadStream(_) | SlabEntryState::ReadSpawned(_) => true,
               _ => false,
             })
@@ -809,13 +809,13 @@ fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopComma
           let vkey = cache.insert(SlabEntry {
             state : SlabEntryState::WriteStream(ws),
             os : ork,
-            peer : ad,
+            peer : Some(ad),
           });
           ork.map(|rix|cache[rix].os=Some(vkey));
         };
       },
       SimpleLoopCommand::SendTo(ad, content, bufsize) => {
-        let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.peer == ad  && match e.state {
+        let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.peer.as_ref() == Some(&ad) && match e.state {
           SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         }).unwrap();
@@ -860,7 +860,7 @@ fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopComma
 fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,CoRHandle,(Rc<RefCell<Vec<u8>>>,CoRHandle),T::Address>>, t : &T,_ : Arc<CpuPool>) -> Result<()> {
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
-        let c = cache.iter().any(|(_,e)|e.peer == ad && match e.state {
+        let c = cache.iter().any(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
           SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         });
@@ -872,11 +872,11 @@ fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T
             Some(cache.insert(SlabEntry {
               state : SlabEntryState::ReadStream(ors.unwrap()),
               os : None,
-              peer : ad.clone(),
+              peer : Some(ad.clone()),
             }))
           } else {
             // try update
-            cache.iter().position(|(_,e)|e.peer == ad && match e.state {
+            cache.iter().position(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
               SlabEntryState::ReadStream(_) | SlabEntryState::ReadSpawned(_) => true,
               _ => false,
             })
@@ -884,13 +884,13 @@ fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T
           let vkey = cache.insert(SlabEntry {
             state : SlabEntryState::WriteStream(ws),
             os : ork,
-            peer : ad,
+            peer : Some(ad),
           });
           ork.map(|rix|cache[rix].os=Some(vkey));
         };
       },
       SimpleLoopCommand::SendTo(ad, content, bufsize) => {
-        let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.peer == ad  && match e.state {
+        let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.peer.as_ref() == Some(&ad)  && match e.state {
           SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         }).unwrap();
@@ -954,7 +954,7 @@ fn corout_ows2<TW : 'static + Write>(mut ws : TW, content : Vec<u8>, bufsize : u
 fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,(Vec<u8>,usize,T::ReadStream),(Vec<u8>,usize,T::WriteStream),T::Address>>, t : &T,_ : Arc<CpuPool>) -> Result<()> {
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
-        let c = cache.iter().any(|(_,e)|e.peer == ad && match e.state {
+        let c = cache.iter().any(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
           SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         });
@@ -966,11 +966,11 @@ fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cach
             Some(cache.insert(SlabEntry {
               state : SlabEntryState::ReadStream(ors.unwrap()),
               os : None,
-              peer : ad.clone(),
+              peer : Some(ad.clone()),
             }))
           } else {
             // try update
-            cache.iter().position(|(_,e)|e.peer == ad && match e.state {
+            cache.iter().position(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
               SlabEntryState::ReadStream(_) | SlabEntryState::ReadSpawned(_) => true,
               _ => false,
             })
@@ -978,13 +978,13 @@ fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cach
           let vkey = cache.insert(SlabEntry {
             state : SlabEntryState::WriteStream(ws),
             os : ork,
-            peer : ad,
+            peer : Some(ad),
           });
           ork.map(|rix|cache[rix].os=Some(vkey));
         };
       },
       SimpleLoopCommand::SendTo(ad, content, bufsize) => {
-        let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.peer == ad  && match e.state {
+        let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.peer.as_ref() == Some(&ad) && match e.state {
           SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         }).unwrap();

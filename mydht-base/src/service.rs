@@ -19,7 +19,25 @@ extern crate coroutine;
 extern crate spin;
 extern crate futures_cpupool;
 extern crate futures;
+extern crate mio;
 
+use self::mio::{
+  Registration,
+  SetReadiness,
+  Poll,
+  Token,
+  Ready,
+  PollOpt,
+};
+use transport::{
+  Registerable,
+};
+use std::sync::mpsc::{
+  Receiver as MpscReceiver,
+  TryRecvError,
+  Sender as MpscSender,
+  channel as mpsc_channel,
+};
 use self::futures_cpupool::CpuPool as FCpuPool;
 use self::futures_cpupool::CpuFuture;
 use self::futures::Async;
@@ -63,7 +81,7 @@ use std::mem::replace;
 use std::collections::vec_deque::VecDeque;
 
 
-pub struct ReadYield<'a,R : 'a + Read,Y : 'a + SpawnerYield> (&'a mut R,&'a mut Y);
+pub struct ReadYield<'a,R : 'a + Read,Y : 'a + SpawnerYield> (pub &'a mut R,pub &'a mut Y);
 impl<'a,R : Read,Y : SpawnerYield> Read for ReadYield<'a,R,Y> {
   fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
     loop {
@@ -81,7 +99,7 @@ impl<'a,R : Read,Y : SpawnerYield> Read for ReadYield<'a,R,Y> {
     }
   }
 }
-pub struct WriteYield<'a,W : 'a + Write, Y : 'a + SpawnerYield> (&'a mut W, &'a mut Y);
+pub struct WriteYield<'a,W : 'a + Write, Y : 'a + SpawnerYield> (pub &'a mut W, pub &'a mut Y);
 impl<'a,W : Write, Y : SpawnerYield> Write for WriteYield<'a,W,Y> {
  fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
    loop {
@@ -139,15 +157,20 @@ pub trait Service {
   /// If no command is 
   /// For restartable service no command in can be send, if no command in is send and it is not
   /// restartable, an error is returned (if input is expected) : use const for testing before call
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : S) -> Result<Self::CommandOut>;
+  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut>;
 }
 
 
-pub trait Spawner<S : Service, D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<<S as Service>::CommandIn>> {
-  type Handle : SpawnHandle<S,R>;
+pub trait Spawner<
+  S : Service,
+  D : SpawnSend<<S as Service>::CommandOut>,
+  R : SpawnRecv<<S as Service>::CommandIn>> {
+  type Handle : SpawnHandle<S,D,R>;
   type Yield : SpawnerYield;
   /// use 0 as nb loop if service should loop forever (for instance on a read receiver or a kvstore
   /// service)
+  /// TODO nb_loop is not enought to manage spawn, some optional duration could be usefull (that
+  /// could also be polled out of the spawner : with a specific suspend command
   fn spawn (
     &mut self,
     service : S,
@@ -158,35 +181,138 @@ pub trait Spawner<S : Service, D : SpawnSend<<S as Service>::CommandOut>, R : Sp
     nb_loop : usize // infinite if 0
   ) -> Result<Self::Handle>;
 }
-/*
-pub SpawnChannel<Command> {
+
+/// Send/Recv service Builder
+pub trait SpawnChannel<Command> {
   type Send : SpawnSend<Command>;
   type Recv : SpawnRecv<Command>;
-  fn new() -> Result<(Self::Send,Self::Recv)>;
-}*/
+  fn new(&mut self) -> Result<(Self::Send,Self::Recv)>;
+}
 
-/// send command to spawn
+/// send command to spawn, this is a blocking send currently : should evolve to non blocking.
 pub trait SpawnSend<Command> : Sized {
   /// if send is disable set to false, this can be test before calling `send`
   const CAN_SEND : bool;
   /// mut on self is currently not needed by impl
   fn send(&mut self, Command) -> Result<()>;
 }
-/// send command to spawn
+/// send command to spawn, it is non blocking (None returned by recv on not ready) : cf macro
+/// spawn_loop or others implementation
 pub trait SpawnRecv<Command> : Sized {
   /// mut on self is currently not needed by impl
   fn recv(&mut self) -> Result<Option<Command>>;
+//  fn new_sender(&mut self) -> Result<Self::SpawnSend>;
 }
 
+/// mio registrable channel receiver
+pub struct MioRecv<R> {
+  mpsc : R,
+  reg : Registration,
+}
+impl<C,R : SpawnRecv<C>> SpawnRecv<C> for MioRecv<R> {
+  fn recv(&mut self) -> Result<Option<C>> {
+    self.mpsc.recv()
+  }
+}
+impl<C> SpawnRecv<C> for MpscReceiver<C> {
+  fn recv(&mut self) -> Result<Option<C>> {
+    match self.try_recv() {
+      Ok(t) => Ok(Some(t)),
+      Err(e) => if let TryRecvError::Empty = e {
+        Ok(None)
+      } else {
+        Err(Error(format!("{}",e), ErrorKind::ChannelRecvError,Some(Box::new(e))))
+      },
+    }
+  }
+}
+
+impl<R> Registerable for MioRecv<R> {
+  fn register(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
+    p.register(&self.reg,t,r,po)?;
+    Ok(true)
+  }
+  fn reregister(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
+    p.reregister(&self.reg,t,r,po)?;
+    Ok(true)
+  }
+}
+/// mio registerable channel sender
+pub struct MioSend<S> {
+  mpsc : S,
+  set_ready : SetReadiness,
+}
+impl<C,S : SpawnSend<C>> SpawnSend<C> for MioSend<S> {
+  const CAN_SEND : bool = true;
+  fn send(&mut self, t : C) -> Result<()> {
+    self.mpsc.send(t)?;
+    self.set_ready.set_readiness(Ready::readable())?;
+    Ok(())
+  }
+}
+impl<C> SpawnSend<C> for MpscSender<C> {
+  const CAN_SEND : bool = true;
+  fn send(&mut self, t : C) -> Result<()> {
+    <MpscSender<C>>::send(self,t)?;
+    Ok(())
+  }
+}
+
+/// Mpsc channel as service send/recv
+pub struct MpscChannel;
+
+impl<C> SpawnChannel<C> for MpscChannel {
+  type Send = MpscSender<C>;
+  type Recv = MpscReceiver<C>;
+  /// new use a struct as input to allow construction over a MyDht for a Peer :
+  /// TODO MDht peer chan : first ensure peer is connected (or not) then run new channel -> send in
+  /// sync send of loop -> loop proxy to peer asynchronously -> dist peer receive command if
+  /// connected, then send in Read included service dest (their spawn impl is same as ours) -> des
+  /// service send to our peer send which send to us -> the recv got a dest to this recv
+  /// => this for this case we create two under lying channel from out of loop to loop and from
+  /// readpeer to out of loop. Second channel is needed to start readservice : after connect ->
+  /// connect is done with this channel creation (cf slab cache)
+  fn new(&mut self) -> Result<(Self::Send,Self::Recv)> {
+    let chan = mpsc_channel();
+    Ok(chan)
+  }
+}
+/// channel register on mio poll in service (service constrains Registrable on 
+/// This allows running mio loop as service, note that the mio loop is reading this channel, not
+/// the spawner loop (it can for commands like stop or restart yet it is not the current usecase
+/// (no need for service yield right now).
+pub struct MioChannel<CH>(pub CH);
+
+impl<C,CH : SpawnChannel<C>> SpawnChannel<C> for MioChannel<CH> {
+  type Send = MioSend<CH::Send>;
+  type Recv = MioRecv<CH::Recv>;
+  fn new(&mut self) -> Result<(Self::Send,Self::Recv)> {
+    let (s,r) = self.0.new()?;
+    let (reg,sr) = Registration::new2();
+    Ok((MioSend {
+      mpsc : s,
+      set_ready : sr,
+    }, MioRecv {
+      mpsc : r,
+      reg : reg,
+    }))
+  }
+}
 
 /// Handle use to send command to get back state
 /// State in the handle is simply the Service struct
-pub trait SpawnHandle<Service,Recv> {
+pub trait SpawnHandle<Service,Sen,Recv> {
   /// self is mut as most of the time this function is used in context where unwrap_state should be
   /// use so it allows more possibility for implementating
   fn is_finished(&mut self) -> bool;
+  /// unyield implementation must take account of the fact that it is called frequently even if the
+  /// spawn is not yield (no is_yield function here it is implementation dependant).
   fn unyield(&mut self) -> Result<()>;
-  fn unwrap_state(self) -> Result<(Service,Recv)>;
+  fn unwrap_state(self) -> Result<(Service,Sen,Recv)>;
+  // TODO add a kill command and maybe a yield command
+  //
+  // TODO add a get_technical_error command : right now we do not know if we should restart on
+  // finished or drop it!!!! -> plus solve the question of handling panic and error management
 }
 
 /// manages asynch call by possibly yielding process (yield a coroutine if same thread, park or
@@ -204,21 +330,55 @@ pub enum YieldReturn {
   Loop,
 }
 
+/// set a default value to receiver (spawn loop will therefore not yield on receiver
+pub struct DefaultRecv<C,SR>(pub SR, pub C);
+
+impl<C : Clone, SR : SpawnRecv<C>> SpawnRecv<C> for DefaultRecv<C,SR> {
+  #[inline]
+  fn recv(&mut self) -> Result<Option<C>> {
+    let r = self.0.recv();
+    if let Ok(None) = r {
+      return Ok(Some(self.1.clone()))
+    }
+    r
+  }
+}
+
+
+/// set a default value to receiver (spawn loop will therefore not yield on receiver
+pub struct DefaultRecvChannel<C,CH>(pub CH,pub C);
+
+impl<C : Clone, CH : SpawnChannel<C>> SpawnChannel<C> for DefaultRecvChannel<C,CH> {
+  type Send = CH::Send;
+  type Recv = DefaultRecv<C,CH::Recv>;
+
+  fn new(&mut self) -> Result<(Self::Send,Self::Recv)> {
+    let (s,r) = self.0.new()?;
+    Ok((s,DefaultRecv(r,self.1.clone())))
+  }
+}
+#[derive(Clone)]
+pub struct NoChannel;
+#[derive(Clone)]
 pub struct NoRecv;
+#[derive(Clone)]
 pub struct NoSend;
-/*pub struct NoChannel;
+
 impl<C> SpawnChannel<C> for NoChannel {
   type Send = NoSend;
   type Recv = NoRecv;
-  fn new() -> Result<(Self::Send,Self::Recv)> {
+  fn new(&mut self) -> Result<(Self::Send,Self::Recv)> {
     Ok((NoSend,NoRecv))
   }
-}*/
+}
 impl<C> SpawnRecv<C> for NoRecv {
   #[inline]
   fn recv(&mut self) -> Result<Option<C>> {
     Ok(None)
   }
+
+  //TODO fn close(&mut self) -> Result<()> : close receiver, meaning senders will fail on send and
+  //could be drop TODO also require is_close function (same for send) TODO this mus be last
 }
 impl<C> SpawnSend<C> for NoSend {
   const CAN_SEND : bool = false;
@@ -229,7 +389,7 @@ impl<C> SpawnSend<C> for NoSend {
   }
 }
 
-pub struct NoYield(YieldReturn);
+pub struct NoYield(pub YieldReturn);
 impl SpawnerYield for NoYield {
   #[inline]
   fn spawn_yield(&mut self) -> YieldReturn {
@@ -237,8 +397,8 @@ impl SpawnerYield for NoYield {
   }
 }
 
-pub struct BlockingSameThread<S,R>((S,R));
-impl<S,R> SpawnHandle<S,R> for BlockingSameThread<S,R> {
+pub struct BlockingSameThread<S,D,R>((S,D,R));
+impl<S,D,R> SpawnHandle<S,D,R> for BlockingSameThread<S,D,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
     true // if called it must be finished
@@ -248,8 +408,8 @@ impl<S,R> SpawnHandle<S,R> for BlockingSameThread<S,R> {
     Ok(())
   }
   #[inline]
-  fn unwrap_state(self) -> Result<(S,R)> {
-    Ok(self.0,)
+  fn unwrap_state(self) -> Result<(S,D,R)> {
+    Ok(self.0)
   }
 }
 
@@ -267,11 +427,11 @@ impl<'a, C> SpawnSend<C> for &'a mut VecDeque<C> {
 //pub struct Blocker<S : Service>(PhantomData<S>);
 pub struct Blocker;
 
-macro_rules! spawn_loop {($service:ident,$spawn_out:ident,$ocin:ident,$r:ident,$nb_loop:ident,$yield_build:expr,$return_build:expr) => {
+macro_rules! spawn_loop {($service:ident,$spawn_out:ident,$ocin:ident,$r:ident,$nb_loop:ident,$yield_build:ident,$return_build:expr) => {
     loop {
       match $ocin {
         Some(cin) => {
-          let cmd_out_r = $service.call(cin, $yield_build);
+          let cmd_out_r = $service.call(cin, &mut $yield_build);
           if let Some(cmd_out) = try_ignore!(cmd_out_r, "In spawner : {:?}") {
             if D::CAN_SEND {
               $spawn_out.send(cmd_out)?;
@@ -302,7 +462,7 @@ macro_rules! spawn_loop {($service:ident,$spawn_out:ident,$ocin:ident,$r:ident,$
 }}
 
 impl<S : Service, D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<S::CommandIn>> Spawner<S,D,R> for Blocker {
-  type Handle = BlockingSameThread<S,R>;
+  type Handle = BlockingSameThread<S,D,R>;
   type Yield = NoYield;
   fn spawn (
     &mut self,
@@ -312,8 +472,9 @@ impl<S : Service, D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<S::Co
     mut r : R,
     mut nb_loop : usize
   ) -> Result<Self::Handle> {
-    spawn_loop!(service,spawn_out,ocin,r,nb_loop,NoYield(YieldReturn::Loop),Err(Error("Blocking spawn service return would block when should loop".to_string(), ErrorKind::Bug, None)));
-    return Ok((BlockingSameThread((service,r))))
+    let mut yiel = NoYield(YieldReturn::Loop);
+    spawn_loop!(service,spawn_out,ocin,r,nb_loop,yiel,Err(Error("Blocking spawn service return would block when should loop".to_string(), ErrorKind::Bug, None)));
+    return Ok((BlockingSameThread((service,spawn_out,r))))
   }
 }
 
@@ -328,13 +489,13 @@ pub struct RestartSpawn<S : Service,D : SpawnSend<<S as Service>::CommandOut>, S
 
 pub enum RestartSameThread<S : Service,D : SpawnSend<<S as Service>::CommandOut>, SP : Spawner<S,D,R>, R : SpawnRecv<S::CommandIn>> {
   ToRestart(RestartSpawn<S,D,SP,R>),
-  Ended((S,R)),
+  Ended((S,D,R)),
   // technical
   Empty,
 }
 
 impl<S : Service + ServiceRestartable,D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<S::CommandIn>>
-  SpawnHandle<S,R> for 
+  SpawnHandle<S,D,R> for 
   RestartSameThread<S,D,RestartOrError,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
@@ -365,7 +526,7 @@ impl<S : Service + ServiceRestartable,D : SpawnSend<<S as Service>::CommandOut>,
   }
 
   #[inline]
-  fn unwrap_state(mut self) -> Result<(S,R)> {
+  fn unwrap_state(mut self) -> Result<(S,D,R)> {
     loop {
       match self {
         RestartSameThread::ToRestart(_) => {
@@ -398,7 +559,8 @@ impl<S : Service + ServiceRestartable, D : SpawnSend<<S as Service>::CommandOut>
     mut recv : R,
     mut nb_loop : usize
   ) -> Result<Self::Handle> {
-    spawn_loop!(service,spawn_out,ocin,recv,nb_loop,NoYield(YieldReturn::Return),
+    let mut yiel = NoYield(YieldReturn::Return);
+    spawn_loop!(service,spawn_out,ocin,recv,nb_loop,yiel,
         Ok(RestartSameThread::ToRestart(
               RestartSpawn {
                 spawner : RestartOrError,
@@ -408,7 +570,7 @@ impl<S : Service + ServiceRestartable, D : SpawnSend<<S as Service>::CommandOut>
                 nb_loop : nb_loop,
               }))
       );
-    return Ok(RestartSameThread::Ended((service,recv)))
+    return Ok(RestartSameThread::Ended((service,spawn_out,recv)))
   }
 }
 
@@ -418,7 +580,7 @@ pub struct Coroutine<'a>(PhantomData<&'a()>);
 /// common send/recv for coroutine local usage (not Send, but clone)
 pub type LocalRc<C> = Rc<RefCell<VecDeque<C>>>;
 /// not type alias as will move from this crate
-pub struct CoroutHandle<S,R>(Rc<Option<S>>,R,CoRHandle);
+pub struct CoroutHandle<S,D,R>(Rc<Option<(S,D,R)>>,CoRHandle);
 pub struct CoroutYield<'a>(&'a mut CoroutineC);
 
 impl<'a> SpawnerYield for CoroutYield<'a> {
@@ -430,14 +592,14 @@ impl<'a> SpawnerYield for CoroutYield<'a> {
 }
 
 
-impl<S,R> SpawnHandle<S,R> for CoroutHandle<S,R> {
+impl<S,D,R> SpawnHandle<S,D,R> for CoroutHandle<S,D,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
-    self.2.is_finished()
+    self.1.is_finished()
   }
   #[inline]
   fn unyield(&mut self) -> Result<()> {
-    self.2.resume(0).map_err(|e|{
+    self.1.resume(0).map_err(|e|{
       match e {
         CoroutError::Panicked => panic!("Spawned coroutine has panicked"),
         CoroutError::Panicking(c) => panic!(c),
@@ -446,18 +608,27 @@ impl<S,R> SpawnHandle<S,R> for CoroutHandle<S,R> {
     Ok(())
   }
   #[inline]
-  fn unwrap_state(self) -> Result<(S,R)> {
+  fn unwrap_state(self) -> Result<(S,D,R)> {
     let s = match Rc::try_unwrap(self.0) {
       Ok(s) => s,
       Err(_) => return Err(Error("Rc not accessible, might have read an unfinished corouthandle".to_string(), ErrorKind::Bug, None)),
     };
     match s {
-      Some(r) => Ok((r,self.1)),
+      Some(r) => Ok(r),
       None => Err(Error("Read an unfinished corouthandle".to_string(), ErrorKind::Bug, None)),
     }
   }
 }
+pub struct LocalRcChannel;
 
+impl<C> SpawnChannel<C> for LocalRcChannel {
+  type Send = LocalRc<C>;
+  type Recv = LocalRc<C>;
+  fn new(&mut self) -> Result<(Self::Send,Self::Recv)> {
+    let lr = Rc::new(RefCell::new(VecDeque::new()));
+    Ok((lr.clone(),lr))
+  }
+}
 impl<C> SpawnSend<C> for LocalRc<C> {
   const CAN_SEND : bool = true;
   fn send(&mut self, c : C) -> Result<()> {
@@ -472,9 +643,9 @@ impl<C> SpawnRecv<C> for LocalRc<C> {
 }
 
 
-impl<'a,S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOut>,R : 'static + Clone + SpawnRecv<S::CommandIn>> 
+impl<'a,S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOut>,R : 'static + SpawnRecv<S::CommandIn>> 
   Spawner<S,D,R> for Coroutine<'a> {
-  type Handle = CoroutHandle<S,R>;
+  type Handle = CoroutHandle<S,D,R>;
   type Yield = CoroutYield<'a>;
   fn spawn (
     &mut self,
@@ -485,30 +656,30 @@ impl<'a,S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOu
     mut nb_loop : usize
   ) -> Result<Self::Handle> {
 
-    let recvr = recv.clone();
     let rcs = Rc::new(None);
     let rcs2 = rcs.clone();
     let co_handle = CoroutineC::spawn(move |corout,_|{
       move || -> Result<()> {
         let mut rcs = rcs;
-        spawn_loop!(service,spawn_out,ocin,recv,nb_loop,CoroutYield(corout),Ok(()));
+        let mut yiel = CoroutYield(corout);
+        spawn_loop!(service,spawn_out,ocin,recv,nb_loop,yiel,Ok(()));
         let dest = Rc::get_mut(&mut rcs).unwrap();
-        replace(dest,Some(service));
+        replace(dest,Some((service,spawn_out,recv)));
         Ok(())
       }().unwrap(); // TODO error management on technical failure
       0
     });
-    return Ok(CoroutHandle(rcs2,recvr,co_handle));
+    return Ok(CoroutHandle(rcs2,co_handle));
   }
 }
 
 
 pub struct ThreadBlock;
-pub struct ThreadHandleBlock<S,R>(Arc<Mutex<Option<(S,R)>>>,JoinHandle<Result<()>>);
+pub struct ThreadHandleBlock<S,D,R>(Arc<Mutex<Option<(S,D,R)>>>,JoinHandle<Result<()>>);
 pub struct ThreadYieldBlock;
 macro_rules! thread_handle {($name:ident,$yield:expr) => {
 
-impl<S,R> SpawnHandle<S,R> for $name<S,R> {
+impl<S,D,R> SpawnHandle<S,D,R> for $name<S,D,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
     self.0.lock().is_some()
@@ -519,7 +690,7 @@ impl<S,R> SpawnHandle<S,R> for $name<S,R> {
   }
 
   #[inline]
-  fn unwrap_state(mut self) -> Result<(S,R)> {
+  fn unwrap_state(mut self) -> Result<(S,D,R)> {
     let mut mlock = self.0.lock();
     if mlock.is_some() {
       //let ost = mutex.into_inner();
@@ -533,7 +704,7 @@ impl<S,R> SpawnHandle<S,R> for $name<S,R> {
 
 }}
 
-thread_handle!(ThreadHandleBlock, |_ : &mut SpawnHandle<S,R>|{
+thread_handle!(ThreadHandleBlock, |_ : &mut SpawnHandle<S,D,R>|{
   Ok(())
 });
 
@@ -554,7 +725,7 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
   Spawner<S,D,R> for $spawner
   where S::CommandIn : Send
 {
-  type Handle = $handle<S,R>;
+  type Handle = $handle<S,D,R>;
   type Yield = $yield;
   fn spawn (
     &mut self,
@@ -569,7 +740,7 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
     let join_handle = thread::Builder::new().spawn(move ||{
       spawn_loop!(service,spawn_out,ocin,recv,nb_loop,$yield,Ok(()));
       let mut data = finished.lock();
-      *data = Some((service,recv));
+      *data = Some((service,spawn_out,recv));
       Ok(())
     })?;
     return Ok($handle(finished2,join_handle));
@@ -583,10 +754,10 @@ thread_spawn!(ThreadBlock,ThreadHandleBlock,ThreadYieldBlock);
 
 
 pub struct ThreadPark;
-pub struct ThreadHandlePark<S,R>(Arc<Mutex<Option<(S,R)>>>,JoinHandle<Result<()>>);
+pub struct ThreadHandlePark<S,D,R>(Arc<Mutex<Option<(S,D,R)>>>,JoinHandle<Result<()>>);
 pub struct ThreadYieldPark;
 
-thread_handle!(ThreadHandlePark, |a : &mut ThreadHandlePark<S,R>|{
+thread_handle!(ThreadHandlePark, |a : &mut ThreadHandlePark<S,D,R>|{
   a.1.thread().unpark();
   Ok(())
 });
@@ -610,10 +781,10 @@ thread_spawn!(ThreadPark,ThreadHandlePark,ThreadYieldPark);
 /// bad (future may be in api so fine)
 /// This use CpuPool but not really the future abstraction
 pub struct CpuPool(FCpuPool);
-pub struct CpuPoolHandle<S,R>(CpuFuture<(S,R),Error>,Option<(S,R)>);
+pub struct CpuPoolHandle<S,D,R>(CpuFuture<(S,D,R),Error>,Option<(S,D,R)>);
 pub struct CpuPoolYield;
 
-impl<S : Send + 'static,R : Send + 'static> SpawnHandle<S,R> for CpuPoolHandle<S,R> {
+impl<S : Send + 'static, D : Send + 'static, R : Send + 'static> SpawnHandle<S,D,R> for CpuPoolHandle<S,D,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
     match self.0.poll() {
@@ -634,7 +805,7 @@ impl<S : Send + 'static,R : Send + 'static> SpawnHandle<S,R> for CpuPoolHandle<S
   }
 
   #[inline]
-  fn unwrap_state(mut self) -> Result<(S,R)> {
+  fn unwrap_state(mut self) -> Result<(S,D,R)> {
     if self.1.is_some() {
       let r = replace(&mut self.1,None);
       return Ok(r.unwrap())
@@ -655,7 +826,7 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
   Spawner<S,D,R> for CpuPool
   where S::CommandIn : Send
 {
-  type Handle = CpuPoolHandle<S,R>;
+  type Handle = CpuPoolHandle<S,D,R>;
   type Yield = CpuPoolYield;
   fn spawn (
     &mut self,
@@ -666,9 +837,9 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
     mut nb_loop : usize
   ) -> Result<Self::Handle> {
     let future = self.0.spawn_fn(move || {
-      match move || -> Result<(S,R)> {
-        spawn_loop!(service,spawn_out,ocin,recv,nb_loop,CpuPoolYield,Ok((service,recv)));
-        Ok((service,recv))
+      match move || -> Result<(S,D,R)> {
+        spawn_loop!(service,spawn_out,ocin,recv,nb_loop,CpuPoolYield,Ok((service,spawn_out,recv)));
+        Ok((service,spawn_out,recv))
       }() {
         Ok(r) => okfuture(r),
         Err(e) => errfuture(e),
@@ -683,9 +854,9 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
 /// This cpu pool use future internally TODO test it , the imediate impact upon CpuPool is that the
 /// receiver for spawning is local (no need to be send)
 pub struct CpuPoolFuture(FCpuPool);
-pub struct CpuPoolHandleFuture<S,R,D>(CpuFuture<(S,D),Error>,Option<(S,D)>,R);
+pub struct CpuPoolHandleFuture<S,D,R>(CpuFuture<(S,D),Error>,Option<(S,D)>,R);
 
-impl<S : Send + 'static + Service,R, D : 'static + Send + SpawnSend<S::CommandOut>> SpawnHandle<S,R> for CpuPoolHandleFuture<S,R,D> {
+impl<S : Send + 'static + Service,R, D : 'static + Send + SpawnSend<S::CommandOut>> SpawnHandle<S,D,R> for CpuPoolHandleFuture<S,D,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
     match self.0.poll() {
@@ -706,13 +877,16 @@ impl<S : Send + 'static + Service,R, D : 'static + Send + SpawnSend<S::CommandOu
   }
 
   #[inline]
-  fn unwrap_state(mut self) -> Result<(S,R)> {
+  fn unwrap_state(mut self) -> Result<(S,D,R)> {
     if self.1.is_some() {
-      let r = replace(&mut self.1,None);
-      return Ok((r.unwrap().0,self.2))
+      if let Some((s,d)) = replace(&mut self.1,None) {
+        return Ok((s,d,self.2))
+      } else {
+        unreachable!()
+      }
     }
     let res = self.0.wait()?;
-    Ok((res.0,self.2))
+    Ok((res.0,res.1,self.2))
   }
 }
 
@@ -721,7 +895,7 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
   Spawner<S,D,R> for CpuPoolFuture
   where S::CommandIn : Send
 {
-  type Handle = CpuPoolHandleFuture<S,R,D>;
+  type Handle = CpuPoolHandleFuture<S,D,R>;
   type Yield = CpuPoolYield;
   fn spawn (
     &mut self,
@@ -736,7 +910,7 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
       match ocin {
         Some(cin) => {
           future = self.0.spawn(future.and_then(|(mut service, mut spawn_out)| {
-            match service.call(cin, CpuPoolYield) {
+            match service.call(cin, &mut CpuPoolYield) {
               Ok(r) => {
                 if D::CAN_SEND {
                   match spawn_out.send(r) {

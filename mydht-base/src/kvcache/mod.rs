@@ -12,6 +12,7 @@ use bit_vec::BitVec;
 pub mod rand_cache;
 
 /// cache base trait to use in storage (transient or persistant) relative implementations
+/// TODO refacto : do not &K, K must be &Something
 pub trait Cache<K, V> {
   /// Add value, pair is boolean for do persistent local store, and option for do cache value for
   /// CachePolicy duration TODO ref to key (key are clone)
@@ -27,8 +28,12 @@ pub trait Cache<K, V> {
 }
 
 /// usize key cache with key creation on insertion
-pub trait SlabCache<E> : 'static + Send + KVCache<usize, E> {
+pub trait SlabCache<E> {
   fn insert(&mut self, val: E) -> usize;
+  fn remove(&mut self, k : usize) -> Option<E>;
+  fn get(&self, k : usize) -> Option<&E>;
+  fn get_mut(&mut self, k : usize) -> Option<&mut E>;
+  fn has(&self, k : usize) -> bool;
 }
 
 /// cache base trait to use in storage (transient or persistant) relative implementations

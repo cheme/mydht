@@ -51,6 +51,11 @@ path = "../mydht-tcp/"
 [dev-dependencies.mydht-udp]
 path = "../mydht-udp/"
 
+[dev-dependencies.mydht-tcp-loop]
+path = "../mydht-tcp-loop/"
+
+[dev-dependencies.mydht-slab]
+path = "../mydht-slab/"
 
 [dependencies.bit-vec]
 git = "https://github.com/cheme/bit-vec.git"

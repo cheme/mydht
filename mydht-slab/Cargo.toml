@@ -1,0 +1,18 @@
+[package]
+
+name = "mydht-slab"
+version = "0.0.1"
+authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
+
+
+[features]
+default = ["with-extra-test"]
+with-extra-test = []
+[dependencies]
+slab = "~0.4.0"
+mydht-base = {path="../mydht-base"}
+
+[dev-dependencies.mydht-basetest]
+path = "../mydht-basetest/"
+
+

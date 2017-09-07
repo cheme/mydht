@@ -14,7 +14,9 @@ dependencies = [
  "mydht-basetest 0.0.1",
  "mydht-bincode 0.0.1",
  "mydht-inefficientmap 0.0.1",
+ "mydht-slab 0.0.1",
  "mydht-tcp 0.0.1",
+ "mydht-tcp-loop 0.0.1",
  "mydht-udp 0.0.1",
  "num 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
  "openssl 0.9.17 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -305,6 +307,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mydht-slab"
+version = "0.0.1"
+dependencies = [
+ "mydht-base 0.0.1",
+ "slab 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "mydht-tcp"
 version = "0.0.1"
 dependencies = [
@@ -314,6 +324,20 @@ dependencies = [
  "mydht-base 0.0.1",
  "num 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
  "time 0.1.38 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "mydht-tcp-loop"
+version = "0.0.1"
+dependencies = [
+ "byteorder 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "mio 0.6.10 (registry+https://github.com/rust-lang/crates.io-index)",
+ "mydht-base 0.0.1",
+ "mydht-basetest 0.0.1",
+ "num 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
+ "time 0.1.38 (registry+https://github.com/rust-lang/crates.io-index)",
+ "vec_map 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

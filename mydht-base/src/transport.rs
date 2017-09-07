@@ -57,7 +57,7 @@ pub struct SlabEntry<T : Transport, RR, WR, P> {
   pub state : SlabEntryState<T,RR,WR>,
   /// corresponding read or write stream slab index
   pub os : Option<usize>,
-  pub peer : P,
+  pub peer : Option<P>,
 }
 
 pub enum SlabEntryState<T : Transport, RR, WR> 
@@ -190,7 +190,10 @@ pub trait Transport : Send + Sync + 'static + Registerable {
   fn start<C> (&self, C) -> Result<()>
     where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<ReaderHandle>;
 
-  /// transport listen for incomming connection
+  /// transport listen for incomming connection 
+  ///
+  /// TODO remove address (not related to peer address
+  /// and accessible by transport handle
   fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>, Self::Address)>;
 
   /// Sometimes : for instance with tcp, the writestream is the same as the read stream,
