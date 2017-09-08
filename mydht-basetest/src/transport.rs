@@ -138,7 +138,7 @@ where
   FR : 'static + Send + Fn(Option<RR>,Option<T::ReadStream>,&T,Arc<AtomicUsize>,Vec<u8>,Arc<CpuPool>) -> Result<RR>,
   FW : 'static + Send + Fn(Option<WR>,Option<T::WriteStream>,&T,Arc<CpuPool>) -> Result<WR>,
   //for<'a> TC : 'static + Send + Fn(M, &'a mut Slab<SlabEntry<T,RR,WR>>) -> Result<()>,
-  TC : 'static + Send + Fn(M, &mut Slab<SlabEntry<T,RR,WR,T::Address>>,&T,Arc<CpuPool>) -> Result<()>,
+  TC : 'static + Send + Fn(M, &mut Slab<SlabEntry<T,RR,WR,(),T::Address>>,&T,Arc<CpuPool>) -> Result<()>,
 {
 
   let (sender,receiver) = channel_reg();
@@ -152,12 +152,12 @@ fn loop_async<M, TC, T : Transport, RR, WR, FR, FW>(receiver : MpscRec<M>, trans
 where 
   FR : Fn(Option<RR>,Option<T::ReadStream>,&T,Arc<AtomicUsize>,Vec<u8>,Arc<CpuPool>) -> Result<RR>,
   FW : Fn(Option<WR>,Option<T::WriteStream>,&T,Arc<CpuPool>) -> Result<WR>,
-  TC : Fn(M, &mut Slab<SlabEntry<T,RR,WR,T::Address>>, &T,Arc<CpuPool>) -> Result<()>,
+  TC : Fn(M, &mut Slab<SlabEntry<T,RR,WR,(),T::Address>>, &T,Arc<CpuPool>) -> Result<()>,
 {
 
 
 
-  let mut cache : Slab<SlabEntry<T,RR,WR,T::Address>> = Slab::new();
+  let mut cache : Slab<SlabEntry<T,RR,WR,(),T::Address>> = Slab::new();
   let mut events = Events::with_capacity(1024);
   let poll = Poll::new()?;
 
@@ -198,7 +198,7 @@ where
                     assert!(true == ws.register(&poll, Token(write_token + START_STREAM_IX), Ready::writable(),
                       PollOpt::edge())?);
                     write_entry.insert(SlabEntry {
-                      state : SlabEntryState::WriteStream(ws),
+                      state : SlabEntryState::WriteStream(ws,()),
                       os : Some(read_token),
                       peer : wad,
                     });
@@ -225,9 +225,9 @@ where
                       ca.state = SlabEntryState::ReadSpawned(read_cl(None,Some(rs),&transport,ended.clone(),exp.clone(),cpp.clone())?);
                     }
                   },
-                  SlabEntryState::WriteStream(_) => {
+                  SlabEntryState::WriteStream(_,_) => {
                     let state = mem::replace(&mut ca.state, SlabEntryState::Empty);
-                    if let SlabEntryState::WriteStream(ws) = state {
+                    if let SlabEntryState::WriteStream(ws,_) = state {
                       ca.state = SlabEntryState::WriteSpawned(write_cl(None,Some(ws),&transport,cpp.clone())?);
                     }
                   },
@@ -553,7 +553,7 @@ pub fn reg_mpsc_recv_test<T : Transport>(t : T) {
   let sp_cix = current_ix.clone();
   let sp_nit = next_it.clone();
   let nbit = 3;
-  let controller = move |ix : usize, _ : &mut Slab<SlabEntry<T,(),(),T::Address>>, _ : &T,_| {
+  let controller = move |ix : usize, _ : &mut Slab<SlabEntry<T,(),(),(),T::Address>>, _ : &T,_| {
     let i = sp_cix.fetch_add(1,Ordering::Relaxed);
     assert_eq!(i, ix);
     if i == nbit -1 {
@@ -591,7 +591,7 @@ pub fn reg_connect_2<T : Transport>(fromadd : &T::Address, t : T, c0 : T, c1 : T
 
   let content = [5];
   
-  let controller = move |_ : (), _ : &mut Slab<SlabEntry<T,(),(),T::Address>>, _ : &T,_| { Ok(()) };
+  let controller = move |_ : (), _ : &mut Slab<SlabEntry<T,(),(),(),T::Address>>, _ : &T,_| { Ok(()) };
 
   let notused = Arc::new(AtomicUsize::new(0));
   let next_it = Arc::new(AtomicBool::new(false));
@@ -695,7 +695,7 @@ impl<'a,RS : ReadTransportStream> RsState<'a,RS> {
     Ok(())
   }
 }
-struct SlabEntryInnerState<'a,A : 'a + Transport,B : 'a,C : 'a,D : 'a>(&'a mut SlabEntry<A,B,C,D>);
+struct SlabEntryInnerState<'a,A : 'a + Transport,B : 'a,C : 'a,D : 'a>(&'a mut SlabEntry<A,B,C,(),D>);
 impl<'a,T : Transport> SlabEntryInnerState<'a,T, (Vec<u8>,usize,T::ReadStream), (Vec<u8>,usize,T::WriteStream),T::Address> {
   /// non blocking send up to wouldblock
   pub fn send(&mut self, bufsize : usize) -> Result<()> {
@@ -712,11 +712,11 @@ impl<'a,T : Transport> SlabEntryInnerState<'a,T, (Vec<u8>,usize,T::ReadStream), 
     }
   }
 }
-fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,CpuFuture<(),Error>,CpuFuture<T::WriteStream,Error>,T::Address>>, t : &T, cpupool : Arc<CpuPool>) -> Result<()> {
+fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,CpuFuture<(),Error>,CpuFuture<T::WriteStream,Error>,(),T::Address>>, t : &T, cpupool : Arc<CpuPool>) -> Result<()> {
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
         let c = cache.iter().any(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
-          SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
+          SlabEntryState::WriteStream(_,_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         });
         if c {
@@ -737,7 +737,7 @@ fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<
             })
           };
           let vkey = cache.insert(SlabEntry {
-            state : SlabEntryState::WriteStream(ws),
+            state : SlabEntryState::WriteStream(ws,()),
             os : ork,
             peer : Some(ad),
           });
@@ -746,13 +746,13 @@ fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<
       },
       SimpleLoopCommand::SendTo(ad, content, bufsize) => {
         let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.peer.as_ref() == Some(&ad) && match e.state {
-          SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
+          SlabEntryState::WriteStream(_,_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         }).unwrap();
         match c.state {
-          SlabEntryState::WriteStream (_) => {
+          SlabEntryState::WriteStream (_,_) => {
             let state = mem::replace(&mut c.state, SlabEntryState::Empty);
-            if let SlabEntryState::WriteStream(mut ws) = state {
+            if let SlabEntryState::WriteStream(mut ws,()) = state {
               let f : CpuFuture<T::WriteStream,Error> = cpupool.spawn_fn(move|| {
                 WriteCpuPool(&mut ws).write_all(&content[..]).unwrap();// TODO replace by implementaiton with right size buffer
                 ok(ws)
@@ -782,11 +782,11 @@ fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<
 }
 
 
-fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,JoinHandle<()>,(Sender<Vec<u8>>,JoinHandle<()>),T::Address>>, t : &T) -> Result<()> {
+fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,JoinHandle<()>,(Sender<Vec<u8>>,JoinHandle<()>),(),T::Address>>, t : &T) -> Result<()> {
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
         let c = cache.iter().any(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
-          SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
+          SlabEntryState::WriteStream(_,()) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         });
         if c {
@@ -807,7 +807,7 @@ fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopComma
             })
           };
           let vkey = cache.insert(SlabEntry {
-            state : SlabEntryState::WriteStream(ws),
+            state : SlabEntryState::WriteStream(ws,()),
             os : ork,
             peer : Some(ad),
           });
@@ -816,13 +816,13 @@ fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopComma
       },
       SimpleLoopCommand::SendTo(ad, content, bufsize) => {
         let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.peer.as_ref() == Some(&ad) && match e.state {
-          SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
+          SlabEntryState::WriteStream(_,_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         }).unwrap();
         match c.state {
-          SlabEntryState::WriteStream(_) => {
+          SlabEntryState::WriteStream(_,_) => {
             let state = mem::replace(&mut c.state, SlabEntryState::Empty);
-            if let SlabEntryState::WriteStream(ws) = state {
+            if let SlabEntryState::WriteStream(ws,_) = state {
               let mut ces = thread_park_w_spawn(ws,bufsize);
               ces.0.send(content).unwrap();
               /*if ces.2.is_some() {
@@ -857,11 +857,11 @@ fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopComma
     Ok(()) 
 }
 
-fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,CoRHandle,(Rc<RefCell<Vec<u8>>>,CoRHandle),T::Address>>, t : &T,_ : Arc<CpuPool>) -> Result<()> {
+fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,CoRHandle,(Rc<RefCell<Vec<u8>>>,CoRHandle),(),T::Address>>, t : &T,_ : Arc<CpuPool>) -> Result<()> {
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
         let c = cache.iter().any(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
-          SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
+          SlabEntryState::WriteStream(_,_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         });
         if c {
@@ -882,7 +882,7 @@ fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T
             })
           };
           let vkey = cache.insert(SlabEntry {
-            state : SlabEntryState::WriteStream(ws),
+            state : SlabEntryState::WriteStream(ws,()),
             os : ork,
             peer : Some(ad),
           });
@@ -891,11 +891,11 @@ fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T
       },
       SimpleLoopCommand::SendTo(ad, content, bufsize) => {
         let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.peer.as_ref() == Some(&ad)  && match e.state {
-          SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
+          SlabEntryState::WriteStream(_,_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         }).unwrap();
         match c.state {
-          SlabEntryState::WriteStream (_) => {
+          SlabEntryState::WriteStream (_,_) => {
             corout_ows(&mut c.state, content, bufsize);
           },
           SlabEntryState::WriteSpawned (ref mut wr) => {
@@ -912,9 +912,9 @@ fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T
     Ok(()) 
 }
 
-fn corout_ows<T : Transport>(cstate : &mut SlabEntryState<T,CoRHandle,(Rc<RefCell<Vec<u8>>>,CoRHandle)>, content : Vec<u8>, bufsize : usize) {
+fn corout_ows<T : Transport>(cstate : &mut SlabEntryState<T,CoRHandle,(Rc<RefCell<Vec<u8>>>,CoRHandle),()>, content : Vec<u8>, bufsize : usize) {
   let state = mem::replace(cstate,SlabEntryState::Empty);
-  if let SlabEntryState::WriteStream(ws) = state {
+  if let SlabEntryState::WriteStream(ws,_) = state {
     let st = corout_ows2(ws, content,bufsize);
     *cstate = SlabEntryState::WriteSpawned(st);
   }
@@ -951,11 +951,11 @@ fn corout_ows2<TW : 'static + Write>(mut ws : TW, content : Vec<u8>, bufsize : u
     (bc,cohandle)
 }
 
-fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,(Vec<u8>,usize,T::ReadStream),(Vec<u8>,usize,T::WriteStream),T::Address>>, t : &T,_ : Arc<CpuPool>) -> Result<()> {
+fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,(Vec<u8>,usize,T::ReadStream),(Vec<u8>,usize,T::WriteStream),(),T::Address>>, t : &T,_ : Arc<CpuPool>) -> Result<()> {
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
         let c = cache.iter().any(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
-          SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
+          SlabEntryState::WriteStream(_,_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         });
         if c {
@@ -976,7 +976,7 @@ fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cach
             })
           };
           let vkey = cache.insert(SlabEntry {
-            state : SlabEntryState::WriteStream(ws),
+            state : SlabEntryState::WriteStream(ws,()),
             os : ork,
             peer : Some(ad),
           });
@@ -985,13 +985,13 @@ fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cach
       },
       SimpleLoopCommand::SendTo(ad, content, bufsize) => {
         let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.peer.as_ref() == Some(&ad) && match e.state {
-          SlabEntryState::WriteStream(_) | SlabEntryState::WriteSpawned(_) => true,
+          SlabEntryState::WriteStream(_,_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
         }).unwrap();
         match c.state {
-          SlabEntryState::WriteStream (_) => {
+          SlabEntryState::WriteStream (_,_) => {
             let state = mem::replace(&mut c.state,SlabEntryState::Empty);
-            if let SlabEntryState::WriteStream(ws) = state {
+            if let SlabEntryState::WriteStream(ws,_) = state {
               c.state = SlabEntryState::WriteSpawned((content,0,ws));
             }
           },

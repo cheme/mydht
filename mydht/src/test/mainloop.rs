@@ -157,7 +157,14 @@ fn test_connect() {
   let sendcommand2 = conf2.start_loop().unwrap();
   let addr2 = utils::sa4(Ipv4Addr::new(127,0,0,1), port2 as u16);
   let command = MainLoopCommand::TryConnect(SerSocketAddr(addr2));
+  let addr3 = utils::sa4(Ipv4Addr::new(127,0,0,1), port2 as u16);
+  let command2 = MainLoopCommand::TryConnect(SerSocketAddr(addr3));
+
+//  thread::sleep_ms(1000); // issue with this sleep : needded
   sendcommand1.send(command).unwrap();
+  thread::sleep_ms(1000);
+  sendcommand1.send(command2).unwrap();
+
   // no service to check connection, currently only for testing and debugging : sleep
   thread::sleep_ms(10000);
 

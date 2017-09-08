@@ -16,7 +16,7 @@
 //!
 
 extern crate coroutine;
-extern crate spin;
+extern crate parking_lot;
 extern crate futures_cpupool;
 extern crate futures;
 extern crate mio;
@@ -56,10 +56,12 @@ use std::sync::{
 };
 use std::sync::atomic::{
   AtomicBool,
+  AtomicUsize,
   Ordering,
 };
-use self::spin::{
+use self::parking_lot::{
   Mutex,
+  Condvar,
 };
 use std::thread;
 use std::thread::JoinHandle;
@@ -74,6 +76,7 @@ use mydhtresult::{
 use std::io::{
   Result as IoResult,
   ErrorKind as IoErrorKind,
+  Error as IoError,
   Read,
   Write,
 };
@@ -98,6 +101,25 @@ impl<'a,R : Read,Y : SpawnerYield> Read for ReadYield<'a,R,Y> {
       }
     }
   }
+  /// Variant of default read_exact where we block on read returning 0 instead of returning an
+  /// error (for a transport stream it makes more sense)
+  fn read_exact(&mut self, mut buf: &mut [u8]) -> IoResult<()> {
+    while !buf.is_empty() {
+      match self.read(buf) {
+        Ok(0) => {
+          match self.1.spawn_yield() {
+            YieldReturn::Return => return Err(IoError::new(IoErrorKind::WouldBlock,
+         "from read_exact")),
+            YieldReturn::Loop => (), 
+          }
+        },
+        Ok(n) => { let tmp = buf; buf = &mut tmp[n..]; }
+        Err(ref e) if e.kind() == IoErrorKind::Interrupted => { }
+        Err(e) => return Err(e),
+      }
+    }
+    Ok(())
+  }
 }
 pub struct WriteYield<'a,W : 'a + Write, Y : 'a + SpawnerYield> (pub &'a mut W, pub &'a mut Y);
 impl<'a,W : Write, Y : SpawnerYield> Write for WriteYield<'a,W,Y> {
@@ -116,6 +138,7 @@ impl<'a,W : Write, Y : SpawnerYield> Write for WriteYield<'a,W,Y> {
      }
    }
  }
+
  fn flush(&mut self) -> IoResult<()> {
    loop {
      match self.0.flush() {
@@ -161,6 +184,24 @@ pub trait Service {
 }
 
 
+/// 
+/// SpawnHandle allow management of service from outside.
+/// SpawnerYield allows inner service management, and only for yield (others action could be
+/// managed by Spawner implementation (catching errors and of course ending spawn).
+///
+/// With parallel execution of spawn and caller, SpawnHandle and SpawnerYield must be synchronized.
+/// A typical concurrency issue being a yield call and an unyield happenning during this yield
+/// execution, for instance with an asynch read on a stream : a read would block leading to
+/// unyield() call, during unyield the read stream becomes available again and unyield is called :
+/// yield being not finished unyield may be seen as useless and after yield occurs it could be
+/// stuck. An atomic state is therefore required, to skip a yield (returning YieldSpawn::Loop
+/// even if it is normally a YieldSpawn::Return) is fine but skipping a unyield is bad.
+/// Therefore unyield may add a atomic yield skip to its call when this kind of behaviour is expected.
+/// Skiping a yield with loop returning being not an issue.
+/// Same thing for channel read and subsequent yield.
+/// Yield prototype does not include blocking call or action so the skip once is the preffered synch
+/// mecanism (cost one loop : a second channel read call or write/read stream call), no protected
+/// section.
 pub trait Spawner<
   S : Service,
   D : SpawnSend<<S as Service>::CommandOut>,
@@ -304,20 +345,31 @@ impl<C,CH : SpawnChannel<C>> SpawnChannel<C> for MioChannel<CH> {
 pub trait SpawnHandle<Service,Sen,Recv> {
   /// self is mut as most of the time this function is used in context where unwrap_state should be
   /// use so it allows more possibility for implementating
+  ///
+  /// TODO error management for is_finished plus is_finished in threads implementation is currently
+  /// extra racy -> can receive message while finishing  : not a huge issue as the receiver remains
+  /// into spawnhandle : after testing is_finished to true the receiver if not empty could be
+  /// reuse. -> TODO some logging in case it is relevant and requires a synch.
   fn is_finished(&mut self) -> bool;
   /// unyield implementation must take account of the fact that it is called frequently even if the
   /// spawn is not yield (no is_yield function here it is implementation dependant).
+  /// For parrallel spawner (threading), unyield should position a skip atomic to true in case
+  /// where it does not actually unyield.
   fn unyield(&mut self) -> Result<()>;
   fn unwrap_state(self) -> Result<(Service,Sen,Recv)>;
   // TODO add a kill command and maybe a yield command
   //
   // TODO add a get_technical_error command : right now we do not know if we should restart on
   // finished or drop it!!!! -> plus solve the question of handling panic and error management
+  // This goes with is_finished redesign : return state
 }
 
 /// manages asynch call by possibly yielding process (yield a coroutine if same thread, park or
 /// yield a thread, do nothing (block)
 pub trait SpawnerYield {
+  /// For parrallel spawner (threading), it is ok to skip yield once in case of possible racy unyield
+  /// (unyield may not be racy : unyield on spawnchannel instead of asynch stream or others), see
+  /// threadpark implementation
   fn spawn_yield(&mut self) -> YieldReturn;
 }
 
@@ -719,14 +771,14 @@ impl SpawnerYield for ThreadYieldBlock {
 }
 
 
-macro_rules! thread_spawn {($spawner:ident,$handle:ident,$yield:ident) => {
+//macro_rules! thread_spawn {($spawner:ident,$handle:ident,$yield:ident) => {
 
 impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>, R : 'static + Send + SpawnRecv<S::CommandIn>> 
-  Spawner<S,D,R> for $spawner
+  Spawner<S,D,R> for ThreadBlock
   where S::CommandIn : Send
 {
-  type Handle = $handle<S,D,R>;
-  type Yield = $yield;
+  type Handle = ThreadHandleBlock<S,D,R>;
+  type Yield = ThreadYieldBlock;
   fn spawn (
     &mut self,
     mut service : S,
@@ -738,39 +790,93 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
     let finished = Arc::new(Mutex::new(None));
     let finished2 = finished.clone();
     let join_handle = thread::Builder::new().spawn(move ||{
-      spawn_loop!(service,spawn_out,ocin,recv,nb_loop,$yield,Ok(()));
+      spawn_loop!(service,spawn_out,ocin,recv,nb_loop,ThreadYieldBlock,Ok(()));
       let mut data = finished.lock();
       *data = Some((service,spawn_out,recv));
       Ok(())
     })?;
-    return Ok($handle(finished2,join_handle));
+    return Ok(ThreadHandleBlock(finished2,join_handle));
   }
 }
 
-}}
 
 
-thread_spawn!(ThreadBlock,ThreadHandleBlock,ThreadYieldBlock);
 
-
+/// park thread on yield, unpark with Handle.
+/// Std thread park not used for parking_lot mutex usage, but implementation
+/// is the same.
+/// It must be notice that after a call to unyield, yield will skip (avoid possible lock).
 pub struct ThreadPark;
-pub struct ThreadHandlePark<S,D,R>(Arc<Mutex<Option<(S,D,R)>>>,JoinHandle<Result<()>>);
-pub struct ThreadYieldPark;
+pub struct ThreadHandlePark<S,D,R>(Arc<Mutex<Option<(S,D,R)>>>,JoinHandle<Result<()>>,Arc<(Mutex<bool>,Condvar)>);
+
+pub struct ThreadYieldPark(Arc<(Mutex<bool>,Condvar)>);
 
 thread_handle!(ThreadHandlePark, |a : &mut ThreadHandlePark<S,D,R>|{
-  a.1.thread().unpark();
+  // unpark (a.1.thread().unpark();)
+  {
+    let mut guard = (a.2).0.lock();
+    if !*guard {
+      *guard = true;
+      (a.2).1.notify_one();
+    }
+  }
   Ok(())
 });
 
 impl SpawnerYield for ThreadYieldPark {
   #[inline]
   fn spawn_yield(&mut self) -> YieldReturn {
-    thread::park();
+    //if self.0.compare_and_swap(true, false, Ordering::Acquire) != true {
+  //  if let Err(status) = (self.0).0.compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed) {
+   // } else {
+      // status 0, we yield only if running, in other state we simply loop and will yield at next
+      // call TODO could optimize by using mutex directly 
+      
+      // park (thread::park();)
+    {
+      let mut guard = (self.0).0.lock();
+//      (self.0).0.store(2,Ordering::Release);
+      while !*guard {
+        (self.0).1.wait(&mut guard);
+        //guard = (self.0).1.wait(guard);
+      }
+      *guard = false;
+    }
+    //}
     YieldReturn::Loop
   }
 }
 
-thread_spawn!(ThreadPark,ThreadHandlePark,ThreadYieldPark);
+
+impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>, R : 'static + Send + SpawnRecv<S::CommandIn>> 
+  Spawner<S,D,R> for ThreadPark
+  where S::CommandIn : Send
+{
+  type Handle = ThreadHandlePark<S,D,R>;
+  type Yield = ThreadYieldPark;
+  fn spawn (
+    &mut self,
+    mut service : S,
+    mut spawn_out : D,
+    mut ocin : Option<<S as Service>::CommandIn>,
+    mut recv : R,
+    mut nb_loop : usize
+  ) -> Result<Self::Handle> {
+    let skip = Arc::new((Mutex::new(false),Condvar::new()));
+    let skip2 = skip.clone();
+    let finished = Arc::new(Mutex::new(None));
+    let finished2 = finished.clone();
+    let join_handle = thread::Builder::new().spawn(move ||{
+      let mut y = ThreadYieldPark(skip2);
+      spawn_loop!(service,spawn_out,ocin,recv,nb_loop,y,Ok(()));
+      let mut data = finished.lock();
+      *data = Some((service,spawn_out,recv));
+      Ok(())
+    })?;
+    return Ok(ThreadHandlePark(finished2,join_handle,skip));
+  }
+}
+
 
 
 

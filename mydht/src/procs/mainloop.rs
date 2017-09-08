@@ -31,6 +31,7 @@ use service::{
 };
 use std::rc::Rc;
 use std::cell::Cell;
+use std::thread;
 use std::thread::{
   Builder as ThreadBuilder,
 };
@@ -96,6 +97,23 @@ macro_rules! register_state {($self:ident,$rs:ident,$os:expr,$entrystate:path) =
     token
   }
 }}
+macro_rules! register_state_w {($self:ident,$pollopt:expr,$rs:ident,$wb:expr,$os:expr,$entrystate:path) => {
+  {
+    let token = $self.slab_cache.insert(SlabEntry {
+      state : $entrystate($rs,$wb),
+      os : $os,
+      peer : None,
+    });
+    if let $entrystate(ref mut rs,_) = $self.slab_cache.get_mut(token).unwrap().state {
+      assert!(true == rs.register(&$self.poll, Token(token + START_STREAM_IX), Ready::writable(),
+      $pollopt )?);
+    } else {
+      unreachable!();
+    }
+    token
+  }
+}}
+
 
 
 pub const CACHE_NO_STREAM : usize = 0;
@@ -155,6 +173,8 @@ pub type RWSlabEntry<MDC : MyDHTConf> = SlabEntry<
   SpawnerRefsDefRecv2<ReadService<MDC>,ReadServiceCommand, MDC::ReadDest, MDC::ReadChannelIn, MDC::ReadSpawn>,
 //  SpawnerRefs<ReadService<MDC>,MDC::ReadDest,DefaultRecvChannel<ReadServiceCommand,MDC::ReadChannelIn>,MDC::ReadSpawn>,
   SpawnerRefs2<WriteService<MDC>,WriteServiceCommand,MDC::WriteDest,MDC::WriteChannelIn,MDC::WriteSpawn>,
+  // bool is has_connect
+  (<MDC::WriteChannelIn as SpawnChannel<WriteServiceCommand>>::Send,<MDC::WriteChannelIn as SpawnChannel<WriteServiceCommand>>::Recv,bool),
   MDC::PeerRef>;
 
 type SpawnerRefs<S : Service,D,CI : SpawnChannel<S::CommandIn>,SP : Spawner<S,D,CI::Recv>> = (SP::Handle,CI::Send); 
@@ -235,7 +255,11 @@ where  <Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Recv : 
     ThreadBuilder::new().name(Self::loop_name.to_string()).spawn(move || {
       let mut state = self.init_state()?;
       let mut yield_spawn = NoYield(YieldReturn::Loop);
-      state.main_loop(r,&mut yield_spawn)
+      let r = state.main_loop(r,&mut yield_spawn);
+      if r.is_err() {
+        panic!("mainloop err : {:?}",&r);
+      }
+      r
     })?;
     Ok(s)
   }
@@ -319,8 +343,11 @@ where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Se
       MainLoopCommand::TryConnect(dest_address) => {
         // TODO duration will be removed
         let (ws,ors) = self.transport.connectwith(&dest_address, CrateDuration::seconds(1000))?;
+
+        let (s,r) = self.write_channel_in.new()?;
+
         // register writestream
-        let write_token = register_state!(self,ws,None,SlabEntryState::WriteStream);
+        let write_token = register_state_w!(self,PollOpt::edge(),ws,(s,r,false),None,SlabEntryState::WriteStream);
 
         // register readstream for multiplex transport
         ors.map(|rs| -> Result<()> {
@@ -386,14 +413,17 @@ where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Se
               // register writestream for multiplex transport
               ows.map(|ws| -> Result<()> {
 
-                let write_token = register_state!(self,ws,Some(read_token),SlabEntryState::WriteStream);
+                let (s,r) = self.write_channel_in.new()?;
+                // connection done on listener so edge immediatly and state has_connect to true
+                let write_token = register_state_w!(self,PollOpt::edge(),ws,(s,r,true),Some(read_token),SlabEntryState::WriteStream);
                 // update read reference
                 self.slab_cache.get_mut(read_token).map(|r|r.os = Some(write_token));
                 Ok(())
               }).unwrap_or(Ok(()))?;
 
-              // start listening on read
-              Self::start_read_stream_listener(self, read_token, <MDC>::init_read_spawner_out()?)?;
+              // do not start listening on read, it will start when poll trigger readable on
+              // connect
+              //Self::start_read_stream_listener(self, read_token, <MDC>::init_read_spawner_out()?)?;
  
 
               Ok(read_token)
@@ -401,8 +431,56 @@ where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Se
 
  
           },
-          _ => {
-            panic!("TODO")
+          tok => {
+            let (sp_read, o_sp_write) =  if let Some(ca) = self.slab_cache.get_mut(tok.0 - START_STREAM_IX) {
+              match ca.state {
+                SlabEntryState::ReadStream(_) => {
+                  (true,None)
+                },
+                SlabEntryState::WriteStream(ref mut ws,(_,ref mut write_r_in,ref mut has_connect)) => {
+                  // case where spawn reach its nb_loop and return, should not happen as yield is
+                  // only out of service call (nb_loop test is out of nb call) for receiver which is not registered.
+                  // Yet if WriteService could resume which is actually not the case we could have a
+                  // spawneryield return and would need to resume with a resume command.
+                  // self.write_stream_send(write_token,WriteServiceCommand::Resume , <MDC>::init_write_spawner_out()?)?;
+                  
+                  // also case when multiplex transport and write stream is ready but nothing to
+                  // send : spawn of write happens on first write.
+                  //TODO a debug log??
+                  if(*has_connect == false) {
+                    *has_connect = true;
+                    // reregister at a edge level
+                    //assert!(true == ws.reregister(&self.poll, tok, Ready::readable(),PollOpt::edge())?);
+                  }
+                  let oc = write_r_in.recv()?;
+
+                  (false,oc)
+                },
+                SlabEntryState::ReadSpawned((ref mut handle,_)) => {
+                  handle.unyield()?;
+                  (false,None)
+                },
+                SlabEntryState::WriteSpawned((ref mut handle,_)) => {
+                  handle.unyield()?;
+                  (false,None)
+                },
+                SlabEntryState::Empty => {
+                  unreachable!()
+                },
+              }
+            } else {
+              // TODO replace by logging as it should happen depending on transport implementation
+              // (or spurrious poll), keep it now for testing purpose
+              panic!("Unregistered token polled");
+              (false,None)
+            };
+            if sp_read {
+              self.start_read_stream_listener(tok.0 - START_STREAM_IX, <MDC>::init_read_spawner_out()?)?;
+            }
+            if o_sp_write.is_some() {
+              self.write_stream_send(tok.0 - START_STREAM_IX, o_sp_write.unwrap(), <MDC>::init_write_spawner_out()?)?;
+            }
+
           },
         }
       }
@@ -444,17 +522,30 @@ where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Se
     let se = self.slab_cache.get_mut(write_token);
     if let Some(entry) = se {
       let restart = match entry.state {
-        ref mut e @ SlabEntryState::WriteStream(_) => {
+        // connected write stream : spawn
+        ref mut e @ SlabEntryState::WriteStream(_,(_,_,true)) => {
           let state = replace(e, SlabEntryState::Empty);
-          let ws = match state {
-            SlabEntryState::WriteStream(ws) => ws,
-            _ => unreachable!(),
-          };
-          let (write_s_in,write_r_in) = self.write_channel_in.new()?;
-          let write_handle = self.write_spawn.spawn(WriteService(ws), write_out.clone(), Some(command), write_r_in, MDC::send_nb_iter)?;
-          let state = SlabEntryState::WriteSpawned((write_handle,write_s_in));
-          replace(e,state);
-          return Ok(())
+          if let SlabEntryState::WriteStream(ws,(mut write_s_in,mut write_r_in,_)) = state {
+ //          let (write_s_in,write_r_in) = self.write_channel_in.new()?;
+            let oc = write_r_in.recv()?;
+            let ocin = if oc.is_some() {
+              // for order sake
+              write_s_in.send(command)?;
+              oc
+            } else {
+              // empty
+              Some(command)
+            };
+            let write_handle = self.write_spawn.spawn(WriteService(ws), write_out.clone(), ocin, write_r_in, MDC::send_nb_iter)?;
+            let state = SlabEntryState::WriteSpawned((write_handle,write_s_in));
+            replace(e,state);
+            None
+          } else {unreachable!()}
+        },
+        SlabEntryState::WriteStream(_,(ref mut send,_,false)) => {
+          // TODO size limit of channel bef connected -> error on send ~= to connection failure
+          send.send(command)?;
+          None
         },
         SlabEntryState::WriteSpawned((ref mut handle, ref mut sender)) => {
           // TODO refactor to not check at every send
@@ -464,32 +555,32 @@ where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Se
 
             //TODO either drop or start restart?? Need to add functionnality to handle
             //right now we consider restart (send can be short or at least short lived thread)
-            true
+            Some(command)
           } else {
             sender.send(command)?;
             // unyield everytime
             handle.unyield()?;
-            return Ok(())
+            None
           }
         },
-        _ => false,
+        _ => return Err(Error("Call of write listener on wrong state".to_string(), ErrorKind::Bug, None)),
       };
-      if restart {
+      if restart.is_some() {
         let state = replace(&mut entry.state, SlabEntryState::Empty);
         if let SlabEntryState::WriteSpawned((handle,sender)) = state {
           let (serv,sen,recv) = handle.unwrap_state()?;
-          let write_handle = self.write_spawn.spawn(serv, sen, Some(command), recv, MDC::send_nb_iter)?;
+          let write_handle = self.write_spawn.spawn(serv, sen, restart, recv, MDC::send_nb_iter)?;
           replace(&mut entry.state, SlabEntryState::WriteSpawned((write_handle,sender)));
         } else {
           unreachable!()
         }
       }
+    } else {
+      return Err(Error("Call of write listener on no state".to_string(), ErrorKind::Bug, None))
     }
 
- 
+    Ok(())
 
-
-    Err(Error("Call of write listener on wrong state".to_string(), ErrorKind::Bug, None))
   }
 }
 pub struct MyDHTService<MDC : MyDHTConf>(pub MDC)
@@ -564,8 +655,9 @@ where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Se
         // for initial testing only TODO replace by deser
         let mut buf = vec![0;4];
         let mut r = ReadYield(&mut self.0, async_yield);
-        r.read_exact(&mut buf)?;
-        panic!("{:?}",&buf[..]);
+        r.read_exact(&mut buf).unwrap(); // unwrap for testring only
+//        panic!("{:?}",&buf[..]);
+        println!("{:?}",&buf[..]);
         assert!(&[1,2,3,4] == &buf[..]);
         buf[0]=9;
       },
@@ -595,7 +687,7 @@ where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Se
         // for initial testing only TODO replace by deser
         let buf = &[1,2,3,4];
         let mut w = WriteYield(&mut self.0, async_yield);
-        w.write_all(buf)?;
+        w.write_all(buf).unwrap(); // unwrap for testing only (thread without error catching
       },
     }
     Ok(())
