@@ -85,6 +85,9 @@ impl MyDHTConf for TestMdhtConf {
   const loop_name : &'static str = "Conf test spawner";
   const events_size : usize = 1024;
   const send_nb_iter : usize = 1;
+  type MainloopSpawn = ThreadPark;
+  type MainLoopChannelIn = MpscChannel;
+  type MainLoopChannelOut = MpscChannel;
   type Transport = Tcp;
   type MsgEnc = Json;
   type Peer = Node;
@@ -100,7 +103,10 @@ impl MyDHTConf for TestMdhtConf {
   type WriteDest = NoSend;
   type WriteChannelIn = MpscChannel;
   type WriteSpawn = ThreadPark;
-  type MainLoopChannelIn = MpscChannel;
+
+  fn get_main_spawner(&mut self) -> Result<Self::ReadSpawn> {
+    Ok(ThreadPark)
+  }
 
   fn init_main_loop_slab_cache(&mut self) -> Result<Self::Slab> {
     Ok(Slab::new())
@@ -112,6 +118,10 @@ impl MyDHTConf for TestMdhtConf {
   fn init_main_loop_channel_in(&mut self) -> Result<Self::MainLoopChannelIn> {
     Ok(MpscChannel)
   }
+  fn init_main_loop_channel_out(&mut self) -> Result<Self::MainLoopChannelIn> {
+    Ok(MpscChannel)
+  }
+
 
   fn init_read_spawner(&mut self) -> Result<Self::ReadSpawn> {
     Ok(ThreadPark)
@@ -153,8 +163,8 @@ fn test_connect() {
   //let state1 = conf1.init_state().unwrap();
   //let state2 = conf2.init_state().unwrap();
 
-  let mut sendcommand1 = conf1.start_loop().unwrap();
-  let sendcommand2 = conf2.start_loop().unwrap();
+  let (mut sendcommand1,_) = conf1.start_loop().unwrap();
+  let (sendcommand2,_) = conf2.start_loop().unwrap();
   let addr2 = utils::sa4(Ipv4Addr::new(127,0,0,1), port2 as u16);
   let command = MainLoopCommand::TryConnect(SerSocketAddr(addr2));
   let addr3 = utils::sa4(Ipv4Addr::new(127,0,0,1), port2 as u16);
