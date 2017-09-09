@@ -151,7 +151,8 @@ where  <MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv : Send
 pub enum MainLoopCommand<MC : MyDHTConf> 
 where  <MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv : Send
 {
-  TryConnect(<MC::Transport as Transport>::Address)
+  Start,
+  TryConnect(<MC::Transport as Transport>::Address),
 }
 impl<MC : MyDHTConf> MyDHT<MC> 
 
@@ -190,7 +191,11 @@ type SpawnerRefsRead2<S : Service,D, CI : SpawnChannel<ReadServiceCommand>, RS :
   //CI::Send); 
 type MainLoopRecvIn<MDC : MyDHTConf> = MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>;
 type MainLoopSendIn<MDC : MyDHTConf> = MioSend<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Send>;
- 
+
+pub enum MainLoopReply {
+  /// TODO
+  Ended,
+}
 pub trait MyDHTConf : 'static + Send + Sized 
 where  <Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Recv : Send
 {
@@ -202,7 +207,18 @@ where  <Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Recv : 
   /// number of iteration before send loop return, 1 is suggested, but if thread are involve a
   /// little more should be better, in a pool infinite (0) could be fine to.
   const send_nb_iter : usize;
+  /// Spawner for main loop
+  type MainloopSpawn : Spawner<
+    Self,
+    MioSend<<Self::MainloopChannelOut as SpawnChannel<MainLoopReply>>::Send>,
+    MioRecv<<Self::MainloopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Recv>
+      >;
+      
 
+  /// channel for input
+  type MainloopChannelIn : SpawnChannel<MainLoopCommand<Self>>;
+  /// TODO out mydht command
+  type MainloopChannelOut : SpawnChannel<MainLoopReply>;
   /// low level transport
   type Transport : Transport;
   /// Message encoding
@@ -249,22 +265,28 @@ where  <Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Recv : 
 
   /// Start the main loop
   #[inline]
-  fn start_loop(mut self : Self) -> Result<MainLoopSendIn<Self>> {
+  fn start_loop(mut self : Self) -> Result<(MioSend<<Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Send>, <Self::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Recv>> {
     let (s,r) = MioChannel(self.init_main_loop_channel_in()?).new()?;
+    let (so,ro) = MioChannel(self.init_main_loop_channel_out()?).new()?;
+
+    let sp = self.get_main_spawner()?;
+    let read_handle = self.read_spawn.spawn(ReadService(rs), read_out.clone(), Some(ReadServiceCommand::Run), read_r_in, 0)?;
+    let service = MyDHTService(self,s);
+    sp.spawn(service, so, None, r, 0)?; 
     // TODO replace this shit by a spawner then remove constraint on MDht trait where
-    ThreadBuilder::new().name(Self::loop_name.to_string()).spawn(move || {
-      let mut state = self.init_state()?;
+  /*  ThreadBuilder::new().name(Self::loop_name.to_string()).spawn(move || {
+      let mut state = self.init_state(r)?;
       let mut yield_spawn = NoYield(YieldReturn::Loop);
-      let r = state.main_loop(r,&mut yield_spawn);
+      let r = state.main_loop(&mut yield_spawn);
       if r.is_err() {
         panic!("mainloop err : {:?}",&r);
       }
       r
-    })?;
-    Ok(s)
+    })?;*/
+    Ok(s,ro)
   }
 
-  fn init_state(mut self : Self) -> Result<MDHTState<Self>> {
+  fn init_state(mut self : Self, recv : MioRecv<<Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Recv>) -> Result<MDHTState<Self>> {
     let events = Events::with_capacity(Self::events_size);
     let poll = Poll::new()?;
     let transport = self.init_transport()?;
@@ -290,6 +312,8 @@ where  <Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Recv : 
   }
 
 
+  /// for start_loop usage
+  fn get_main_spawner(&mut self) -> Result<Self::MainloopSpawn>;
   /// cache initializing for main loop slab cache
   fn init_main_loop_slab_cache(&mut self) -> Result<Self::Slab>;
 
@@ -367,23 +391,26 @@ where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Se
     Ok(())
   }
 
-  fn main_loop<S : SpawnerYield>(&mut self, mut receiver : MainLoopRecvIn<MDC>, async_yield : &mut S) -> Result<()> {
+//  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut>;
+  fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>, req: MainLoopCommand<MDC>, async_yield : &mut S) -> Result<()> {
    let mut events = if self.events.is_some() {
      let oevents = replace(&mut self.events,None);
      oevents.unwrap_or(Events::with_capacity(MDC::events_size))
    } else {
      Events::with_capacity(MDC::events_size)
    };
-   self.inner_main_loop(receiver, async_yield, &mut events).map_err(|e|{
+   self.inner_main_loop(rec, req, async_yield, &mut events).map_err(|e|{
      self.events = Some(events);
      e
    })
   }
-  fn inner_main_loop<S : SpawnerYield>(&mut self, mut receiver : MainLoopRecvIn<MDC>, async_yield : &mut S, events : &mut Events) -> Result<()> {
+  fn inner_main_loop<S : SpawnerYield>(&mut self, receiver : &mut MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>, req: MainLoopCommand<MDC>, async_yield : &mut S, events : &mut Events) -> Result<()> {
 
     assert!(true == receiver.register(&self.poll, LOOP_COMMAND, Ready::readable(),
                       PollOpt::edge())?);
 
+    let cout = self.call_inner_loop(req,async_yield)?;
+    // TODO cout in sender WHen implementing spawne
     loop {
       self.poll.poll(events, None)?;
       for event in events.iter() {
@@ -583,25 +610,40 @@ where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Se
 
   }
 }
-pub struct MyDHTService<MDC : MyDHTConf>(pub MDC)
+
+
+
+impl<MDC : MyDHTConf> Service for MDHTState<MDC>
+where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Send {
+  type CommandIn = MainLoopCommand<MDC>;
+  type CommandOut = MainLoopReply;
+
+  #[inline]
+  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+    self.main_loop(req, async_yield)?;
+    Ok(MainLoopReply::Ended)
+
+//  fn inner_main_loop<S : SpawnerYield>(&mut self, async_yield : &mut S, events : &mut Events) -> Result<()> {
+  }
+}
+
+pub struct MyDHTService<MDC : MyDHTConf>(pub MDC, pub recv : MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>)
 where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Send
 ;
-
 impl<MDC : MyDHTConf> Service for MyDHTService<MDC>
 where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Send
 {
   type CommandIn = MainLoopCommand<MDC>;
-  // For now no reply TODO use one obviously
-  type CommandOut = ();
+  type CommandOut = MainLoopReply;
 
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
-    panic!("TODO plug start_loop here");
-/*    match req {
-      TryConnect(MC::Address) => {
-    // TODO
-      },
+    let mut state = self.0.init_state()?;
+    let mut yield_spawn = NoYield(YieldReturn::Loop);
+    let r = state.main_loop(&mut self.2, &mut yield_spawn);
+    if r.is_err() {
+      panic!("mainloop err : {:?}",&r);
     }
- */   
+    r
   }
 }
 
