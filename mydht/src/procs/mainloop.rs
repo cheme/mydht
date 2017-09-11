@@ -42,7 +42,6 @@ use std::sync::atomic::{
 };
 use std::sync::Arc;
 
-
 use std::sync::mpsc::{
   Sender,
   Receiver,
@@ -146,13 +145,10 @@ pub fn boot_server
 */
 /// implementation of api TODO move in its own module
 /// Allow call from Rust method or Foreign library
-pub struct MyDHT<MC : MyDHTConf>(MainLoopSendIn<MC>)
-where  <MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv : Send
-;
+pub struct MyDHT<MC : MyDHTConf>(MainLoopSendIn<MC>);
+
 /// command supported by MyDHT loop
-pub enum MainLoopCommand<MC : MyDHTConf> 
-where  <MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv : Send
-{
+pub enum MainLoopCommand<MC : MyDHTConf> {
   Start,
   TryConnect(<MC::Transport as Transport>::Address),
 }
@@ -186,9 +182,7 @@ pub enum MainLoopReply {
   /// TODO
   Ended,
 }
-pub trait MyDHTConf : 'static + Send + Sized 
-where  <Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Recv : Send
-{
+pub trait MyDHTConf : 'static + Send + Sized {
 
   /// Name of the main thread
   const loop_name : &'static str = "MyDHT Main Loop";
@@ -336,9 +330,7 @@ where  <Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Recv : 
 
 }
 
-pub struct MDHTState<MDC : MyDHTConf>
-where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Send
-{
+pub struct MDHTState<MDC : MyDHTConf> {
   transport : MDC::Transport,
   slab_cache : MDC::Slab,
   peer_cache : MDC::PeerCache,
@@ -350,9 +342,7 @@ where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Se
   write_channel_in : MDC::WriteChannelIn,
 }
 
-impl<MDC : MyDHTConf> MDHTState<MDC>
-where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Send
-{
+impl<MDC : MyDHTConf> MDHTState<MDC> {
 
   /// sub call for service (actually mor relevant service implementation : the call will only
   /// return one CommandOut to spawner : finished or fail).
@@ -613,12 +603,9 @@ where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Se
 
 
 
-pub struct MyDHTService<MDC : MyDHTConf>(pub MDC, pub MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>, pub <MDC::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Send)
-where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Send
-;
-impl<MDC : MyDHTConf> Service for MyDHTService<MDC>
-where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Send
-{
+pub struct MyDHTService<MDC : MyDHTConf>(pub MDC, pub MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>, pub <MDC::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Send);
+
+impl<MDC : MyDHTConf> Service for MyDHTService<MDC> {
   type CommandIn = MainLoopCommand<MDC>;
   type CommandOut = MainLoopReply;
 
@@ -668,12 +655,9 @@ impl<P> PeerCacheEntry<P> {
 }
 
 // TODO put in its own module
-pub struct ReadService<MC : MyDHTConf>(pub <MC::Transport as Transport>::ReadStream)
-where  <MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv : Send;
+pub struct ReadService<MC : MyDHTConf>(pub <MC::Transport as Transport>::ReadStream);
 
-impl<MDC : MyDHTConf> Service for ReadService<MDC>
-where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Send
-{
+impl<MDC : MyDHTConf> Service for ReadService<MDC> {
   type CommandIn = ReadServiceCommand;
   type CommandOut = ();
 
@@ -700,12 +684,9 @@ pub enum ReadServiceCommand {
 }
 
 // TODO put in its own module
-pub struct WriteService<MC : MyDHTConf>(pub <MC::Transport as Transport>::WriteStream)
-where  <MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv : Send;
+pub struct WriteService<MC : MyDHTConf>(pub <MC::Transport as Transport>::WriteStream);
 
-impl<MDC : MyDHTConf> Service for WriteService<MDC>
-where  <MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv : Send
-{
+impl<MDC : MyDHTConf> Service for WriteService<MDC> {
   type CommandIn = WriteServiceCommand;
   type CommandOut = ();
 
