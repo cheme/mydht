@@ -166,7 +166,7 @@ mod test_tcp_all_block_thread {
 
 
   #[test]
-  fn test_connect() {
+  fn test_connect_t() {
     let conf1 = TestMdhtConf("peer1".to_string(), 48880, true);
     let port2 = 48881;
     let conf2 = TestMdhtConf("peer2".to_string(), port2, true);
@@ -273,7 +273,7 @@ mod test_dummy_all_block_thread {
   fn test_connect_l() {
  let is_mult = true;
     //let tr = AsynchTransportTest::create_transport (nb : usize, multiplex : bool, managed : bool, conn : Duration, sen : Duration, rec : Duration) -> Vec<AsynchTransportTest>();
-    let mut tr = AsynchTransportTest::create_transport (2, is_mult, true, Duration::from_millis(500), Duration::from_millis(100), Duration::from_millis(200));
+    let mut tr = AsynchTransportTest::create_transport (2, is_mult, true, Duration::from_millis(500), Duration::from_millis(100), Duration::from_millis(100));
 
     tr.reverse();
     let conf1 = TestMdhtConf1(TestMdhtConf("peer1".to_string(), 0, true),tr.pop());

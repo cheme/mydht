@@ -297,8 +297,12 @@ impl Write for AsynchLocalWriteStream {
       if now >= self.4 {
         self.4 = now + self.2;
         let r = self.0.write(buf);
-        (self.5).0.set_readiness(Ready::writable());
-        (self.5).1.set_readiness(Ready::readable());
+        trigger_registration(self.4, (self.5).0.clone(), Ready::writable());
+        if self.3 > self.2 {
+          trigger_registration(now + self.3 - self.2, (self.5).1.clone(), Ready::readable());
+        } else {
+          (self.5).1.set_readiness(Ready::readable()).unwrap();
+        }
         r
       } else {
          Err(IoError::new (
@@ -543,11 +547,17 @@ impl Transport for AsynchTransportTest {
     let oalws = match ows {
       Some(ws) => {
         let wregistration = self.5.get_wregistration(self.0.address,ad.0);
-        Some(AsynchLocalWriteStream(ws,self.1,self.2,self.3, Instant::now() + self.3, (self.5.get_wsetready(self.0.address,ad.0).clone(),self.5.get_rsetready(ad.0,self.0.address).clone()), wregistration))
+        Some(AsynchLocalWriteStream(ws,self.1,self.2,self.3, Instant::now() + self.3, (self.5.get_wsetready(self.0.address,ad.0).clone(),self.5.get_rsetready(self.0.address,ad.0).clone()), wregistration))
       },
       None => None,
     };
-    self.5.get_wsetready(self.0.address,ad.0).set_readiness(Ready::writable())?;
+    let now = Instant::now();
+    // trigger our write imediatly but not added to poll -> so trigger after read time
+//    self.5.get_wsetready(self.0.address,ad.0).set_readiness(Ready::writable())?;
+    trigger_registration(now + self.3, self.5.get_wsetready(self.0.address,ad.0).clone(), Ready::writable());
+    // trigger our read imediatly but not added to poll -> so trigger after write time
+//    self.5.get_rsetready(ad.0,self.0.address).set_readiness(Ready::readable())?;
+    trigger_registration(now + self.2, self.5.get_rsetready(ad.0,self.0.address).clone(), Ready::readable());
     Ok((
         AsynchLocalReadStream(rs,self.1,self.2,self.3, Instant::now() + self.2, self.5.clone(), rregistration),
         oalws,
@@ -567,10 +577,12 @@ impl Transport for AsynchTransportTest {
     };
     // connection handler
     trigger_registration(con_time, self.5.get_lis_setready(address.0).clone(), Ready::readable());
-    // connection ouur write 
-    trigger_registration(con_time, self.5.get_wsetready(address.0,self.0.address).clone(), Ready::writable());
+    // connection our write 
+    trigger_registration(con_time, self.5.get_wsetready(self.0.address,address.0).clone(), Ready::writable());
+    // connection our read 
+    trigger_registration(con_time, self.5.get_rsetready(address.0,self.0.address).clone(), Ready::readable());
     Ok((
-        AsynchLocalWriteStream(ws,self.1,self.2,self.3, con_time, (self.5.get_wsetready(self.0.address,address.0).clone(),self.5.get_rsetready(address.0,self.0.address).clone()), wregistration),
+        AsynchLocalWriteStream(ws,self.1,self.2,self.3, con_time, (self.5.get_wsetready(self.0.address,address.0).clone(),self.5.get_rsetready(self.0.address,address.0).clone()), wregistration),
         oalrs))
   }
  
@@ -630,6 +642,7 @@ impl Read for LocalReadStream {
       } else {
         self.0.recv().unwrap()
       };
+
       let (nbr,rem) = {
       let from : &mut Vec<u8> = if culen != 0 {
         &mut self.1
