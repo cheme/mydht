@@ -26,8 +26,9 @@
 //! several frames (sync in transport with its rec)) we act like managed, and managed transport test should
 //! be used.
 
-use mio::{Poll,Token,Ready,PollOpt};
+use mio::{Poll,Token,Ready,PollOpt,SetReadiness,Registration};
 use std::sync::mpsc::{Sender,Receiver};
+use std::mem::replace;
 use std::sync::mpsc;
 use std::sync::{Arc,Mutex};
 use std::io::Result as IoResult;
@@ -35,31 +36,117 @@ use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
 use std::io::{Read,Write};
 use mydht_base::mydhtresult::{Result,Error,ErrorKind};
-use time::Duration;
+use time::Duration as CrateDuration;
+use std::time::{
+  Instant,
+  Duration,
+};
+use std::thread;
 use mydht_base::transport::{Transport,Address,ReadTransportStream,WriteTransportStream,SpawnRecMode,ReaderHandle,Registerable,};
 #[cfg(test)]
 use transport as ttest;
 use transport::LocalAdd;
 
+/// transport test plus 3 duration for connect/send/receive
+pub struct AsynchTransportTest(TransportTest,Duration,Duration,Duration,Instant,Arc<ReadinessTransport>,Registration);
 
 // note all mutex content is clone in receive loop and in connect_with (only here for init)
 // here as transport must be sync .
 pub struct TransportTest {
+ 
   pub multiplex : bool,
   pub managed : bool,
   pub address : usize,
+ 
   /// directory with all sender of other peers
   /// Addresses are position in vec
   /// usize is our address
   pub dir : Mutex<Vec<Sender<(usize,usize,usize,Arc<Vec<u8>>)>>>,
-  
+ 
   /// usize is address from emitter
   pub recv : Mutex<Receiver<(usize,usize,usize,Arc<Vec<u8>>)>>,
-  
+ 
   /// sender to connected client receiver, when connection established from peer
   pub cli_from : Mutex<Vec<Vec<Sender<Arc<Vec<u8>>>>>>,
   /// sender to connected client receiver, when connection established with peer
   pub cli_with : Mutex<Vec<Vec<Sender<Arc<Vec<u8>>>>>>,
+}
+pub struct ReadinessTransport {
+  pub recvready : Vec<Vec<SetReadiness>>,
+  pub recvreg : Mutex<Vec<Vec<Option<Registration>>>>,
+  pub sendready : Vec<Vec<SetReadiness>>,
+  pub sendreg : Mutex<Vec<Vec<Option<Registration>>>>,
+  pub listener : Vec<SetReadiness>,
+}
+impl ReadinessTransport {
+  fn get_wregistration(&self,from : usize, to : usize) -> Registration {
+    let mut a = self.sendreg.lock().unwrap();
+    let v = replace(&mut a[from][to],None);
+    v.unwrap()
+  }
+  fn get_rregistration(&self,from : usize, to : usize) -> Registration {
+    let mut a = self.recvreg.lock().unwrap();
+    let v = replace(&mut a[from][to],None);
+    v.unwrap()
+  }
+  fn get_rsetready(&self,from : usize, to : usize) -> &SetReadiness {
+    &self.recvready[from][to]
+  }
+  fn get_wsetready(&self,from : usize, to : usize) -> &SetReadiness {
+    &self.sendready[from][to]
+  }
+  fn get_lis_setready(&self, to :usize) -> &SetReadiness {
+    &self.listener[to]
+  }
+
+}
+impl AsynchTransportTest {
+  pub fn create_transport (nb : usize, multiplex : bool, managed : bool, conn : Duration, sen : Duration, rec : Duration) -> Vec<AsynchTransportTest> {
+    let mut rready = Vec::with_capacity(nb);
+    let mut sready = Vec::with_capacity(nb);
+    let mut rreg = Vec::with_capacity(nb);
+    let mut sreg = Vec::with_capacity(nb);
+    let mut listener_ready = Vec::with_capacity(nb);
+    let mut listener_reg = Vec::with_capacity(nb);
+    for i in 0..nb {
+      let (registration, set_readiness) = Registration::new2();
+      listener_ready.push(set_readiness);
+      listener_reg.push(registration);
+      let mut irready = Vec::with_capacity(nb);
+      let mut isready = Vec::with_capacity(nb);
+      let mut irreg = Vec::with_capacity(nb);
+      let mut isreg = Vec::with_capacity(nb);
+
+      for j in 0..nb {
+        let (rregistration,rset_readiness) = Registration::new2();
+        let (sregistration,sset_readiness) = Registration::new2();
+        irready.push(rset_readiness);
+        isready.push(sset_readiness);
+        irreg.push(Some(rregistration));
+        isreg.push(Some(sregistration));
+      }
+      rready.push(irready);
+      sready.push(isready);
+      rreg.push(irreg);
+      sreg.push(isreg);
+ 
+    }
+    let asr = Arc::new(
+        ReadinessTransport{
+          recvready : rready,
+          recvreg : Mutex::new(rreg),
+          sendready : sready,
+          sendreg : Mutex::new(sreg),
+          listener : listener_ready,
+        }
+        );
+
+    listener_reg.reverse();
+    let res = TransportTest::create_transport(nb,multiplex,managed);
+    res.into_iter().map(|tr|{
+      AsynchTransportTest(tr, conn.clone(),sen.clone(),rec.clone(), Instant::now(), asr.clone(),listener_reg.pop().unwrap())
+    }).collect()
+  }
 }
 
 impl TransportTest {
@@ -99,6 +186,10 @@ impl TransportTest {
   }
 }
 
+/// LocalReastream plus a connect/send/recv Duration (return would block otherwhise) and last action call.
+pub struct AsynchLocalReadStream(LocalReadStream,Duration,Duration,Duration,Instant,Arc<ReadinessTransport>,Registration);
+pub struct AsynchLocalWriteStream(LocalWriteStream,Duration,Duration,Duration,Instant,(SetReadiness,SetReadiness),Registration);
+
 pub struct LocalReadStream(Receiver<Arc<Vec<u8>>>,Vec<u8>,bool,bool);
 impl Registerable for LocalReadStream {
   fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
@@ -115,6 +206,28 @@ impl Registerable for LocalWriteStream {
   fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
     Ok(false)
   }
+}
+
+impl Registerable for AsynchLocalReadStream {
+  fn register(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
+    p.register(&self.6,t,r,po)?;
+    Ok(true)
+  }
+  fn reregister(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
+    p.reregister(&self.6,t,r,po)?;
+    Ok(true)
+  }
+}
+impl Registerable for AsynchLocalWriteStream {
+  fn register(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
+    p.register(&self.6,t,r,po)?;
+    Ok(true)
+  }
+  fn reregister(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
+    p.reregister(&self.6,t,r,po)?;
+    Ok(true)
+  }
+
 }
 
 
@@ -134,6 +247,36 @@ impl ReadTransportStream for LocalReadStream {
     ()
   }
 }
+
+impl ReadTransportStream for AsynchLocalReadStream {
+  fn disconnect(&mut self) -> IoResult<()> {
+    self.0.disconnect()
+  }
+  fn rec_end_condition(&self) -> bool {
+    self.0.rec_end_condition()
+  }
+  fn end_read_msg(&mut self) -> () {
+    self.0.end_read_msg()
+  }
+}
+
+impl Read for AsynchLocalReadStream {
+    fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
+      let now = Instant::now();
+        
+      if now >= self.4 {
+        self.4 = now + self.3;
+        self.0.read(buf)
+      } else {
+         Err(IoError::new (
+          IoErrorKind::WouldBlock,
+          "read wouldblock",
+         ))
+      }
+
+    }
+}
+
 impl WriteTransportStream for LocalWriteStream {
   fn disconnect(&mut self) -> IoResult<()> {
     self.4 = false;
@@ -141,6 +284,34 @@ impl WriteTransportStream for LocalWriteStream {
     Ok(())
   }
 }
+impl WriteTransportStream for AsynchLocalWriteStream {
+  fn disconnect(&mut self) -> IoResult<()> {
+    self.0.disconnect()
+  }
+}
+
+impl Write for AsynchLocalWriteStream {
+    fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+      let now = Instant::now();
+        
+      if now >= self.4 {
+        self.4 = now + self.2;
+        let r = self.0.write(buf);
+        (self.5).0.set_readiness(Ready::writable());
+        (self.5).1.set_readiness(Ready::readable());
+        r
+      } else {
+         Err(IoError::new (
+          IoErrorKind::WouldBlock,
+          "write wouldblock",
+         ))
+      }
+    }
+    fn flush(&mut self) -> IoResult<()> {
+      self.0.flush()
+    }
+}
+
 
 pub struct LocalWriteStream(usize,usize,usize,Sender<(usize,usize,usize,Arc<Vec<u8>>)>,bool);
 
@@ -153,6 +324,17 @@ impl Registerable for TransportTest {
     Ok(false)
   }
 }
+impl Registerable for AsynchTransportTest {
+  fn register(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
+    p.register(&self.6,t,r,po)?;
+    Ok(true)
+  }
+  fn reregister(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
+    p.reregister(&self.6,t,r,po)?;
+    Ok(true)
+  }
+}
+
 /// default dospawn impl : it is a managed transport.
 impl Transport for TransportTest {
   /// chanel from transport receiving (loop on connection)
@@ -285,7 +467,7 @@ impl Transport for TransportTest {
             }
 
   }
-  fn connectwith(&self, address : &Self::Address, _ : Duration) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
+  fn connectwith(&self, address : &Self::Address, _ : CrateDuration) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
     
     let (locread,connb) =  if self.managed {
       let mut clis = self.cli_with.lock().unwrap();
@@ -333,9 +515,72 @@ impl Transport for TransportTest {
       SpawnRecMode::LocalSpawn
     }
   }
+}
+
+// costy, should switch to cpupool futures?
+fn trigger_registration(t : Instant, sr : SetReadiness, r : Ready) {
+  thread::spawn(move || {
+    while Instant::now() < t {
+      // costy
+    };
+    sr.set_readiness(r).unwrap()
+  });
+}
+
+impl Transport for AsynchTransportTest {
+  type ReadStream = AsynchLocalReadStream;
+  type WriteStream = AsynchLocalWriteStream;
+  type Address = LocalAdd;
+
+  fn start<C> (&self, readhandler : C) -> Result<()>
+    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<ReaderHandle> {
+      panic!("TODO remove from trait : not for asynch")
+  }
+
+  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>, Self::Address)> {
+    let (rs,ows,ad) = self.0.accept()?;
+    let rregistration = self.5.get_rregistration(ad.0,self.0.address);
+    let oalws = match ows {
+      Some(ws) => {
+        let wregistration = self.5.get_wregistration(self.0.address,ad.0);
+        Some(AsynchLocalWriteStream(ws,self.1,self.2,self.3, Instant::now() + self.3, (self.5.get_wsetready(self.0.address,ad.0).clone(),self.5.get_rsetready(ad.0,self.0.address).clone()), wregistration))
+      },
+      None => None,
+    };
+    self.5.get_wsetready(self.0.address,ad.0).set_readiness(Ready::writable())?;
+    Ok((
+        AsynchLocalReadStream(rs,self.1,self.2,self.3, Instant::now() + self.2, self.5.clone(), rregistration),
+        oalws,
+        ad))
+  }
+
+  fn connectwith(&self, address : &Self::Address, cd : CrateDuration) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
+    let (ws,ors) = self.0.connectwith(address, cd)?;
+    let con_time = Instant::now() + self.1;
+    let wregistration = self.5.get_wregistration(self.0.address,address.0);
+    let oalrs = match ors {
+      Some(rs) => {
+        let rregistration = self.5.get_rregistration(address.0,self.0.address);
+        Some(AsynchLocalReadStream(rs,self.1,self.2,self.3, con_time, self.5.clone(), rregistration))
+      },
+      None => None,
+    };
+    // connection handler
+    trigger_registration(con_time, self.5.get_lis_setready(address.0).clone(), Ready::readable());
+    // connection ouur write 
+    trigger_registration(con_time, self.5.get_wsetready(address.0,self.0.address).clone(), Ready::writable());
+    Ok((
+        AsynchLocalWriteStream(ws,self.1,self.2,self.3, con_time, (self.5.get_wsetready(self.0.address,address.0).clone(),self.5.get_rsetready(address.0,self.0.address).clone()), wregistration),
+        oalrs))
+  }
+ 
+  fn do_spawn_rec(&self) -> SpawnRecMode {
+    self.0.do_spawn_rec()
+  }
 
 
 }
+
 
 impl Write for LocalWriteStream {
     fn write(&mut self, buf: &[u8]) -> IoResult<usize> {

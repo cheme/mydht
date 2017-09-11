@@ -355,6 +355,7 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
       },
       MainLoopCommand::TryConnect(dest_address) => {
         // TODO duration will be removed
+        // first check cache if there is a connect already : no (if peer yes)
         let (ws,ors) = self.transport.connectwith(&dest_address, CrateDuration::seconds(1000))?;
 
         let (s,r) = self.write_channel_in.new()?;
