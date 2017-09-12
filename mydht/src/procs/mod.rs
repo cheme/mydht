@@ -12,25 +12,258 @@ use std::sync::mpsc::channel;
 use std::thread;
 use route::Route;
 use peer::Peer;
-use transport::{Transport,Address};
-use transport::{WriteTransportStream};
 use time::Duration;
 use utils::{self};
 use msgenc::MsgEnc;
+use std::result::Result as StdResult;
 //use num::traits::ToPrimitive;
 use std::marker::PhantomData;
-use mydhtresult::Result as MDHTResult;
 use std::fmt::{Debug,Display};
+use transport::{
+  Transport,
+  Address,
+  Address as TransportAddress,
+  SlabEntry,
+  SlabEntryState,
+  Registerable,
+  WriteTransportStream,
+};
+use kvcache::{
+  SlabCache,
+  KVCache,
+};
+use mydhtresult::{
+  Result,
+  Error,
+  ErrorKind,
+  ErrorLevel as MdhtErrorLevel,
+};
 
 pub use mydht_base::procs::*;
+use service::{
+  Service,
+  Spawner,
+  SpawnSend,
+  SpawnRecv,
+  SpawnHandle,
+  SpawnChannel,
+  MioChannel,
+  MioSend,
+  MioRecv,
+  NoYield,
+  YieldReturn,
+  SpawnerYield,
+  WriteYield,
+  ReadYield,
+  DefaultRecv,
+  DefaultRecvChannel,
+  NoRecv,
+  NoSend,
+};
+use self::mainloop::{
+  MainLoopCommand,
+  PeerCacheEntry,
+  MDHTState,
+};
+use self::server2::{
+  ReadService,
+  ReadServiceCommand,
+};
+use self::client2::{
+  WriteService,
+  WriteServiceCommand,
+  WriteServiceReply,
+};
+use utils::{
+  Ref,
+};
 
 pub mod mesgs;
+
+pub mod mainloop;
+mod server2;
+mod client2;
 mod server;
 mod client;
 mod peermanager;
 mod kvmanager;
 mod querymanager;
-pub mod mainloop;
+
+
+
+
+pub struct MyDHTService<MDC : MyDHTConf>(pub MDC, pub MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>, pub <MDC::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Send);
+
+impl<MDC : MyDHTConf> Service for MyDHTService<MDC> {
+  type CommandIn = MainLoopCommand<MDC>;
+  type CommandOut = MainLoopReply;
+
+  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+    let mut state = MDHTState::init_state(&mut self.0)?;
+    let mut yield_spawn = NoYield(YieldReturn::Loop);
+    let r = state.main_loop(&mut self.1, req, &mut yield_spawn);
+    if r.is_err() {
+      panic!("mainloop err : {:?}",&r);
+    }
+    Ok(MainLoopReply::Ended) 
+  }
+}
+
+
+pub type RWSlabEntry<MDC : MyDHTConf> = SlabEntry<
+  MDC::Transport,
+//  (),
+  //SpawnerRefsRead2<ReadService<MDC>, MDC::ReadDest, MDC::ReadChannelIn, MDC::ReadSpawn>,
+  SpawnerRefsDefRecv2<ReadService<MDC>,ReadServiceCommand, MDC::ReadDest, MDC::ReadChannelIn, MDC::ReadSpawn>,
+//  SpawnerRefs<ReadService<MDC>,MDC::ReadDest,DefaultRecvChannel<ReadServiceCommand,MDC::ReadChannelIn>,MDC::ReadSpawn>,
+  SpawnerRefs2<WriteService<MDC>,WriteServiceCommand,MDC::WriteDest,MDC::WriteChannelIn,MDC::WriteSpawn>,
+  // bool is has_connect
+  (<MDC::WriteChannelIn as SpawnChannel<WriteServiceCommand>>::Send,<MDC::WriteChannelIn as SpawnChannel<WriteServiceCommand>>::Recv,bool),
+  MDC::PeerRef>;
+
+type SpawnerRefs<S : Service,D,CI : SpawnChannel<S::CommandIn>,SP : Spawner<S,D,CI::Recv>> = (SP::Handle,CI::Send); 
+type SpawnerRefs2<S : Service,COM_IN, D,CI : SpawnChannel<COM_IN>,SP : Spawner<S,D,CI::Recv>> = (SP::Handle,CI::Send); 
+type SpawnerRefsDefRecv2<S : Service,COM_IN,D, CI : SpawnChannel<COM_IN>, RS : Spawner<S,D,DefaultRecv<COM_IN,CI::Recv>>> = (RS::Handle,CI::Send);
+type SpawnerRefsRead2<S : Service,D, CI : SpawnChannel<ReadServiceCommand>, RS : Spawner<S,D,DefaultRecv<ReadServiceCommand,CI::Recv>>> = (RS::Handle,CI::Send);
+
+/*pub trait Spawner<
+  S : Service,
+  D : SpawnSend<<S as Service>::CommandOut>,
+  R : SpawnRecv<<S as Service>::CommandIn>> {
+*/ 
+  //CI::Send); 
+type MainLoopRecvIn<MDC : MyDHTConf> = MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>;
+type MainLoopSendIn<MDC : MyDHTConf> = MioSend<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Send>;
+
+pub enum MainLoopReply {
+  /// TODO
+  Ended,
+}
+pub trait MyDHTConf : 'static + Send + Sized {
+
+  /// Name of the main thread
+  const loop_name : &'static str = "MyDHT Main Loop";
+  /// number of events to poll (size of mio `Events`)
+  const events_size : usize = 1024;
+  /// number of iteration before send loop return, 1 is suggested, but if thread are involve a
+  /// little more should be better, in a pool infinite (0) could be fine to.
+  const send_nb_iter : usize;
+  /// Spawner for main loop
+  type MainloopSpawn : Spawner<
+    MyDHTService<Self>,
+    //<Self::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Send,
+    NoSend,
+    //MioRecv<<Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Recv>
+    NoRecv
+      >;
+      
+
+  /// channel for input
+  type MainLoopChannelIn : SpawnChannel<MainLoopCommand<Self>>;
+  /// TODO out mydht command
+  type MainLoopChannelOut : SpawnChannel<MainLoopReply>;
+  /// low level transport
+  type Transport : Transport;
+  /// Message encoding
+  type MsgEnc : MsgEnc;
+  /// Peer struct (with key and address)
+  type Peer : Peer<Address = <Self::Transport as Transport>::Address>;
+  /// most of the time Arc, if not much threading or smal peer description, RcCloneOnSend can be use, or AllwaysCopy
+  /// or Copy.
+  type PeerRef : Ref<Self::Peer>;
+  /// shared info
+  type KeyVal : KeyVal;
+  /// Peer management methods 
+  type PeerMgmtMeths : PeerMgmtMeths<Self::Peer, Self::KeyVal>;
+  /// Dynamic rules for the dht
+  type DHTRules : DHTRules;
+  /// loop slab implementation
+  type Slab : SlabCache<RWSlabEntry<Self>>;
+  /// local cache for peer
+  type PeerCache : KVCache<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
+  
+  type ReadChannelIn : SpawnChannel<ReadServiceCommand>;
+  //type ReadChannelIn : SpawnChannel<<Self::ReadService as Service>::CommandIn>;
+//  type ReadFrom : SpawnRecv<<Self::ReadService as Service>::CommandIn>;
+  //type ReadDest : SpawnSend<<Self::ReadService as Service>::CommandOut>;
+  type ReadDest : SpawnSend<()> + Clone;
+  type ReadSpawn : Spawner<
+    ReadService<Self>,
+    Self::ReadDest,
+    DefaultRecv<ReadServiceCommand,
+      <Self::ReadChannelIn as SpawnChannel<ReadServiceCommand>>::Recv>>;
+
+  type WriteDest : SpawnSend<WriteServiceReply> + Clone;
+  type WriteChannelIn : SpawnChannel<WriteServiceCommand>;
+//  type WriteFrom : SpawnRecv<<Self::WriteService as Service>::CommandIn>;
+  type WriteSpawn : Spawner<WriteService<Self>,Self::WriteDest,<Self::WriteChannelIn as SpawnChannel<WriteServiceCommand>>::Recv>;
+
+  // TODO temp for type check , hardcode it after on transport service (not true for kvstore service) the service contains the read stream!!
+//  type ReadService : Service;
+  // TODO call to read and write in service will use ReadYield and WriteYield wrappers containing
+  // the spawn yield (cf sample implementation in transport tests).
+  //type WriteService : Service;
+
+
+  /// Start the main loop
+  #[inline]
+  fn start_loop(mut self : Self) -> Result<(
+    MioSend<<Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Send>, 
+    <Self::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Recv
+    )> {
+    let (s,r) = MioChannel(self.init_main_loop_channel_in()?).new()?;
+    let (so,ro) = self.init_main_loop_channel_out()?.new()?;
+
+    let mut sp = self.get_main_spawner()?;
+    //let read_handle = self.read_spawn.spawn(ReadService(rs), read_out.clone(), Some(ReadServiceCommand::Run), read_r_in, 0)?;
+    let service = MyDHTService(self,r,so);
+    // the  spawn loop is not use, the poll loop is : here we run a single loop without receive
+    sp.spawn(service, NoSend, Some(MainLoopCommand::Start), NoRecv, 1)?; 
+    // TODO replace this shit by a spawner then remove constraint on MDht trait where
+  /*  ThreadBuilder::new().name(Self::loop_name.to_string()).spawn(move || {
+      let mut state = self.init_state(r)?;
+      let mut yield_spawn = NoYield(YieldReturn::Loop);
+      let r = state.main_loop(&mut yield_spawn);
+      if r.is_err() {
+        panic!("mainloop err : {:?}",&r);
+      }
+      r
+    })?;*/
+    Ok((s,ro))
+  }
+
+
+  /// for start_loop usage
+  fn get_main_spawner(&mut self) -> Result<Self::MainloopSpawn>;
+  /// cache initializing for main loop slab cache
+  fn init_main_loop_slab_cache(&mut self) -> Result<Self::Slab>;
+
+  /// Peer cache initialization
+  fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache>;
+
+  /// Main loop channel input builder
+  fn init_main_loop_channel_in(&mut self) -> Result<Self::MainLoopChannelIn>;
+  fn init_main_loop_channel_out(&mut self) -> Result<Self::MainLoopChannelOut>;
+
+  /// instantiate read spawner
+  fn init_read_spawner(&mut self) -> Result<Self::ReadSpawn>;
+  fn init_write_spawner(&mut self) -> Result<Self::WriteSpawn>;
+
+  /// TODO replace with channel
+  fn init_read_spawner_out() -> Result<Self::ReadDest>;
+  fn init_write_spawner_out() -> Result<Self::WriteDest>;
+  fn init_read_channel_in(&mut self) -> Result<Self::ReadChannelIn>;
+  fn init_write_channel_in(&mut self) -> Result<Self::WriteChannelIn>;
+
+  /// Transport initialization
+  fn init_transport(&mut self) -> Result<Self::Transport>;
+
+
+
+}
+
+
+
 
 /// utility trait to avoid lot of parameters in each struct / fn
 /// kinda aliasing
@@ -92,7 +325,7 @@ impl<P : Peer, V : KeyVal, W : WriteTransportStream> ClientHandle<P,V,W> {
   
   /// send message with the handle if the handle allows it otherwhise return false.
   /// If an error is returned consider either the handle died (ask for new) or something else. 
-  pub fn send_msg(&self, mess : ClientMessage<P,V,W>) -> MDHTResult<bool> {
+  pub fn send_msg(&self, mess : ClientMessage<P,V,W>) -> Result<bool> {
     match self {
       &ClientHandle::Threaded(ref clisend, ref ix) => {
         try!(clisend.send((mess,*ix)));
@@ -505,7 +738,7 @@ pub fn boot_server
   cached_nodes : Vec<Arc<RT::P>>, 
   boot_nodes : Vec<Arc<RT::P>>,
   ) 
- -> MDHTResult<DHT<RT>> {
+ -> Result<DHT<RT>> {
 
   let (tquery,rquery) = channel();
   let (tkvstore,rkvstore) = channel();
@@ -600,7 +833,7 @@ pub fn boot_server
 }
 
 /// manage result of a spawned handler
-fn sphandler_res<A, E : Debug + Display> (res : Result<A, E>) {
+fn sphandler_res<A, E : Debug + Display> (res : StdResult<A, E>) {
   match res {
     Ok(_) => debug!("Spawned result returned gracefully"),
     Err(e) => error!("Thread exit due to error : {}",e),

@@ -23,12 +23,13 @@ use self::mydht_slab::slab::{
 use self::mydht_tcp_loop::{
   Tcp,
 };
-use procs::mainloop::{
+use procs::{
   MyDHTConf,
-  MDHTState,
   RWSlabEntry,
+};
+use procs::mainloop::{
+  MDHTState,
   PeerCacheEntry,
-  ReadServiceCommand,
   MainLoopCommand,
 };
 use std::net::{SocketAddr,Ipv4Addr};
@@ -174,8 +175,10 @@ mod test_tcp_all_block_thread {
     //let state1 = conf1.init_state().unwrap();
     //let state2 = conf2.init_state().unwrap();
 
-    let (mut sendcommand1,_) = conf1.start_loop().unwrap();
     let (sendcommand2,_) = conf2.start_loop().unwrap();
+    // avoid connection refused TODO replace by a right connect test (ping address)
+    thread::sleep_ms(100);
+    let (mut sendcommand1,_) = conf1.start_loop().unwrap();
     let addr2 = utils::sa4(Ipv4Addr::new(127,0,0,1), port2 as u16);
     let command = MainLoopCommand::TryConnect(SerSocketAddr(addr2));
     let addr3 = utils::sa4(Ipv4Addr::new(127,0,0,1), port2 as u16);

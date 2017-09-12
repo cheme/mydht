@@ -2,6 +2,11 @@
 //! method.
 //! Usage of mydht library requires to create a struct implementing the MyDHTConf trait, by linking with suitable inner trait implementation and their requires component.
 
+use super::{
+  MyDHTConf,
+  MainLoopSendIn,
+  RWSlabEntry,
+};
 use time::Duration as CrateDuration;
 use std::marker::PhantomData;
 use std::mem::replace;
@@ -82,6 +87,16 @@ use mio::{
   PollOpt,
   Token
 };
+use super::server2::{
+  ReadServiceCommand,
+  ReadService,
+};
+use super::client2::{
+  WriteServiceCommand,
+  WriteServiceReply,
+  WriteService,
+};
+
 macro_rules! register_state {($self:ident,$rs:ident,$os:expr,$entrystate:path) => {
   {
     let token = $self.slab_cache.insert(SlabEntry {
@@ -153,183 +168,6 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
   TryConnect(<MC::Transport as Transport>::Address),
 }
 
-pub type RWSlabEntry<MDC : MyDHTConf> = SlabEntry<
-  MDC::Transport,
-//  (),
-  //SpawnerRefsRead2<ReadService<MDC>, MDC::ReadDest, MDC::ReadChannelIn, MDC::ReadSpawn>,
-  SpawnerRefsDefRecv2<ReadService<MDC>,ReadServiceCommand, MDC::ReadDest, MDC::ReadChannelIn, MDC::ReadSpawn>,
-//  SpawnerRefs<ReadService<MDC>,MDC::ReadDest,DefaultRecvChannel<ReadServiceCommand,MDC::ReadChannelIn>,MDC::ReadSpawn>,
-  SpawnerRefs2<WriteService<MDC>,WriteServiceCommand,MDC::WriteDest,MDC::WriteChannelIn,MDC::WriteSpawn>,
-  // bool is has_connect
-  (<MDC::WriteChannelIn as SpawnChannel<WriteServiceCommand>>::Send,<MDC::WriteChannelIn as SpawnChannel<WriteServiceCommand>>::Recv,bool),
-  MDC::PeerRef>;
-
-type SpawnerRefs<S : Service,D,CI : SpawnChannel<S::CommandIn>,SP : Spawner<S,D,CI::Recv>> = (SP::Handle,CI::Send); 
-type SpawnerRefs2<S : Service,COM_IN, D,CI : SpawnChannel<COM_IN>,SP : Spawner<S,D,CI::Recv>> = (SP::Handle,CI::Send); 
-type SpawnerRefsDefRecv2<S : Service,COM_IN,D, CI : SpawnChannel<COM_IN>, RS : Spawner<S,D,DefaultRecv<COM_IN,CI::Recv>>> = (RS::Handle,CI::Send);
-type SpawnerRefsRead2<S : Service,D, CI : SpawnChannel<ReadServiceCommand>, RS : Spawner<S,D,DefaultRecv<ReadServiceCommand,CI::Recv>>> = (RS::Handle,CI::Send);
-
-/*pub trait Spawner<
-  S : Service,
-  D : SpawnSend<<S as Service>::CommandOut>,
-  R : SpawnRecv<<S as Service>::CommandIn>> {
-*/ 
-  //CI::Send); 
-type MainLoopRecvIn<MDC : MyDHTConf> = MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>;
-type MainLoopSendIn<MDC : MyDHTConf> = MioSend<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Send>;
-
-pub enum MainLoopReply {
-  /// TODO
-  Ended,
-}
-pub trait MyDHTConf : 'static + Send + Sized {
-
-  /// Name of the main thread
-  const loop_name : &'static str = "MyDHT Main Loop";
-  /// number of events to poll (size of mio `Events`)
-  const events_size : usize = 1024;
-  /// number of iteration before send loop return, 1 is suggested, but if thread are involve a
-  /// little more should be better, in a pool infinite (0) could be fine to.
-  const send_nb_iter : usize;
-  /// Spawner for main loop
-  type MainloopSpawn : Spawner<
-    MyDHTService<Self>,
-    //<Self::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Send,
-    NoSend,
-    //MioRecv<<Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Recv>
-    NoRecv
-      >;
-      
-
-  /// channel for input
-  type MainLoopChannelIn : SpawnChannel<MainLoopCommand<Self>>;
-  /// TODO out mydht command
-  type MainLoopChannelOut : SpawnChannel<MainLoopReply>;
-  /// low level transport
-  type Transport : Transport;
-  /// Message encoding
-  type MsgEnc : MsgEnc;
-  /// Peer struct (with key and address)
-  type Peer : Peer<Address = <Self::Transport as Transport>::Address>;
-  /// most of the time Arc, if not much threading or smal peer description, RcCloneOnSend can be use, or AllwaysCopy
-  /// or Copy.
-  type PeerRef : Ref<Self::Peer>;
-  /// shared info
-  type KeyVal : KeyVal;
-  /// Peer management methods 
-  type PeerMgmtMeths : PeerMgmtMeths<Self::Peer, Self::KeyVal>;
-  /// Dynamic rules for the dht
-  type DHTRules : DHTRules;
-  /// loop slab implementation
-  type Slab : SlabCache<RWSlabEntry<Self>>;
-  /// local cache for peer
-  type PeerCache : KVCache<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
-  
-  type ReadChannelIn : SpawnChannel<ReadServiceCommand>;
-  //type ReadChannelIn : SpawnChannel<<Self::ReadService as Service>::CommandIn>;
-//  type ReadFrom : SpawnRecv<<Self::ReadService as Service>::CommandIn>;
-  //type ReadDest : SpawnSend<<Self::ReadService as Service>::CommandOut>;
-  type ReadDest : SpawnSend<()> + Clone;
-  type ReadSpawn : Spawner<
-    ReadService<Self>,
-    Self::ReadDest,
-    DefaultRecv<ReadServiceCommand,
-      <Self::ReadChannelIn as SpawnChannel<ReadServiceCommand>>::Recv>>;
-
-  type WriteDest : SpawnSend<()> + Clone;
-  type WriteChannelIn : SpawnChannel<WriteServiceCommand>;
-//  type WriteFrom : SpawnRecv<<Self::WriteService as Service>::CommandIn>;
-  type WriteSpawn : Spawner<WriteService<Self>,Self::WriteDest,<Self::WriteChannelIn as SpawnChannel<WriteServiceCommand>>::Recv>;
-
-  // TODO temp for type check , hardcode it after on transport service (not true for kvstore service) the service contains the read stream!!
-//  type ReadService : Service;
-  // TODO call to read and write in service will use ReadYield and WriteYield wrappers containing
-  // the spawn yield (cf sample implementation in transport tests).
-  //type WriteService : Service;
-
-
-  /// Start the main loop
-  #[inline]
-  fn start_loop(mut self : Self) -> Result<(
-    MioSend<<Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Send>, 
-    <Self::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Recv
-    )> {
-    let (s,r) = MioChannel(self.init_main_loop_channel_in()?).new()?;
-    let (so,ro) = self.init_main_loop_channel_out()?.new()?;
-
-    let mut sp = self.get_main_spawner()?;
-    //let read_handle = self.read_spawn.spawn(ReadService(rs), read_out.clone(), Some(ReadServiceCommand::Run), read_r_in, 0)?;
-    let service = MyDHTService(self,r,so);
-    // the  spawn loop is not use, the poll loop is : here we run a single loop without receive
-    sp.spawn(service, NoSend, Some(MainLoopCommand::Start), NoRecv, 1)?; 
-    // TODO replace this shit by a spawner then remove constraint on MDht trait where
-  /*  ThreadBuilder::new().name(Self::loop_name.to_string()).spawn(move || {
-      let mut state = self.init_state(r)?;
-      let mut yield_spawn = NoYield(YieldReturn::Loop);
-      let r = state.main_loop(&mut yield_spawn);
-      if r.is_err() {
-        panic!("mainloop err : {:?}",&r);
-      }
-      r
-    })?;*/
-    Ok((s,ro))
-  }
-
-  fn init_state(self : &mut Self) -> Result<MDHTState<Self>> {
-    let events = Events::with_capacity(Self::events_size);
-    let poll = Poll::new()?;
-    let transport = self.init_transport()?;
-    assert!(true == transport.register(&poll, LISTENER, Ready::readable(),
-                    PollOpt::edge())?);
-
-    let read_spawn = self.init_read_spawner()?;
-    let write_spawn = self.init_write_spawner()?;
-    let read_channel_in = DefaultRecvChannel(self.init_read_channel_in()?,ReadServiceCommand::Run);
-    let write_channel_in = self.init_write_channel_in()?;
-    let s = MDHTState {
-      transport : transport,
-      slab_cache : self.init_main_loop_slab_cache()?,
-      peer_cache : self.init_main_loop_peer_cache()?,
-      events : None,
-      poll : poll,
-      read_spawn : read_spawn,
-      read_channel_in : read_channel_in,
-      write_spawn : write_spawn,
-      write_channel_in : write_channel_in,
-    };
-    Ok(s)
-  }
-
-
-  /// for start_loop usage
-  fn get_main_spawner(&mut self) -> Result<Self::MainloopSpawn>;
-  /// cache initializing for main loop slab cache
-  fn init_main_loop_slab_cache(&mut self) -> Result<Self::Slab>;
-
-  /// Peer cache initialization
-  fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache>;
-
-  /// Main loop channel input builder
-  fn init_main_loop_channel_in(&mut self) -> Result<Self::MainLoopChannelIn>;
-  fn init_main_loop_channel_out(&mut self) -> Result<Self::MainLoopChannelOut>;
-
-  /// instantiate read spawner
-  fn init_read_spawner(&mut self) -> Result<Self::ReadSpawn>;
-  fn init_write_spawner(&mut self) -> Result<Self::WriteSpawn>;
-
-  /// TODO replace with channel
-  fn init_read_spawner_out() -> Result<Self::ReadDest>;
-  fn init_write_spawner_out() -> Result<Self::WriteDest>;
-  fn init_read_channel_in(&mut self) -> Result<Self::ReadChannelIn>;
-  fn init_write_channel_in(&mut self) -> Result<Self::WriteChannelIn>;
-
-  /// Transport initialization
-  fn init_transport(&mut self) -> Result<Self::Transport>;
-
-
-
-}
-
 pub struct MDHTState<MDC : MyDHTConf> {
   transport : MDC::Transport,
   slab_cache : MDC::Slab,
@@ -343,6 +181,31 @@ pub struct MDHTState<MDC : MyDHTConf> {
 }
 
 impl<MDC : MyDHTConf> MDHTState<MDC> {
+  pub fn init_state(conf : &mut MDC) -> Result<MDHTState<MDC>> {
+    let events = Events::with_capacity(MDC::events_size);
+    let poll = Poll::new()?;
+    let transport = conf.init_transport()?;
+    assert!(true == transport.register(&poll, LISTENER, Ready::readable(),
+                    PollOpt::edge())?);
+
+    let read_spawn = conf.init_read_spawner()?;
+    let write_spawn = conf.init_write_spawner()?;
+    let read_channel_in = DefaultRecvChannel(conf.init_read_channel_in()?,ReadServiceCommand::Run);
+    let write_channel_in = conf.init_write_channel_in()?;
+    let s = MDHTState {
+      transport : transport,
+      slab_cache : conf.init_main_loop_slab_cache()?,
+      peer_cache : conf.init_main_loop_peer_cache()?,
+      events : None,
+      poll : poll,
+      read_spawn : read_spawn,
+      read_channel_in : read_channel_in,
+      write_spawn : write_spawn,
+      write_channel_in : write_channel_in,
+    };
+    Ok(s)
+  }
+
 
   /// sub call for service (actually mor relevant service implementation : the call will only
   /// return one CommandOut to spawner : finished or fail).
@@ -381,8 +244,7 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
     Ok(())
   }
 
-//  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut>;
-  fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>, req: MainLoopCommand<MDC>, async_yield : &mut S) -> Result<()> {
+pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>, req: MainLoopCommand<MDC>, async_yield : &mut S) -> Result<()> {
    let mut events = if self.events.is_some() {
      let oevents = replace(&mut self.events,None);
      oevents.unwrap_or(Events::with_capacity(MDC::events_size))
@@ -460,14 +322,13 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
                   // Yet if WriteService could resume which is actually not the case we could have a
                   // spawneryield return and would need to resume with a resume command.
                   // self.write_stream_send(write_token,WriteServiceCommand::Resume , <MDC>::init_write_spawner_out()?)?;
-                  
                   // also case when multiplex transport and write stream is ready but nothing to
                   // send : spawn of write happens on first write.
                   //TODO a debug log??
                   if *has_connect == false {
                     *has_connect = true;
                     // reregister at a edge level
-                    //assert!(true == ws.reregister(&self.poll, tok, Ready::readable(),PollOpt::edge())?);
+                    //assert!(true == ws.reregister(&self.poll, tok, Ready::writable(),PollOpt::edge())?);
                   }
                   let oc = write_r_in.recv()?;
 
@@ -532,13 +393,19 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
   }
 
 
+  fn remove_writestream(&mut self, write_token : usize) -> Result<()> {
+    // TODO remove ws and rs (test if rs spawn is finished before : could still be running) if in ws plus update peer cache to remove peer
+    panic!("TODO");
+    Ok(())
+  }
 
   /// The state of the slab entry must be checked before, return error on wrong state
   ///  TODO replace dest with channel spawner mut ref
   fn write_stream_send(&mut self, write_token : usize, command : WriteServiceCommand, write_out : MDC::WriteDest) -> Result<()> {
+    let rem = {
     let se = self.slab_cache.get_mut(write_token);
     if let Some(entry) = se {
-      let restart = match entry.state {
+      let finished = match entry.state {
         // connected write stream : spawn
         ref mut e @ SlabEntryState::WriteStream(_,(_,_,true)) => {
           let state = replace(e, SlabEntryState::Empty);
@@ -582,18 +449,35 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
         },
         _ => return Err(Error("Call of write listener on wrong state".to_string(), ErrorKind::Bug, None)),
       };
-      if restart.is_some() {
+      if finished.is_some() {
         let state = replace(&mut entry.state, SlabEntryState::Empty);
         if let SlabEntryState::WriteSpawned((handle,sender)) = state {
-          let (serv,sen,recv) = handle.unwrap_state()?;
-          let write_handle = self.write_spawn.spawn(serv, sen, restart, recv, MDC::send_nb_iter)?;
-          replace(&mut entry.state, SlabEntryState::WriteSpawned((write_handle,sender)));
+          let (serv,mut sen,recv,result) = handle.unwrap_state()?;
+          if result.is_ok() {
+            // restart
+            let write_handle = self.write_spawn.spawn(serv, sen, finished, recv, MDC::send_nb_iter)?;
+            replace(&mut entry.state, SlabEntryState::WriteSpawned((write_handle,sender)));
+            false
+          } else {
+            // error TODO error management
+            // TODO log
+            // TODO sen writeout error
+            sen.send(WriteServiceReply::Failure(finished.unwrap()))?;
+            true
+          }
         } else {
           unreachable!()
         }
+      } else {
+        false
       }
     } else {
       return Err(Error("Call of write listener on no state".to_string(), ErrorKind::Bug, None))
+    }
+    };
+    if rem {
+      // TODO remove write stream !!!
+      self.remove_writestream(write_token)?;
     }
 
     Ok(())
@@ -602,24 +486,6 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
 }
 
 
-
-
-pub struct MyDHTService<MDC : MyDHTConf>(pub MDC, pub MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>, pub <MDC::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Send);
-
-impl<MDC : MyDHTConf> Service for MyDHTService<MDC> {
-  type CommandIn = MainLoopCommand<MDC>;
-  type CommandOut = MainLoopReply;
-
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
-    let mut state = self.0.init_state()?;
-    let mut yield_spawn = NoYield(YieldReturn::Loop);
-    let r = state.main_loop(&mut self.1, req, &mut yield_spawn);
-    if r.is_err() {
-      panic!("mainloop err : {:?}",&r);
-    }
-    Ok(MainLoopReply::Ended) 
-  }
-}
 
 
 pub struct PeerCacheEntry<P> {
@@ -653,60 +519,6 @@ impl<P> PeerCacheEntry<P> {
   pub fn set_write_token(&self, v : usize) {
     self.write.set(v)
   }
-}
-
-// TODO put in its own module
-pub struct ReadService<MC : MyDHTConf>(pub <MC::Transport as Transport>::ReadStream);
-
-impl<MDC : MyDHTConf> Service for ReadService<MDC> {
-  type CommandIn = ReadServiceCommand;
-  type CommandOut = ();
-
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
-    match req {
-      ReadServiceCommand::Run => {
-        // for initial testing only TODO replace by deser
-        let mut buf = vec![0;4];
-        let mut r = ReadYield(&mut self.0, async_yield);
-        r.read_exact(&mut buf).unwrap(); // unwrap for testring only
-//        panic!("{:?}",&buf[..]);
-        println!("{:?}",&buf[..]);
-        assert!(&[1,2,3,4] == &buf[..]);
-        buf[0]=9;
-      },
-    }
-    Ok(())
-  }
-}
-/// command for readservice
-#[derive(Clone)]
-pub enum ReadServiceCommand {
-  Run,
-}
-
-// TODO put in its own module
-pub struct WriteService<MC : MyDHTConf>(pub <MC::Transport as Transport>::WriteStream);
-
-impl<MDC : MyDHTConf> Service for WriteService<MDC> {
-  type CommandIn = WriteServiceCommand;
-  type CommandOut = ();
-
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
-    match req {
-      WriteServiceCommand::Write => {
-        // for initial testing only TODO replace by deser
-        let buf = &[1,2,3,4];
-        let mut w = WriteYield(&mut self.0, async_yield);
-        w.write_all(buf).unwrap(); // unwrap for testing only (thread without error catching
-      },
-    }
-    Ok(())
-  }
-}
-/// command for readservice
-#[derive(Clone)]
-pub enum WriteServiceCommand {
-  Write,
 }
 
 

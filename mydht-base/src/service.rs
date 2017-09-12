@@ -21,6 +21,7 @@ extern crate futures_cpupool;
 extern crate futures;
 extern crate mio;
 
+use std::result::Result as StdResult;
 use self::mio::{
   Registration,
   SetReadiness,
@@ -350,13 +351,19 @@ pub trait SpawnHandle<Service,Sen,Recv> {
   /// extra racy -> can receive message while finishing  : not a huge issue as the receiver remains
   /// into spawnhandle : after testing is_finished to true the receiver if not empty could be
   /// reuse. -> TODO some logging in case it is relevant and requires a synch.
+  ///
+  /// is_finished is not included in unwrap_state because it should be optimized by implementation
+  /// (called frequently return single bool).
   fn is_finished(&mut self) -> bool;
   /// unyield implementation must take account of the fact that it is called frequently even if the
   /// spawn is not yield (no is_yield function here it is implementation dependant).
   /// For parrallel spawner (threading), unyield should position a skip atomic to true in case
   /// where it does not actually unyield.
   fn unyield(&mut self) -> Result<()>;
-  fn unwrap_state(self) -> Result<(Service,Sen,Recv)>;
+  /// if finished (implementation should panic if methode call if not finished), error management
+  /// through last result and restart service through 3 firt items.
+  /// Error are only technical : service error should send errormessge in sender.
+  fn unwrap_state(self) -> Result<(Service,Sen,Recv,Result<()>)>;
   // TODO add a kill command and maybe a yield command
   //
   // TODO add a get_technical_error command : right now we do not know if we should restart on
@@ -449,7 +456,7 @@ impl SpawnerYield for NoYield {
   }
 }
 
-pub struct BlockingSameThread<S,D,R>((S,D,R));
+pub struct BlockingSameThread<S,D,R>((S,D,R,Result<()>));
 impl<S,D,R> SpawnHandle<S,D,R> for BlockingSameThread<S,D,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
@@ -460,7 +467,7 @@ impl<S,D,R> SpawnHandle<S,D,R> for BlockingSameThread<S,D,R> {
     Ok(())
   }
   #[inline]
-  fn unwrap_state(self) -> Result<(S,D,R)> {
+  fn unwrap_state(self) -> Result<(S,D,R,Result<()>)> {
     Ok(self.0)
   }
 }
@@ -479,38 +486,48 @@ impl<'a, C> SpawnSend<C> for &'a mut VecDeque<C> {
 //pub struct Blocker<S : Service>(PhantomData<S>);
 pub struct Blocker;
 
-macro_rules! spawn_loop {($service:ident,$spawn_out:ident,$ocin:ident,$r:ident,$nb_loop:ident,$yield_build:ident,$return_build:expr) => {
-    loop {
-      match $ocin {
-        Some(cin) => {
-          let cmd_out_r = $service.call(cin, &mut $yield_build);
-          if let Some(cmd_out) = try_ignore!(cmd_out_r, "In spawner : {:?}") {
+
+// TODO make it a function returning result of type parameter
+macro_rules! spawn_loop {($service:ident,$spawn_out:ident,$ocin:ident,$r:ident,$nb_loop:ident,$yield_build:ident,$result:ident,$return_build:expr) => {
+  loop {
+    match $ocin {
+      Some(cin) => {
+        match $service.call(cin, &mut $yield_build) {
+          Ok(r) => {
             if D::CAN_SEND {
-              $spawn_out.send(cmd_out)?;
+              $spawn_out.send(r)?;
             }
-          } else {
+          },
+          Err(e) => if e.level() == MdhtErrorLevel::Ignore {
+            // suspend with YieldReturn 
             return $return_build;
+          } else if e.level() == MdhtErrorLevel::Panic {
+            panic!("In spawner : {:?}",e);
+          } else {
+            $result = Err(e);
+            break;
+          },
+        }
+        if $nb_loop > 0 {
+          $nb_loop -= 1;
+          if $nb_loop == 0 {
+            break;
           }
-          if $nb_loop > 0 {
-            $nb_loop -= 1;
-            if $nb_loop == 0 {
-              break;
-            }
+        }
+      },
+      None => {
+        $ocin = $r.recv()?;
+        if $ocin.is_none() {
+          if let YieldReturn::Return = $yield_build.spawn_yield() {
+            return $return_build;
+          } else {
+            continue;
           }
-        },
-        None => {
-          $ocin = $r.recv()?;
-          if $ocin.is_none() {
-            if let YieldReturn::Return = $yield_build.spawn_yield() {
-              return $return_build;
-            } else {
-              continue;
-            }
-          }
-        },
-      }
-      $ocin = None;
+        }
+      },
     }
+    $ocin = None;
+  }
 }}
 
 impl<S : Service, D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<S::CommandIn>> Spawner<S,D,R> for Blocker {
@@ -525,8 +542,9 @@ impl<S : Service, D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<S::Co
     mut nb_loop : usize
   ) -> Result<Self::Handle> {
     let mut yiel = NoYield(YieldReturn::Loop);
-    spawn_loop!(service,spawn_out,ocin,r,nb_loop,yiel,Err(Error("Blocking spawn service return would block when should loop".to_string(), ErrorKind::Bug, None)));
-    return Ok((BlockingSameThread((service,spawn_out,r))))
+    let mut err = Ok(());
+    spawn_loop!(service,spawn_out,ocin,r,nb_loop,yiel,err,Err(Error("Blocking spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
+    return Ok((BlockingSameThread((service,spawn_out,r,err))))
   }
 }
 
@@ -541,7 +559,7 @@ pub struct RestartSpawn<S : Service,D : SpawnSend<<S as Service>::CommandOut>, S
 
 pub enum RestartSameThread<S : Service,D : SpawnSend<<S as Service>::CommandOut>, SP : Spawner<S,D,R>, R : SpawnRecv<S::CommandIn>> {
   ToRestart(RestartSpawn<S,D,SP,R>),
-  Ended((S,D,R)),
+  Ended((S,D,R,Result<()>)),
   // technical
   Empty,
 }
@@ -578,7 +596,7 @@ impl<S : Service + ServiceRestartable,D : SpawnSend<<S as Service>::CommandOut>,
   }
 
   #[inline]
-  fn unwrap_state(mut self) -> Result<(S,D,R)> {
+  fn unwrap_state(mut self) -> Result<(S,D,R,Result<()>)> {
     loop {
       match self {
         RestartSameThread::ToRestart(_) => {
@@ -612,7 +630,8 @@ impl<S : Service + ServiceRestartable, D : SpawnSend<<S as Service>::CommandOut>
     mut nb_loop : usize
   ) -> Result<Self::Handle> {
     let mut yiel = NoYield(YieldReturn::Return);
-    spawn_loop!(service,spawn_out,ocin,recv,nb_loop,yiel,
+    let mut err = Ok(());
+    spawn_loop!(service,spawn_out,ocin,recv,nb_loop,yiel,err,
         Ok(RestartSameThread::ToRestart(
               RestartSpawn {
                 spawner : RestartOrError,
@@ -622,7 +641,7 @@ impl<S : Service + ServiceRestartable, D : SpawnSend<<S as Service>::CommandOut>
                 nb_loop : nb_loop,
               }))
       );
-    return Ok(RestartSameThread::Ended((service,spawn_out,recv)))
+      Ok(RestartSameThread::Ended((service,spawn_out,recv,err)))
   }
 }
 
@@ -632,7 +651,7 @@ pub struct Coroutine<'a>(PhantomData<&'a()>);
 /// common send/recv for coroutine local usage (not Send, but clone)
 pub type LocalRc<C> = Rc<RefCell<VecDeque<C>>>;
 /// not type alias as will move from this crate
-pub struct CoroutHandle<S,D,R>(Rc<Option<(S,D,R)>>,CoRHandle);
+pub struct CoroutHandle<S,D,R>(Rc<Option<(S,D,R,Result<()>)>>,CoRHandle);
 pub struct CoroutYield<'a>(&'a mut CoroutineC);
 
 impl<'a> SpawnerYield for CoroutYield<'a> {
@@ -660,7 +679,7 @@ impl<S,D,R> SpawnHandle<S,D,R> for CoroutHandle<S,D,R> {
     Ok(())
   }
   #[inline]
-  fn unwrap_state(self) -> Result<(S,D,R)> {
+  fn unwrap_state(self) -> Result<(S,D,R,Result<()>)> {
     let s = match Rc::try_unwrap(self.0) {
       Ok(s) => s,
       Err(_) => return Err(Error("Rc not accessible, might have read an unfinished corouthandle".to_string(), ErrorKind::Bug, None)),
@@ -712,13 +731,14 @@ impl<'a,S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOu
     let rcs2 = rcs.clone();
     let co_handle = CoroutineC::spawn(move |corout,_|{
       move || -> Result<()> {
+        let mut err = Ok(());
         let mut rcs = rcs;
         let mut yiel = CoroutYield(corout);
-        spawn_loop!(service,spawn_out,ocin,recv,nb_loop,yiel,Ok(()));
+        spawn_loop!(service,spawn_out,ocin,recv,nb_loop,yiel,err,Err(Error("Coroutine spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
         let dest = Rc::get_mut(&mut rcs).unwrap();
-        replace(dest,Some((service,spawn_out,recv)));
+        replace(dest,Some((service,spawn_out,recv,err)));
         Ok(())
-      }().unwrap(); // TODO error management on technical failure
+      }().unwrap();
       0
     });
     return Ok(CoroutHandle(rcs2,co_handle));
@@ -727,7 +747,7 @@ impl<'a,S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOu
 
 
 pub struct ThreadBlock;
-pub struct ThreadHandleBlock<S,D,R>(Arc<Mutex<Option<(S,D,R)>>>,JoinHandle<Result<()>>);
+pub struct ThreadHandleBlock<S,D,R>(Arc<Mutex<Option<(S,D,R,Result<()>)>>>,JoinHandle<Result<()>>);
 pub struct ThreadYieldBlock;
 macro_rules! thread_handle {($name:ident,$yield:expr) => {
 
@@ -742,7 +762,7 @@ impl<S,D,R> SpawnHandle<S,D,R> for $name<S,D,R> {
   }
 
   #[inline]
-  fn unwrap_state(mut self) -> Result<(S,D,R)> {
+  fn unwrap_state(mut self) -> Result<(S,D,R,Result<()>)> {
     let mut mlock = self.0.lock();
     if mlock.is_some() {
       //let ost = mutex.into_inner();
@@ -790,9 +810,10 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
     let finished = Arc::new(Mutex::new(None));
     let finished2 = finished.clone();
     let join_handle = thread::Builder::new().spawn(move ||{
-      spawn_loop!(service,spawn_out,ocin,recv,nb_loop,ThreadYieldBlock,Ok(()));
+      let mut err = Ok(());
+      spawn_loop!(service,spawn_out,ocin,recv,nb_loop,ThreadYieldBlock,err,Err(Error("Thread block spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
       let mut data = finished.lock();
-      *data = Some((service,spawn_out,recv));
+      *data = Some((service,spawn_out,recv,err));
       Ok(())
     })?;
     return Ok(ThreadHandleBlock(finished2,join_handle));
@@ -807,7 +828,7 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
 /// is the same.
 /// It must be notice that after a call to unyield, yield will skip (avoid possible lock).
 pub struct ThreadPark;
-pub struct ThreadHandlePark<S,D,R>(Arc<Mutex<Option<(S,D,R)>>>,JoinHandle<Result<()>>,Arc<(Mutex<bool>,Condvar)>);
+pub struct ThreadHandlePark<S,D,R>(Arc<Mutex<Option<(S,D,R,Result<()>)>>>,JoinHandle<Result<()>>,Arc<(Mutex<bool>,Condvar)>);
 
 pub struct ThreadYieldPark(Arc<(Mutex<bool>,Condvar)>);
 
@@ -868,9 +889,11 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
     let finished2 = finished.clone();
     let join_handle = thread::Builder::new().spawn(move ||{
       let mut y = ThreadYieldPark(skip2);
-      spawn_loop!(service,spawn_out,ocin,recv,nb_loop,y,Ok(()));
+
+      let mut err = Ok(());
+      spawn_loop!(service,spawn_out,ocin,recv,nb_loop,y,err,Err(Error("Thread park spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
       let mut data = finished.lock();
-      *data = Some((service,spawn_out,recv));
+      *data = Some((service,spawn_out,recv,err));
       Ok(())
     })?;
     return Ok(ThreadHandlePark(finished2,join_handle,skip));
@@ -887,7 +910,8 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
 /// bad (future may be in api so fine)
 /// This use CpuPool but not really the future abstraction
 pub struct CpuPool(FCpuPool);
-pub struct CpuPoolHandle<S,D,R>(CpuFuture<(S,D,R),Error>,Option<(S,D,R)>);
+// TODO simpliest type with Result<() everywhere).
+pub struct CpuPoolHandle<S,D,R>(CpuFuture<(S,D,R,Result<()>),Error>,Option<(S,D,R,Result<()>)>);
 pub struct CpuPoolYield;
 
 impl<S : Send + 'static, D : Send + 'static, R : Send + 'static> SpawnHandle<S,D,R> for CpuPoolHandle<S,D,R> {
@@ -911,7 +935,7 @@ impl<S : Send + 'static, D : Send + 'static, R : Send + 'static> SpawnHandle<S,D
   }
 
   #[inline]
-  fn unwrap_state(mut self) -> Result<(S,D,R)> {
+  fn unwrap_state(mut self) -> Result<(S,D,R,Result<()>)> {
     if self.1.is_some() {
       let r = replace(&mut self.1,None);
       return Ok(r.unwrap())
@@ -943,9 +967,10 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
     mut nb_loop : usize
   ) -> Result<Self::Handle> {
     let future = self.0.spawn_fn(move || {
-      match move || -> Result<(S,D,R)> {
-        spawn_loop!(service,spawn_out,ocin,recv,nb_loop,CpuPoolYield,Ok((service,spawn_out,recv)));
-        Ok((service,spawn_out,recv))
+      match move || -> Result<(S,D,R,Result<()>)> {
+        let mut err = Ok(());
+        spawn_loop!(service,spawn_out,ocin,recv,nb_loop,CpuPoolYield,err,Err(Error("CpuPool spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
+        Ok((service,spawn_out,recv,err))
       }() {
         Ok(r) => okfuture(r),
         Err(e) => errfuture(e),
@@ -960,14 +985,14 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
 /// This cpu pool use future internally TODO test it , the imediate impact upon CpuPool is that the
 /// receiver for spawning is local (no need to be send)
 pub struct CpuPoolFuture(FCpuPool);
-pub struct CpuPoolHandleFuture<S,D,R>(CpuFuture<(S,D),Error>,Option<(S,D)>,R);
+pub struct CpuPoolHandleFuture<S,D,R>(CpuFuture<(S,D,Result<()>),Error>,Option<(S,D,Result<()>)>,R);
 
 impl<S : Send + 'static + Service,R, D : 'static + Send + SpawnSend<S::CommandOut>> SpawnHandle<S,D,R> for CpuPoolHandleFuture<S,D,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
     match self.0.poll() {
       Ok(Async::Ready(r)) => {
-        self.1 = Some(r);
+        self.1 = Some((r.0,r.1,Ok(())));
         true
       },
       Ok(Async::NotReady) => false,
@@ -983,16 +1008,18 @@ impl<S : Send + 'static + Service,R, D : 'static + Send + SpawnSend<S::CommandOu
   }
 
   #[inline]
-  fn unwrap_state(mut self) -> Result<(S,D,R)> {
+  fn unwrap_state(mut self) -> Result<(S,D,R,Result<()>)> {
     if self.1.is_some() {
-      if let Some((s,d)) = replace(&mut self.1,None) {
-        return Ok((s,d,self.2))
+      if let Some((s,d,res)) = replace(&mut self.1,None) {
+        return Ok((s,d,self.2,res))
       } else {
         unreachable!()
       }
     }
-    let res = self.0.wait()?;
-    Ok((res.0,res.1,self.2))
+    match self.0.wait() {
+      Ok((s,d,r)) => Ok((s,d,self.2,r)),
+      Err(e) => Err(e),
+    }
   }
 }
 
@@ -1011,11 +1038,11 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
     mut recv : R,
     mut nb_loop : usize
   ) -> Result<Self::Handle> {
-    let mut future = self.0.spawn(okfuture((service,spawn_out)));
+    let mut future = self.0.spawn(okfuture((service,spawn_out,Ok(()))));
     loop {
       match ocin {
         Some(cin) => {
-          future = self.0.spawn(future.and_then(|(mut service, mut spawn_out)| {
+          future = self.0.spawn(future.and_then(|(mut service, mut spawn_out,_)| {
             match service.call(cin, &mut CpuPoolYield) {
               Ok(r) => {
                 if D::CAN_SEND {
@@ -1024,14 +1051,15 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
                     Err(e) => return errfuture(e),
                   }
                 }
-                return okfuture((service,spawn_out));
+                return okfuture((service,spawn_out,Ok(())));
               },
               Err(e) => if e.level() == MdhtErrorLevel::Ignore {
                 panic!("This should only yield loop, there is an issue with implementation");
               } else if e.level() == MdhtErrorLevel::Panic {
                 panic!("In spawner cpufuture panic : {:?} ",e);
               } else {
-                return errfuture(e)
+                return okfuture((service,spawn_out,Err(e)));
+//                return errfuture((service,spawn_out,e))
               },
             };
           }));
