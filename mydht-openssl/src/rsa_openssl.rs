@@ -1,5 +1,6 @@
 //! Openssl trait and shadower for mydht.
 //! TODO a shadow mode for header (only asym cyph)
+//! TODO split to 2 shadow SymSym and Asym only!!!
 
 #[cfg(test)]
 extern crate mydht_basetest;
@@ -42,8 +43,8 @@ use readwrite_comp::{
   ExtWrite,
   ReadDefImpl,
 };
+use mydht_base::peer::{NoShadow};
 use mydht_base::keyval::{KeyVal};
-use mydht_base::peer::{ShadowBase,ShadowW,ShadowR};
 #[cfg(test)]
 use mydht_base::keyval::{Attachment,SettableAttachment};
 #[cfg(test)]
@@ -640,7 +641,7 @@ impl<RT : OpenSSLConf> OSSLShadowerR<RT> {
   pub fn new (pk : PKeyExt<RT>) -> IoResult<Self> {
      Ok(OSSLShadowerR {
       inner : OSSLMixR::new(pk),
-      mode : ASymSymMode::None,
+      mode : ASymSymMode::ASymSym,
       asymbufs : None,
     })
   }
@@ -649,7 +650,7 @@ impl<RT : OpenSSLConf> OSSLShadowerW<RT> {
   pub fn new (pk : PKeyExt<RT>) -> IoResult<Self> {
      Ok(OSSLShadowerW {
       inner : OSSLMixW::new(pk)?,
-      mode : ASymSymMode::None,
+      mode : ASymSymMode::ASymSym,
       asymbufs : None,
     })
   }
@@ -861,8 +862,6 @@ impl<RT : OpenSSLConf> ExtWrite for OSSLShadowerW<RT> {
 
 }
 
-impl<RT : OpenSSLConf> ShadowW for OSSLShadowerW<RT> {}
-impl<RT : OpenSSLConf> ShadowR for OSSLShadowerR<RT> {}
 
 // TODO if bincode get include use it over ASYMSYMMode isnstead of those three constant
 const SMODE_ASYM_ONLY_ENABLE : u8 = 2;
@@ -887,30 +886,6 @@ impl<RT : OpenSSLConf> PKeyExt<RT> {
   }
 
 
-}
-
-impl<RT : OpenSSLConf> ShadowBase for OSSLShadowerR<RT> {
-  type ShadowMode = ASymSymMode; // TODO shadowmode allowing head to be RSA only
-
-  #[inline]
-  fn set_mode (&mut self, sm : Self::ShadowMode) {
-    self.mode = sm;
-  }
-  #[inline]
-  fn get_mode (&self) -> Self::ShadowMode {
-    self.mode.clone()
-  }
-}
-impl<RT : OpenSSLConf> ShadowBase for OSSLShadowerW<RT> {
-  type ShadowMode = ASymSymMode;
-  #[inline]
-  fn set_mode (&mut self, sm : Self::ShadowMode) {
-    self.mode = sm;
-  }
-  #[inline]
-  fn get_mode (&self) -> Self::ShadowMode {
-    self.mode.clone()
-  }
 }
 
 
@@ -1004,41 +979,41 @@ impl<I> SettableAttachment for RSAPeerTest<I> {}
 
 impl<I : KVContent> Peer for RSAPeerTest<I> {
   type Address = LocalAdd;
-  type ShadowW = OSSLShadowerW<RSAPeerConf>;
-  type ShadowR = OSSLShadowerR<RSAPeerConf>;
+  type ShadowWMsg = OSSLShadowerW<RSAPeerConf>;
+  type ShadowRMsg = OSSLShadowerR<RSAPeerConf>;
+  type ShadowWAuth = NoShadow;
+  type ShadowRAuth = NoShadow;
   #[inline]
   fn get_address(&self) -> &LocalAdd {
     &self.address
   }
  
   #[inline]
-  fn get_shadower_r (&self) -> Self::ShadowR {
-    OSSLShadowerR::new(self.publickey.clone()).unwrap() // TODO change peer trait
+  fn get_shadower_r_auth (&self) -> Self::ShadowRAuth {
+    NoShadow
   }
   #[inline]
-  fn get_shadower_w (&self) -> Self::ShadowW {
+  fn get_shadower_r_msg (&self) -> Self::ShadowRMsg {
+    OSSLShadowerR::new(self.publickey.clone()).unwrap() // TODO change peer trait
+  }
+ 
+  #[inline]
+  fn get_shadower_w_auth (&self) -> Self::ShadowWAuth {
+    NoShadow
+  }
+  #[inline]
+  fn get_shadower_w_msg (&self) -> Self::ShadowWMsg {
     OSSLShadowerW::new(self.publickey.clone()).unwrap() // TODO change peer trait
   }
 
-  #[inline]
-  fn default_message_mode (&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {
-    ASymSymMode::ASymSym
-  }
-/*  #[inline]
-  fn default_header_mode (&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {
-    ASymSymMode::ASymOnly
-  }*/
-  #[inline]
-  fn default_auth_mode (&self) ->  <Self::ShadowW as ShadowBase>::ShadowMode {
-    ASymSymMode::None
-  }
+
 }
 
 fn rsa_shadower_test (input_length : usize, write_buffer_length : usize,
 read_buffer_length : usize, smode : ASymSymMode) {
 
   let to_p = RSAPeerTest::new(1,()).unwrap();
-  shadower_test(to_p,input_length,write_buffer_length,read_buffer_length,smode);
+  shadower_test(to_p,input_length,write_buffer_length,read_buffer_length);
 
 }
 

@@ -21,7 +21,12 @@ extern crate futures_cpupool;
 extern crate futures;
 extern crate mio;
 
+use std::borrow::Borrow;
 use std::result::Result as StdResult;
+use utils::{
+  SRef,
+  SToRef,
+};
 use self::mio::{
   Registration,
   SetReadiness,
@@ -226,7 +231,7 @@ pub trait Spawner<
 
 /// Send/Recv service Builder
 pub trait SpawnChannel<Command> {
-  type Send : SpawnSend<Command>;
+  type Send : SpawnSend<Command> + Clone;
   type Recv : SpawnRecv<Command>;
   fn new(&mut self) -> Result<(Self::Send,Self::Recv)>;
 }
@@ -280,18 +285,32 @@ impl<R> Registerable for MioRecv<R> {
   }
 }
 /// mio registerable channel sender
+#[derive(Clone)]
 pub struct MioSend<S> {
   mpsc : S,
   set_ready : SetReadiness,
 }
 impl<C,S : SpawnSend<C>> SpawnSend<C> for MioSend<S> {
-  const CAN_SEND : bool = true;
+  const CAN_SEND : bool = <S as SpawnSend<C>>::CAN_SEND;
   fn send(&mut self, t : C) -> Result<()> {
     self.mpsc.send(t)?;
     self.set_ready.set_readiness(Ready::readable())?;
     Ok(())
   }
 }
+
+#[derive(Clone)]
+pub struct HandleSend<S,H : SpawnUnyield>(pub S, pub H);
+
+impl<C,S : SpawnSend<C>, H : SpawnUnyield> SpawnSend<C> for HandleSend<S,H> {
+  const CAN_SEND : bool = <S as SpawnSend<C>>::CAN_SEND;
+  fn send(&mut self, t : C) -> Result<()> {
+    self.0.send(t)?;
+    self.1.unyield()?;
+    Ok(())
+  }
+}
+
 impl<C> SpawnSend<C> for MpscSender<C> {
   const CAN_SEND : bool = true;
   fn send(&mut self, t : C) -> Result<()> {
@@ -299,6 +318,68 @@ impl<C> SpawnSend<C> for MpscSender<C> {
     Ok(())
   }
 }
+
+/// Mpsc channel as service send/recv, to use on Ref (non sendable content)
+pub struct MpscChannelRef;
+pub struct MpscSenderRef<C : SRef>(MpscSender<C::Send>);
+pub struct MpscReceiverRef<C : SRef>(MpscReceiver<C::Send>);
+pub struct MpscSenderToRef<CS>(MpscSender<CS>);
+
+impl<C : SRef> SpawnSend<C> for MpscSenderRef<C> {
+  const CAN_SEND : bool = <MpscSender<C::Send>>::CAN_SEND;
+  fn send(&mut self, t : C) -> Result<()> {
+    <MpscSender<C::Send> as SpawnSend<C::Send>>::send(&mut self.0,t.get_sendable())?;
+    Ok(())
+  }
+}
+
+impl<C : SRef> SpawnSend<C> for MpscSenderToRef<C::Send> {
+//impl<C : Ref<C>> ToRef<MpscSenderRef<C>,MpscSenderRef<C>> for MpscSender<C::Send> {
+  const CAN_SEND : bool = true;
+  fn send(&mut self, t : C) -> Result<()> {
+    <MpscSender<C::Send>>::send(&mut self.0,t.get_sendable())?;
+    Ok(())
+  }
+}
+
+impl<C : SRef> SpawnRecv<C> for MpscReceiverRef<C> {
+  fn recv(&mut self) -> Result<Option<C>> {
+    let r = <MpscReceiver<C::Send> as SpawnRecv<C::Send>>::recv(&mut self.0)?;
+    Ok(r.map(|tr|tr.to_ref()))
+  }
+}
+
+impl<C : SRef> Clone for MpscSenderRef<C> {
+  fn clone(&self) -> Self {
+    MpscSenderRef(self.0.clone())
+  }
+}
+
+impl<C : SRef> SRef for MpscSenderRef<C> {
+  type Send = MpscSenderToRef<C::Send>;
+  #[inline]
+  fn get_sendable(&self) -> Self::Send {
+    MpscSenderToRef(self.0.clone())
+  }
+}
+
+impl<C : SRef> SToRef<MpscSenderRef<C>> for MpscSenderToRef<C::Send> {
+  #[inline]
+  fn to_ref(self) -> MpscSenderRef<C> {
+    MpscSenderRef(self.0)
+  }
+}
+
+
+impl<C : SRef> SpawnChannel<C> for MpscChannelRef {
+  type Send = MpscSenderRef<C>;
+  type Recv = MpscReceiverRef<C>;
+  fn new(&mut self) -> Result<(Self::Send,Self::Recv)> {
+    let (s,r) = mpsc_channel();
+    Ok((MpscSenderRef(s),MpscReceiverRef(r)))
+  }
+}
+
 
 /// Mpsc channel as service send/recv
 pub struct MpscChannel;
@@ -340,10 +421,37 @@ impl<C,CH : SpawnChannel<C>> SpawnChannel<C> for MioChannel<CH> {
     }))
   }
 }
+#[derive(Clone)]
+pub struct NoWeakHandle;
+impl SpawnUnyield for NoWeakHandle {
+  fn is_finished(&mut self) -> bool {
+    unreachable!()
+  }
+  fn unyield(&mut self) -> Result<()> {
+    unreachable!()
+  }
+}
 
 /// Handle use to send command to get back state
 /// State in the handle is simply the Service struct
-pub trait SpawnHandle<Service,Sen,Recv> {
+pub trait SpawnHandle<Service,Sen,Recv> : SpawnUnyield {
+  type WeakHandle : SpawnUnyield + Clone;
+
+  /// if finished (implementation should panic if methode call if not finished), error management
+  /// through last result and restart service through 3 firt items.
+  /// Error are only technical : service error should send errormessge in sender.
+  fn unwrap_state(self) -> Result<(Service,Sen,Recv,Result<()>)>;
+
+  /// not all implementation allow weakhandle
+  fn get_weak_handle(&self) -> Option<Self::WeakHandle>;
+  // TODO add a kill command and maybe a yield command
+  //
+  // TODO add a get_technical_error command : right now we do not know if we should restart on
+  // finished or drop it!!!! -> plus solve the question of handling panic and error management
+  // This goes with is_finished redesign : return state
+}
+
+pub trait SpawnUnyield {
   /// self is mut as most of the time this function is used in context where unwrap_state should be
   /// use so it allows more possibility for implementating
   ///
@@ -360,15 +468,6 @@ pub trait SpawnHandle<Service,Sen,Recv> {
   /// For parrallel spawner (threading), unyield should position a skip atomic to true in case
   /// where it does not actually unyield.
   fn unyield(&mut self) -> Result<()>;
-  /// if finished (implementation should panic if methode call if not finished), error management
-  /// through last result and restart service through 3 firt items.
-  /// Error are only technical : service error should send errormessge in sender.
-  fn unwrap_state(self) -> Result<(Service,Sen,Recv,Result<()>)>;
-  // TODO add a kill command and maybe a yield command
-  //
-  // TODO add a get_technical_error command : right now we do not know if we should restart on
-  // finished or drop it!!!! -> plus solve the question of handling panic and error management
-  // This goes with is_finished redesign : return state
 }
 
 /// manages asynch call by possibly yielding process (yield a coroutine if same thread, park or
@@ -423,6 +522,8 @@ pub struct NoRecv;
 #[derive(Clone)]
 pub struct NoSend;
 
+sref_send_clone!(NoSend);
+
 impl<C> SpawnChannel<C> for NoChannel {
   type Send = NoSend;
   type Recv = NoRecv;
@@ -457,7 +558,7 @@ impl SpawnerYield for NoYield {
 }
 
 pub struct BlockingSameThread<S,D,R>((S,D,R,Result<()>));
-impl<S,D,R> SpawnHandle<S,D,R> for BlockingSameThread<S,D,R> {
+impl<S,D,R> SpawnUnyield for BlockingSameThread<S,D,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
     true // if called it must be finished
@@ -466,9 +567,17 @@ impl<S,D,R> SpawnHandle<S,D,R> for BlockingSameThread<S,D,R> {
   fn unyield(&mut self) -> Result<()> {
     Ok(())
   }
+
+}
+impl<S,D,R> SpawnHandle<S,D,R> for BlockingSameThread<S,D,R> {
+  type WeakHandle = NoWeakHandle;
   #[inline]
   fn unwrap_state(self) -> Result<(S,D,R,Result<()>)> {
     Ok(self.0)
+  }
+  #[inline]
+  fn get_weak_handle(&self) -> Option<Self::WeakHandle> {
+    None
   }
 }
 
@@ -565,7 +674,7 @@ pub enum RestartSameThread<S : Service,D : SpawnSend<<S as Service>::CommandOut>
 }
 
 impl<S : Service + ServiceRestartable,D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<S::CommandIn>>
-  SpawnHandle<S,D,R> for 
+  SpawnUnyield for
   RestartSameThread<S,D,RestartOrError,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
@@ -595,6 +704,12 @@ impl<S : Service + ServiceRestartable,D : SpawnSend<<S as Service>::CommandOut>,
     Ok(())
   }
 
+
+}
+impl<S : Service + ServiceRestartable,D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<S::CommandIn>>
+  SpawnHandle<S,D,R> for 
+  RestartSameThread<S,D,RestartOrError,R> {
+  type WeakHandle = NoWeakHandle;
   #[inline]
   fn unwrap_state(mut self) -> Result<(S,D,R,Result<()>)> {
     loop {
@@ -608,6 +723,10 @@ impl<S : Service + ServiceRestartable,D : SpawnSend<<S as Service>::CommandOut>,
         _ => unreachable!(),
       }
     }
+  }
+  #[inline]
+  fn get_weak_handle(&self) -> Option<Self::WeakHandle> {
+    None
   }
 }
 
@@ -663,7 +782,7 @@ impl<'a> SpawnerYield for CoroutYield<'a> {
 }
 
 
-impl<S,D,R> SpawnHandle<S,D,R> for CoroutHandle<S,D,R> {
+impl<S,D,R> SpawnUnyield for CoroutHandle<S,D,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
     self.1.is_finished()
@@ -678,6 +797,9 @@ impl<S,D,R> SpawnHandle<S,D,R> for CoroutHandle<S,D,R> {
     }).unwrap();
     Ok(())
   }
+}
+impl<S,D,R> SpawnHandle<S,D,R> for CoroutHandle<S,D,R> {
+  type WeakHandle = NoWeakHandle;
   #[inline]
   fn unwrap_state(self) -> Result<(S,D,R,Result<()>)> {
     let s = match Rc::try_unwrap(self.0) {
@@ -689,7 +811,12 @@ impl<S,D,R> SpawnHandle<S,D,R> for CoroutHandle<S,D,R> {
       None => Err(Error("Read an unfinished corouthandle".to_string(), ErrorKind::Bug, None)),
     }
   }
+  #[inline]
+  fn get_weak_handle(&self) -> Option<Self::WeakHandle> {
+    None
+  }
 }
+
 pub struct LocalRcChannel;
 
 impl<C> SpawnChannel<C> for LocalRcChannel {
@@ -748,10 +875,16 @@ impl<'a,S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOu
 
 pub struct ThreadBlock;
 pub struct ThreadHandleBlock<S,D,R>(Arc<Mutex<Option<(S,D,R,Result<()>)>>>,JoinHandle<Result<()>>);
+pub struct ThreadHandleBlockWeak<S,D,R>(Arc<Mutex<Option<(S,D,R,Result<()>)>>>);
+impl<S,D,R> Clone for ThreadHandleBlockWeak<S,D,R> {
+  fn clone(&self) -> Self {
+    ThreadHandleBlockWeak(self.0.clone())
+  }
+}
 pub struct ThreadYieldBlock;
-macro_rules! thread_handle {($name:ident,$yield:expr) => {
+macro_rules! thread_handle {($name:ident,$nameweak:ident,$yield:expr) => {
 
-impl<S,D,R> SpawnHandle<S,D,R> for $name<S,D,R> {
+impl<S,D,R> SpawnUnyield for $nameweak<S,D,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
     self.0.lock().is_some()
@@ -760,7 +893,20 @@ impl<S,D,R> SpawnHandle<S,D,R> for $name<S,D,R> {
   fn unyield(&mut self) -> Result<()> {
     $yield(self)
   }
+}
 
+impl<S,D,R> SpawnUnyield for $name<S,D,R> {
+  #[inline]
+  fn is_finished(&mut self) -> bool {
+    self.0.lock().is_some()
+  }
+  #[inline]
+  fn unyield(&mut self) -> Result<()> {
+    $yield(self)
+  }
+}
+impl<S,D,R> SpawnHandle<S,D,R> for $name<S,D,R> {
+  type WeakHandle = $nameweak<S,D,R>;
   #[inline]
   fn unwrap_state(mut self) -> Result<(S,D,R,Result<()>)> {
     let mut mlock = self.0.lock();
@@ -772,13 +918,56 @@ impl<S,D,R> SpawnHandle<S,D,R> for $name<S,D,R> {
       Err(Error("unwrap state on unfinished thread".to_string(), ErrorKind::Bug, None))
     }
   }
+
+  #[inline]
+  fn get_weak_handle(&self) -> Option<Self::WeakHandle> {
+    Some($nameweak(self.0.clone()))
+  }
 }
 
 }}
 
-thread_handle!(ThreadHandleBlock, |_ : &mut SpawnHandle<S,D,R>|{
-  Ok(())
-});
+impl<S,D,R> SpawnUnyield for ThreadHandleBlockWeak<S,D,R> {
+  #[inline]
+  fn is_finished(&mut self) -> bool {
+    self.0.lock().is_some()
+  }
+  #[inline]
+  fn unyield(&mut self) -> Result<()> {
+    Ok(())
+  }
+}
+
+impl<S,D,R> SpawnUnyield for ThreadHandleBlock<S,D,R> {
+  #[inline]
+  fn is_finished(&mut self) -> bool {
+    self.0.lock().is_some()
+  }
+  #[inline]
+  fn unyield(&mut self) -> Result<()> {
+    Ok(())
+  }
+}
+impl<S,D,R> SpawnHandle<S,D,R> for ThreadHandleBlock<S,D,R> {
+  type WeakHandle = ThreadHandleBlockWeak<S,D,R>;
+  #[inline]
+  fn unwrap_state(mut self) -> Result<(S,D,R,Result<()>)> {
+    let mut mlock = self.0.lock();
+    if mlock.is_some() {
+      //let ost = mutex.into_inner();
+      let ost = replace(&mut (*mlock),None);
+      Ok(ost.unwrap())
+    } else {
+      Err(Error("unwrap state on unfinished thread".to_string(), ErrorKind::Bug, None))
+    }
+  }
+
+  #[inline]
+  fn get_weak_handle(&self) -> Option<Self::WeakHandle> {
+    Some(ThreadHandleBlockWeak(self.0.clone()))
+  }
+}
+
 
 
 
@@ -828,21 +1017,111 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
 /// is the same.
 /// It must be notice that after a call to unyield, yield will skip (avoid possible lock).
 pub struct ThreadPark;
+/// variant of thread park using command and channel as Ref to obtain send versio 
+pub struct ThreadParkRef;
+pub struct ThreadHandleParkWeak<S,D,R>(Arc<Mutex<Option<(S,D,R,Result<()>)>>>,(),Arc<(Mutex<bool>,Condvar)>);
+impl<S,D,R> Clone for ThreadHandleParkWeak<S,D,R> {
+  fn clone(&self) -> Self {
+    ThreadHandleParkWeak(self.0.clone(),(),self.2.clone())
+  }
+}
+
 pub struct ThreadHandlePark<S,D,R>(Arc<Mutex<Option<(S,D,R,Result<()>)>>>,JoinHandle<Result<()>>,Arc<(Mutex<bool>,Condvar)>);
+pub struct ThreadHandleParkRef<S,D : SRef,R>(Arc<Mutex<Option<(S,D::Send,R,Result<()>)>>>,JoinHandle<Result<()>>,Arc<(Mutex<bool>,Condvar)>);
 
 pub struct ThreadYieldPark(Arc<(Mutex<bool>,Condvar)>);
 
-thread_handle!(ThreadHandlePark, |a : &mut ThreadHandlePark<S,D,R>|{
-  // unpark (a.1.thread().unpark();)
-  {
-    let mut guard = (a.2).0.lock();
+impl<S,D,R> SpawnUnyield for ThreadHandleParkWeak<S,D,R> {
+  #[inline]
+  fn is_finished(&mut self) -> bool {
+    self.0.lock().is_some()
+  }
+  #[inline]
+  fn unyield(&mut self) -> Result<()> {
+    let mut guard = (self.2).0.lock();
     if !*guard {
       *guard = true;
-      (a.2).1.notify_one();
+      (self.2).1.notify_one();
+    }
+    Ok(())
+  }
+}
+
+impl<S,D : SRef,R> SpawnUnyield for ThreadHandleParkRef<S,D,R> {
+  #[inline]
+  fn is_finished(&mut self) -> bool {
+    self.0.lock().is_some()
+  }
+  #[inline]
+  fn unyield(&mut self) -> Result<()> {
+    let mut guard = (self.2).0.lock();
+    if !*guard {
+      *guard = true;
+      (self.2).1.notify_one();
+    }
+    Ok(())
+  }
+}
+
+impl<S,D,R> SpawnUnyield for ThreadHandlePark<S,D,R> {
+  #[inline]
+  fn is_finished(&mut self) -> bool {
+    self.0.lock().is_some()
+  }
+  #[inline]
+  fn unyield(&mut self) -> Result<()> {
+    let mut guard = (self.2).0.lock();
+    if !*guard {
+      *guard = true;
+      (self.2).1.notify_one();
+    }
+    Ok(())
+  }
+}
+impl<S,D : SRef,R> SpawnHandle<S,D,R> for ThreadHandleParkRef<S,D,R> {
+  type WeakHandle = NoWeakHandle;
+  // TODO ThreadHandleParkWeakRef type WeakHandle = ThreadHandleParkWeak<S,D,R>;
+  #[inline]
+  fn unwrap_state(self) -> Result<(S,D,R,Result<()>)> {
+    let mut mlock = self.0.lock();
+    if mlock.is_some() {
+      //let ost = mutex.into_inner();
+      let ost = replace(&mut (*mlock),None);
+      let (s,d,r,rr) = ost.unwrap();
+      Ok((s,d.to_ref(),r,rr))
+    } else {
+      Err(Error("unwrap state on unfinished thread".to_string(), ErrorKind::Bug, None))
     }
   }
-  Ok(())
-});
+
+  #[inline]
+  fn get_weak_handle(&self) -> Option<Self::WeakHandle> {
+    None
+//    Some(ThreadHandleParkWeak(self.0.clone(),(),self.2.clone()))
+  }
+}
+
+
+impl<S,D,R> SpawnHandle<S,D,R> for ThreadHandlePark<S,D,R> {
+  type WeakHandle = ThreadHandleParkWeak<S,D,R>;
+  #[inline]
+  fn unwrap_state(self) -> Result<(S,D,R,Result<()>)> {
+    let mut mlock = self.0.lock();
+    if mlock.is_some() {
+      //let ost = mutex.into_inner();
+      let ost = replace(&mut (*mlock),None);
+      Ok(ost.unwrap())
+    } else {
+      Err(Error("unwrap state on unfinished thread".to_string(), ErrorKind::Bug, None))
+    }
+  }
+
+  #[inline]
+  fn get_weak_handle(&self) -> Option<Self::WeakHandle> {
+    Some(ThreadHandleParkWeak(self.0.clone(),(),self.2.clone()))
+  }
+}
+
 
 impl SpawnerYield for ThreadYieldPark {
   #[inline]
@@ -900,6 +1179,48 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
   }
 }
 
+//impl<C : Ref<C>> Ref<MpscSenderRef<C>> for MpscSenderRef<C> {
+impl<S : 'static + Send + Service, D : SRef + 'static + SpawnSend<S::CommandOut>, R : 'static + Send + SpawnRecv<S::CommandIn>> 
+  Spawner<S,D,R> for ThreadParkRef
+  where D::Send : SpawnSend<S::CommandOut>,
+  <S as Service>::CommandIn : SRef
+{
+ 
+/*impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>, R : 'static + Send + SpawnRecv<
+<S::CommandIn as Ref<S::CommandIn>>::ToRef<S::CommandIn>
+>> 
+  Spawner<S,D,R> for ThreadParkRef
+  where S::CommandIn : Ref<S::CommandIn>
+{*/
+  type Handle = ThreadHandleParkRef<S,D,R>;
+  type Yield = ThreadYieldPark;
+  fn spawn (
+    &mut self,
+    mut service : S,
+    mut spawn_out : D,
+    mut ocin : Option<<S as Service>::CommandIn>,
+    mut recv : R,
+    mut nb_loop : usize
+  ) -> Result<Self::Handle> {
+    let skip = Arc::new((Mutex::new(false),Condvar::new()));
+    let skip2 = skip.clone();
+    let finished = Arc::new(Mutex::new(None));
+    let finished2 = finished.clone();
+    let mut spawn_out_s = spawn_out.get_sendable();
+    let ocins = ocin.map(|cin|cin.get_sendable());
+    let join_handle = thread::Builder::new().spawn(move ||{
+      let mut y = ThreadYieldPark(skip2);
+      let mut err = Ok(());
+      let mut ocin = ocins.map(|cin|cin.to_ref());
+      spawn_loop!(service,spawn_out_s,ocin,recv,nb_loop,y,err,Err(Error("Thread park spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
+      let mut data = finished.lock();
+      *data = Some((service,spawn_out_s,recv,err));
+      Ok(())
+    })?;
+    return Ok(ThreadHandleParkRef(finished2,join_handle,skip));
+  }
+}
+
 
 
 
@@ -914,7 +1235,7 @@ pub struct CpuPool(FCpuPool);
 pub struct CpuPoolHandle<S,D,R>(CpuFuture<(S,D,R,Result<()>),Error>,Option<(S,D,R,Result<()>)>);
 pub struct CpuPoolYield;
 
-impl<S : Send + 'static, D : Send + 'static, R : Send + 'static> SpawnHandle<S,D,R> for CpuPoolHandle<S,D,R> {
+impl<S : Send + 'static, D : Send + 'static, R : Send + 'static> SpawnUnyield for CpuPoolHandle<S,D,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
     match self.0.poll() {
@@ -933,7 +1254,10 @@ impl<S : Send + 'static, D : Send + 'static, R : Send + 'static> SpawnHandle<S,D
     }
     Ok(())
   }
-
+}
+impl<S : Send + 'static, D : Send + 'static, R : Send + 'static> SpawnHandle<S,D,R> for CpuPoolHandle<S,D,R> {
+  // weakHandle is doable but require some sync overhead (arc mutex)
+  type WeakHandle = NoWeakHandle;
   #[inline]
   fn unwrap_state(mut self) -> Result<(S,D,R,Result<()>)> {
     if self.1.is_some() {
@@ -941,6 +1265,10 @@ impl<S : Send + 'static, D : Send + 'static, R : Send + 'static> SpawnHandle<S,D
       return Ok(r.unwrap())
     }
     self.0.wait()
+  }
+  #[inline]
+  fn get_weak_handle(&self) -> Option<Self::WeakHandle> {
+    None
   }
 }
 
@@ -987,7 +1315,7 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
 pub struct CpuPoolFuture(FCpuPool);
 pub struct CpuPoolHandleFuture<S,D,R>(CpuFuture<(S,D,Result<()>),Error>,Option<(S,D,Result<()>)>,R);
 
-impl<S : Send + 'static + Service,R, D : 'static + Send + SpawnSend<S::CommandOut>> SpawnHandle<S,D,R> for CpuPoolHandleFuture<S,D,R> {
+impl<S : Send + 'static + Service,R, D : 'static + Send + SpawnSend<S::CommandOut>> SpawnUnyield for CpuPoolHandleFuture<S,D,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
     match self.0.poll() {
@@ -1006,7 +1334,10 @@ impl<S : Send + 'static + Service,R, D : 'static + Send + SpawnSend<S::CommandOu
     }
     Ok(())
   }
-
+}
+impl<S : Send + 'static + Service,R, D : 'static + Send + SpawnSend<S::CommandOut>> SpawnHandle<S,D,R> for CpuPoolHandleFuture<S,D,R> {
+  // TODO could be implemented with arc mutex our content
+  type WeakHandle = NoWeakHandle;
   #[inline]
   fn unwrap_state(mut self) -> Result<(S,D,R,Result<()>)> {
     if self.1.is_some() {
@@ -1020,6 +1351,10 @@ impl<S : Send + 'static + Service,R, D : 'static + Send + SpawnSend<S::CommandOu
       Ok((s,d,r)) => Ok((s,d,self.2,r)),
       Err(e) => Err(e),
     }
+  }
+  #[inline]
+  fn get_weak_handle(&self) -> Option<Self::WeakHandle> {
+    None
   }
 }
 

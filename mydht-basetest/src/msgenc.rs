@@ -16,7 +16,8 @@ pub fn test_peer_enc<ME : MsgEnc> (e : ME) {
     nodeid: "toid".to_string(),
     address : LocalAdd(1),
     keyshift: 2,
-    modesh : ShadowModeTest::NoShadow,
+    modeshauth : ShadowModeTest::NoShadow,
+    modeshmsg : ShadowModeTest::NoShadow,
   };
  
    let v1 = vec![1u8;155];

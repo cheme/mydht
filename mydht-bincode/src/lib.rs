@@ -58,8 +58,8 @@ where <P as Peer>::Address : 'a,
      Ok(())
   }
 
-  fn attach_into<W : Write> (&self, w : &mut W, a : Option<&Attachment>) -> MDHTResult<()> {
-    try!(w.write_all(&[if a.is_some(){1}else{0}]));
+  fn attach_into<W : Write> (&self, w : &mut W, a : &Attachment) -> MDHTResult<()> {
+//    try!(w.write_all(&[if a.is_some(){1}else{0}]));
     write_attachment(w,a)
   }
 
@@ -67,8 +67,8 @@ where <P as Peer>::Address : 'a,
     Ok(tryfor!(BinErr,bincode::deserialize_from(r, Infinite)))
   }
 
-  fn attach_from<R : Read>(&self, r : &mut R) -> MDHTResult<Option<Attachment>> {
-    let mut buf = [0];
+  fn attach_from<R : Read>(&self, r : &mut R, mlen : usize) -> MDHTResult<Attachment> {
+/*    let mut buf = [0];
     try!(r.read(&mut buf));
     match buf[0] {
       i if i == 0 => Ok(None),
@@ -77,7 +77,8 @@ where <P as Peer>::Address : 'a,
           read_attachment(r).map(|a|Some(a))
       },
       _ => return Err(Error("Invalid attachment description".to_string(), ErrorKind::SerializingError, None)),
-    }
+    }*/
+    read_attachment(r,mlen)
   }
 
 }

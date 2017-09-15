@@ -23,6 +23,7 @@ use self::send_variant::ProtoMessage as ProtoMessageSend;
 
 /// Trait for message encoding between peers.
 /// It use bytes which will be used by transport.
+/// TODO split in read/write and make mut??
 pub trait MsgEnc : Send + Sync + 'static {
   //fn encode<P : Peer, V : KeyVal>(&self, &ProtoMessage<P,V>) -> Option<Vec<u8>>;
   
@@ -32,11 +33,12 @@ where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a,
       <V as KeyVal>::Key : 'a ;
  
-  fn attach_into<W : Write> (&self, &mut W, Option<&Attachment>) -> MDHTResult<()>;
+  fn attach_into<W : Write> (&self, &mut W, &Attachment) -> MDHTResult<()>;
 //  fn decode<P : Peer, V : KeyVal>(&self, &[u8]) -> Option<ProtoMessage<P,V>>;
   /// decode
   fn decode_from<R : Read, P : Peer, V : KeyVal>(&self, &mut R) -> MDHTResult<ProtoMessage<P,V>>;
-  fn attach_from<R : Read>(&self, &mut R) -> MDHTResult<Option<Attachment>>;
+  /// error if attachment more than a treshold (0 if no limit).
+  fn attach_from<R : Read>(&self, &mut R, usize) -> MDHTResult<Attachment>;
 }
 
 
@@ -49,7 +51,7 @@ pub mod send_variant {
 
   #[derive(Serialize,Debug)]
   pub enum ProtoMessage<'a,P : Peer + 'a, V : KeyVal + 'a> {
-    PING(&'a P,Vec<u8>, Vec<u8>), // TODO vec to &[u8]??
+    PING(&'a P,Vec<u8>,Vec<u8>), // TODO vec to &[u8]??
     /// reply contain peer for update of distant peer info, for instance its listener address for a
     /// tcp transport.
     PONG(&'a P,Vec<u8>),
@@ -71,7 +73,7 @@ pub mod send_variant {
 #[serde(bound(deserialize = ""))]
 pub enum ProtoMessage<P : Peer, V : KeyVal> {
   /// Our node pinging plus challenge and message signing
-  PING(P,Vec<u8>, Vec<u8>), 
+  PING(P,Vec<u8>,Vec<u8>), 
   /// Ping reply with signature with
   ///  - emitter
   ///  - signing of challenge
@@ -127,50 +129,52 @@ impl<'de,V : KeyVal>  Deserialize<'de> for DistantEncAtt<V> {
 
 
 /// common utility for encode implementation (attachment should allways be following bytes)
-pub fn write_attachment<W : Write> (w : &mut W, a : Option<&Attachment>) -> MDHTResult<()> {
-    a.map(|path| {
-      let mut f = try!(File::open(&path));
-      debug!("trynig nwriting att");
-      // send over buff size
-      let fsize = f.metadata().unwrap().len();
-      let nbframe = (fsize / (BUFF_SIZE).to_u64().unwrap()).to_usize().unwrap();
-      let lfrsize = (fsize - (BUFF_SIZE.to_u64().unwrap() * nbframe.to_u64().unwrap())).to_usize().unwrap();
-      debug!("fsize{:?}",fsize);
-      debug!("nwbfr{:?}",nbframe);
-      debug!("frsiz{:?}",lfrsize);
-      debug!("busize{:?}",BUFF_SIZE);
-      // TODO less headers??
-      //tryfor!(BOErr,w.write_u64::<LittleEndian>(fsize));
-      try!(w.write_u64::<LittleEndian>(fsize));
-      //try!(w.write_u32::<LittleEndian>(nbframe.to_u32().unwrap()));
-      //try!(w.write_u32::<LittleEndian>(BUFF_SIZE.to_u32().unwrap()));
-      //try!(w.write_u32::<LittleEndian>(lfrsize.to_u32().unwrap()));
-      try!(f.seek(SeekFrom::Start(0)));
-      let buf = &mut [0; BUFF_SIZE];
-      for i in 0..(nbframe + 1) {
-        debug!("fread : {:?}", i);
-        let nb = try!(f.read(buf));
-        if nb == BUFF_SIZE {
-          try!(w.write_all(buf));
-        } else {
-          if nb != lfrsize {
-            return Err(Error("mismatch file size calc for tcp transport".to_string(), ErrorKind::IOError, None));
-          };
-          // truncate buff
-          try!(w.write(&buf[..nb]));
-        }
+pub fn write_attachment<W : Write> (w : &mut W, path : &Attachment) -> MDHTResult<()> {
+  let mut f = try!(File::open(&path));
+  debug!("trynig nwriting att");
+  // send over buff size
+  let fsize = f.metadata().unwrap().len();
+  let nbframe = (fsize / (BUFF_SIZE).to_u64().unwrap()).to_usize().unwrap();
+  let lfrsize = (fsize - (BUFF_SIZE.to_u64().unwrap() * nbframe.to_u64().unwrap())).to_usize().unwrap();
+  debug!("fsize{:?}",fsize);
+  debug!("nwbfr{:?}",nbframe);
+  debug!("frsiz{:?}",lfrsize);
+  debug!("busize{:?}",BUFF_SIZE);
+  // TODO less headers??
+  //tryfor!(BOErr,w.write_u64::<LittleEndian>(fsize));
+  try!(w.write_u64::<LittleEndian>(fsize));
+  //try!(w.write_u32::<LittleEndian>(nbframe.to_u32().unwrap()));
+  //try!(w.write_u32::<LittleEndian>(BUFF_SIZE.to_u32().unwrap()));
+  //try!(w.write_u32::<LittleEndian>(lfrsize.to_u32().unwrap()));
+  try!(f.seek(SeekFrom::Start(0)));
+  let buf = &mut [0; BUFF_SIZE];
+  for i in 0..(nbframe + 1) {
+    debug!("fread : {:?}", i);
+    let nb = try!(f.read(buf));
+    if nb == BUFF_SIZE {
+      try!(w.write_all(buf));
+    } else {
+      if nb != lfrsize {
+        return Err(Error("mismatch file size calc for tcp transport".to_string(), ErrorKind::IOError, None));
       };
-      Ok(())
-    }).unwrap_or(Ok(()))
+      // truncate buff
+      try!(w.write(&buf[..nb]));
+    }
+  };
+  Ok(())
 }
 
-pub fn read_attachment(s : &mut Read)-> MDHTResult<Attachment> {
+pub fn read_attachment(s : &mut Read, mlen : usize)-> MDHTResult<Attachment> {
 
   //let nbframe = try!(s.read_u32::<LittleEndian>()).to_usize().unwrap();
   //let bsize   = try!(s.read_u32::<LittleEndian>()).to_usize().unwrap();
   //let lfrsize = try!(s.read_u32::<LittleEndian>()).to_usize().unwrap();
   //let fsize = tryfor!(BOErr,s.read_u64::<LittleEndian>());
   let fsize = try!(s.read_u64::<LittleEndian>());
+  if mlen > 0 && fsize > (mlen as u64) {
+    return Err(Error("Attachment bigger than expected".to_string(), ErrorKind::SerializingError, None));
+  }
+
   let nbframe = (fsize / (BUFF_SIZE).to_u64().unwrap()).to_usize().unwrap();
   let lfrsize = (fsize - (BUFF_SIZE.to_u64().unwrap() * nbframe.to_u64().unwrap())).to_usize().unwrap();
  

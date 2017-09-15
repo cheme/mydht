@@ -184,7 +184,7 @@ where
                   assert!(true == rs.register(&poll, Token(read_token + START_STREAM_IX), Ready::readable(),
                     PollOpt::edge())?);
                   read_entry.insert(SlabEntry {
-                    state : SlabEntryState::ReadStream(rs),
+                    state : SlabEntryState::ReadStream(rs,None),
                     os : None,
                     peer : Some(ad),
                   });
@@ -219,9 +219,9 @@ where
               },
               tok => if let Some(ca) = cache.get_mut(tok.0 - START_STREAM_IX) {
                 match ca.state {
-                  SlabEntryState::ReadStream(_) => {
+                  SlabEntryState::ReadStream(_,_) => {
                     let state = mem::replace(&mut ca.state, SlabEntryState::Empty);
-                    if let SlabEntryState::ReadStream(rs) = state {
+                    if let SlabEntryState::ReadStream(rs,_) = state {
                       ca.state = SlabEntryState::ReadSpawned(read_cl(None,Some(rs),&transport,ended.clone(),exp.clone(),cpp.clone())?);
                     }
                   },
@@ -725,14 +725,14 @@ fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<
           let (ws,ors) = t.connectwith(&ad, Duration::seconds(5)).unwrap();
           let ork = if ors.is_some() {
             Some(cache.insert(SlabEntry {
-              state : SlabEntryState::ReadStream(ors.unwrap()),
+              state : SlabEntryState::ReadStream(ors.unwrap(),None),
               os : None,
               peer : Some(ad.clone()),
             }))
           } else {
             // try update
             cache.iter().position(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
-              SlabEntryState::ReadStream(_) | SlabEntryState::ReadSpawned(_) => true,
+              SlabEntryState::ReadStream(_,_) | SlabEntryState::ReadSpawned(_) => true,
               _ => false,
             })
           };
@@ -795,14 +795,14 @@ fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopComma
           let (ws,ors) = t.connectwith(&ad, Duration::seconds(5)).unwrap();
           let ork = if ors.is_some() {
             Some(cache.insert(SlabEntry {
-              state : SlabEntryState::ReadStream(ors.unwrap()),
+              state : SlabEntryState::ReadStream(ors.unwrap(),None),
               os : None,
               peer : Some(ad.clone()),
             }))
           } else {
             // try update
             cache.iter().position(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
-              SlabEntryState::ReadStream(_) | SlabEntryState::ReadSpawned(_) => true,
+              SlabEntryState::ReadStream(_,_) | SlabEntryState::ReadSpawned(_) => true,
               _ => false,
             })
           };
@@ -870,14 +870,14 @@ fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T
           let (ws,ors) = t.connectwith(&ad, Duration::seconds(5)).unwrap();
           let ork = if ors.is_some() {
             Some(cache.insert(SlabEntry {
-              state : SlabEntryState::ReadStream(ors.unwrap()),
+              state : SlabEntryState::ReadStream(ors.unwrap(),None),
               os : None,
               peer : Some(ad.clone()),
             }))
           } else {
             // try update
             cache.iter().position(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
-              SlabEntryState::ReadStream(_) | SlabEntryState::ReadSpawned(_) => true,
+              SlabEntryState::ReadStream(_,_) | SlabEntryState::ReadSpawned(_) => true,
               _ => false,
             })
           };
@@ -912,7 +912,7 @@ fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T
     Ok(()) 
 }
 
-fn corout_ows<T : Transport>(cstate : &mut SlabEntryState<T,CoRHandle,(Rc<RefCell<Vec<u8>>>,CoRHandle),()>, content : Vec<u8>, bufsize : usize) {
+fn corout_ows<T : Transport>(cstate : &mut SlabEntryState<T,CoRHandle,(Rc<RefCell<Vec<u8>>>,CoRHandle),(),T::Address>, content : Vec<u8>, bufsize : usize) {
   let state = mem::replace(cstate,SlabEntryState::Empty);
   if let SlabEntryState::WriteStream(ws,_) = state {
     let st = corout_ows2(ws, content,bufsize);
@@ -964,14 +964,14 @@ fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cach
           let (ws,ors) = t.connectwith(&ad, Duration::seconds(5)).unwrap();
           let ork = if ors.is_some() {
             Some(cache.insert(SlabEntry {
-              state : SlabEntryState::ReadStream(ors.unwrap()),
+              state : SlabEntryState::ReadStream(ors.unwrap(),None),
               os : None,
               peer : Some(ad.clone()),
             }))
           } else {
             // try update
             cache.iter().position(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
-              SlabEntryState::ReadStream(_) | SlabEntryState::ReadSpawned(_) => true,
+              SlabEntryState::ReadStream(_,_) | SlabEntryState::ReadSpawned(_) => true,
               _ => false,
             })
           };

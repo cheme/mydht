@@ -7,8 +7,15 @@ use transport::{
   SlabEntryState,
   Registerable,
 };
+use utils::{
+  Ref,
+  ToRef,
+  SRef,
+  SToRef,
+};
 use super::{
   MyDHTConf,
+  PeerRefSend,
 };
 use service::{
   Service,
@@ -40,39 +47,87 @@ use std::io::{
   Write,
   Read,
 };
-
+use super::api::ApiReply;
 
 // TODO put in its own module
-pub struct WriteService<MC : MyDHTConf>(pub <MC::Transport as Transport>::WriteStream);
+pub struct WriteService<MC : MyDHTConf> {
+  stream : <MC::Transport as Transport>::WriteStream,
+  is_auth : bool,
+  from : PeerRefSend<MC>,
+  with : Option<PeerRefSend<MC>>,
+}
+
+impl<MC : MyDHTConf> WriteService<MC> {
+  pub fn new( ws : <MC::Transport as Transport>::WriteStream, me : PeerRefSend<MC>, with : Option<PeerRefSend<MC>>) -> Self {
+    WriteService {
+      stream : ws,
+      is_auth : false,
+      from : me,
+      with : with,
+    }
+  }
+}
 
 impl<MDC : MyDHTConf> Service for WriteService<MDC> {
-  type CommandIn = WriteServiceCommand;
-  type CommandOut = WriteServiceReply;
+  type CommandIn = WriteCommand<MDC>;
+  type CommandOut = WriteReply<MDC>;
 
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
     match req {
-      WriteServiceCommand::Write => {
+      WriteCommand::Write => {
         // for initial testing only TODO replace by deser
         let buf = &[1,2,3,4];
-        let mut w = WriteYield(&mut self.0, async_yield);
+        let mut w = WriteYield(&mut self.stream, async_yield);
         w.write_all(buf).unwrap(); // unwrap for testing only (thread without error catching
       },
+      WriteCommand::Pong(rp,chal,read_token) => panic!("TODO"),
     }
-    Ok(WriteServiceReply::Done)
+    Ok(WriteReply::Api(ApiReply::Done))
   }
 }
 /// command for readservice
-#[derive(Clone)]
-pub enum WriteServiceCommand {
+pub enum WriteCommand<MC : MyDHTConf> {
   Write,
+  /// pong a peer with challenge and read token
+  Pong(MC::PeerRef, Vec<u8>, usize),
 }
 
+pub enum WriteCommandSend<MC : MyDHTConf> {
+  Write,
+  /// pong a peer with challenge and read token
+  Pong(<MC::PeerRef as Ref<MC::Peer>>::Send, Vec<u8>, usize),
+}
+
+impl<MC : MyDHTConf> Clone for WriteCommand<MC> {
+  fn clone(&self) -> Self {
+    match *self {
+      WriteCommand::Write => WriteCommand::Write,
+      WriteCommand::Pong(ref pr,ref v,s) => WriteCommand::Pong(pr.clone(),v.clone(),s),
+    }
+  }
+}
+impl<MC : MyDHTConf> SRef for WriteCommand<MC> {
+  type Send = WriteCommandSend<MC>;
+  fn get_sendable(&self) -> Self::Send {
+    match *self {
+      WriteCommand::Write => WriteCommandSend::Write,
+      WriteCommand::Pong(ref pr,ref v,s) => WriteCommandSend::Pong(pr.get_sendable(),v.clone(),s),
+    }
+  }
+}
+impl<MC : MyDHTConf> SToRef<WriteCommand<MC>> for WriteCommandSend<MC> {
+  fn to_ref(self) -> WriteCommand<MC> {
+    match self {
+      WriteCommandSend::Write => WriteCommand::Write,
+      WriteCommandSend::Pong(pr,v,s) => WriteCommand::Pong(pr.to_ref(),v,s),
+    }
+  }
+}
+
+
 #[derive(Clone)]
-pub enum WriteServiceReply {
-  /// if no result expected
-  Done,
-  /// service failure (could be from spawner)
-  Failure(WriteServiceCommand),
+pub enum WriteReply<MDC : MyDHTConf> {
+  Api(ApiReply<MDC>),
 }
 
 

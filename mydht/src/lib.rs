@@ -60,7 +60,7 @@ mod peer;
 mod pool;
 mod procs;
 mod query;
-mod route;
+//mod route;
 mod transport;
 mod msgenc;
 pub mod utils;
@@ -123,9 +123,6 @@ pub mod kvstoreif{
   pub use mydht_base::kvcache::{KVCache};
   pub use mydht_base::kvstore::{KVStore, KVStoreRel};
   pub use procs::mesgs::{KVStoreMgmtMessage};
-}
-pub mod routeif{
-  pub use route::{Route};
 }
 pub mod transportif{
   pub use transport::{Transport,TransportStream};

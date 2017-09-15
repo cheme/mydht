@@ -1,8 +1,8 @@
+
+
 use peer::{
   Peer,
-  ShadowR,
-  ShadowBase,
-  ShadowW,
+  NoShadow,
 };
 use std::io::{
   Write,
@@ -109,20 +109,6 @@ impl ShadowTest {
 }
 
 
-impl ShadowBase for ShadowTest {
-
-  type ShadowMode = ShadowModeTest;
-
-  fn set_mode (&mut self, sm : Self::ShadowMode) {
-    self.2 = sm
-  }
-  fn get_mode (&self) -> Self::ShadowMode {
-    self.2.clone()
-  }
-
-}
-impl ShadowR for ShadowTest {}
-impl ShadowW for ShadowTest {}
 impl ExtWrite for ShadowTest {
 
   /// write transaction key
@@ -198,20 +184,17 @@ impl ExtRead for ShadowTest {
 }
 
 
-
+/// test for shadow_msg of peer
 pub fn shadower_test<P : Peer> (to_p : P, input_length : usize, write_buffer_length : usize,
-read_buffer_length : usize, smode : <<P as Peer>::ShadowW as ShadowBase>::ShadowMode) 
-where <<P as Peer>::ShadowW as ShadowBase>::ShadowMode : Eq
+read_buffer_length : usize) 
 {
 
   let mut inputb = vec![0;input_length];
   thread_rng().fill_bytes(&mut inputb);
   let mut output;
   let input = inputb;
-  let mut from_shad = to_p.get_shadower_w();
-  from_shad.set_mode(smode.clone());
-  let mut to_shad = to_p.get_shadower_r();
-  to_shad.set_mode(smode.clone());
+  let mut from_shad = to_p.get_shadower_w_msg();
+  let mut to_shad = to_p.get_shadower_r_msg();
 
   let mut ix;
  
@@ -236,8 +219,6 @@ where <<P as Peer>::ShadowW as ShadowBase>::ShadowMode : Eq
   input_v = Cursor::new(output.into_inner());
 
   to_shad.read_header(&mut input_v).unwrap();
-  let mode = to_shad.get_mode();
-  assert!(smode == mode);
 
 
   ix = 0;

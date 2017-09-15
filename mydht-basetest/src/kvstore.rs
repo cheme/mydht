@@ -3,7 +3,12 @@
 //! TODO seems pretty useless : remove??
 use keyval::KeyVal;
 use node::{Node,NodeID};
-use peer::{Peer,ShadowW,ShadowR,ShadowBase};
+use readwrite_comp::{
+  ExtRead,
+  ExtWrite,
+};
+
+use peer::{Peer};
 use std::cmp::Eq;
 use std::cmp::PartialEq;
 
@@ -42,25 +47,30 @@ impl KeyVal for NodeK2 {
 
   impl Peer for NodeK2 {
     type Address = <Node as Peer>::Address;
-    type ShadowW = <Node as Peer>::ShadowW;
-    type ShadowR = <Node as Peer>::ShadowR;
+    type ShadowWMsg = <Node as Peer>::ShadowWMsg;
+    type ShadowRMsg = <Node as Peer>::ShadowRMsg;
+    type ShadowWAuth = <Node as Peer>::ShadowWAuth;
+    type ShadowRAuth = <Node as Peer>::ShadowRAuth;
     #[inline]
     fn get_address(&self) -> &<Node as Peer>::Address {
       self.0.get_address()
     }
     #[inline]
-    fn get_shadower_r (&self) -> Self::ShadowR {
-      self.0.get_shadower_r()
+    fn get_shadower_r_auth (&self) -> Self::ShadowRAuth {
+      self.0.get_shadower_r_auth()
     }
     #[inline]
-    fn get_shadower_w (&self) -> Self::ShadowW {
-      self.0.get_shadower_w()
+    fn get_shadower_r_msg (&self) -> Self::ShadowRMsg {
+      self.0.get_shadower_r_msg()
     }
-    fn default_auth_mode(&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {
-     self.0.default_auth_mode() 
+ 
+    #[inline]
+    fn get_shadower_w_auth (&self) -> Self::ShadowWAuth {
+      self.0.get_shadower_w_auth()
     }
-    fn default_message_mode(&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {
-       self.0.default_message_mode() 
+    #[inline]
+    fn get_shadower_w_msg (&self) -> Self::ShadowWMsg {
+      self.0.get_shadower_w_msg()
     }
 
   }

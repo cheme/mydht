@@ -20,7 +20,7 @@ pub use mydht_base::peer::*;
 
 
 /// Rules for peers. Usefull for web of trust for instance, or just to block some peers.
-/// TODO refactor : replace String by bytes array and Vec<u8>!! (+ &String makes no sense)
+/// TODO simplify
 pub trait PeerMgmtMeths<P : Peer, V : KeyVal> : Send + Sync + 'static {
   /// get challenge for a node, most of the time a random value to avoid replay attack
   fn challenge (&self, &P) -> Vec<u8>; 
@@ -31,7 +31,9 @@ pub trait PeerMgmtMeths<P : Peer, V : KeyVal> : Send + Sync + 'static {
   /// accept a peer? (reference to running process and running context could be use to query
   /// ourself
   /// Post PONG message handle
-  fn accept<M : PeerMgmtMeths<P,V>, RT : RunningTypes<P=P,V=V,A=P::Address,M=M>> (&self, &P, &RunningProcesses<RT>, &ArcRunningContext<RT>) -> Option<PeerPriority>;
+  /// If accept is heavy it can run asynch by returning PeerPriority::Unchecked and sending, then
+  /// check will be done by sending accept query to PeerMgmt service
+  fn accept (&self, &P) -> Option<PeerPriority>;
   // call from accept it will loop on sending info to never online peer)
   /// Post action after adding a new online peer : eg propagate or update this in another store
   /// Post PING message handle (on successfull challenge)
@@ -51,15 +53,6 @@ pub trait PeerMgmtMeths<P : Peer, V : KeyVal> : Send + Sync + 'static {
   /// but in message encoding). TODO return a r.shadower, and maybe a shorter slice
   fn get_unshadower<'a> (&self, &P, &'a [u8]) -> (rshad, &'a [u8]);
 */
-  /// Resolve mode of shadowing to use for a peer and and a message. TODO might need ref to running
-  /// processes and contexts (or just our peer), but keep it simple for now
-  /// Default implementation relies on shadow message
-  fn get_shadower (&self, p : &P, m : &ProtoMessageSend<P,V>) -> <P::ShadowW as ShadowBase>::ShadowMode {
-    match m {
-      &ProtoMessageSend::PING(..) |&ProtoMessageSend::PONG(..) => p.default_auth_mode(),
-      _ => p.default_message_mode(),
-    }
-  }
-
 }
+
 

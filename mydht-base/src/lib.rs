@@ -24,6 +24,26 @@ macro_rules! static_buff {
 }
 */
 
+
+#[macro_export]
+macro_rules! sref_send_clone(($ty:ident) => (
+
+  impl SRef for $ty {
+    type Send = $ty;
+    fn get_sendable(&self) -> Self::Send {
+      self.clone()
+    }
+  }
+  impl SToRef<$ty> for $ty {
+    fn to_ref(self) -> $ty {
+      self
+    }
+  }
+
+));
+
+
+
 #[macro_export]
 /// a try which use a wrapping type
 macro_rules! tryfor(($ty:ident, $expr:expr) => (
@@ -100,23 +120,35 @@ macro_rules! noattachment(() => (
 
 #[macro_export]
 /// convenience macro for peer implementation without a shadow
-macro_rules! noshadow(() => (
+macro_rules! noshadow_auth(() => (
 
-  type ShadowR = NoShadow;
-  type ShadowW = NoShadow;
+  type ShadowWAuth = NoShadow;
+  type ShadowRAuth = NoShadow;
   #[inline]
-  fn get_shadower_w (&self) -> Self::ShadowW {
+  fn get_shadower_w_auth (&self) -> Self::ShadowWAuth {
     NoShadow
   }
   #[inline]
-  fn get_shadower_r (&self) -> Self::ShadowR {
+  fn get_shadower_r_auth (&self) -> Self::ShadowRAuth {
     NoShadow
   }
-  #[inline]
-  fn default_auth_mode(&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {()}
-  #[inline]
-  fn default_message_mode(&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {()}
 ));
+#[macro_export]
+/// convenience macro for peer implementation without a shadow
+macro_rules! noshadow_msg(() => (
+
+  type ShadowWMsg = NoShadow;
+  type ShadowRMsg = NoShadow;
+  #[inline]
+  fn get_shadower_w_msg (&self) -> Self::ShadowWMsg {
+    NoShadow
+  }
+  #[inline]
+  fn get_shadower_r_msg (&self) -> Self::ShadowRMsg {
+    NoShadow
+  }
+));
+
 
 
 #[macro_export]

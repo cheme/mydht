@@ -1,4 +1,5 @@
 use std::sync::mpsc::{Sender};
+use std::borrow::Borrow;
 use peer::{PeerMgmtMeths};
 use query::{self,QueryConf,QueryPriority,QueryMode,QueryModeMsg,LastSent,QueryMsg,Query};
 use rules::DHTRules;
@@ -10,7 +11,6 @@ use self::mesgs::{PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage,ClientMess
 use std::sync::{Arc,Condvar,Mutex};
 use std::sync::mpsc::channel;
 use std::thread;
-use route::Route;
 use peer::Peer;
 use time::Duration;
 use utils::{self};
@@ -31,6 +31,9 @@ use transport::{
 use kvcache::{
   SlabCache,
   KVCache,
+};
+use self::peermgmt::{
+  PeerMgmtCommand,
 };
 use mydhtresult::{
   Result,
@@ -62,44 +65,65 @@ use service::{
 };
 use self::mainloop::{
   MainLoopCommand,
-  PeerCacheEntry,
+  //PeerCacheEntry,
   MDHTState,
 };
 use self::server2::{
   ReadService,
-  ReadServiceCommand,
+  ReadCommand,
+  ReadReply,
+  ReadDest,
 };
 use self::client2::{
   WriteService,
-  WriteServiceCommand,
-  WriteServiceReply,
+  WriteCommand,
+  WriteReply,
 };
 use utils::{
   Ref,
 };
-
 pub mod mesgs;
 
-pub mod mainloop;
+mod mainloop;
+pub mod api;
 mod server2;
 mod client2;
-mod server;
-mod client;
-mod peermanager;
-mod kvmanager;
-mod querymanager;
+mod peermgmt;
+//mod server;
+//mod client;
+//mod peermanager;
+//mod kvmanager;
+//mod querymanager;
 
 
+// reexport
+pub use self::mainloop::{
+  PeerCacheEntry,
+};
+pub use self::api::{
+  ApiCommand,
+  ApiSendIn,
+};
 
+pub struct MyDHTService<MDC : MyDHTConf>(pub MDC, pub MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>, pub <MDC::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Send,pub MioSend<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Send>);
 
-pub struct MyDHTService<MDC : MyDHTConf>(pub MDC, pub MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>, pub <MDC::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Send);
+#[derive(Clone,Eq,PartialEq)]
+pub enum ShadowAuthType {
+  /// skip ping/pong, dest is unknown : reply as a public server
+  NoAuth,
+  /// shadow used on ping is from ourself (could be NoShadow or group shared secret)
+  Public,
+  /// shadow used from dest peer, return failure for a subset of api comment (eg connect with
+  /// address only)
+  Private,
+}
 
 impl<MDC : MyDHTConf> Service for MyDHTService<MDC> {
   type CommandIn = MainLoopCommand<MDC>;
   type CommandOut = MainLoopReply;
 
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
-    let mut state = MDHTState::init_state(&mut self.0)?;
+    let mut state = MDHTState::init_state(&mut self.0, &mut self.3)?;
     let mut yield_spawn = NoYield(YieldReturn::Loop);
     let r = state.main_loop(&mut self.1, req, &mut yield_spawn);
     if r.is_err() {
@@ -114,17 +138,17 @@ pub type RWSlabEntry<MDC : MyDHTConf> = SlabEntry<
   MDC::Transport,
 //  (),
   //SpawnerRefsRead2<ReadService<MDC>, MDC::ReadDest, MDC::ReadChannelIn, MDC::ReadSpawn>,
-  SpawnerRefsDefRecv2<ReadService<MDC>,ReadServiceCommand, MDC::ReadDest, MDC::ReadChannelIn, MDC::ReadSpawn>,
-//  SpawnerRefs<ReadService<MDC>,MDC::ReadDest,DefaultRecvChannel<ReadServiceCommand,MDC::ReadChannelIn>,MDC::ReadSpawn>,
-  SpawnerRefs2<WriteService<MDC>,WriteServiceCommand,MDC::WriteDest,MDC::WriteChannelIn,MDC::WriteSpawn>,
+  SpawnerRefsDefRecv2<ReadService<MDC>,ReadCommand, ReadDest<MDC>, MDC::ReadChannelIn, MDC::ReadSpawn>,
+//  SpawnerRefs<ReadService<MDC>,MDC::ReadDest,DefaultRecvChannel<ReadCommand,MDC::ReadChannelIn>,MDC::ReadSpawn>,
+  SpawnerRefs2<WriteService<MDC>,WriteCommand<MDC>,MDC::WriteDest,MDC::WriteChannelIn,MDC::WriteSpawn>,
   // bool is has_connect
-  (<MDC::WriteChannelIn as SpawnChannel<WriteServiceCommand>>::Send,<MDC::WriteChannelIn as SpawnChannel<WriteServiceCommand>>::Recv,bool),
+  (<MDC::WriteChannelIn as SpawnChannel<WriteCommand<MDC>>>::Send,<MDC::WriteChannelIn as SpawnChannel<WriteCommand<MDC>>>::Recv,bool),
   MDC::PeerRef>;
 
 type SpawnerRefs<S : Service,D,CI : SpawnChannel<S::CommandIn>,SP : Spawner<S,D,CI::Recv>> = (SP::Handle,CI::Send); 
 type SpawnerRefs2<S : Service,COM_IN, D,CI : SpawnChannel<COM_IN>,SP : Spawner<S,D,CI::Recv>> = (SP::Handle,CI::Send); 
 type SpawnerRefsDefRecv2<S : Service,COM_IN,D, CI : SpawnChannel<COM_IN>, RS : Spawner<S,D,DefaultRecv<COM_IN,CI::Recv>>> = (RS::Handle,CI::Send);
-type SpawnerRefsRead2<S : Service,D, CI : SpawnChannel<ReadServiceCommand>, RS : Spawner<S,D,DefaultRecv<ReadServiceCommand,CI::Recv>>> = (RS::Handle,CI::Send);
+type SpawnerRefsRead2<S : Service,D, CI : SpawnChannel<ReadCommand>, RS : Spawner<S,D,DefaultRecv<ReadCommand,CI::Recv>>> = (RS::Handle,CI::Send);
 
 /*pub trait Spawner<
   S : Service,
@@ -139,8 +163,15 @@ pub enum MainLoopReply {
   /// TODO
   Ended,
 }
-pub trait MyDHTConf : 'static + Send + Sized {
 
+pub type PeerRefSend<MC:MyDHTConf> = <MC::PeerRef as Ref<MC::Peer>>::Send;
+//pub type BorRef<
+pub trait MyDHTConf : 'static + Send + Sized 
+{
+//  where <Self::PeerRef as Ref<Self::Peer>>::Send : Borrow<Self::Peer> {
+
+  /// defaults to Public, as the most common use case TODO remove default value??  
+  const AUTH_MODE : ShadowAuthType = ShadowAuthType::Public;
   /// Name of the main thread
   const loop_name : &'static str = "MyDHT Main Loop";
   /// number of events to poll (size of mio `Events`)
@@ -165,7 +196,7 @@ pub trait MyDHTConf : 'static + Send + Sized {
   /// low level transport
   type Transport : Transport;
   /// Message encoding
-  type MsgEnc : MsgEnc;
+  type MsgEnc : MsgEnc + Clone;
   /// Peer struct (with key and address)
   type Peer : Peer<Address = <Self::Transport as Transport>::Address>;
   /// most of the time Arc, if not much threading or smal peer description, RcCloneOnSend can be use, or AllwaysCopy
@@ -174,29 +205,30 @@ pub trait MyDHTConf : 'static + Send + Sized {
   /// shared info
   type KeyVal : KeyVal;
   /// Peer management methods 
-  type PeerMgmtMeths : PeerMgmtMeths<Self::Peer, Self::KeyVal>;
+  type PeerMgmtMeths : PeerMgmtMeths<Self::Peer, Self::KeyVal> + Clone;
   /// Dynamic rules for the dht
-  type DHTRules : DHTRules;
+  type DHTRules : DHTRules + Clone;
   /// loop slab implementation
   type Slab : SlabCache<RWSlabEntry<Self>>;
   /// local cache for peer
   type PeerCache : KVCache<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
   
-  type ReadChannelIn : SpawnChannel<ReadServiceCommand>;
+  type PeerMgmtChannelIn : SpawnChannel<PeerMgmtCommand<Self>>;
+  type ReadChannelIn : SpawnChannel<ReadCommand>;
   //type ReadChannelIn : SpawnChannel<<Self::ReadService as Service>::CommandIn>;
 //  type ReadFrom : SpawnRecv<<Self::ReadService as Service>::CommandIn>;
   //type ReadDest : SpawnSend<<Self::ReadService as Service>::CommandOut>;
-  type ReadDest : SpawnSend<()> + Clone;
+//  type ReadDest : SpawnSend<ReadReply<Self>> + Clone;
   type ReadSpawn : Spawner<
     ReadService<Self>,
-    Self::ReadDest,
-    DefaultRecv<ReadServiceCommand,
-      <Self::ReadChannelIn as SpawnChannel<ReadServiceCommand>>::Recv>>;
+    ReadDest<Self>,
+    DefaultRecv<ReadCommand,
+      <Self::ReadChannelIn as SpawnChannel<ReadCommand>>::Recv>>;
 
-  type WriteDest : SpawnSend<WriteServiceReply> + Clone;
-  type WriteChannelIn : SpawnChannel<WriteServiceCommand>;
+  type WriteDest : SpawnSend<WriteReply<Self>> + Clone;
+  type WriteChannelIn : SpawnChannel<WriteCommand<Self>>;
 //  type WriteFrom : SpawnRecv<<Self::WriteService as Service>::CommandIn>;
-  type WriteSpawn : Spawner<WriteService<Self>,Self::WriteDest,<Self::WriteChannelIn as SpawnChannel<WriteServiceCommand>>::Recv>;
+  type WriteSpawn : Spawner<WriteService<Self>,Self::WriteDest,<Self::WriteChannelIn as SpawnChannel<WriteCommand<Self>>>::Recv>;
 
   // TODO temp for type check , hardcode it after on transport service (not true for kvstore service) the service contains the read stream!!
 //  type ReadService : Service;
@@ -208,15 +240,16 @@ pub trait MyDHTConf : 'static + Send + Sized {
   /// Start the main loop
   #[inline]
   fn start_loop(mut self : Self) -> Result<(
-    MioSend<<Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Send>, 
+    ApiSendIn<Self>,
+//    MioSend<<Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Send>, 
     <Self::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Recv
     )> {
     let (s,r) = MioChannel(self.init_main_loop_channel_in()?).new()?;
     let (so,ro) = self.init_main_loop_channel_out()?.new()?;
 
     let mut sp = self.get_main_spawner()?;
-    //let read_handle = self.read_spawn.spawn(ReadService(rs), read_out.clone(), Some(ReadServiceCommand::Run), read_r_in, 0)?;
-    let service = MyDHTService(self,r,so);
+    //let read_handle = self.read_spawn.spawn(ReadService(rs), read_out.clone(), Some(ReadCommand::Run), read_r_in, 0)?;
+    let service = MyDHTService(self,r,so,s.clone());
     // the  spawn loop is not use, the poll loop is : here we run a single loop without receive
     sp.spawn(service, NoSend, Some(MainLoopCommand::Start), NoRecv, 1)?; 
     // TODO replace this shit by a spawner then remove constraint on MDht trait where
@@ -229,10 +262,13 @@ pub trait MyDHTConf : 'static + Send + Sized {
       }
       r
     })?;*/
-    Ok((s,ro))
+    Ok((ApiSendIn{
+      main_loop : s,
+    },ro))
   }
 
-
+  /// create or load peer for our transport (ourselve)
+  fn init_ref_peer(&mut self) -> Result<Self::PeerRef>;
   /// for start_loop usage
   fn get_main_spawner(&mut self) -> Result<Self::MainloopSpawn>;
   /// cache initializing for main loop slab cache
@@ -245,16 +281,18 @@ pub trait MyDHTConf : 'static + Send + Sized {
   fn init_main_loop_channel_in(&mut self) -> Result<Self::MainLoopChannelIn>;
   fn init_main_loop_channel_out(&mut self) -> Result<Self::MainLoopChannelOut>;
 
+  fn init_peermgmt_channel_in(&mut self) -> Result<Self::PeerMgmtChannelIn>;
   /// instantiate read spawner
   fn init_read_spawner(&mut self) -> Result<Self::ReadSpawn>;
   fn init_write_spawner(&mut self) -> Result<Self::WriteSpawn>;
 
-  /// TODO replace with channel
-  fn init_read_spawner_out() -> Result<Self::ReadDest>;
+  //fn init_read_spawner_out(<Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Send, <Self::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<Self>>>::Send) -> Result<ReadDest<Self>>;
   fn init_write_spawner_out() -> Result<Self::WriteDest>;
   fn init_read_channel_in(&mut self) -> Result<Self::ReadChannelIn>;
   fn init_write_channel_in(&mut self) -> Result<Self::WriteChannelIn>;
-
+  fn init_enc_proto(&mut self) -> Result<Self::MsgEnc>;
+  fn init_peermgmt_proto(&mut self) -> Result<Self::PeerMgmtMeths>;
+  fn init_dhtrules_proto(&mut self) -> Result<Self::DHTRules>;
   /// Transport initialization
   fn init_transport(&mut self) -> Result<Self::Transport>;
 
@@ -724,7 +762,8 @@ impl<RT : RunningTypes> DHT<RT> {
 
 /// Main function to start a DHT.
 pub fn boot_server
- <T : Route<RT::A,RT::P,RT::V,RT::T>, 
+// <T : Route<RT::A,RT::P,RT::V,RT::T>, 
+ <T,
   QC : QueryCache<RT::P,RT::V>, 
   S : KVStore<RT::V>,
   F1 : FnOnce() -> Option<S> + Send + 'static,
@@ -752,11 +791,11 @@ pub fn boot_server
   // Query manager is allways start TODO a parameter for not starting it (if running dht in full
   // proxy mode for instance)
   thread::spawn (move ||{
-    sphandler_res(querymanager::start::<RT,_,_>(&rquery, &cleantquery, &cleantpeer, &cleantkstor, querycache, cleandelay));
+    //sphandler_res(querymanager::start::<RT,_,_>(&rquery, &cleantquery, &cleantpeer, &cleantkstor, querycache, cleandelay));
   });
   let sem = Arc::new((Condvar::new(),Mutex::new(-1))); // wait end of two process from shutdown TODO replace that by joinhandle wait!!!
   
-  let rp = RunningProcesses {
+  let rp : RunningProcesses<RT> = RunningProcesses {
     peers : tpeer.clone(), 
     queries : tquery.clone(),
     store : tkvstore.clone()
@@ -767,7 +806,7 @@ pub fn boot_server
   let rpsp = rp.clone();
   let semsp = sem.clone();
   thread::spawn (move ||{
-    match peermanager::start (rcsp, route, &rpeer,rpsp) {
+  /*  match peermanager::start (rcsp, route, &rpeer,rpsp) {
       Ok(()) => {
         info!("peermanager end ok");
       },
@@ -777,7 +816,7 @@ pub fn boot_server
       },
     };
     *semsp.1.lock().unwrap() += 1;
-    semsp.0.notify_one(); // TODO replace by join handle
+    semsp.0.notify_one(); // TODO replace by join handle*/
   });
   
   // starting kvstore process
@@ -785,7 +824,7 @@ pub fn boot_server
   let rpst = rp.clone();
   let semsp2 = sem.clone();
   thread::spawn (move ||{
-    match kvmanager::start (rcst, kvst, &rkvstore,rpst) {
+    /*match kvmanager::start (rcst, kvst, &rkvstore,rpst) {
       Ok(()) => {
         info!("kvmanager end ok");
       },
@@ -796,7 +835,7 @@ pub fn boot_server
     };
 
     *semsp2.1.lock().unwrap() += 1;
-    semsp2.0.notify_one(); // TODO replace by join handle
+    semsp2.0.notify_one(); // TODO replace by join handle*/
   });
   
   // starting socket listener process
@@ -805,7 +844,7 @@ pub fn boot_server
   let rcsp2 = rc.clone();
   let rpsp2 = rp.clone();
   thread::spawn (move ||{
-    sphandler_res(server::servloop(rcsp2, rpsp2));
+//    sphandler_res(server::servloop(rcsp2, rpsp2));
   });
   
   // Typically those cached node are more likely to be initialized with the routing backend (here it

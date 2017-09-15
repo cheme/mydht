@@ -63,6 +63,11 @@ impl<K : Serialize + DeserializeOwned + fmt::Debug + Eq + Clone + 'static + Send
 pub trait KeyVal : Serialize + DeserializeOwned + fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment + 'static {
   /// Key type of KeyVal
   type Key : Key + Send + Sync; //aka key // Ord , Hash ... might be not mandatory but issue currently
+  /// return size of attachment to download, default implementation return 0 (safe) as a way to
+  /// disable attachment by default
+  fn attachment_expected_size(&self) -> usize {
+    0
+  }
   /// getter for key value
   fn get_key(&self) -> Self::Key;
   /* Get key ref usage is of for type like enum over multiple keyval or other key with calculated

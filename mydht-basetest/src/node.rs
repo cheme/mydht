@@ -1,7 +1,15 @@
 use std::net::{SocketAddr};
 use serde::{Serializer,Serialize,Deserializer};
 use peer::Peer;
-use peer::{ShadowBase,ShadowW,ShadowR,NoShadow};
+use peer::{
+  NoShadow,
+};
+use readwrite_comp::{
+  ExtRead,
+  ExtWrite,
+};
+
+
 use std::string::String;
 use keyval::{KeyVal};
 use keyval::{Attachment,SettableAttachment};
@@ -40,7 +48,8 @@ impl Peer for Node {
   fn get_address(&self) -> &SerSocketAddr {
     &self.address
   }
-  noshadow!();
+  noshadow_auth!();
+  noshadow_msg!();
 }
 
   impl<'a> DHTElemBytes<'a> for Node {

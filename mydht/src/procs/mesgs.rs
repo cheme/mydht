@@ -12,7 +12,6 @@ use transport::{ReadTransportStream,WriteTransportStream};
 use procs::ClientHandle;
 //use procs::server::ServerHandle;
 use std::sync::mpsc::{SyncSender};
-use route::ServerInfo;
 use std::marker::PhantomData;
 
 /// message for peermanagement TODO remove TR when stable (currently unused phantomdata in
@@ -27,9 +26,9 @@ pub enum PeerMgmtMessage<P : Peer,V : KeyVal,TR : ReadTransportStream, TW : Writ
   /// with possibly an initial read stream : start or add to pool of server.
   /// Also Query for a client handle (from procs or other process to skip peermanagement process in
   /// later calls), a synchro is needed eitherway.
-  PeerAddFromServer(Arc<P>, PeerPriority, Option<TW>, SyncSender<ClientHandle<P,V,TW>>, ServerInfo),
+  PeerAddFromServer(Arc<P>, PeerPriority, Option<TW>, SyncSender<ClientHandle<P,V,TW>>),
   /// TODO use key instead of P (peer handle already initialized)
-  ServerInfoFromClient(Arc<P>, ServerInfo),
+  ServerInfoFromClient(Arc<P>),
   /// add an offline peer
   /// if you want to add and connect please use PeerPing instead
   PeerAddOffline(Arc<P>),

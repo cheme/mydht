@@ -10,14 +10,13 @@ extern crate readwrite_comp;
 
 // reexport from base
 pub use mydht_base::utils::*;
-pub use mydht_base::peer::{
-  ShadowReadOnce,
-  ShadowWriteOnce,
-  new_shadow_read_once,
-  new_shadow_write_once,
+
+use self::readwrite_comp::{
+  ExtRead,
+  ExtWrite,
+  CompExtWInner,
+  CompExtRInner,
 };
-
-
 use num::bigint::{BigUint,RandBigInt};
 use rand::Rng;
 use rand::thread_rng;
@@ -32,9 +31,6 @@ use std::fmt::Error as FmtError;
 //use keyval::{AsKeyValIf};
 use keyval::{FileKeyVal};
 use peer::Peer;
-use peer::ShadowW;
-use peer::ShadowR;
-use peer::ShadowBase;
 #[cfg(feature="openssl-impl")]
 use self::openssl::hash::{Hasher,MessageDigest};
 use std::io::Write;
@@ -123,7 +119,7 @@ pub fn random_bytes(size : usize) -> Vec<u8> {
 }
 
 
-
+/*
 pub fn send_msg<'a,P : Peer + 'a, V : KeyVal + 'a, T : WriteTransportStream, E : MsgEnc, S : ShadowW> (
    m : &ProtoMessageSend<'a,P,V>, 
    a : Option<&Attachment>, 
@@ -161,7 +157,7 @@ pub fn receive_msg_tmp2<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E 
 pub fn receive_msg<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc, S : ShadowR>(t : &mut T, e : &E, s : &mut S) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
   receive_msg_tmp2(t,e,s).ok()
 }
-
+*/
 /*
 pub fn receive_msg<P : Peer, V : KeyVal, T : TransportStream, E : MsgEnc>(t : &mut T, e : &E) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
   let rs = t.streamread();
@@ -182,6 +178,29 @@ pub fn sendUnconnectMsg<P : Per, V : KeyVal, T : TransportStream, E : MsgEnc>( p
       Some (mut s) => sendMsg(&s, e),
     }
 }*/
+
+pub fn receive_msg<P : Peer, V : KeyVal, T : Read, E : MsgEnc, S : ExtRead>(t : &mut T, e : &E, s : &mut S) -> MDHTResult<(ProtoMessage<P,V>)> {
+  let mut cr = CompExtRInner(t,s);
+  let m = e.decode_from(&mut cr)?;
+  Ok(m)
+}
+pub fn receive_att<T : Read, E : MsgEnc, S : ExtRead>(t : &mut T, e : &E, s : &mut S, sl : usize) -> MDHTResult<Attachment> {
+  let mut cr = CompExtRInner(t,s);
+  let oa = e.attach_from(&mut cr,sl)?;
+  Ok(oa)
+}
+
+#[inline]
+pub fn shad_read_header<T : Read, S : ExtRead>(s : &mut S, t : &mut T) -> MDHTResult<()> {
+  s.read_header(t)?;
+  Ok(())
+}
+#[inline]
+pub fn shad_read_end<T : Read, S : ExtRead>(s : &mut S, t : &mut T) -> MDHTResult<()> {
+  s.read_end(t)?;
+  Ok(())
+}
+
 
 #[cfg(feature="rust-crypto-impl")]
 pub fn hash_buf_crypto(buff : &[u8], digest : &mut Digest) -> Vec<u8> {

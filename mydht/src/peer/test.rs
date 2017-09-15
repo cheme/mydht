@@ -89,8 +89,8 @@ impl<P : Peer, V : KeyVal> PeerMgmtMeths<P, V> for TestingRules {
     thread::sleep_ms(self.delay_ms_check);
     format!("{:?}, {:?}",n.get_key(), chal).into_bytes() == sign
   }
-  fn accept<M : PeerMgmtMeths<P,V>, RT : RunningTypes<P=P,V=V,A=P::Address,M=M>>
-  (&self, _ : &P, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) 
+  fn accept
+  (&self, _ : &P)
   -> Option<PeerPriority> {
     thread::sleep_ms(self.delay_ms_accept);
     Some (PeerPriority::Normal)
@@ -116,8 +116,8 @@ pub fn basic_auth_test<P : Peer, R : PeerMgmtMeths<P,P>> (r : &R, p1 : &P, p2 : 
 
 #[test]
 fn test_testingrules () {
-  let p1 = PeerTest {nodeid: "dummyID1".to_string(), address : LocalAdd(0), keyshift: 1, modesh : ShadowModeTest::SimpleShift};
-  let p2 = PeerTest {nodeid: "dummyID2".to_string(), address : LocalAdd(1), keyshift: 2, modesh : ShadowModeTest::SimpleShift};
+  let p1 = PeerTest {nodeid: "dummyID1".to_string(), address : LocalAdd(0), keyshift: 1, modeshauth : ShadowModeTest::NoShadow, modeshmsg : ShadowModeTest::SimpleShift};
+  let p2 = PeerTest {nodeid: "dummyID2".to_string(), address : LocalAdd(1), keyshift: 2, modeshauth : ShadowModeTest::NoShadow, modeshmsg : ShadowModeTest::SimpleShift};
   let r = TestingRules::new_no_delay();
   basic_auth_test(&r,&p1,&p2);
 }

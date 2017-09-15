@@ -12,6 +12,7 @@ default = ["rust-crypto-impl","with-extra-test","openssl-impl"]
 openssl-impl = ["openssl"]
 rust-crypto-impl = ["rust-crypto"]
 with-extra-test = []
+api-direct-sender = []
 nightly = []
 
 [dependencies]

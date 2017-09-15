@@ -30,7 +30,7 @@ use mydht_base::keyval::KeyVal as KVCont;
 use mydht_base::transport::{SerSocketAddr};
 use mydht_base::utils::{TimeSpecExt};
 use mydht_base::keyval::{Attachment,SettableAttachment};
-use mydht_base::peer::{Peer,ShadowBase};
+use mydht_base::peer::{Peer,NoShadow};
 #[cfg(feature="wot")]
 use bincode::SizeLimit;
 use mydht_openssl::rsa_openssl::PKeyExt;
@@ -224,30 +224,28 @@ impl<RT : OpenSSLConf, I : KVCont> SettableAttachment for RSAPeer<RT,I> {}
 impl<RT : OpenSSLConf, I : KVCont> Peer for RSAPeer<RT,I> {
   type Address = SerSocketAddr;
 
-  type ShadowW = OSSLShadowerW<RT>;
-  type ShadowR = OSSLShadowerR<RT>;
- 
+  type ShadowWMsg = OSSLShadowerW<RT>;
+  type ShadowRMsg = OSSLShadowerR<RT>;
+  type ShadowWAuth = NoShadow;
+  type ShadowRAuth = NoShadow;
   #[inline]
-  fn get_shadower_r (&self) -> Self::ShadowR {
-    OSSLShadowerR::new(self.publickey.clone()).unwrap() // TODO change peer trait
+  fn get_shadower_r_auth (&self) -> Self::ShadowRAuth {
+    NoShadow
   }
   #[inline]
-  fn get_shadower_w (&self) -> Self::ShadowW {
-    OSSLShadowerW::new(self.publickey.clone()).unwrap() // TODO change peer trait
+  fn get_shadower_r_msg (&self) -> Self::ShadowRMsg {
+    OSSLShadowerR::new(self.publickey.clone()).unwrap() // TODO change peer trait
   }
 
   #[inline]
-  fn default_message_mode (&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {
-    ASymSymMode::ASymSym
+  fn get_shadower_w_auth (&self) -> Self::ShadowWAuth {
+    NoShadow
   }
-/*  #[inline]
-  fn default_header_mode (&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {
-    ASymSymMode::ASymOnly
-  }*/
   #[inline]
-  fn default_auth_mode (&self) ->  <Self::ShadowW as ShadowBase>::ShadowMode {
-    ASymSymMode::None
+  fn get_shadower_w_msg (&self) -> Self::ShadowWMsg {
+    OSSLShadowerW::new(self.publickey.clone()).unwrap() // TODO change peer trait
   }
+
   #[inline]
   fn get_address(&self) -> &SerSocketAddr {
     &self.address

@@ -60,14 +60,14 @@ where <P as Peer>::Address : 'a,
 
   /// attach into will simply add bytes afterward json cont (no hex or base64 costly enc otherwhise
   /// it would be into message)
-  fn attach_into<W : Write> (&self, w : &mut W, a : Option<&Attachment>) -> MDHTResult<()> {
-    let has_at = if a.is_some() {
+  fn attach_into<W : Write> (&self, w : &mut W, a : &Attachment) -> MDHTResult<()> {
+/*    let has_at = if a.is_some() {
       BUFF_TRUE
     } else {
       BUFF_FALSE
     };
     try!(w.write_all(&has_at));
-
+*/
     write_attachment(w,a)
   }
 
@@ -83,17 +83,17 @@ where <P as Peer>::Address : 'a,
     Ok(tryfor!(JSonErr,json::from_slice(&mut vbuf[..])))
   }
 
-  fn attach_from<R : Read>(&self, r : &mut R) -> MDHTResult<Option<Attachment>> {
-    let mut buf = [0];
+  fn attach_from<R : Read>(&self, r : &mut R, mlen : usize) -> MDHTResult<Attachment> {
+/*    let mut buf = [0];
     try!(r.read(&mut buf));
     match buf[0] {
       i if i == 0 => Ok(None),
       i if i == 1 => {
-          debug!("Reding an attached file");
-          read_attachment(r).map(|a|Some(a))
-      },
+          debug!("Reding an attached file");*/
+      read_attachment(r,mlen)
+      /*},
       _ => Err(Error("Invalid attachment description".to_string(), ErrorKind::SerializingError, None)),
-    }
+    }*/
   }
 
 

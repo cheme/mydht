@@ -52,17 +52,18 @@ use std::net::{
 //use utils::Ref;
 
 /// entry discribing the read or write stream
-pub struct SlabEntry<T : Transport, RR, WR, WB, P> {
+pub struct SlabEntry<T : Transport, RR, WR, WB, RP> {
   /// state for the stream
-  pub state : SlabEntryState<T,RR,WR,WB>,
+  pub state : SlabEntryState<T,RR,WR,WB,RP>,
   /// corresponding read or write stream slab index
   pub os : Option<usize>,
-  pub peer : Option<P>,
+  pub peer : Option<RP>,
 }
 
-pub enum SlabEntryState<T : Transport, RR, WR, WB> 
+pub enum SlabEntryState<T : Transport, RR, WR, WB,P> 
 {
-  ReadStream(T::ReadStream),
+  /// RP is dest peer reference
+  ReadStream(T::ReadStream,Option<P>),
   /// WB is a buffer to use while stream is unconnected
   WriteStream(T::WriteStream,WB),
   ReadSpawned(RR),

@@ -36,7 +36,8 @@ pub struct PeerTest {
   pub nodeid  : String,
   pub address : LocalAdd,
   pub keyshift : u8,
-  pub modesh : ShadowModeTest,
+  pub modeshauth : ShadowModeTest,
+  pub modeshmsg : ShadowModeTest,
 }
 
 impl KeyVal for PeerTest {
@@ -57,27 +58,31 @@ impl SettableAttachment for PeerTest { }
 
 impl Peer for PeerTest {
   type Address = LocalAdd;
-  type ShadowW = ShadowTest;
-  type ShadowR = ShadowTest;
+  type ShadowWAuth = ShadowTest;
+  type ShadowRAuth = ShadowTest;
+  type ShadowWMsg = ShadowTest;
+  type ShadowRMsg = ShadowTest;
   fn get_address(&self) -> &Self::Address {
     &self.address
   }
 
   #[inline]
-  fn get_shadower_w (&self) -> Self::ShadowW {
-    ShadowTest(self.keyshift,0,self.modesh.clone()) // default to no shadow
+  fn get_shadower_w_auth (&self) -> Self::ShadowWAuth {
+    ShadowTest(self.keyshift,0,self.modeshauth.clone()) // default to no shadow
   }
   #[inline]
-  fn get_shadower_r (&self) -> Self::ShadowR {
-    ShadowTest(self.keyshift,0,self.modesh.clone()) // default to no shadow
+  fn get_shadower_r_auth (&self) -> Self::ShadowRAuth {
+    ShadowTest(self.keyshift,0,self.modeshauth.clone()) // default to no shadow
+  }
+  #[inline]
+  fn get_shadower_w_msg (&self) -> Self::ShadowWMsg {
+    ShadowTest(self.keyshift,0,self.modeshmsg.clone()) // default to no shadow
+  }
+  #[inline]
+  fn get_shadower_r_msg (&self) -> Self::ShadowRMsg {
+    ShadowTest(self.keyshift,0,self.modeshmsg.clone()) // default to no shadow
   }
 
-  fn default_auth_mode(&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {
-    ShadowModeTest::NoShadow
-  }
-  fn default_message_mode(&self) -> <Self::ShadowW as ShadowBase>::ShadowMode {
-    ShadowModeTest::SimpleShift
-  }
 }
 
 impl<'a> DHTElemBytes<'a> for PeerTest {
@@ -96,7 +101,7 @@ impl<'a> DHTElemBytes<'a> for PeerTest {
 
 #[cfg(test)]
 fn peertest_shadower_test (input_length : usize, write_buffer_length : usize,
-read_buffer_length : usize, smode : ShadowModeTest) {
+read_buffer_length : usize, smodeauth : ShadowModeTest, smodemsg : ShadowModeTest) {
 
 /*  let fromP = PeerTest {
     nodeid: "fromid".to_string(),
@@ -107,27 +112,26 @@ read_buffer_length : usize, smode : ShadowModeTest) {
     nodeid: "toid".to_string(),
     address : LocalAdd(1),
     keyshift: 2,
-    modesh : smode.clone(),
+    modeshauth : smodeauth.clone(),
+    modeshmsg : smodemsg.clone(),
   };
  
-  shadower_test(to_p.clone(),input_length,write_buffer_length,read_buffer_length,smode.clone());
+  shadower_test(to_p.clone(),input_length,write_buffer_length,read_buffer_length);
   // non std
-  shadower_sym(to_p,input_length,write_buffer_length,read_buffer_length,smode);
+  shadower_sym(to_p,input_length,write_buffer_length,read_buffer_length);
 
 }
 #[cfg(test)]
 pub fn shadower_sym (to_p : PeerTest, input_length : usize, write_buffer_length : usize,
-read_buffer_length : usize, smode : ShadowModeTest) 
+read_buffer_length : usize) 
 {
 
   let mut inputb = vec![0;input_length];
   thread_rng().fill_bytes(&mut inputb);
   let mut output = Cursor::new(Vec::new());
   let input = inputb;
-  let mut from_shad = to_p.get_shadower_w();
-  from_shad.set_mode(smode.clone());
-  let mut to_shad = to_p.get_shadower_r();
-  to_shad.set_mode(smode.clone());
+  let mut from_shad = to_p.get_shadower_w_msg();
+  let mut to_shad = to_p.get_shadower_r_msg();
 
   // sim test
   let sim_shad = ShadowTest::new_shadow_sim().unwrap();
@@ -183,7 +187,7 @@ fn shadower1_test () {
   let input_length = 256;
   let write_buffer_length = 256;
   let read_buffer_length = 256;
-  peertest_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
+  peertest_shadower_test (input_length, write_buffer_length, read_buffer_length, ShadowModeTest::NoShadow, smode);
 }
 
 #[test]
@@ -192,7 +196,7 @@ fn shadower2_test () {
   let input_length = 20;
   let write_buffer_length = 15;
   let read_buffer_length = 25;
-  peertest_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
+  peertest_shadower_test (input_length, write_buffer_length, read_buffer_length, ShadowModeTest::NoShadow, smode);
 }
 
 #[test]
@@ -201,6 +205,6 @@ fn shadower3_test () {
   let input_length = 123;
   let write_buffer_length = 14;
   let read_buffer_length = 17;
-  peertest_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
+  peertest_shadower_test (input_length, write_buffer_length, read_buffer_length, ShadowModeTest::NoShadow, smode);
 }
 

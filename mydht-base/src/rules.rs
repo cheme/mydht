@@ -8,7 +8,9 @@ use procs::ClientMode;
 //use procs::ServerMode;
 use num;
 use num::traits::ToPrimitive;
-
+use std::sync::Arc;
+use std::ops::Deref;
+//use std::rc::Rc;
 
 /// Rules for DHT.
 /// This is used to map priorities with actual query strategies.
@@ -16,6 +18,8 @@ use num::traits::ToPrimitive;
 /// have fast implementations.
 /// In fact some info are related to DHT, this is more DHTRules than QueryRules (could be split in
 /// two).
+/// TODO heavy refacto (lot of useless method with new procs)
+/// TODO consider removing Sync or Send, and switch to Ref<DHTRules>
 pub trait DHTRules : Sync + Send + 'static {
   /// Max number of hop for the query, the method is currently called in main peermgmt process, therefore it must be fast (a mapping, not a db access).
   fn nbhop (&self, QueryPriority) -> u8;
@@ -112,5 +116,69 @@ pub trait DHTRules : Sync + Send + 'static {
   fn is_routing_heavy(&self) -> (bool,bool,bool);
 }
 
+macro_rules! deref_impl {() => {
 
+  #[inline]
+  fn nbhop (&self, qp : QueryPriority) -> u8 {
+    self.deref().nbhop(qp)
+  }
+  #[inline]
+  fn nbquery (&self, qp : QueryPriority) -> u8 {
+    self.deref().nbquery(qp)
+  }
+  #[inline]
+  fn notfoundtreshold (&self, nbquer : u8, maxhop : u8, mode : &QueryMode) -> usize {
+    self.deref().notfoundtreshold(nbquer,maxhop,mode)
+  }
+  #[inline]
+  fn asynch_clean(&self) -> Option<Duration> {
+    self.deref().asynch_clean()
+  }
+  #[inline]
+  fn lifetime (&self, prio : QueryPriority) -> Duration {
+    self.deref().lifetime(prio)
+  }
+  #[inline]
+  fn do_store (&self, islocal : bool, qprio : QueryPriority, sprio : StoragePriority, hopnb : Option <usize>) -> (bool,Option<CachePolicy>) {
+    self.deref().do_store(islocal,qprio,sprio,hopnb)
+  }
+  #[inline]
+  fn nbhop_dec (&self) -> u8 {
+    self.deref().nbhop_dec()
+  }
+  #[inline]
+  fn tunnel_length(&self, qp : QueryPriority) -> u8 {
+    self.deref().tunnel_length(qp)
+  }
+  #[inline]
+  fn is_authenticated(&self) -> bool {
+    self.deref().is_authenticated()
+  }
+  #[inline]
+  fn client_mode(&self) -> &ClientMode {
+    self.deref().client_mode()
+  }
+  #[inline]
+  fn server_mode_conf(&self) -> (usize, usize, usize, Option<Duration>) {
+    self.deref().server_mode_conf()
+  }
+  #[inline]
+  fn is_accept_heavy(&self) -> bool {
+    self.deref().is_accept_heavy()
+  }
+  #[inline]
+  fn is_routing_heavy(&self) -> (bool,bool,bool) {
+    self.deref().is_routing_heavy()
+  }
+
+
+
+}}
+
+impl<DR : DHTRules> DHTRules for Arc<DR> {
+  deref_impl!();
+}
+/*impl<DR : DHTRules> DHTRules for Rc<DR> {
+  deref_impl!();
+}*/
 

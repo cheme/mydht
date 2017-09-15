@@ -40,7 +40,7 @@ use procs::ServerMode;
 use procs::ClientHandle;
 use route::ServerInfo;
 use procs::sphandler_res;
-
+ 
 /// either we created a permanent thread for server, or it is managed otherwhise (for instance udp
 /// single reception loop or tcp evented loop).
 pub enum ServerHandle<P : Peer, TR : ReadTransportStream> {
@@ -171,7 +171,7 @@ pub fn start_listener <RT : RunningTypes>
       let sh = ServerHandle::ThreadedOne(amut);
       let sh_thread = sh.clone();
       thread::spawn (move || {
-        sphandler_res(request_handler::<RT> (s, rc_thread.me.get_shadower_r(), &rc_thread, &rp_thread, None, sh_thread, otimeout,false));
+        sphandler_res(request_handler::<RT> (s, rc_thread.me.get_shadower_r_auth(), &rc_thread, &rp_thread, None, sh_thread, otimeout,false));
       });
       Ok(sh)
     },
@@ -288,7 +288,7 @@ pub fn servloop <RT : RunningTypes>
 /// peeradd msg with this ows.
 fn request_handler <RT : RunningTypes>
  (mut s1 : <RT::T as Transport>::ReadStream,
-  mut shad1 : <RT::P as Peer>::ShadowR,
+  mut shad1 : <RT::P as Peer>::ShadowRAuth,
   rc : &ArcRunningContext<RT>, 
   rp : &RunningProcesses<RT>,
   mut ows : Option<<RT::T as Transport>::WriteStream>,

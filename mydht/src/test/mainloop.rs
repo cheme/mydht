@@ -3,6 +3,7 @@
 
 extern crate mydht_tcp_loop;
 extern crate mydht_slab;
+use std::sync::Arc;
 use std::mem::replace;
 use std::thread;
 use mydhtresult::{
@@ -27,10 +28,9 @@ use procs::{
   MyDHTConf,
   RWSlabEntry,
 };
-use procs::mainloop::{
-  MDHTState,
+use procs::{
   PeerCacheEntry,
-  MainLoopCommand,
+  ApiCommand,
 };
 use std::net::{SocketAddr,Ipv4Addr};
 use transport::{
@@ -41,6 +41,7 @@ use node::Node;
 use service::{
   SpawnChannel,
   MpscChannel,
+  MpscChannelRef,
   NoChannel,
   LocalRcChannel,
 
@@ -53,15 +54,15 @@ use service::{
   Blocker,
   RestartOrError,
   Coroutine,
+  RestartSameThread,
   ThreadBlock,
   ThreadPark,
+  ThreadParkRef,
 
   CpuPool,
   CpuPoolFuture,
-
-
-
 };
+use super::DHTRULES_DEFAULT;
 use mydht_basetest::transport::{
   LocalAdd,
 };
@@ -85,7 +86,10 @@ use utils::{
 };
 use simplecache::SimpleCache;
 
-use rules::simplerules::SimpleRules;
+use rules::simplerules::{
+  SimpleRules,
+  DhtRules,
+};
 
 /// peer name, listener port, is_multiplexed
 pub struct TestMdhtConf (pub String, pub usize, pub bool);
@@ -97,27 +101,41 @@ mod test_tcp_all_block_thread {
     const loop_name : &'static str = "Conf test spawner";
     const events_size : usize = 1024;
     const send_nb_iter : usize = 1;
-    type MainloopSpawn = ThreadPark;
-    type MainLoopChannelIn = MpscChannel;
+    type MainloopSpawn = ThreadParkRef;// -> failure to send into spawner cf command in of spawner need send so the mpsc channel recv could be send in impl -» need to change command in to commandin as ref :: toref
+//    type MainloopSpawn = Blocker;
+    type MainLoopChannelIn = MpscChannelRef;
+    //type MainLoopChannelIn = MpscChannel;
     type MainLoopChannelOut = MpscChannel;
     type Transport = Tcp;
     type MsgEnc = Json;
     type Peer = Node;
-    type PeerRef = ArcRef<Self::Peer>;
+    //type PeerRef = ArcRef<Self::Peer>;
+    type PeerRef = RcRef<Self::Peer>;
     type KeyVal = Node;
     type PeerMgmtMeths = TestingRules;
-    type DHTRules = SimpleRules;
+    type DHTRules = Arc<SimpleRules>;
     type Slab = Slab<RWSlabEntry<Self>>;
     type PeerCache = HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
+    type PeerMgmtChannelIn = MpscChannel;
     type ReadChannelIn = MpscChannel;
-    type ReadDest = NoSend;
-    type ReadSpawn = ThreadPark;
+    //type ReadSpawn = ThreadPark;
+    type ReadSpawn = Blocker;
     type WriteDest = NoSend;
     type WriteChannelIn = MpscChannel;
-    type WriteSpawn = ThreadPark;
+//    type WriteChannelIn = LocalRcChannel;
+    type WriteSpawn = Blocker;
+    //type WriteSpawn = ThreadPark;
 
-    fn get_main_spawner(&mut self) -> Result<Self::ReadSpawn> {
-      Ok(ThreadPark)
+    fn init_ref_peer(&mut self) -> Result<Self::PeerRef> {
+       let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), self.1 as u16);
+       let val = Node {nodeid: self.0.clone(), address : SerSocketAddr(addr)};
+      // Ok(ArcRef::new(val))
+       Ok(RcRef::new(val))
+    }
+    fn get_main_spawner(&mut self) -> Result<Self::MainloopSpawn> {
+      //Ok(Blocker)
+      //Ok(ThreadPark)
+      Ok(ThreadParkRef)
     }
 
     fn init_main_loop_slab_cache(&mut self) -> Result<Self::Slab> {
@@ -128,24 +146,24 @@ mod test_tcp_all_block_thread {
     }
 
     fn init_main_loop_channel_in(&mut self) -> Result<Self::MainLoopChannelIn> {
-      Ok(MpscChannel)
+      //Ok(MpscChannel)
+      Ok(MpscChannelRef)
     }
-    fn init_main_loop_channel_out(&mut self) -> Result<Self::MainLoopChannelIn> {
+    fn init_main_loop_channel_out(&mut self) -> Result<Self::MainLoopChannelOut> {
       Ok(MpscChannel)
     }
 
 
     fn init_read_spawner(&mut self) -> Result<Self::ReadSpawn> {
-      Ok(ThreadPark)
+      //Ok(ThreadPark)
+      Ok(Blocker)
     }
 
     fn init_write_spawner(&mut self) -> Result<Self::WriteSpawn> {
-      Ok(ThreadPark)
+      //Ok(ThreadPark)
+      Ok(Blocker)
     }
 
-    fn init_read_spawner_out() -> Result<Self::ReadDest> {
-      Ok(NoSend)
-    }
     fn init_write_spawner_out() -> Result<Self::WriteDest> {
       Ok(NoSend)
     }
@@ -153,7 +171,16 @@ mod test_tcp_all_block_thread {
       Ok(MpscChannel)
     }
     fn init_write_channel_in(&mut self) -> Result<Self::WriteChannelIn> {
+//      Ok(LocalRcChannel)
       Ok(MpscChannel)
+    }
+    fn init_peermgmt_channel_in(&mut self) -> Result<Self::PeerMgmtChannelIn> {
+      Ok(MpscChannel)
+    }
+
+
+    fn init_enc_proto(&mut self) -> Result<Self::MsgEnc> {
+      Ok(Json)
     }
 
     fn init_transport(&mut self) -> Result<Self::Transport> {
@@ -161,6 +188,13 @@ mod test_tcp_all_block_thread {
       let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), self.1 as u16);
       Ok(Tcp::new(&addr, None, self.2)?)
     }
+    fn init_peermgmt_proto(&mut self) -> Result<Self::PeerMgmtMeths> {
+      Ok(TestingRules::new_no_delay())
+    }
+    fn init_dhtrules_proto(&mut self) -> Result<Self::DHTRules> {
+      Ok(Arc::new(SimpleRules::new(DHTRULES_DEFAULT)))
+    }
+
 
 
   }
@@ -180,9 +214,9 @@ mod test_tcp_all_block_thread {
     thread::sleep_ms(100);
     let (mut sendcommand1,_) = conf1.start_loop().unwrap();
     let addr2 = utils::sa4(Ipv4Addr::new(127,0,0,1), port2 as u16);
-    let command = MainLoopCommand::TryConnect(SerSocketAddr(addr2));
+    let command = ApiCommand::try_connect(SerSocketAddr(addr2));
     let addr3 = utils::sa4(Ipv4Addr::new(127,0,0,1), port2 as u16);
-    let command2 = MainLoopCommand::TryConnect(SerSocketAddr(addr3));
+    let command2 = ApiCommand::try_connect(SerSocketAddr(addr3));
 
   //  thread::sleep_ms(1000); // issue with this sleep : needded
     sendcommand1.send(command).unwrap();
@@ -213,17 +247,26 @@ mod test_dummy_all_block_thread {
     type PeerRef = ArcRef<Self::Peer>;
     type KeyVal = PeerTest;
     type PeerMgmtMeths = TestingRules;
-    type DHTRules = SimpleRules;
+    type DHTRules = Arc<SimpleRules>;
     type Slab = Slab<RWSlabEntry<Self>>;
     type PeerCache = HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
+    type PeerMgmtChannelIn = MpscChannel;
     type ReadChannelIn = MpscChannel;
-    type ReadDest = NoSend;
     type ReadSpawn = ThreadPark;
     type WriteDest = NoSend;
     type WriteChannelIn = MpscChannel;
     type WriteSpawn = ThreadPark;
 
-    fn get_main_spawner(&mut self) -> Result<Self::ReadSpawn> {
+    fn init_ref_peer(&mut self) -> Result<Self::PeerRef> {
+      Ok(ArcRef::new(PeerTest {
+        nodeid  : (self.0).0.clone(),
+        address : LocalAdd((self.0).1),
+        keyshift : 5,
+        modeshauth : ShadowModeTest::NoShadow,
+        modeshmsg : ShadowModeTest::SimpleShift,
+      }))
+    }
+    fn get_main_spawner(&mut self) -> Result<Self::MainloopSpawn> {
       Ok(ThreadPark)
     }
 
@@ -237,7 +280,7 @@ mod test_dummy_all_block_thread {
     fn init_main_loop_channel_in(&mut self) -> Result<Self::MainLoopChannelIn> {
       Ok(MpscChannel)
     }
-    fn init_main_loop_channel_out(&mut self) -> Result<Self::MainLoopChannelIn> {
+    fn init_main_loop_channel_out(&mut self) -> Result<Self::MainLoopChannelOut> {
       Ok(MpscChannel)
     }
 
@@ -250,9 +293,6 @@ mod test_dummy_all_block_thread {
       Ok(ThreadPark)
     }
 
-    fn init_read_spawner_out() -> Result<Self::ReadDest> {
-      Ok(NoSend)
-    }
     fn init_write_spawner_out() -> Result<Self::WriteDest> {
       Ok(NoSend)
     }
@@ -262,7 +302,21 @@ mod test_dummy_all_block_thread {
     fn init_write_channel_in(&mut self) -> Result<Self::WriteChannelIn> {
       Ok(MpscChannel)
     }
+    fn init_peermgmt_channel_in(&mut self) -> Result<Self::PeerMgmtChannelIn> {
+      Ok(MpscChannel)
+    }
 
+    fn init_enc_proto(&mut self) -> Result<Self::MsgEnc> {
+      Ok(Json)
+    }
+    fn init_peermgmt_proto(&mut self) -> Result<Self::PeerMgmtMeths> {
+      Ok(TestingRules::new_no_delay())
+    }
+    fn init_dhtrules_proto(&mut self) -> Result<Self::DHTRules> {
+      Ok(Arc::new(SimpleRules::new(DHTRULES_DEFAULT)))
+    }
+
+ 
     fn init_transport(&mut self) -> Result<Self::Transport> {
       let addr = LocalAdd((self.0).1);
       let tr = replace(&mut self.1,None);
@@ -272,8 +326,8 @@ mod test_dummy_all_block_thread {
   }
 
 
-  #[test]
-  fn test_connect_l() {
+#[test]
+fn test_connect_l() {
  let is_mult = true;
     //let tr = AsynchTransportTest::create_transport (nb : usize, multiplex : bool, managed : bool, conn : Duration, sen : Duration, rec : Duration) -> Vec<AsynchTransportTest>();
     let mut tr = AsynchTransportTest::create_transport (2, is_mult, true, Duration::from_millis(500), Duration::from_millis(100), Duration::from_millis(100));
@@ -288,10 +342,10 @@ mod test_dummy_all_block_thread {
     let (mut sendcommand1,_) = conf1.start_loop().unwrap();
     let (sendcommand2,_) = conf2.start_loop().unwrap();
     let addr1 = LocalAdd(1);
-    let command = MainLoopCommand::TryConnect(addr1);
+    let command = ApiCommand::try_connect(addr1);
     //  No support for double connect with AsynchTransportTest!!!
 //    let addr2 = LocalAdd(1);
-//    let command2 = MainLoopCommand::TryConnect(addr2);
+//    let command2 = ApiCommand::try_connect(addr2);
 
   //  thread::sleep_ms(1000); // issue with this sleep : needded
     sendcommand1.send(command).unwrap();
