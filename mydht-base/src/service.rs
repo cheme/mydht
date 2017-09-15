@@ -1031,7 +1031,7 @@ pub struct ThreadHandleParkRef<S,D : SRef,R>(Arc<Mutex<Option<(S,D::Send,R,Resul
 
 pub struct ThreadYieldPark(Arc<(Mutex<bool>,Condvar)>);
 
-impl<S,D,R> SpawnUnyield for ThreadHandleParkWeak<S,D,R> {
+macro_rules! thread_parkunyield(() => (
   #[inline]
   fn is_finished(&mut self) -> bool {
     self.0.lock().is_some()
@@ -1045,42 +1045,26 @@ impl<S,D,R> SpawnUnyield for ThreadHandleParkWeak<S,D,R> {
     }
     Ok(())
   }
+
+));
+
+
+
+impl<S,D,R> SpawnUnyield for ThreadHandleParkWeak<S,D,R> {
+  thread_parkunyield!();
 }
 
 impl<S,D : SRef,R> SpawnUnyield for ThreadHandleParkRef<S,D,R> {
-  #[inline]
-  fn is_finished(&mut self) -> bool {
-    self.0.lock().is_some()
-  }
-  #[inline]
-  fn unyield(&mut self) -> Result<()> {
-    let mut guard = (self.2).0.lock();
-    if !*guard {
-      *guard = true;
-      (self.2).1.notify_one();
-    }
-    Ok(())
-  }
+  thread_parkunyield!();
 }
 
+
 impl<S,D,R> SpawnUnyield for ThreadHandlePark<S,D,R> {
-  #[inline]
-  fn is_finished(&mut self) -> bool {
-    self.0.lock().is_some()
-  }
-  #[inline]
-  fn unyield(&mut self) -> Result<()> {
-    let mut guard = (self.2).0.lock();
-    if !*guard {
-      *guard = true;
-      (self.2).1.notify_one();
-    }
-    Ok(())
-  }
+  thread_parkunyield!();
 }
 impl<S,D : SRef,R> SpawnHandle<S,D,R> for ThreadHandleParkRef<S,D,R> {
-  type WeakHandle = NoWeakHandle;
-  // TODO ThreadHandleParkWeakRef type WeakHandle = ThreadHandleParkWeak<S,D,R>;
+//  type WeakHandle = NoWeakHandle;
+  type WeakHandle = ThreadHandleParkWeak<S,<D as SRef>::Send,R>;
   #[inline]
   fn unwrap_state(self) -> Result<(S,D,R,Result<()>)> {
     let mut mlock = self.0.lock();
@@ -1096,8 +1080,7 @@ impl<S,D : SRef,R> SpawnHandle<S,D,R> for ThreadHandleParkRef<S,D,R> {
 
   #[inline]
   fn get_weak_handle(&self) -> Option<Self::WeakHandle> {
-    None
-//    Some(ThreadHandleParkWeak(self.0.clone(),(),self.2.clone()))
+    Some(ThreadHandleParkWeak(self.0.clone(),(),self.2.clone()))
   }
 }
 
