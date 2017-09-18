@@ -783,7 +783,7 @@ pub struct CoroutHandle<S,D,R>(Rc<Option<(S,D,R,Result<()>)>>,CoRHandle);
 impl<'a,A : SpawnerYield> SpawnerYield for &'a mut A {
   #[inline]
   fn spawn_yield(&mut self) -> YieldReturn {
-    self.spawn_yield()
+    (*self).spawn_yield()
   }
 }
 impl SpawnerYield for CoroutineC {
