@@ -771,15 +771,30 @@ pub struct Coroutine<'a>(PhantomData<&'a()>);
 pub type LocalRc<C> = Rc<RefCell<VecDeque<C>>>;
 /// not type alias as will move from this crate
 pub struct CoroutHandle<S,D,R>(Rc<Option<(S,D,R,Result<()>)>>,CoRHandle);
-pub struct CoroutYield<'a>(&'a mut CoroutineC);
+//pub struct CoroutYield<'a>(&'a mut CoroutineC);
 
-impl<'a> SpawnerYield for CoroutYield<'a> {
+/*impl<'a> SpawnerYield for CoroutYield<'a> {
   #[inline]
   fn spawn_yield(&mut self) -> YieldReturn {
     self.0.yield_with(0);
     YieldReturn::Loop
   }
+}*/
+impl<'a,A : SpawnerYield> SpawnerYield for &'a mut A {
+  #[inline]
+  fn spawn_yield(&mut self) -> YieldReturn {
+    self.spawn_yield()
+  }
 }
+impl SpawnerYield for CoroutineC {
+  #[inline]
+  fn spawn_yield(&mut self) -> YieldReturn {
+    self.yield_with(0);
+    YieldReturn::Loop
+  }
+}
+
+
 
 
 impl<S,D,R> SpawnUnyield for CoroutHandle<S,D,R> {
@@ -844,7 +859,8 @@ impl<C> SpawnRecv<C> for LocalRc<C> {
 impl<'a,S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOut>,R : 'static + SpawnRecv<S::CommandIn>> 
   Spawner<S,D,R> for Coroutine<'a> {
   type Handle = CoroutHandle<S,D,R>;
-  type Yield = CoroutYield<'a>;
+  type Yield = CoroutineC;
+  //type Yield = CoroutYield<'a>;
   fn spawn (
     &mut self,
     mut service : S,
@@ -860,7 +876,7 @@ impl<'a,S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOu
       move || -> Result<()> {
         let mut err = Ok(());
         let mut rcs = rcs;
-        let mut yiel = CoroutYield(corout);
+        let mut yiel = corout;
         spawn_loop!(service,spawn_out,ocin,recv,nb_loop,yiel,err,Err(Error("Coroutine spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
         let dest = Rc::get_mut(&mut rcs).unwrap();
         replace(dest,Some((service,spawn_out,recv,err)));

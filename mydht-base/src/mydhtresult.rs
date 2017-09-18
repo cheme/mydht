@@ -42,6 +42,7 @@ impl From<BinError> for Error {
 }
 
 
+/// TODO refactor (String in error replace by &'static str plus array of params)
 #[derive(Debug)]
 pub struct Error(pub String, pub ErrorKind, pub Option<Box<ErrorTrait>>);
 
@@ -164,6 +165,7 @@ pub enum ErrorKind {
   PingError,
   StoreError,
   MutexError,
+  ChannelFinishedDest,
   Bug, // something that should algorithmically not happen
   ExternalLib,
 }
@@ -175,6 +177,7 @@ impl ErrorKind {
         | ErrorKind::Bug
         => ErrorLevel::Panic,
       ErrorKind::ExpectedError => ErrorLevel::Ignore,
+      ErrorKind::ChannelFinishedDest => ErrorLevel::Ignore,
       _ => ErrorLevel::ShutAction,
     }
   }

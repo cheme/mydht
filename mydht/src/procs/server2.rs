@@ -60,6 +60,7 @@ use service::{
   NoYield,
   YieldReturn,
   SpawnerYield,
+  SpawnUnyield,
   WriteYield,
   ReadYield,
   DefaultRecv,
@@ -239,9 +240,25 @@ impl<MDC : MyDHTConf> SpawnSend<ReadReply<MDC>> for ReadDest<MDC> {
     match r {
       ReadReply::MainLoop(mlc) => self.mainloop.send(mlc)?,
       ReadReply::PeerMgmt(pmc) => self.peermgmt.send(pmc)?,
-      ReadReply::Write(wc) => match self.write {
-        Some(ref mut w) => w.send(wc)?,
-        None => self.mainloop.send(MainLoopCommand::ProxyWrite(wc))?,
+      ReadReply::Write(wc) => {
+        let cwrite = match self.write {
+          Some(ref mut w) => {
+            if w.1.is_finished() {
+              Some(wc)
+            } else {
+              w.send(wc)?;
+              None
+            }
+          },
+          None => {
+            self.mainloop.send(MainLoopCommand::ProxyWrite(wc))?;
+            None
+          },
+        };
+        if let Some(wc) = cwrite {
+          self.write = None;
+          self.mainloop.send(MainLoopCommand::ProxyWrite(wc))?;
+        }
       },
       ReadReply::NewPeer(pr,pp,tok,chal) => {
         self.send(ReadReply::MainLoop(MainLoopCommand::NewPeer(pr.clone(),pp,Some(tok))))?;
