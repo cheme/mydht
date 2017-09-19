@@ -95,7 +95,9 @@ impl<'a,R : Read,Y : SpawnerYield> Read for ReadYield<'a,R,Y> {
   fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
     loop {
       match self.0.read(buf) {
-        Ok(r) => return Ok(r),
+        Ok(r) => {
+          return Ok(r)
+        },
         Err(e) => if let IoErrorKind::WouldBlock = e.kind() {
           match self.1.spawn_yield() {
             YieldReturn::Return => return Err(e),
@@ -647,6 +649,8 @@ macro_rules! spawn_loop {($service:ident,$spawn_out:ident,$ocin:ident,$r:ident,$
           } else {
             continue;
           }
+        } else {
+          continue;
         }
       },
     }

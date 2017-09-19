@@ -179,6 +179,7 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
 
             },
             ProtoMessage::PONG(mut withpeer,initial_chal, sig, next_chal) => {
+
               let atsize = withpeer.attachment_expected_size();
               if atsize > 0 {
                 let att = receive_att(&mut stream, &self.enc, &mut shad, atsize)?;
@@ -198,6 +199,10 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
                       if peer_prio == PeerPriority::Unchecked {
                           // send accept query to peermgmt service : it will update cache
                           let pref = MDC::PeerRef::new(withpeer);
+                          // not really auth actually : could still be refused, but message
+                          // received next will not be auth message (service drop on failure so if
+                          // new connect it is on new service)
+                          self.is_auth = true;
                           return Ok(ReadReply::PeerMgmt(PeerMgmtCommand::Accept(pref.clone(),MainLoopCommand::NewPeerUncheckedChallenge(pref.clone(),peer_prio,self.token,initial_chal,next_chal))));
                       } else {
                         peer_prio
@@ -207,6 +212,7 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
                     }
                   },
                 };
+                self.is_auth = true;
                 return Ok(ReadReply::MainLoop(MainLoopCommand::NewPeerUncheckedChallenge(MDC::PeerRef::new(withpeer),prio,self.token,initial_chal,next_chal)));
               }
 

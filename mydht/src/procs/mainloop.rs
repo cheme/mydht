@@ -319,7 +319,6 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
 
 
   fn connect_with(&mut self, dest_address : &<MDC::Peer as Peer>::Address) -> Result<(usize, Option<usize>)> {
-
     // TODO duration will be removed
     // first check cache if there is a connect already : no (if peer yes)
     let (ws,ors) = self.transport.connectwith(&dest_address, CrateDuration::seconds(1000))?;
@@ -331,7 +330,6 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
 
       // register readstream for multiplex transport
       let ort = ors.map(|rs| -> Result<Option<usize>> {
-
         let read_token = register_state_r!(self,rs,Some(write_token),SlabEntryState::ReadStream,None);
         // update read reference
         self.slab_cache.get_mut(write_token).map(|r|r.os = Some(read_token));
@@ -342,6 +340,7 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
   }
 
   fn update_peer(&mut self, pr : MDC::PeerRef, pp : PeerPriority, owtok : Option<usize>, owread : Option<usize>) -> Result<()> {
+    println!("upd pee\n");
     let pk = pr.borrow().get_key();
     // TODO conflict for existing peer (close )
     // TODO useless has_val_c : u
@@ -518,6 +517,7 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopCh
               let os = ca.os;
               match ca.state {
                 SlabEntryState::ReadStream(_,_) => {
+
                   (true,None,os)
                 },
                 SlabEntryState::WriteStream(ref mut ws,(_,ref mut write_r_in,ref mut has_connect)) => {
