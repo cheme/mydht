@@ -51,10 +51,10 @@ pub mod send_variant {
 
   #[derive(Serialize,Debug)]
   pub enum ProtoMessage<'a,P : Peer + 'a, V : KeyVal + 'a> {
-    PING(&'a P,Vec<u8>,Vec<u8>), // TODO vec to &[u8]??
+    PING(&'a P,Vec<u8>,Vec<u8>), // TODO vec to &[u8]?? ort at least &Vec<u8> : yes TODO with challenge as ref refacto
     /// reply contain peer for update of distant peer info, for instance its listener address for a
     /// tcp transport.
-    PONG(&'a P,Vec<u8>),
+    PONG(&'a P,Vec<u8>,Vec<u8>,Option<Vec<u8>>),
     STORENODE(Option<QueryID>, Option<DistantEnc<&'a P>>),
     STOREVALUE(Option<QueryID>, Option<DistantEnc<&'a V>>),
     STOREVALUEATT(Option<QueryID>, Option<DistantEncAtt<&'a V>>),
@@ -76,9 +76,11 @@ pub enum ProtoMessage<P : Peer, V : KeyVal> {
   PING(P,Vec<u8>,Vec<u8>), 
   /// Ping reply with signature with
   ///  - emitter
+  ///  - challenge from ping (P is not always known at this point)
   ///  - signing of challenge
+  ///  - Optionnally a challeng for authentifying back (second challenge)
   ///  P is added for reping on lost PING, TODO could be remove and simply origin key in pong
-  PONG(P,Vec<u8>),
+  PONG(P,Vec<u8>,Vec<u8>,Option<Vec<u8>>),
   /// reply to query of propagate, if no queryid is used it is a node propagate
   STORENODE(Option<QueryID>, Option<DistantEnc<P>>), // reply to synch or asynch query - note no mix in query mode -- no signature, since we go with a ping before adding a node (ping is signed) TODO allow a signing with primitive only for this ?? and possible not ping afterwad
   /// reply to query of propagate, if no queryid is used it is a node propagate

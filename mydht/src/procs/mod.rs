@@ -125,6 +125,10 @@ impl<MDC : MyDHTConf> Service for MyDHTService<MDC> {
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
     let mut state = MDHTState::init_state(&mut self.0, &mut self.3)?;
     let mut yield_spawn = NoYield(YieldReturn::Loop);
+//    (self.3).send((MainLoopCommand::Start))?;
+    //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
+    //(state.mainloop_send).send((MainLoopCommand::Start))?;
+
     let r = state.main_loop(&mut self.1, req, &mut yield_spawn);
     if r.is_err() {
       panic!("mainloop err : {:?}",&r);
@@ -212,6 +216,8 @@ pub trait MyDHTConf : 'static + Send + Sized
   type Slab : SlabCache<RWSlabEntry<Self>>;
   /// local cache for peer
   type PeerCache : KVCache<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
+  /// local cache for auth challenges
+  type ChallengeCache : KVCache<Vec<u8>,ChallengeEntry>;
   
   type PeerMgmtChannelIn : SpawnChannel<PeerMgmtCommand<Self>>;
   type ReadChannelIn : SpawnChannel<ReadCommand>;
@@ -276,6 +282,7 @@ pub trait MyDHTConf : 'static + Send + Sized
 
   /// Peer cache initialization
   fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache>;
+  fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache>;
 
   /// Main loop channel input builder
   fn init_main_loop_channel_in(&mut self) -> Result<Self::MainLoopChannelIn>;
@@ -301,7 +308,12 @@ pub trait MyDHTConf : 'static + Send + Sized
 }
 
 
-
+/// entry cache for challenge
+pub struct ChallengeEntry {
+//  pub challenge : Vec<u8>,
+  pub write_tok : usize,
+  pub read_tok : Option<usize>,
+}
 
 /// utility trait to avoid lot of parameters in each struct / fn
 /// kinda aliasing

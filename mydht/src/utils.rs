@@ -200,6 +200,33 @@ pub fn shad_read_end<T : Read, S : ExtRead>(s : &mut S, t : &mut T) -> MDHTResul
   s.read_end(t)?;
   Ok(())
 }
+#[inline]
+pub fn shad_write_header<T : Write, S : ExtWrite>(s : &mut S, t : &mut T) -> MDHTResult<()> {
+  s.write_header(t)?;
+  Ok(())
+}
+#[inline]
+pub fn shad_flush<T : Write, S : ExtWrite>(s : &mut S, t : &mut T) -> MDHTResult<()> {
+  s.flush_into(t)?;
+  Ok(())
+}
+#[inline]
+pub fn shad_write_end<T : Write, S : ExtWrite>(s : &mut S, t : &mut T) -> MDHTResult<()> {
+  s.write_end(t)?;
+  Ok(())
+}
+pub fn send_msg<P : Peer, V : KeyVal, T : Write, E : MsgEnc, S : ExtWrite>(m : &ProtoMessageSend<P,V>, t : &mut T, e : &E, s : &mut S) -> MDHTResult<()> {
+  let mut cw = CompExtWInner(t,s);
+  e.encode_into(&mut cw,m)?;
+  Ok(())
+}
+pub fn send_att<T : Write, E : MsgEnc, S : ExtWrite>(att : &Attachment, t : &mut T, e : &E, s : &mut S) -> MDHTResult<()> {
+  let mut cw = CompExtWInner(t,s);
+  let m = e.attach_into(&mut cw,att)?;
+  Ok(())
+}
+
+
 
 
 #[cfg(feature="rust-crypto-impl")]

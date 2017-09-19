@@ -90,6 +90,7 @@ pub struct ReadService<MC : MyDHTConf> {
   shad : Option<<MC::Peer as Peer>::ShadowRMsg>,
   peermgmt : MC::PeerMgmtMeths,
   token : usize,
+  prio : Option<PeerPriority>,
 //      dhtrules_proto : conf.init_dhtrules_proto()?,
 }
 
@@ -109,15 +110,18 @@ impl<MC : MyDHTConf> ReadService<MC> {
       shad : None,
       peermgmt : peermgmt,
       token : token,
+      prio : None,
     }
   }
 }
+
 
 impl<MDC : MyDHTConf> Service for ReadService<MDC> {
   type CommandIn = ReadCommand;
   type CommandOut = ReadReply<MDC>;
 
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+    let mut stream = ReadYield(&mut self.stream, async_yield);
     match req {
       ReadCommand::Run => {
         let msg = if !self.is_auth {
@@ -136,33 +140,36 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
             },
           };
 
-          shad_read_header(&mut shad, &mut self.stream)?;
+          shad_read_header(&mut shad, &mut stream)?;
           // read in single pass
           // TODO specialize ping pong messages with MaxSize. - 
-          let msg : ProtoMessage<MDC::Peer,MDC::KeyVal> = receive_msg(&mut self.stream, &self.enc, &mut shad)?;
+          let msg : ProtoMessage<MDC::Peer,MDC::KeyVal> = receive_msg(&mut stream, &self.enc, &mut shad)?;
 
           match msg {
             ProtoMessage::PING(mut p, chal, sig) => {
               // attachment probably useless but if it is possible...
               let atsize = p.attachment_expected_size();
               if atsize > 0 {
-                let att = receive_att(&mut self.stream, &self.enc, &mut shad, atsize)?;
+                let att = receive_att(&mut stream, &self.enc, &mut shad, atsize)?;
                 p.set_attachment(&att);
               }
-              shad_read_end(&mut shad, &mut self.stream)?;
+              shad_read_end(&mut shad, &mut stream)?;
               // check sig
               if !self.peermgmt.checkmsg(&p,&chal[..],&sig[..]) {
                 // send refuse peer with token to mainloop 
                 return Ok(ReadReply::MainLoop(MainLoopCommand::RejectReadSpawn(self.token)));
               } else {
                 if let Some(peer_prio) = self.peermgmt.accept(&p) {
+                  self.prio = Some(peer_prio.clone());
                   if peer_prio == PeerPriority::Unchecked {
                     // send accept query to peermgmt service : it will update cache
-                    return Ok(ReadReply::PeerMgmt(PeerMgmtCommand::Accept(MDC::PeerRef::new(p))))
+                    let pref = MDC::PeerRef::new(p);
+                    return Ok(ReadReply::PeerMgmt(PeerMgmtCommand::Accept(pref.clone(),MainLoopCommand::NewPeerChallenge(pref,peer_prio,self.token,chal))));
                   } else {
                     // send RefPeer to peermgmt with new priority
 //                    return Ok(ReadReply::PeerMgmt(PeerMgmtCommand::NewPrio(MDC::PeerRef::new(p),peer_prio)))
-                    return Ok(ReadReply::NewPeer(MDC::PeerRef::new(p),peer_prio,self.token,chal))
+//                    return Ok(ReadReply::NewPeer(MDC::PeerRef::new(p),peer_prio,self.token,chal))
+                    return Ok(ReadReply::MainLoop(MainLoopCommand::NewPeerChallenge(MDC::PeerRef::new(p),peer_prio,self.token,chal)));
                   }
                 } else {
                   // send refuse peer with token to mainloop 
@@ -170,18 +177,39 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
                 }
               }
 
-              panic!("TODO")
             },
-            ProtoMessage::PONG(..) => {
+            ProtoMessage::PONG(mut withpeer,initial_chal, sig, next_chal) => {
+              let atsize = withpeer.attachment_expected_size();
+              if atsize > 0 {
+                let att = receive_att(&mut stream, &self.enc, &mut shad, atsize)?;
+                withpeer.set_attachment(&att);
+              }
+              shad_read_end(&mut shad, &mut stream)?;
+              // check sig
+              if !self.peermgmt.checkmsg(&withpeer,&initial_chal[..],&sig[..]) {
+                // send refuse peer with token to mainloop 
+                return Ok(ReadReply::MainLoop(MainLoopCommand::RejectReadSpawn(self.token)));
+              } else {
+                let prio = match self.prio {
+                  Some(ref prio) => prio.clone(),
+                  None => {
+                    if let Some(peer_prio) = self.peermgmt.accept(&withpeer) {
+                      self.prio = Some(peer_prio.clone());
+                      if peer_prio == PeerPriority::Unchecked {
+                          // send accept query to peermgmt service : it will update cache
+                          let pref = MDC::PeerRef::new(withpeer);
+                          return Ok(ReadReply::PeerMgmt(PeerMgmtCommand::Accept(pref.clone(),MainLoopCommand::NewPeerUncheckedChallenge(pref.clone(),peer_prio,self.token,initial_chal,next_chal))));
+                      } else {
+                        peer_prio
+                      }
+                    } else {
+                      return Ok(ReadReply::MainLoop(MainLoopCommand::RejectPeer(withpeer.get_key(),None,Some(self.token))));
+                    }
+                  },
+                };
+                return Ok(ReadReply::MainLoop(MainLoopCommand::NewPeerUncheckedChallenge(MDC::PeerRef::new(withpeer),prio,self.token,initial_chal,next_chal)));
+              }
 
-              // TODO check chal is same as stored chal (yield on no store chal with read from
-              // command for expected val on restore : TODO a buf of skipped command)
-
-              // TODO check sig 
-
-              // TODO check P is conformant and if update send to ChannelPeerStoreUpdate & |  to mainloop cache
-
-              panic!("TODO")
             },
             _ => return Err(Error("wrong state for peer not authenticated yet".to_string(),ErrorKind::PingError,None)),
           }
@@ -213,7 +241,8 @@ pub enum ReadReply<MC : MyDHTConf> {
   PeerMgmt(PeerMgmtCommand<MC>),
   Write(WriteCommand<MC>),
   /// proxy to mainloop new peer (which proxy to peermgmt new peer prio update), and sender pong
-  /// (through mainloop or direct WriteCommand).
+  /// (through mainloop or direct WriteCommand). TODO remove as use case requires a store of
+  /// chalenge THEN a pong
   NewPeer(MC::PeerRef,PeerPriority,usize,Vec<u8>), 
   NoReply,
 }
@@ -238,7 +267,9 @@ impl<MDC : MyDHTConf> SpawnSend<ReadReply<MDC>> for ReadDest<MDC> {
   const CAN_SEND : bool = true;
   fn send(&mut self, r : ReadReply<MDC>) -> Result<()> {
     match r {
-      ReadReply::MainLoop(mlc) => self.mainloop.send(mlc)?,
+      ReadReply::MainLoop(mlc) => {
+        self.mainloop.send(mlc)?
+      },
       ReadReply::PeerMgmt(pmc) => self.peermgmt.send(pmc)?,
       ReadReply::Write(wc) => {
         let cwrite = match self.write {
@@ -261,8 +292,9 @@ impl<MDC : MyDHTConf> SpawnSend<ReadReply<MDC>> for ReadDest<MDC> {
         }
       },
       ReadReply::NewPeer(pr,pp,tok,chal) => {
-        self.send(ReadReply::MainLoop(MainLoopCommand::NewPeer(pr.clone(),pp,Some(tok))))?;
-        self.send(ReadReply::Write(WriteCommand::Pong(pr,chal,tok)))?;
+        panic!("unused TODO remove??");
+//        self.send(ReadReply::MainLoop(MainLoopCommand::NewPeer(pr.clone(),pp,Some(tok))))?;
+ //       self.send(ReadReply::Write(WriteCommand::Pong(pr,chal,rtok)))?;
       },
       ReadReply::NoReply => (),
     }

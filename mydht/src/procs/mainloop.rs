@@ -2,10 +2,12 @@
 //! method.
 //! Usage of mydht library requires to create a struct implementing the MyDHTConf trait, by linking with suitable inner trait implementation and their requires component.
 use std::clone::Clone;
+use std::borrow::Borrow;
 use super::{
   MyDHTConf,
   MainLoopSendIn,
   RWSlabEntry,
+  ChallengeEntry,
 };
 use time::Duration as CrateDuration;
 use std::marker::PhantomData;
@@ -62,6 +64,7 @@ use peer::{
 use kvcache::{
   SlabCache,
   KVCache,
+  Cache,
 };
 use keyval::KeyVal;
 use rules::DHTRules;
@@ -189,7 +192,11 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
   RejectReadSpawn(usize),
   /// reject a peer (accept fail), usize are write stream token and read stream token
   RejectPeer(<MC::Peer as KeyVal>::Key,Option<usize>,Option<usize>),
-  /// new peer accepted with optionnal read stream token
+  /// New peer after a ping
+  NewPeerChallenge(MC::PeerRef,PeerPriority,usize,Vec<u8>),
+  /// New peer after first or second pong
+  NewPeerUncheckedChallenge(MC::PeerRef,PeerPriority,usize,Vec<u8>,Option<Vec<u8>>),
+  /// new peer accepted with optionnal read stream token TODO remove (replace by NewPeerChallenge)
   NewPeer(MC::PeerRef,PeerPriority,Option<usize>),
   ProxyWrite(WriteCommand<MC>),
 }
@@ -203,6 +210,8 @@ pub enum MainLoopCommandSend<MC : MyDHTConf> {
   RejectPeer(<MC::Peer as KeyVal>::Key,Option<usize>,Option<usize>),
   /// new peer accepted with optionnal read stream token
   NewPeer(<MC::PeerRef as Ref<MC::Peer>>::Send,PeerPriority,Option<usize>),
+  NewPeerChallenge(<MC::PeerRef as Ref<MC::Peer>>::Send,PeerPriority,usize,Vec<u8>),
+  NewPeerUncheckedChallenge(<MC::PeerRef as Ref<MC::Peer>>::Send,PeerPriority,usize,Vec<u8>,Option<Vec<u8>>),
   ProxyWrite(WriteCommandSend<MC>),
 }
 
@@ -214,6 +223,8 @@ impl<MC : MyDHTConf> Clone for MainLoopCommand<MC> {
       MainLoopCommand::RejectReadSpawn(s) => MainLoopCommand::RejectReadSpawn(s),
       MainLoopCommand::RejectPeer(ref k,ref os,ref os2) => MainLoopCommand::RejectPeer(k.clone(),os.clone(),os2.clone()),
       MainLoopCommand::NewPeer(ref rp,ref pp,ref os) => MainLoopCommand::NewPeer(rp.clone(),pp.clone(),os.clone()),
+      MainLoopCommand::NewPeerChallenge(ref rp,ref pp,rtok,ref chal) => MainLoopCommand::NewPeerChallenge(rp.clone(),pp.clone(),rtok,chal.clone()),
+      MainLoopCommand::NewPeerUncheckedChallenge(ref rp,ref pp,rtok,ref chal,ref nextchal) => MainLoopCommand::NewPeerUncheckedChallenge(rp.clone(),pp.clone(),rtok,chal.clone(),nextchal.clone()),
       MainLoopCommand::ProxyWrite(ref rcs) => MainLoopCommand::ProxyWrite(rcs.clone()),
     }
   }
@@ -228,6 +239,8 @@ impl<MC : MyDHTConf> SRef for MainLoopCommand<MC> {
       MainLoopCommand::RejectReadSpawn(s) => MainLoopCommandSend::RejectReadSpawn(s),
       MainLoopCommand::RejectPeer(ref k,ref os,ref os2) => MainLoopCommandSend::RejectPeer(k.clone(),os.clone(),os2.clone()),
       MainLoopCommand::NewPeer(ref rp,ref pp,ref os) => MainLoopCommandSend::NewPeer(rp.get_sendable(),pp.clone(),os.clone()),
+      MainLoopCommand::NewPeerChallenge(ref rp,ref pp,rtok,ref chal) => MainLoopCommandSend::NewPeerChallenge(rp.get_sendable(),pp.clone(),rtok,chal.clone()),
+      MainLoopCommand::NewPeerUncheckedChallenge(ref rp,ref pp,rtok,ref chal,ref nextchal) => MainLoopCommandSend::NewPeerUncheckedChallenge(rp.get_sendable(),pp.clone(),rtok,chal.clone(),nextchal.clone()),
       MainLoopCommand::ProxyWrite(ref rcs) => MainLoopCommandSend::ProxyWrite(rcs.get_sendable()),
     }
   }
@@ -241,6 +254,8 @@ impl<MC : MyDHTConf> SToRef<MainLoopCommand<MC>> for MainLoopCommandSend<MC> {
       MainLoopCommandSend::RejectReadSpawn(s) => MainLoopCommand::RejectReadSpawn(s),
       MainLoopCommandSend::RejectPeer(k,os,os2) => MainLoopCommand::RejectPeer(k,os,os2),
       MainLoopCommandSend::NewPeer(rp,pp,os) => MainLoopCommand::NewPeer(rp.to_ref(),pp,os),
+      MainLoopCommandSend::NewPeerChallenge(rp,pp,rtok,chal) => MainLoopCommand::NewPeerChallenge(rp.to_ref(),pp,rtok,chal),
+      MainLoopCommandSend::NewPeerUncheckedChallenge(rp,pp,rtok,chal,nchal) => MainLoopCommand::NewPeerUncheckedChallenge(rp.to_ref(),pp,rtok,chal,nchal),
       MainLoopCommandSend::ProxyWrite(rcs) => MainLoopCommand::ProxyWrite(rcs.to_ref()),
     }
   }
@@ -251,6 +266,7 @@ pub struct MDHTState<MDC : MyDHTConf> {
   transport : MDC::Transport,
   slab_cache : MDC::Slab,
   peer_cache : MDC::PeerCache,
+  challenge_cache : MDC::ChallengeCache,
   events : Option<Events>,
   poll : Poll,
   read_spawn : MDC::ReadSpawn,
@@ -259,9 +275,11 @@ pub struct MDHTState<MDC : MyDHTConf> {
   write_channel_in : MDC::WriteChannelIn,
   peermgmt_channel_in : MDC::PeerMgmtChannelIn,
   enc_proto : MDC::MsgEnc,
+  /// currently locally use only for challenge TODO rename (proto not ok) or split trait to have a
+  /// challenge only instance
   peermgmt_proto : MDC::PeerMgmtMeths,
   dhtrules_proto : MDC::DHTRules,
-  mainloop_send : MioSend<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Send>,
+  pub mainloop_send : MioSend<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Send>,
 
 }
 
@@ -283,6 +301,7 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
       transport : transport,
       slab_cache : conf.init_main_loop_slab_cache()?,
       peer_cache : conf.init_main_loop_peer_cache()?,
+      challenge_cache : conf.init_main_loop_challenge_cache()?,
       events : None,
       poll : poll,
       read_spawn : read_spawn,
@@ -299,6 +318,56 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
   }
 
 
+  fn connect_with(&mut self, dest_address : &<MDC::Peer as Peer>::Address) -> Result<(usize, Option<usize>)> {
+
+    // TODO duration will be removed
+    // first check cache if there is a connect already : no (if peer yes)
+    let (ws,ors) = self.transport.connectwith(&dest_address, CrateDuration::seconds(1000))?;
+
+      let (s,r) = self.write_channel_in.new()?;
+
+      // register writestream
+      let write_token = register_state_w!(self,PollOpt::edge(),ws,(s,r,false),None,SlabEntryState::WriteStream);
+
+      // register readstream for multiplex transport
+      let ort = ors.map(|rs| -> Result<Option<usize>> {
+
+        let read_token = register_state_r!(self,rs,Some(write_token),SlabEntryState::ReadStream,None);
+        // update read reference
+        self.slab_cache.get_mut(write_token).map(|r|r.os = Some(read_token));
+        Ok(Some(read_token))
+      }).unwrap_or(Ok(None))?;
+
+    Ok((write_token,ort))
+  }
+
+  fn update_peer(&mut self, pr : MDC::PeerRef, pp : PeerPriority, owtok : Option<usize>, owread : Option<usize>) -> Result<()> {
+    let pk = pr.borrow().get_key();
+    // TODO conflict for existing peer (close )
+    // TODO useless has_val_c : u
+    if let Some(p_entry) = self.peer_cache.get_val_c(&pk) {
+      // TODO update peer, if xisting write should be drop (new one should be use) and read could
+      // receive a message for close on timeout (read should stay open as at the other side on
+      // double connect the peer can keep sending on this read : the new read could timeout in
+      // fact
+      // TODO add a logg for this removeal and one for double read_token
+      // TODO clean close??
+      // TODO check if read is finished and remove if finished
+      if p_entry.write.get() != CACHE_NO_STREAM {
+        self.slab_cache.remove(p_entry.write.get());
+      }
+    };
+    self.peer_cache.add_val_c(pk, PeerCacheEntry {
+      peer : pr,
+      read : Rc::new(Cell::new(owread.unwrap_or(CACHE_NO_STREAM))),
+      write : Rc::new(Cell::new(owtok.unwrap_or(CACHE_NO_STREAM))),
+      prio : Rc::new(Cell::new(pp)),
+    });
+    // TODO peer_service update ??? through peer cache ???
+    Ok(())
+  }
+
+ 
   /// sub call for service (actually mor relevant service implementation : the call will only
   /// return one CommandOut to spawner : finished or fail).
   /// Async yield being into self.
@@ -309,26 +378,62 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
         // do nothing it has start if the function was called
       },
       MainLoopCommand::TryConnect(dest_address) => {
-        // TODO duration will be removed
-        // first check cache if there is a connect already : no (if peer yes)
-        let (ws,ors) = self.transport.connectwith(&dest_address, CrateDuration::seconds(1000))?;
+        let (write_token,ort) = self.connect_with(&dest_address)?;
 
-        let (s,r) = self.write_channel_in.new()?;
+        let chal = self.peermgmt_proto.challenge(self.me.borrow());
+        self.challenge_cache.add_val_c(chal.clone(),ChallengeEntry {
+          write_tok : write_token,
+          read_tok : ort,
+        });
+        // send a ping
+        self.write_stream_send(write_token,WriteCommand::Ping(chal), <MDC>::init_write_spawner_out()?, None)?;
 
-        // register writestream
-        let write_token = register_state_w!(self,PollOpt::edge(),ws,(s,r,false),None,SlabEntryState::WriteStream);
+      },
+      MainLoopCommand::NewPeerChallenge(pr,pp,rtok,chal) => {
+        let owtok = self.slab_cache.get(rtok).map(|r|r.os);
+        let wtok = match owtok {
+          Some(Some(tok)) => tok,
+          Some(None) => {
+            let (write_token,ort) = self.connect_with(pr.borrow().get_address())?;
+            assert!(ort.is_none()); // TODO change to a warning log (might mean half multiplex transport)
+            write_token
+          },
 
-        // register readstream for multiplex transport
-        ors.map(|rs| -> Result<()> {
+          None => {
+            // TODO log inconsistency certainly related to peer removal
+            return Ok(())
+          },
+        };
 
-          let read_token = register_state_r!(self,rs,Some(write_token),SlabEntryState::ReadStream,None);
-          // update read reference
-          self.slab_cache.get_mut(write_token).map(|r|r.os = Some(read_token));
-          Ok(())
-        }).unwrap_or(Ok(()))?;
-
-        // TODO send a ping not this shiet testing command
-        self.write_stream_send(write_token,WriteCommand::Write , <MDC>::init_write_spawner_out()?)?;
+        let chal2 = self.peermgmt_proto.challenge(self.me.borrow());
+        self.challenge_cache.add_val_c(chal2.clone(),ChallengeEntry {
+          write_tok : wtok,
+          read_tok : Some(rtok),
+        });
+  
+        // do not store new peer as it is not authentified with a fresh challenge (could be replay)
+//         self.update_peer(pr.clone(),pp,Some(wtok),Some(rtok))?;
+        // send pong with 2nd challeng
+        let pongmess = WriteCommand::Pong(pr,chal,rtok,Some(chal2));
+        // with is not used because the command will init it
+        self.write_stream_send(wtok, pongmess, <MDC>::init_write_spawner_out()?, None)?; // TODO remove peer on error
+      },
+ 
+      MainLoopCommand::NewPeerUncheckedChallenge(pr,pp,rtok,chal,nextchal) => {
+        // check chal
+        match self.challenge_cache.get_val_c(&chal).map(|c|c.write_tok) {
+          Some(wtok) => {
+            self.update_peer(pr.clone(),pp,Some(wtok),Some(rtok))?;
+            if let Some(nchal) = nextchal {
+              let pongmess = WriteCommand::Pong(pr,nchal,rtok,None);
+              self.write_stream_send(wtok, pongmess, <MDC>::init_write_spawner_out()?, None)?; // TODO remove peer on error
+            }
+          },
+          None => {
+            // TODO log inconsistence, do not panic as it can be forge or replay
+            panic!("TODO same code as RejectReadSpawn plus RejectPeer with pr and rtok : transport must be close at least, peer??");
+          },
+        };
 
       },
       MainLoopCommand::RejectReadSpawn(..) => panic!("TODO"),
@@ -355,6 +460,8 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopCh
   }
   fn inner_main_loop<S : SpawnerYield>(&mut self, receiver : &mut MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>, req: MainLoopCommand<MDC>, async_yield : &mut S, events : &mut Events) -> Result<()> {
 
+    //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
+    //(self.mainloop_send).send((MainLoopCommand::Start))?;
     // TODO start other service
     let (smgmt,rmgmt) = self.peermgmt_channel_in.new()?; // TODO persistence bad for suspend -> put smgmt into self plus add handle to send 
 
@@ -403,12 +510,8 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopCh
               // do not start listening on read, it will start when poll trigger readable on
               // connect
               //Self::start_read_stream_listener(self, read_token, <MDC>::init_read_spawner_out()?)?;
- 
-
               Ok(read_token)
             });
-
- 
           },
           tok => {
             let (sp_read, o_sp_write,os) =  if let Some(ca) = self.slab_cache.get_mut(tok.0 - START_STREAM_IX) {
@@ -454,7 +557,7 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopCh
               (false,None,None)
             };
             if o_sp_write.is_some() {
-              self.write_stream_send(tok.0 - START_STREAM_IX, o_sp_write.unwrap(), <MDC>::init_write_spawner_out()?)?;
+              self.write_stream_send(tok.0 - START_STREAM_IX, o_sp_write.unwrap(), <MDC>::init_write_spawner_out()?, None)?;
             }
             if sp_read {
               let owrite_send = match os {
@@ -463,11 +566,16 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopCh
                 },
                 None => None,
               };
-              let rd = ReadDest {
+
+    //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
+    //(self.mainloop_send).send((MainLoopCommand::Start))?;
+              let mut rd = ReadDest {
                 mainloop : self.mainloop_send.clone(),
                 peermgmt : smgmt.clone(),
                 write : owrite_send,
               };
+    //(self.mainloop_send).send((MainLoopCommand::Start))?;
+    //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
               self.start_read_stream_listener(tok.0 - START_STREAM_IX, rd)?;
             }
 
@@ -492,9 +600,10 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopCh
 
   /// The state of the slab entry must be checked before, return error on wrong state
   fn start_read_stream_listener(&mut self, read_token : usize,
-    read_out : ReadDest<MDC>,
+    mut read_out : ReadDest<MDC>,
                                 ) -> Result<()> {
-     let se = self.slab_cache.get_mut(read_token);
+    //read_out.send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
+    let se = self.slab_cache.get_mut(read_token);
     if let Some(entry) = se {
       if let SlabEntryState::ReadStream(_,_) = entry.state {
         let state = replace(&mut entry.state,SlabEntryState::Empty);
@@ -511,7 +620,7 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopCh
             with.map(|w|w.get_sendable()),
             self.enc_proto.clone(),
             self.peermgmt_proto.clone()
-            ), read_out.clone(), Some(ReadCommand::Run), read_r_in, 0)?;
+            ), read_out, Some(ReadCommand::Run), read_r_in, 0)?;
         let state = SlabEntryState::ReadSpawned((read_handle,read_s_in));
         replace(&mut entry.state,state);
         return Ok(())
@@ -532,7 +641,7 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopCh
 
   /// The state of the slab entry must be checked before, return error on wrong state
   ///  TODO replace dest with channel spawner mut ref
-  fn write_stream_send(&mut self, write_token : usize, command : WriteCommand<MDC>, write_out : MDC::WriteDest) -> Result<()> {
+  fn write_stream_send(&mut self, write_token : usize, command : WriteCommand<MDC>, write_out : MDC::WriteDest, with : Option<MDC::PeerRef>) -> Result<()> {
     let rem = {
     let se = self.slab_cache.get_mut(write_token);
     if let Some(entry) = se {
@@ -553,7 +662,8 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopCh
             };
             // dest is unknown TODO check if still relevant with other use case (read side we allow
             // dest peer as rs could result from a connection with an identified peer)
-            let write_handle = self.write_spawn.spawn(WriteService::new(ws,self.me.get_sendable(),None), write_out.clone(), ocin, write_r_in, MDC::send_nb_iter)?;
+            let write_service = WriteService::new(write_token,ws,self.me.get_sendable(),with.map(|w|w.get_sendable()), self.enc_proto.clone(),self.peermgmt_proto.clone());
+            let write_handle = self.write_spawn.spawn(write_service, write_out.clone(), ocin, write_r_in, MDC::send_nb_iter)?;
             let state = SlabEntryState::WriteSpawned((write_handle,write_s_in));
             replace(e,state);
             None
@@ -569,9 +679,6 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopCh
           //
           // TODO  panic!("TODO possible error droprestart"); do it at each is_finished state
           if handle.is_finished() {
-
-            //TODO either drop or start restart?? Need to add functionnality to handle
-            //right now we consider restart (send can be short or at least short lived thread)
             Some(command)
           } else {
             sender.send(command)?;
@@ -620,7 +727,7 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopCh
 
 
 
-
+/// Rc Cell seems useless TODO remove if unused or use it by using them in slabcache too
 pub struct PeerCacheEntry<RP> {
   /// ref peer
   peer : RP,

@@ -160,6 +160,21 @@ impl<'a,W : Write, Y : SpawnerYield> Write for WriteYield<'a,W,Y> {
      }
    }
  }
+
+  /*fn write_all(&mut self, mut buf: &[u8]) -> IoResult<()> {
+      while !buf.is_empty() {
+          match self.write(buf) {
+              Ok(0) => {
+                return Err(IoError::new(IoErrorKind::WriteZero,
+                                             "failed to write whole buffer"))
+              },
+              Ok(n) => buf = &buf[n..],
+              Err(ref e) if e.kind() == IoErrorKind::Interrupted => {}
+              Err(e) => return Err(e),
+          }
+      }
+      Ok(())
+  }*/
 } 
 
 

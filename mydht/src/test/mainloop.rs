@@ -30,6 +30,7 @@ use procs::{
 };
 use procs::{
   PeerCacheEntry,
+  ChallengeEntry,
   ApiCommand,
 };
 use std::net::{SocketAddr,Ipv4Addr};
@@ -103,34 +104,35 @@ mod test_tcp_all_block_thread {
     const send_nb_iter : usize = 1;
     type MainloopSpawn = ThreadParkRef;// -> failure to send into spawner cf command in of spawner need send so the mpsc channel recv could be send in impl -» need to change command in to commandin as ref :: toref
 //    type MainloopSpawn = Blocker;
-    type MainLoopChannelIn = MpscChannelRef;
-    //type MainLoopChannelIn = MpscChannel;
+    //type MainLoopChannelIn = MpscChannelRef;
+    type MainLoopChannelIn = MpscChannel;
     type MainLoopChannelOut = MpscChannel;
     type Transport = Tcp;
     type MsgEnc = Json;
     type Peer = Node;
-    //type PeerRef = ArcRef<Self::Peer>;
-    type PeerRef = RcRef<Self::Peer>;
+    type PeerRef = ArcRef<Self::Peer>;
+    //type PeerRef = RcRef<Self::Peer>;
     type KeyVal = Node;
     type PeerMgmtMeths = TestingRules;
     type DHTRules = Arc<SimpleRules>;
     type Slab = Slab<RWSlabEntry<Self>>;
     type PeerCache = HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
+    type ChallengeCache = HashMap<Vec<u8>,ChallengeEntry>;
     type PeerMgmtChannelIn = MpscChannel;
     type ReadChannelIn = MpscChannel;
-    //type ReadSpawn = ThreadPark;
-    type ReadSpawn = Blocker;
+    type ReadSpawn = ThreadPark;
+    //type ReadSpawn = Blocker;
     type WriteDest = NoSend;
     type WriteChannelIn = MpscChannel;
 //    type WriteChannelIn = LocalRcChannel;
-    type WriteSpawn = Blocker;
-    //type WriteSpawn = ThreadPark;
+   // type WriteSpawn = Blocker;
+    type WriteSpawn = ThreadPark;
 
     fn init_ref_peer(&mut self) -> Result<Self::PeerRef> {
        let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), self.1 as u16);
        let val = Node {nodeid: self.0.clone(), address : SerSocketAddr(addr)};
-      // Ok(ArcRef::new(val))
-       Ok(RcRef::new(val))
+       Ok(ArcRef::new(val))
+      // Ok(RcRef::new(val))
     }
     fn get_main_spawner(&mut self) -> Result<Self::MainloopSpawn> {
       //Ok(Blocker)
@@ -144,10 +146,14 @@ mod test_tcp_all_block_thread {
     fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache> {
       Ok(HashMap::new())
     }
+    fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache> {
+      Ok(HashMap::new())
+    }
+
 
     fn init_main_loop_channel_in(&mut self) -> Result<Self::MainLoopChannelIn> {
-      //Ok(MpscChannel)
-      Ok(MpscChannelRef)
+      Ok(MpscChannel)
+      //Ok(MpscChannelRef)
     }
     fn init_main_loop_channel_out(&mut self) -> Result<Self::MainLoopChannelOut> {
       Ok(MpscChannel)
@@ -155,13 +161,13 @@ mod test_tcp_all_block_thread {
 
 
     fn init_read_spawner(&mut self) -> Result<Self::ReadSpawn> {
-      //Ok(ThreadPark)
-      Ok(Blocker)
+      Ok(ThreadPark)
+      //Ok(Blocker)
     }
 
     fn init_write_spawner(&mut self) -> Result<Self::WriteSpawn> {
-      //Ok(ThreadPark)
-      Ok(Blocker)
+      Ok(ThreadPark)
+      //Ok(Blocker)
     }
 
     fn init_write_spawner_out() -> Result<Self::WriteDest> {
@@ -250,6 +256,7 @@ mod test_dummy_all_block_thread {
     type DHTRules = Arc<SimpleRules>;
     type Slab = Slab<RWSlabEntry<Self>>;
     type PeerCache = HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
+    type ChallengeCache = HashMap<Vec<u8>,ChallengeEntry>;
     type PeerMgmtChannelIn = MpscChannel;
     type ReadChannelIn = MpscChannel;
     type ReadSpawn = ThreadPark;
@@ -276,6 +283,10 @@ mod test_dummy_all_block_thread {
     fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache> {
       Ok(HashMap::new())
     }
+    fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache> {
+      Ok(HashMap::new())
+    }
+
 
     fn init_main_loop_channel_in(&mut self) -> Result<Self::MainLoopChannelIn> {
       Ok(MpscChannel)

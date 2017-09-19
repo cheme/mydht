@@ -108,10 +108,12 @@ impl DHTRulesIf for SimpleRules {
       };
       (res.0, res.1.map(|d| CachePolicy(time::get_time() + d)))
   } // wether you need to store the keyval or not
+
   #[inline]
   fn is_authenticated(&self) -> bool {
     true 
   }
+
   #[inline]
   fn client_mode(&self) -> &ClientMode {
     &self.1.clientmode
@@ -131,7 +133,6 @@ impl DHTRulesIf for SimpleRules {
   fn is_routing_heavy(&self) -> (bool,bool,bool) {
     (false, false, false)
   }
-
 
 }
 
