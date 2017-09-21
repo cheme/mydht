@@ -38,6 +38,12 @@ impl<MC : MyDHTConf> ApiCommand<MC> {
   pub fn try_connect(ad : <MC::Transport as Transport>::Address) -> ApiCommand<MC> {
     ApiCommand::Mainloop(MainLoopCommand::TryConnect(ad))
   }
+  pub fn call_service(c : MC::LocalServiceCommand) -> ApiCommand<MC> {
+    ApiCommand::Mainloop(MainLoopCommand::ForwardService(c))
+  }
+  pub fn local_service(c : MC::GlobalServiceCommand) -> ApiCommand<MC> {
+    ApiCommand::Mainloop(MainLoopCommand::ProxyGlobal(c))
+  }
 }
 
 #[derive(Clone)]

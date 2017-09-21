@@ -6,7 +6,7 @@ use serde::de::{DeserializeOwned};
 use std::fmt;
 //use num::traits::ToPrimitive;
 
-/// Non serialize binary attached content.
+/// Non serialize binary attached content. For now only a file, as store, since very limited usage.
 /// This is usefull depending on msg encoding implementation, obviously when implementation does
 /// not use Read/Write interface, message is fully in memory and big content should be serialize as
 /// an attachment : a linked file (if multiple content, use tmp file then split).
@@ -58,8 +58,16 @@ impl<K : Serialize + DeserializeOwned + fmt::Debug + Eq + Clone + 'static + Send
   }*/
 }
 
+pub trait GettableAttachments {
+  /// TODO switch to iter
+  fn get_attachments(&self) -> Vec<&Attachment>;
+
+}
 /// KeyVal is the basis for DHT content, a value with key.
 // TODO rem 'static and add it only when needed (Arc) : method as_static??
+// TODO rem Serialize from trait, + remove encode_kv and decode_kv : MsgEnc do not use serialize,
+// its implementation does!!
+//pub trait KeyVal : fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment + 'static {
 pub trait KeyVal : Serialize + DeserializeOwned + fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment + 'static {
   /// Key type of KeyVal
   type Key : Key + Send + Sync; //aka key // Ord , Hash ... might be not mandatory but issue currently
@@ -138,12 +146,20 @@ impl<KV : KeyVal> Deserialize for KV {
 /// ``` impl<KV : Keyval> KeyVal for AsKeyValIf<KV> ```
 /// It also make trivial in most case (no attachment support) the implementation.
 pub trait SettableAttachment {
+
   /// optional attachment
   fn set_attachment(& mut self, &Attachment) -> bool {
     // default to no attachment support
     false
   }
 }
+pub trait SettableAttachments {
+  // TODO replace by iter over getable attachments
+  fn attachment_expected_sizes(&self) -> Vec<usize>;
+  /// optional attachment
+  fn set_attachments(& mut self, &[Attachment]) -> bool;
+}
+
 /*
 /// currently this could only be used for type ,
 /// If/when trait object could include associated type def, as_key_val_if should return &KeyVal,

@@ -21,7 +21,7 @@ pub use mydht_base::peer::*;
 
 /// Rules for peers. Usefull for web of trust for instance, or just to block some peers.
 /// TODO simplify
-pub trait PeerMgmtMeths<P : Peer, V : KeyVal> : Send + Sync + 'static {
+pub trait PeerMgmtMeths<P : Peer> : Send + Sync + 'static {
   /// get challenge for a node, most of the time a random value to avoid replay attack
   fn challenge (&self, &P) -> Vec<u8>; 
   /// sign a message. Node and challenge. Node in parameter is ourselve.
@@ -35,9 +35,9 @@ pub trait PeerMgmtMeths<P : Peer, V : KeyVal> : Send + Sync + 'static {
   /// check will be done by sending accept query to PeerMgmt service
   fn accept (&self, &P) -> Option<PeerPriority>;
   // call from accept it will loop on sending info to never online peer)
-  /// Post action after adding a new online peer : eg propagate or update this in another store
-  /// Post PING message handle (on successfull challenge)
-  fn for_accept_ping<M : PeerMgmtMeths<P,V>, RT : RunningTypes<P=P,V=V,A=P::Address,M=M>> (&self, &Arc<P>, &RunningProcesses<RT>, &ArcRunningContext<RT>);
+  // TODO still useful?? Post action after adding a new online peer : eg propagate or update this in another store
+  // Post PING message handle (on successfull challenge)
+//  fn for_accept_ping<M : PeerMgmtMeths<P,V>, RT : RunningTypes<P=P,V=V,A=P::Address,M=M>> (&self, &Arc<P>, &RunningProcesses<RT>, &ArcRunningContext<RT>);
 /*
   /// shadow a message using peer shadowing implementation, this interface allows custom usage of
   /// shadowing depending upon message content.

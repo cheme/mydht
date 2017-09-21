@@ -7,6 +7,7 @@
 #![feature(socket_timeout)]
 #![feature(slice_bytes)] // in wot
 #![feature(fn_traits)]
+#![feature(associated_type_defaults)]
 
 #[macro_use] extern crate log;
 #[macro_use] extern crate mydht_base;
@@ -26,6 +27,37 @@ extern crate coroutine;
 #[cfg(test)]
 extern crate mydht_basetest;
 extern crate mio;
+
+
+/// Local service will simply proxy to Global service
+#[macro_export]
+macro_rules! nolocal(() => (
+
+    type GlobalServiceCommand  = GlobalCommand<Self>; // def
+    type LocalService = DefLocalService<Self>; // def
+    const LOCAL_SERVICE_NB_ITER : usize = 1; // def
+    type LocalServiceSpawn = Blocker; // def
+    type LocalServiceChannelIn = NoChannel; // def
+
+    #[inline]
+    fn init_local_spawner(&mut self) -> Result<Self::LocalServiceSpawn> {
+      Ok(Blocker)
+    }
+    #[inline]
+    fn init_local_channel_in(&mut self) -> Result<Self::LocalServiceChannelIn> {
+      Ok(NoChannel)
+    }
+    #[inline]
+    fn init_local_service(me : Self::PeerRef, with : Option<Self::PeerRef>) -> Result<Self::LocalService> {
+      Ok(DefLocalService{
+        from : me,
+        with : with,
+        })
+    }
+));
+
+
+
 
 mod kvcache{
 pub use mydht_base::kvcache::*;

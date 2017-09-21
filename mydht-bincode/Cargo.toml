@@ -11,6 +11,7 @@ with-extra-test = []
 [dependencies]
 log = "~0.3.4"
 bincode = "~0.8.0"
+serde = { version = "~1.0.10", features = ["rc"]}
 
 
 [dependencies.mydht-base]

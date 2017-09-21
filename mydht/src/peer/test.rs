@@ -74,7 +74,7 @@ impl TestingRules {
   }
 }
 
-impl<P : Peer, V : KeyVal> PeerMgmtMeths<P, V> for TestingRules {
+impl<P : Peer> PeerMgmtMeths<P> for TestingRules {
   fn challenge (&self, _ : &P) -> Vec<u8> {
     thread::sleep_ms(self.delay_ms_chal);
     let mut s = vec![0; 4]; // four bytes challenge
@@ -95,16 +95,16 @@ impl<P : Peer, V : KeyVal> PeerMgmtMeths<P, V> for TestingRules {
     thread::sleep_ms(self.delay_ms_accept);
     Some (PeerPriority::Normal)
   }
-  fn for_accept_ping<M : PeerMgmtMeths<P,V>, RT : RunningTypes<P=P,V=V,A=P::Address,M=M>>
+  /*fn for_accept_ping<M : PeerMgmtMeths<P,V>, RT : RunningTypes<P=P,V=V,A=P::Address,M=M>>
   (&self, n : &Arc<P>, _ : &RunningProcesses<RT>, _ : &ArcRunningContext<RT>) {
     thread::sleep_ms(self.delay_ms_accept_hook);
-  }
+  }*/
 
 
 }
 
 /// test for PeerMgmtMeths auth primitives (challenge, signmsg, checkmsg)
-pub fn basic_auth_test<P : Peer, R : PeerMgmtMeths<P,P>> (r : &R, p1 : &P, p2 : &P) {
+pub fn basic_auth_test<P : Peer, R : PeerMgmtMeths<P>> (r : &R, p1 : &P, p2 : &P) {
   let chal1 = r.challenge(p1);
   let chal2 = r.challenge(p2);
   assert!(chal1 != chal2);

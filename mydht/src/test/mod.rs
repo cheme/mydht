@@ -533,7 +533,7 @@ fn finddistantpeer<RT : RunningTypes> (peers : Vec<(RT::P,DHT<RT>)>, nbpeer : us
     }
 }
 
-fn initpeers<E : MsgEnc + Clone, RT : RunningTypes<R = SimpleRules, E = E>> (nodes : Vec<RT::P>, transports : Vec<RT::T>, map : &[&[usize]], meths : RT::M, dhtrules : DhtRules, enc : RT::E, sim : Option<u32>) -> Vec<(RT::P, DHT<RT>)> 
+fn initpeers<E : MsgEnc<RT::P,RT::V> + Clone, RT : RunningTypes<R = SimpleRules, E = E>> (nodes : Vec<RT::P>, transports : Vec<RT::T>, map : &[&[usize]], meths : RT::M, dhtrules : DhtRules, enc : RT::E, sim : Option<u32>) -> Vec<(RT::P, DHT<RT>)> 
 where <RT as RunningTypes>::M : Clone,
       <<RT as RunningTypes>::P as KeyVal>::Key : Hash + Ord,
       <<RT as RunningTypes>::V as KeyVal>::Key : Hash,

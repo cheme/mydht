@@ -1,4 +1,8 @@
 //! Server service aka receiving process
+use std::mem::replace;
+use super::deflocal::{
+  LocalDest,
+};
 use super::peermgmt::{
   PeerMgmtCommand,
 };
@@ -15,6 +19,7 @@ use utils::{
   Ref,
   ToRef,
   receive_msg,
+  receive_msg_msg,
   receive_att,
   shad_read_header,
   shad_read_end,
@@ -40,11 +45,13 @@ use super::{
   MyDHTConf,
   PeerRefSend,
   ShadowAuthType,
+  GlobalHandleSend,
 };
 use peer::Peer;
 use keyval::{
   KeyVal,
   SettableAttachment,
+  SettableAttachments,
 };
 use service::{
   HandleSend,
@@ -85,17 +92,42 @@ pub struct ReadService<MC : MyDHTConf> {
   stream : <MC::Transport as Transport>::ReadStream,
   is_auth : bool,
   enc : MC::MsgEnc,
-  from : PeerRefSend<MC>,
-  with : Option<PeerRefSend<MC>>,
+//  from : PeerRefSend<MC>,
+  from : MC::PeerRef,
+  //with : Option<PeerRefSend<MC>>,
+  with : Option<MC::PeerRef>,
   shad : Option<<MC::Peer as Peer>::ShadowRMsg>,
   peermgmt : MC::PeerMgmtMeths,
   token : usize,
   prio : Option<PeerPriority>,
+  shad_msg : Option<<MC::Peer as Peer>::ShadowRMsg>,
+  local_sp : Option<(
+    <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Send, 
+    <MC::LocalServiceSpawn as Spawner<
+      MC::LocalService,
+      LocalDest<MC>,
+      <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Recv
+    >>::Handle)>,
+  local_spawner : MC::LocalServiceSpawn,
+  local_channel_in : MC::LocalServiceChannelIn,
+  read_dest_proto : ReadDest<MC>,
+  global_dest_proto : Option<GlobalHandleSend<MC>>,
 //      dhtrules_proto : conf.init_dhtrules_proto()?,
 }
 
 impl<MC : MyDHTConf> ReadService<MC> {
-  pub fn new(token :usize, rs : <MC::Transport as Transport>::ReadStream, me : PeerRefSend<MC>, with : Option<PeerRefSend<MC>>, enc : MC::MsgEnc, peermgmt : MC::PeerMgmtMeths) -> Self {
+  pub fn new(
+    token :usize, 
+    rs : <MC::Transport as Transport>::ReadStream, 
+    me : MC::PeerRef, with : Option<MC::PeerRef>, 
+    enc : MC::MsgEnc, 
+    peermgmt : MC::PeerMgmtMeths, 
+    local_spawn : MC::LocalServiceSpawn, 
+    local_channel_in : MC::LocalServiceChannelIn,
+    read_dest_proto : ReadDest<MC>,
+    global_dest_proto : Option<GlobalHandleSend<MC>>,
+    ) -> Self {
+  //pub fn new(token :usize, rs : <MC::Transport as Transport>::ReadStream, me : PeerRefSend<MC>, with : Option<PeerRefSend<MC>>, enc : MC::MsgEnc, peermgmt : MC::PeerMgmtMeths) -> Self {
     let is_auth = if MC::AUTH_MODE == ShadowAuthType::NoAuth {
       true
     } else {
@@ -111,6 +143,12 @@ impl<MC : MyDHTConf> ReadService<MC> {
       peermgmt : peermgmt,
       token : token,
       prio : None,
+      shad_msg : None,
+      local_sp : None,
+      local_spawner : local_spawn,
+      local_channel_in : local_channel_in,
+      read_dest_proto : read_dest_proto,
+      global_dest_proto : global_dest_proto,
     }
   }
 }
@@ -124,7 +162,7 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
     let mut stream = ReadYield(&mut self.stream, async_yield);
     match req {
       ReadCommand::Run => {
-        let msg = if !self.is_auth {
+        if !self.is_auth {
           let mut shad = match MDC::AUTH_MODE {
             ShadowAuthType::NoAuth => {
               /*self.is_auth = true;
@@ -143,7 +181,7 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
           shad_read_header(&mut shad, &mut stream)?;
           // read in single pass
           // TODO specialize ping pong messages with MaxSize. - 
-          let msg : ProtoMessage<MDC::Peer,MDC::KeyVal> = receive_msg(&mut stream, &self.enc, &mut shad)?;
+          let msg : ProtoMessage<MDC::Peer> = receive_msg(&mut stream, &self.enc, &mut shad)?;
 
           match msg {
             ProtoMessage::PING(mut p, chal, sig) => {
@@ -203,7 +241,10 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
                           // received next will not be auth message (service drop on failure so if
                           // new connect it is on new service)
                           self.is_auth = true;
-                          return Ok(ReadReply::PeerMgmt(PeerMgmtCommand::Accept(pref.clone(),MainLoopCommand::NewPeerUncheckedChallenge(pref.clone(),peer_prio,self.token,initial_chal,next_chal))));
+                          // must update in case of shared secret update for msg shadower
+                          //self.with = Some(pref.get_sendable());
+                          self.with = Some(pref.clone());
+                          return Ok(ReadReply::PeerMgmt(PeerMgmtCommand::Accept(pref.clone(),MainLoopCommand::NewPeerUncheckedChallenge(pref,peer_prio,self.token,initial_chal,next_chal))));
                       } else {
                         peer_prio
                       }
@@ -213,7 +254,10 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
                   },
                 };
                 self.is_auth = true;
-                return Ok(ReadReply::MainLoop(MainLoopCommand::NewPeerUncheckedChallenge(MDC::PeerRef::new(withpeer),prio,self.token,initial_chal,next_chal)));
+                let pref = MDC::PeerRef::new(withpeer);
+                //self.with = Some(pref.get_sendable());
+                self.with = Some(pref.clone());
+                return Ok(ReadReply::MainLoop(MainLoopCommand::NewPeerUncheckedChallenge(pref,prio,self.token,initial_chal,next_chal)));
               }
 
             },
@@ -221,6 +265,74 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
           }
 //pub fn receive_msg<P : Peer, V : KeyVal, T : Read, E : MsgEnc, S : ExtRead>(t : &mut T, e : &E, s : &mut S) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
         } else {
+          // init shad if needed
+          if self.shad_msg.is_none() {
+            let mut shad = match MDC::AUTH_MODE {
+              ShadowAuthType::NoAuth => {
+                self.from.borrow().get_shadower_r_msg()
+              },
+              ShadowAuthType::Public | ShadowAuthType::Private => {
+                match self.with {
+                  Some(ref w) => w.borrow().get_shadower_r_msg(),
+                  None => {return Err(Error("reader set as auth but no with peer and not NoAuth auth".to_string(), ErrorKind::Bug,None));},
+                }
+              },
+            };
+            shad_read_header(&mut shad, &mut stream)?;
+            self.shad_msg = Some(shad);
+          }
+          let shad = self.shad_msg.as_mut().unwrap();
+          let mut pmess : MDC::ProtoMsg = receive_msg_msg(&mut stream, &self.enc, shad)?;
+          let atts_s = pmess.attachment_expected_sizes();
+          if atts_s.len() > 0 {
+            let mut atts = Vec::with_capacity(atts_s.len());
+            for atsize in atts_s {
+              let att = receive_att(&mut stream, &self.enc, shad, atsize)?;
+              atts.push(att);
+            }
+            pmess.set_attachments(&atts[..]);
+          }
+
+          let s_replace = if let Some((ref mut send, ref mut local_handle)) = self.local_sp {
+            // try send in 
+            if !local_handle.is_finished() {
+              send.send(pmess.into())?;
+              local_handle.unyield()?;
+              None
+            } else {
+              Some(pmess) 
+            }
+          } else {
+            let service = MDC::init_local_service(self.from.clone(),self.with.clone())?;
+            let (send,recv) = self.local_channel_in.new()?;
+            let sender = LocalDest{
+              read : self.read_dest_proto.clone(),
+              global : self.global_dest_proto.clone(),
+            };
+            let local_handle = self.local_spawner.spawn(service, sender, Some(pmess.into()), recv, MDC::LOCAL_SERVICE_NB_ITER)?;
+            self.local_sp = Some((send,local_handle));
+            None
+          };
+          if let Some(pmess) = s_replace {
+            let lh = replace(&mut self.local_sp, None);
+            if let Some((send, local_handle)) = lh {
+              let (service, sender, receiver, res) = local_handle.unwrap_state()?;
+              let nlocal_handle = if res.is_err() {
+                // TODO log try restart ???
+                // reinit service, reuse receiver as may not be empty (do not change our send)
+                let service = MDC::init_local_service(self.from.clone(),self.with.clone())?;
+                // TODO reinit channel and sender plus empty receiver in sender seems way better!!!
+                self.local_spawner.spawn(service, sender, Some(pmess.into()), receiver, MDC::LOCAL_SERVICE_NB_ITER)?
+              } else {
+                // restart
+                self.local_spawner.spawn(service, sender, Some(pmess.into()), receiver, MDC::LOCAL_SERVICE_NB_ITER)?
+              };
+              replace(&mut self.local_sp, Some((send,nlocal_handle)));
+            }
+          }
+          // spawn service local with pmess
+          panic!("spawn sloc");
+
         };
         // for initial testing only TODO replace by deser
     /*    let mut buf = vec![0;4];
@@ -258,6 +370,7 @@ pub struct ReadDest<MDC : MyDHTConf> {
   // TODO switch to optionnal handle send similar to write
   pub peermgmt : <MDC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MDC>>>::Send,
   pub write : Option<WriteHandleSend<MDC>>,
+  pub read_token : usize,
 }
 
 impl<MDC : MyDHTConf> Clone for ReadDest<MDC> {
@@ -266,6 +379,7 @@ impl<MDC : MyDHTConf> Clone for ReadDest<MDC> {
         mainloop : self.mainloop.clone(),
         peermgmt : self.peermgmt.clone(),
         write : self.write.clone(),
+        read_token : self.read_token,
       }
     }
 }
@@ -288,13 +402,13 @@ impl<MDC : MyDHTConf> SpawnSend<ReadReply<MDC>> for ReadDest<MDC> {
             }
           },
           None => {
-            self.mainloop.send(MainLoopCommand::ProxyWrite(wc))?;
+            self.mainloop.send(MainLoopCommand::ProxyWrite(self.read_token,wc))?;
             None
           },
         };
         if let Some(wc) = cwrite {
           self.write = None;
-          self.mainloop.send(MainLoopCommand::ProxyWrite(wc))?;
+          self.mainloop.send(MainLoopCommand::ProxyWrite(self.read_token,wc))?;
         }
       },
       ReadReply::NewPeer(pr,pp,tok,chal) => {

@@ -607,6 +607,9 @@ impl<'a, C> SpawnSend<C> for &'a mut VecDeque<C> {
     Ok(())
   }
 }
+
+
+#[derive(Clone)]
 /// Should not be use, except for very specific case or debugging.
 /// It blocks the main loop during process (run on the same thread).
 //pub struct Blocker<S : Service>(PhantomData<S>);
@@ -1198,7 +1201,7 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
 }
 
 //impl<C : Ref<C>> Ref<MpscSenderRef<C>> for MpscSenderRef<C> {
-impl<S : 'static + Send + Service, D : SRef + 'static + SpawnSend<S::CommandOut>, R : 'static + Send + SpawnRecv<S::CommandIn>> 
+impl<S : 'static + Send + Service + SRef, D : SRef + 'static + SpawnSend<S::CommandOut>, R : 'static + Send + SpawnRecv<S::CommandIn>> 
   Spawner<S,D,R> for ThreadParkRef
   where D::Send : SpawnSend<S::CommandOut>,
   <S as Service>::CommandIn : SRef

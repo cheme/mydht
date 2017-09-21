@@ -38,9 +38,9 @@ use procs::ClientMode;
 #[cfg(test)]
 use mydht_basetest::transport::connect_rw_with_optional_non_managed;
 
-struct RunningTypesImpl<M : PeerMgmtMeths<Node, Node>, T : Transport, E : MsgEnc> (PhantomData<(M,T,E)>);
+struct RunningTypesImpl<M : PeerMgmtMeths<Node>, T : Transport, E : MsgEnc<Node,Node>> (PhantomData<(M,T,E)>);
 
-impl<M : PeerMgmtMeths<Node, Node>, T : Transport<Address=SerSocketAddr>, E : MsgEnc> RunningTypes for RunningTypesImpl<M, T, E> {
+impl<M : PeerMgmtMeths<Node>, T : Transport<Address=SerSocketAddr>, E : MsgEnc<Node,Node>> RunningTypes for RunningTypesImpl<M, T, E> {
   type A = SerSocketAddr;
   type P = Node;
   type V = Node;
@@ -74,7 +74,7 @@ fn connect_rw_nospawn () {
   connect_rw_with_optional_non_managed(tcp_transport_1,tcp_transport_2,&a1,&a2,false,false,true,false);
 }
 
-fn initpeers_udp<M : PeerMgmtMeths<Node, Node> + Clone> (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : M, rules : DhtRules, sim : Option<u32>) -> Vec<(Node, DHT<RunningTypesImpl<M,Udp,Bincode>>)>{
+fn initpeers_udp<M : PeerMgmtMeths<Node> + Clone> (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : M, rules : DhtRules, sim : Option<u32>) -> Vec<(Node, DHT<RunningTypesImpl<M,Udp,Bincode>>)>{
   let mut nodes = Vec::new();
   let mut transports = Vec::new();
 

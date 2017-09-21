@@ -1,3 +1,6 @@
+
+use serde::{Serializer,Serialize,Deserialize,Deserializer};
+use serde::de::{DeserializeOwned};
 use serde_json as json;
 use serde_json::error::Error as JSonError;
 //use rustc_serialize::{Encodable,Decodable};
@@ -38,7 +41,7 @@ const BUFF_FALSE : [u8; 1] = [0];
 unsafe impl Send for Json {
 }
 
-impl MsgEnc for Json {
+impl<P : Peer, M : Serialize + DeserializeOwned> MsgEnc<P,M> for Json {
 /*  fn encode<P : Peer, V : KeyVal> (&self, mesg : &ProtoMessage<P,V>) -> Option<Vec<u8>>{
     json::encode(mesg).ok().map(|m| m.into_bytes())
   }*/
@@ -47,16 +50,23 @@ impl MsgEnc for Json {
     //  should not & on deref of cow...
     json::decode(&(*String::from_utf8_lossy(buff))).ok()
   }*/
-  fn encode_into<'a, W : Write, P : Peer + 'a, V : KeyVal + 'a> (&self, w : &mut W, mesg : &ProtoMessageSend<'a,P,V>) -> MDHTResult<()> 
+  fn encode_into<'a, W : Write> (&self, w : &mut W, mesg : &ProtoMessageSend<'a,P>) -> MDHTResult<()> 
 where <P as Peer>::Address : 'a,
-      <P as KeyVal>::Key : 'a,
-      <V as KeyVal>::Key : 'a {
+      <P as KeyVal>::Key : 'a {
  
     tryfor!(JSonErr,json::to_vec(mesg).map(|bytes|{
       try!(w.write_u64::<LittleEndian>(bytes.len().to_u64().unwrap()));
       w.write_all(&bytes[..])
     })).map_err(|e|e.into())
   }
+  fn encode_msg_into<'a, W : Write> (&self, w : &mut W, mesg : &M) -> MDHTResult<()> {
+ 
+    tryfor!(JSonErr,json::to_vec(mesg).map(|bytes|{
+      try!(w.write_u64::<LittleEndian>(bytes.len().to_u64().unwrap()));
+      w.write_all(&bytes[..])
+    })).map_err(|e|e.into())
+  }
+
 
   /// attach into will simply add bytes afterward json cont (no hex or base64 costly enc otherwhise
   /// it would be into message)
@@ -71,7 +81,20 @@ where <P as Peer>::Address : 'a,
     write_attachment(w,a)
   }
 
-  fn decode_from<R : Read, P : Peer, V : KeyVal>(&self, r : &mut R) -> MDHTResult<ProtoMessage<P,V>> {
+  fn decode_msg_from<R : Read>(&self, r : &mut R) -> MDHTResult<M> {
+    let len = try!(r.read_u64::<LittleEndian>()) as usize;
+    // TODO max len : easy overflow here
+    if len > MAX_BUFF {
+      return Err(Error(format!("Oversized protomessage, max length in bytes was {:?}", MAX_BUFF), ErrorKind::SerializingError, None));
+    };
+    let mut vbuf = vec![0; len];
+    try!(r.read(&mut vbuf[..]));
+    // TODO this is likely break at the first utf8 char : test it
+    Ok(tryfor!(JSonErr,json::from_slice(&mut vbuf[..])))
+  }
+
+
+  fn decode_from<R : Read>(&self, r : &mut R) -> MDHTResult<ProtoMessage<P>> {
     let len = try!(r.read_u64::<LittleEndian>()) as usize;
     // TODO max len : easy overflow here
     if len > MAX_BUFF {

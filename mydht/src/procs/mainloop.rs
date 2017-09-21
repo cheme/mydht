@@ -8,6 +8,9 @@ use super::{
   MainLoopSendIn,
   RWSlabEntry,
   ChallengeEntry,
+  GlobalHandle,
+  GlobalHandleSend,
+  Route,
 };
 use time::Duration as CrateDuration;
 use std::marker::PhantomData;
@@ -147,6 +150,7 @@ macro_rules! register_state_w {($self:ident,$pollopt:expr,$rs:ident,$wb:expr,$os
   }
 }}
 
+
 pub type WriteHandleSend<MDC : MyDHTConf> = HandleSend<<MDC::WriteChannelIn as SpawnChannel<WriteCommand<MDC>>>::Send,
   <<
     MDC::WriteSpawn as Spawner<WriteService<MDC>,MDC::WriteDest,<MDC::WriteChannelIn as SpawnChannel<WriteCommand<MDC>>>::Recv>>::Handle as 
@@ -188,6 +192,7 @@ pub struct MyDHT<MC : MyDHTConf>(MainLoopSendIn<MC>);
 pub enum MainLoopCommand<MC : MyDHTConf> {
   Start,
   TryConnect(<MC::Transport as Transport>::Address),
+  ForwardService(MC::LocalServiceCommand),
   /// reject stream for this token and Address
   RejectReadSpawn(usize),
   /// reject a peer (accept fail), usize are write stream token and read stream token
@@ -198,12 +203,18 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
   NewPeerUncheckedChallenge(MC::PeerRef,PeerPriority,usize,Vec<u8>,Option<Vec<u8>>),
   /// new peer accepted with optionnal read stream token TODO remove (replace by NewPeerChallenge)
   NewPeer(MC::PeerRef,PeerPriority,Option<usize>),
-  ProxyWrite(WriteCommand<MC>),
+  /// first field is read token ix, write is obtain from os or a connection
+  ProxyWrite(usize,WriteCommand<MC>),
+  ProxyGlobal(MC::GlobalServiceCommand),
 }
+
 /// Send variant (to use when inner ref are not Sendable)
-pub enum MainLoopCommandSend<MC : MyDHTConf> {
+pub enum MainLoopCommandSend<MC : MyDHTConf>
+ where MC::GlobalServiceCommand : SRef,
+       MC::LocalServiceCommand : SRef {
   Start,
   TryConnect(<MC::Transport as Transport>::Address),
+  ForwardService(<MC::LocalServiceCommand as SRef>::Send),
   /// reject stream for this token and Address
   RejectReadSpawn(usize),
   /// reject a peer (accept fail), usize are write stream token and read stream token
@@ -212,51 +223,64 @@ pub enum MainLoopCommandSend<MC : MyDHTConf> {
   NewPeer(<MC::PeerRef as Ref<MC::Peer>>::Send,PeerPriority,Option<usize>),
   NewPeerChallenge(<MC::PeerRef as Ref<MC::Peer>>::Send,PeerPriority,usize,Vec<u8>),
   NewPeerUncheckedChallenge(<MC::PeerRef as Ref<MC::Peer>>::Send,PeerPriority,usize,Vec<u8>,Option<Vec<u8>>),
-  ProxyWrite(WriteCommandSend<MC>),
+  ProxyWrite(usize,WriteCommandSend<MC>),
+  ProxyGlobal(<MC::GlobalServiceCommand as SRef>::Send),
 }
 
-impl<MC : MyDHTConf> Clone for MainLoopCommand<MC> {
+impl<MC : MyDHTConf> Clone for MainLoopCommand<MC> 
+ where MC::GlobalServiceCommand : Clone,
+       MC::LocalServiceCommand : Clone {
   fn clone(&self) -> Self {
     match *self {
       MainLoopCommand::Start => MainLoopCommand::Start,
       MainLoopCommand::TryConnect(ref a) => MainLoopCommand::TryConnect(a.clone()),
+      MainLoopCommand::ForwardService(ref a) => MainLoopCommand::ForwardService(a.clone()),
       MainLoopCommand::RejectReadSpawn(s) => MainLoopCommand::RejectReadSpawn(s),
       MainLoopCommand::RejectPeer(ref k,ref os,ref os2) => MainLoopCommand::RejectPeer(k.clone(),os.clone(),os2.clone()),
       MainLoopCommand::NewPeer(ref rp,ref pp,ref os) => MainLoopCommand::NewPeer(rp.clone(),pp.clone(),os.clone()),
       MainLoopCommand::NewPeerChallenge(ref rp,ref pp,rtok,ref chal) => MainLoopCommand::NewPeerChallenge(rp.clone(),pp.clone(),rtok,chal.clone()),
       MainLoopCommand::NewPeerUncheckedChallenge(ref rp,ref pp,rtok,ref chal,ref nextchal) => MainLoopCommand::NewPeerUncheckedChallenge(rp.clone(),pp.clone(),rtok,chal.clone(),nextchal.clone()),
-      MainLoopCommand::ProxyWrite(ref rcs) => MainLoopCommand::ProxyWrite(rcs.clone()),
+      MainLoopCommand::ProxyWrite(rt, ref rcs) => MainLoopCommand::ProxyWrite(rt, rcs.clone()),
+      MainLoopCommand::ProxyGlobal(ref rcs) => MainLoopCommand::ProxyGlobal(rcs.clone()),
     }
   }
 }
 
-impl<MC : MyDHTConf> SRef for MainLoopCommand<MC> {
+impl<MC : MyDHTConf> SRef for MainLoopCommand<MC>
+ where MC::GlobalServiceCommand : SRef,
+       MC::LocalServiceCommand : SRef {
   type Send = MainLoopCommandSend<MC>;
   fn get_sendable(&self) -> Self::Send {
     match *self {
       MainLoopCommand::Start => MainLoopCommandSend::Start,
       MainLoopCommand::TryConnect(ref a) => MainLoopCommandSend::TryConnect(a.clone()),
+      MainLoopCommand::ForwardService(ref a) => MainLoopCommandSend::ForwardService(a.get_sendable()),
       MainLoopCommand::RejectReadSpawn(s) => MainLoopCommandSend::RejectReadSpawn(s),
       MainLoopCommand::RejectPeer(ref k,ref os,ref os2) => MainLoopCommandSend::RejectPeer(k.clone(),os.clone(),os2.clone()),
       MainLoopCommand::NewPeer(ref rp,ref pp,ref os) => MainLoopCommandSend::NewPeer(rp.get_sendable(),pp.clone(),os.clone()),
       MainLoopCommand::NewPeerChallenge(ref rp,ref pp,rtok,ref chal) => MainLoopCommandSend::NewPeerChallenge(rp.get_sendable(),pp.clone(),rtok,chal.clone()),
       MainLoopCommand::NewPeerUncheckedChallenge(ref rp,ref pp,rtok,ref chal,ref nextchal) => MainLoopCommandSend::NewPeerUncheckedChallenge(rp.get_sendable(),pp.clone(),rtok,chal.clone(),nextchal.clone()),
-      MainLoopCommand::ProxyWrite(ref rcs) => MainLoopCommandSend::ProxyWrite(rcs.get_sendable()),
+      MainLoopCommand::ProxyWrite(rt, ref rcs) => MainLoopCommandSend::ProxyWrite(rt, rcs.get_sendable()),
+      MainLoopCommand::ProxyGlobal(ref rcs) => MainLoopCommandSend::ProxyGlobal(rcs.get_sendable()),
     }
   }
 }
 
-impl<MC : MyDHTConf> SToRef<MainLoopCommand<MC>> for MainLoopCommandSend<MC> {
+impl<MC : MyDHTConf> SToRef<MainLoopCommand<MC>> for MainLoopCommandSend<MC>
+ where MC::GlobalServiceCommand : SRef,
+       MC::LocalServiceCommand : SRef {
   fn to_ref(self) -> MainLoopCommand<MC> {
     match self {
       MainLoopCommandSend::Start => MainLoopCommand::Start,
       MainLoopCommandSend::TryConnect(a) => MainLoopCommand::TryConnect(a),
+      MainLoopCommandSend::ForwardService(a) => MainLoopCommand::ForwardService(a.to_ref()),
       MainLoopCommandSend::RejectReadSpawn(s) => MainLoopCommand::RejectReadSpawn(s),
       MainLoopCommandSend::RejectPeer(k,os,os2) => MainLoopCommand::RejectPeer(k,os,os2),
       MainLoopCommandSend::NewPeer(rp,pp,os) => MainLoopCommand::NewPeer(rp.to_ref(),pp,os),
       MainLoopCommandSend::NewPeerChallenge(rp,pp,rtok,chal) => MainLoopCommand::NewPeerChallenge(rp.to_ref(),pp,rtok,chal),
       MainLoopCommandSend::NewPeerUncheckedChallenge(rp,pp,rtok,chal,nchal) => MainLoopCommand::NewPeerUncheckedChallenge(rp.to_ref(),pp,rtok,chal,nchal),
-      MainLoopCommandSend::ProxyWrite(rcs) => MainLoopCommand::ProxyWrite(rcs.to_ref()),
+      MainLoopCommandSend::ProxyWrite(rt,rcs) => MainLoopCommand::ProxyWrite(rt,rcs.to_ref()),
+      MainLoopCommandSend::ProxyGlobal(rcs) => MainLoopCommand::ProxyGlobal(rcs.to_ref()),
     }
   }
 }
@@ -264,6 +288,7 @@ impl<MC : MyDHTConf> SToRef<MainLoopCommand<MC>> for MainLoopCommandSend<MC> {
 pub struct MDHTState<MDC : MyDHTConf> {
   me : MDC::PeerRef,
   transport : MDC::Transport,
+  route : MDC::Route,
   slab_cache : MDC::Slab,
   peer_cache : MDC::PeerCache,
   challenge_cache : MDC::ChallengeCache,
@@ -281,6 +306,15 @@ pub struct MDHTState<MDC : MyDHTConf> {
   dhtrules_proto : MDC::DHTRules,
   pub mainloop_send : MioSend<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Send>,
 
+  /// stored internally for global restart on ended (maybe on error)
+  global_spawn : MDC::GlobalServiceSpawn,
+  global_channel_in : MDC::GlobalServiceChannelIn,
+  /// send to global service
+  global_send : <MDC::GlobalServiceChannelIn as SpawnChannel<MDC::GlobalServiceCommand>>::Send,
+  global_handle : GlobalHandle<MDC>,
+  local_spawn_proto : MDC::LocalServiceSpawn,
+  local_channel_in_proto : MDC::LocalServiceChannelIn,
+
 }
 
 impl<MDC : MyDHTConf> MDHTState<MDC> {
@@ -288,6 +322,7 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
     let events = Events::with_capacity(MDC::events_size);
     let poll = Poll::new()?;
     let transport = conf.init_transport()?;
+    let route = conf.init_route()?;
     assert!(true == transport.register(&poll, LISTENER, Ready::readable(),
                     PollOpt::edge())?);
     let me = conf.init_ref_peer()?;
@@ -296,9 +331,19 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
     let read_channel_in = DefaultRecvChannel(conf.init_read_channel_in()?,ReadCommand::Run);
     let write_channel_in = conf.init_write_channel_in()?;
     let enc_proto = conf.init_enc_proto()?;
+    let mut global_spawn = conf.init_global_spawner()?;
+    let global_service = conf.init_global_service()?;
+    // TODO use a true dest with mainloop, api weak as dest
+    let global_dest = conf.init_global_dest()?;
+    let mut global_channel_in = conf.init_global_channel_in()?;
+    let (global_send, global_recv) = global_channel_in.new()?;
+    let global_handle = global_spawn.spawn(global_service, global_dest, None, global_recv, MDC::GLOBAL_NB_ITER)?;
+    let local_channel_in = conf.init_local_channel_in()?;
+    let local_spawn = conf.init_local_spawner()?;
     let s = MDHTState {
       me : me,
       transport : transport,
+      route : route,
       slab_cache : conf.init_main_loop_slab_cache()?,
       peer_cache : conf.init_main_loop_peer_cache()?,
       challenge_cache : conf.init_main_loop_challenge_cache()?,
@@ -313,6 +358,12 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
       peermgmt_proto : conf.init_peermgmt_proto()?,
       dhtrules_proto : conf.init_dhtrules_proto()?,
       mainloop_send : mlsend.clone(),
+      global_channel_in : global_channel_in,
+      global_spawn : global_spawn,
+      global_send : global_send,
+      global_handle : global_handle,
+      local_channel_in_proto : local_channel_in,
+      local_spawn_proto : local_spawn,
     };
     Ok(s)
   }
@@ -375,6 +426,40 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
     match req {
       MainLoopCommand::Start => {
         // do nothing it has start if the function was called
+      },
+      MainLoopCommand::ProxyGlobal(sc) => {
+        // send in global service TODO when send from api use a composed sender to send directly
+        if !self.global_handle.is_finished() {
+          self.global_send.send(sc)?;
+          self.global_handle.unyield()?;
+        } else {
+          // TODO log try restart ???
+          panic!("Global service finished TODO code to make it restartable cf write service and initialising from conf in init_state + on error right error mgmt");
+        }
+      },
+      MainLoopCommand::ForwardService(sc) => {
+        // query route then run write of sc as WriteCommand 
+        let (sc, dests) = self.route.route(sc,&self.slab_cache, &self.peer_cache)?;
+        // TODO return a api result with number of forward done?? -> TODO next when looking at
+        // return : TODO route telling if should return to api plus message trait with optionnal
+        // query id for api!!
+        // for all dests forward
+        if dests.len() == 0 {
+          // TODO log
+
+          return Ok(());
+        }
+
+        let mut ldest = None;
+        for dest in dests {
+          if let Some(d) = ldest {
+            self.write_stream_send(d,WriteCommand::Service(sc.clone()), <MDC>::init_write_spawner_out()?, None)?;
+          }
+          let ldest = Some(dest);
+        }
+        if let Some(d) = ldest {
+          self.write_stream_send(ldest.unwrap(),WriteCommand::Service(sc), <MDC>::init_write_spawner_out()?, None)?;
+        }
       },
       MainLoopCommand::TryConnect(dest_address) => {
         let (write_token,ort) = self.connect_with(&dest_address)?;
@@ -573,6 +658,7 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopCh
                 mainloop : self.mainloop_send.clone(),
                 peermgmt : smgmt.clone(),
                 write : owrite_send,
+                read_token : tok.0 - START_STREAM_IX,
               };
     //(self.mainloop_send).send((MainLoopCommand::Start))?;
     //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
@@ -612,14 +698,23 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopCh
           _ => unreachable!(),
         };
         let (read_s_in,read_r_in) = self.read_channel_in.new()?;
+        let wh = match self.global_handle.get_weak_handle() {
+          Some(h) => Some(HandleSend(self.global_send.clone(),h)),
+          None => None,
+        };
         // spawn reader TODO try with None (default to Run)
         let read_handle = self.read_spawn.spawn(ReadService::new(
             read_token,
             rs,
-            self.me.get_sendable(),
-            with.map(|w|w.get_sendable()),
+            self.me.clone(),
+            with,
+            //with.map(|w|w.get_sendable()),
             self.enc_proto.clone(),
-            self.peermgmt_proto.clone()
+            self.peermgmt_proto.clone(),
+            self.local_spawn_proto.clone(),
+            self.local_channel_in_proto.clone(),
+            read_out.clone(),
+            wh
             ), read_out, Some(ReadCommand::Run), read_r_in, 0)?;
         let state = SlabEntryState::ReadSpawned((read_handle,read_s_in));
         replace(&mut entry.state,state);
@@ -641,79 +736,80 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MDC::MainLoopCh
 
   /// The state of the slab entry must be checked before, return error on wrong state
   ///  TODO replace dest with channel spawner mut ref
+  ///  TODO write_out as param is probably a mistake
   fn write_stream_send(&mut self, write_token : usize, command : WriteCommand<MDC>, write_out : MDC::WriteDest, with : Option<MDC::PeerRef>) -> Result<()> {
     let rem = {
-    let se = self.slab_cache.get_mut(write_token);
-    if let Some(entry) = se {
-      let finished = match entry.state {
-        // connected write stream : spawn
-        ref mut e @ SlabEntryState::WriteStream(_,(_,_,true)) => {
-          let state = replace(e, SlabEntryState::Empty);
-          if let SlabEntryState::WriteStream(ws,(mut write_s_in,mut write_r_in,_)) = state {
- //          let (write_s_in,write_r_in) = self.write_channel_in.new()?;
-            let oc = write_r_in.recv()?;
-            let ocin = if oc.is_some() {
-              // for order sake
-              write_s_in.send(command)?;
-              oc
-            } else {
-              // empty
+      let se = self.slab_cache.get_mut(write_token);
+      if let Some(entry) = se {
+        let finished = match entry.state {
+          // connected write stream : spawn
+          ref mut e @ SlabEntryState::WriteStream(_,(_,_,true)) => {
+            let state = replace(e, SlabEntryState::Empty);
+            if let SlabEntryState::WriteStream(ws,(mut write_s_in,mut write_r_in,_)) = state {
+   //          let (write_s_in,write_r_in) = self.write_channel_in.new()?;
+              let oc = write_r_in.recv()?;
+              let ocin = if oc.is_some() {
+                // for order sake
+                write_s_in.send(command)?;
+                oc
+              } else {
+                // empty
+                Some(command)
+              };
+              // dest is unknown TODO check if still relevant with other use case (read side we allow
+              // dest peer as rs could result from a connection with an identified peer)
+              let write_service = WriteService::new(write_token,ws,self.me.clone(),with, self.enc_proto.clone(),self.peermgmt_proto.clone());
+              let write_handle = self.write_spawn.spawn(write_service, write_out.clone(), ocin, write_r_in, MDC::send_nb_iter)?;
+              let state = SlabEntryState::WriteSpawned((write_handle,write_s_in));
+              replace(e,state);
+              None
+            } else {unreachable!()}
+          },
+          SlabEntryState::WriteStream(_,(ref mut send,_,false)) => {
+            // TODO size limit of channel bef connected -> error on send ~= to connection failure
+            send.send(command)?;
+            None
+          },
+          SlabEntryState::WriteSpawned((ref mut handle, ref mut sender)) => {
+            // TODO refactor to not check at every send
+            //
+            // TODO  panic!("TODO possible error droprestart"); do it at each is_finished state
+            if handle.is_finished() {
               Some(command)
-            };
-            // dest is unknown TODO check if still relevant with other use case (read side we allow
-            // dest peer as rs could result from a connection with an identified peer)
-            let write_service = WriteService::new(write_token,ws,self.me.get_sendable(),with.map(|w|w.get_sendable()), self.enc_proto.clone(),self.peermgmt_proto.clone());
-            let write_handle = self.write_spawn.spawn(write_service, write_out.clone(), ocin, write_r_in, MDC::send_nb_iter)?;
-            let state = SlabEntryState::WriteSpawned((write_handle,write_s_in));
-            replace(e,state);
-            None
-          } else {unreachable!()}
-        },
-        SlabEntryState::WriteStream(_,(ref mut send,_,false)) => {
-          // TODO size limit of channel bef connected -> error on send ~= to connection failure
-          send.send(command)?;
-          None
-        },
-        SlabEntryState::WriteSpawned((ref mut handle, ref mut sender)) => {
-          // TODO refactor to not check at every send
-          //
-          // TODO  panic!("TODO possible error droprestart"); do it at each is_finished state
-          if handle.is_finished() {
-            Some(command)
+            } else {
+              sender.send(command)?;
+              // unyield everytime
+              handle.unyield()?;
+              None
+            }
+          },
+          _ => return Err(Error("Call of write listener on wrong state".to_string(), ErrorKind::Bug, None)),
+        };
+        if finished.is_some() {
+          let state = replace(&mut entry.state, SlabEntryState::Empty);
+          if let SlabEntryState::WriteSpawned((handle,sender)) = state {
+            let (serv,mut sen,recv,result) = handle.unwrap_state()?;
+            if result.is_ok() {
+              // restart
+              let write_handle = self.write_spawn.spawn(serv, sen, finished, recv, MDC::send_nb_iter)?;
+              replace(&mut entry.state, SlabEntryState::WriteSpawned((write_handle,sender)));
+              false
+            } else {
+              // error TODO error management
+              // TODO log
+              // TODO sen writeout error
+              sen.send(WriteReply::Api(ApiReply::Failure(finished.unwrap())))?;
+              true
+            }
           } else {
-            sender.send(command)?;
-            // unyield everytime
-            handle.unyield()?;
-            None
-          }
-        },
-        _ => return Err(Error("Call of write listener on wrong state".to_string(), ErrorKind::Bug, None)),
-      };
-      if finished.is_some() {
-        let state = replace(&mut entry.state, SlabEntryState::Empty);
-        if let SlabEntryState::WriteSpawned((handle,sender)) = state {
-          let (serv,mut sen,recv,result) = handle.unwrap_state()?;
-          if result.is_ok() {
-            // restart
-            let write_handle = self.write_spawn.spawn(serv, sen, finished, recv, MDC::send_nb_iter)?;
-            replace(&mut entry.state, SlabEntryState::WriteSpawned((write_handle,sender)));
-            false
-          } else {
-            // error TODO error management
-            // TODO log
-            // TODO sen writeout error
-            sen.send(WriteReply::Api(ApiReply::Failure(finished.unwrap())))?;
-            true
+            unreachable!()
           }
         } else {
-          unreachable!()
+          false
         }
       } else {
-        false
+        return Err(Error("Call of write listener on no state".to_string(), ErrorKind::Bug, None))
       }
-    } else {
-      return Err(Error("Call of write listener on no state".to_string(), ErrorKind::Bug, None))
-    }
     };
     if rem {
       // TODO remove write stream !!!

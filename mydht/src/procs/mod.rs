@@ -4,7 +4,11 @@ use peer::{PeerMgmtMeths};
 use query::{self,QueryConf,QueryPriority,QueryMode,QueryModeMsg,LastSent,QueryMsg,Query};
 use rules::DHTRules;
 use kvstore::{StoragePriority, KVStore};
-use keyval::{KeyVal};
+use keyval::{
+  KeyVal,
+  GettableAttachments,
+  SettableAttachments,
+};
 use query::cache::QueryCache;
 use self::mesgs::{PeerMgmtMessage,KVStoreMgmtMessage,QueryMgmtMessage,ClientMessage,ClientMessageIx};
 //use self::mesgs::{PeerMgmtMessage,PeerMgmtInitMessage,KVStoreMgmtMessage,QueryMgmtMessage,ClientMessage,ClientMessageIx};
@@ -13,8 +17,22 @@ use std::sync::mpsc::channel;
 use std::thread;
 use peer::Peer;
 use time::Duration;
-use utils::{self};
-use msgenc::MsgEnc;
+use self::deflocal::{
+  LocalReply,
+  DefLocalService,
+  GlobalCommand,
+  GlobalReply,
+  LocalDest,
+};
+use utils::{
+  self,
+  SRef,
+};
+use msgenc::{
+  MsgEnc,
+};
+use serde::{Serializer,Serialize,Deserialize,Deserializer};
+use serde::de::{DeserializeOwned};
 use std::result::Result as StdResult;
 //use num::traits::ToPrimitive;
 use std::marker::PhantomData;
@@ -44,8 +62,11 @@ use mydhtresult::{
 
 pub use mydht_base::procs::*;
 use service::{
+  HandleSend,
   Service,
   Spawner,
+  Blocker,
+  NoChannel,
   SpawnSend,
   SpawnRecv,
   SpawnHandle,
@@ -63,7 +84,7 @@ use service::{
   NoRecv,
   NoSend,
 };
-use self::mainloop::{
+pub use self::mainloop::{
   MainLoopCommand,
   //PeerCacheEntry,
   MDHTState,
@@ -86,6 +107,7 @@ pub mod mesgs;
 
 mod mainloop;
 pub mod api;
+pub mod deflocal;
 mod server2;
 mod client2;
 mod peermgmt;
@@ -168,6 +190,14 @@ pub enum MainLoopReply {
   Ended,
 }
 
+pub trait Route<MDC : MyDHTConf> {
+  /// if set to true, all function return an expected error and result is receive as a mainloop
+  /// command containing the message and tokens
+  const USE_SERVICE : bool = false;
+  /// return an array of write token as dest TODO refactor to return iterator?? (avoid vec aloc,
+  /// allow nice implementation for route)
+  fn route(&mut self, MDC::LocalServiceCommand,&MDC::Slab, &MDC::PeerCache) -> Result<(MDC::LocalServiceCommand,Vec<usize>)>;
+}
 pub type PeerRefSend<MC:MyDHTConf> = <MC::PeerRef as Ref<MC::Peer>>::Send;
 //pub type BorRef<
 pub trait MyDHTConf : 'static + Send + Sized 
@@ -183,6 +213,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// number of iteration before send loop return, 1 is suggested, but if thread are involve a
   /// little more should be better, in a pool infinite (0) could be fine to.
   const send_nb_iter : usize;
+  const GLOBAL_NB_ITER : usize = 0;
   /// Spawner for main loop
   type MainloopSpawn : Spawner<
     MyDHTService<Self>,
@@ -200,16 +231,14 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// low level transport
   type Transport : Transport;
   /// Message encoding
-  type MsgEnc : MsgEnc + Clone;
+  type MsgEnc : MsgEnc<Self::Peer, Self::ProtoMsg> + Clone;
   /// Peer struct (with key and address)
   type Peer : Peer<Address = <Self::Transport as Transport>::Address>;
   /// most of the time Arc, if not much threading or smal peer description, RcCloneOnSend can be use, or AllwaysCopy
   /// or Copy.
   type PeerRef : Ref<Self::Peer>;
-  /// shared info
-  type KeyVal : KeyVal;
   /// Peer management methods 
-  type PeerMgmtMeths : PeerMgmtMeths<Self::Peer, Self::KeyVal> + Clone;
+  type PeerMgmtMeths : PeerMgmtMeths<Self::Peer> + Clone;
   /// Dynamic rules for the dht
   type DHTRules : DHTRules + Clone;
   /// loop slab implementation
@@ -236,6 +265,7 @@ pub trait MyDHTConf : 'static + Send + Sized
 //  type WriteFrom : SpawnRecv<<Self::WriteService as Service>::CommandIn>;
   type WriteSpawn : Spawner<WriteService<Self>,Self::WriteDest,<Self::WriteChannelIn as SpawnChannel<WriteCommand<Self>>>::Recv>;
 
+  type Route : Route<Self>;
   // TODO temp for type check , hardcode it after on transport service (not true for kvstore service) the service contains the read stream!!
 //  type ReadService : Service;
   // TODO call to read and write in service will use ReadYield and WriteYield wrappers containing
@@ -243,7 +273,63 @@ pub trait MyDHTConf : 'static + Send + Sized
   //type WriteService : Service;
 
 
-  /// Start the main loop
+
+  /// application protomsg used immediatly by local service
+  type ProtoMsg : Into<Self::LocalServiceCommand> + SettableAttachments + GettableAttachments;
+  /// global service command : by default it should be protoMsg, depending on spawner use, should
+  /// be Send or SRef... Local command require clone (sent to multiple peer)
+  type LocalServiceCommand : Into<Self::ProtoMsg> + Clone;
+  /// global service command : by default it should be protoMsg see macro `nolocal`.
+  /// For default proxy command, this use a globalCommand struct, the only command to define is
+  /// LocalServiceCommand
+  type GlobalServiceCommand : GetOrigin<Self>;// = GlobalCommand<Self>;
+  // ref for protomsg : need to be compatible with spawners -> this has been disabled, ref will
+  // need to be included in service command (which are
+//  type LocalServiceCommandRef : Ref<Self::LocalServiceCommand>;
+//  type GlobalServiceCommandRef : Ref<Self::GlobalServiceCommand>;
+  /// Main service spawned from ReadService.
+  /// In most use case it is a global service that is used, therefore a default implementation ( see macro `nolocal`). is
+  /// defined here (proxy command to global service and spawn locally with no suspend strategie).
+  /// It can be overriden by a service : usefull for instance in streaming use cases (command being
+  /// buf and size read obviously), global service may be disabled in this case but may still have
+  /// relevant or accessory use.
+  /// Local service is initiated with existing peer comm.
+  type LocalService : Service<
+    CommandIn = Self::LocalServiceCommand,
+    CommandOut = LocalReply<Self>
+  >;// = DefLocalService<Self>;
+
+  const LOCAL_SERVICE_NB_ITER : usize;// = 1;
+  /// Spawn to local service, run from Read service, it default to local spawn (default local (see
+  /// macro `nolocal`))
+  /// service proxy command to Global service).
+  /// Warn this is clone (spawner will be use for each peer receive and include in many
+  /// ReadService)
+  type LocalServiceSpawn : Clone + Spawner<
+    Self::LocalService,
+    LocalDest<Self>,
+    <Self::LocalServiceChannelIn as SpawnChannel<Self::LocalServiceCommand>>::Recv
+  >;// = Blocker;
+  type LocalServiceChannelIn : Clone + SpawnChannel<Self::LocalServiceCommand>;// = NoChannel;
+  /* sref of protomessage enough for it
+  /// in case of local and global service usage, this type can be used to convert command, it
+  /// defaults to an identity converter.
+  type LocalGlobalCommandAdapter;*/
+  /// Main Service for the application, most of the time it is composed of several service (except
+  /// peer management).
+  /// Global service is initiated with from peer only, dest peer must be in service command.
+  type GlobalService : Service<CommandIn = Self::GlobalServiceCommand, CommandOut = GlobalReply<Self>>;
+  /// GlobalService is spawned from the main loop, and most of the time should use its own thread.
+  type GlobalServiceSpawn : Spawner<
+    Self::GlobalService,
+    Self::GlobalDest,
+    <Self::GlobalServiceChannelIn as SpawnChannel<Self::GlobalServiceCommand>>::Recv
+  >;
+  type GlobalServiceChannelIn : SpawnChannel<Self::GlobalServiceCommand>;
+  type GlobalDest : SpawnSend<GlobalReply<Self>>;
+
+  /// Start the main loop TODO change sender to avoid mainloop proxies (an API sender like for
+  /// others services)
   #[inline]
   fn start_loop(mut self : Self) -> Result<(
     ApiSendIn<Self>,
@@ -292,7 +378,15 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// instantiate read spawner
   fn init_read_spawner(&mut self) -> Result<Self::ReadSpawn>;
   fn init_write_spawner(&mut self) -> Result<Self::WriteSpawn>;
+  fn init_global_channel_in(&mut self) -> Result<Self::GlobalServiceChannelIn>;
+  fn init_global_spawner(&mut self) -> Result<Self::GlobalServiceSpawn>;
+  fn init_global_service(&mut self) -> Result<Self::GlobalService>;
+  /// TODO remove as it should be static
+  fn init_global_dest(&mut self) -> Result<Self::GlobalDest>;
 
+  fn init_local_service(Self::PeerRef, Option<Self::PeerRef>) -> Result<Self::LocalService>;
+  fn init_local_spawner(&mut self) -> Result<Self::LocalServiceSpawn>;
+  fn init_local_channel_in(&mut self) -> Result<Self::LocalServiceChannelIn>;
   //fn init_read_spawner_out(<Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Send, <Self::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<Self>>>::Send) -> Result<ReadDest<Self>>;
   fn init_write_spawner_out() -> Result<Self::WriteDest>;
   fn init_read_channel_in(&mut self) -> Result<Self::ReadChannelIn>;
@@ -302,11 +396,16 @@ pub trait MyDHTConf : 'static + Send + Sized
   fn init_dhtrules_proto(&mut self) -> Result<Self::DHTRules>;
   /// Transport initialization
   fn init_transport(&mut self) -> Result<Self::Transport>;
+  fn init_route(&mut self) -> Result<Self::Route>;
 
 
 
 }
 
+/// trait for global message to keep reference to read peer
+pub trait GetOrigin<MDC : MyDHTConf> {
+  fn get_origin(&self) -> Option<&MDC::PeerRef>;
+}
 
 /// entry cache for challenge
 pub struct ChallengeEntry {
@@ -322,9 +421,9 @@ pub trait RunningTypes : Send + Sync + 'static
   type A : Address;
   type P : Peer<Address = Self::A>;
   type V : KeyVal;
-  type M : PeerMgmtMeths<Self::P, Self::V>;
+  type M : PeerMgmtMeths<Self::P>;
   type R : DHTRules;
-  type E : MsgEnc;
+  type E : MsgEnc<Self::P,Self::V>;
   type T : Transport<Address = Self::A>;
 }
 /*pub trait RunningTypes : Send + Sync + 'static 
@@ -464,9 +563,9 @@ pub struct RunningTypesImpl<
   A : Address,
   P : Peer<Address = A>,
   V : KeyVal,
-  M : PeerMgmtMeths<P, V>, 
+  M : PeerMgmtMeths<P>, 
   R : DHTRules,
-  E : MsgEnc, 
+  E : MsgEnc<P,V>, 
   T : Transport<Address = A>>
   (PhantomData<(A,R,P,V,M,T,E)>);
 /*
@@ -490,9 +589,9 @@ impl<
   A : Address,
   P : Peer<Address = A>,
   V : KeyVal,
-  M : PeerMgmtMeths<P, V>, 
+  M : PeerMgmtMeths<P>, 
   R : DHTRules,
-  E : MsgEnc, 
+  E : MsgEnc<P,V>, 
   T : Transport<Address = A>>
      RunningTypes for RunningTypesImpl<A, P, V, M, R, E, T> 
      {
@@ -892,3 +991,13 @@ fn sphandler_res<A, E : Debug + Display> (res : StdResult<A, E>) {
 }
 
 static NULL_QUERY_ID : usize = 0; // TODO replace by optional value to None!!
+pub type GlobalHandle<MDC : MyDHTConf> = <MDC::GlobalServiceSpawn as Spawner<MDC::GlobalService,MDC::GlobalDest,<MDC::GlobalServiceChannelIn as SpawnChannel<MDC::GlobalServiceCommand>>::Recv>>::Handle;
+
+pub type GlobalHandleSend<MDC : MyDHTConf> = HandleSend<<MDC::GlobalServiceChannelIn as SpawnChannel<MDC::GlobalServiceCommand>>::Send,
+  <<
+    MDC::GlobalServiceSpawn as Spawner<MDC::GlobalService,MDC::GlobalDest,<MDC::GlobalServiceChannelIn as SpawnChannel<MDC::GlobalServiceCommand>>::Recv>>::Handle as 
+    SpawnHandle<MDC::GlobalService,MDC::GlobalDest,<MDC::GlobalServiceChannelIn as SpawnChannel<MDC::GlobalServiceCommand>>::Recv>
+    >::WeakHandle
+    >;
+
+

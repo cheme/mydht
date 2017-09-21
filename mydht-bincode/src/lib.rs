@@ -1,9 +1,12 @@
 #[macro_use] extern crate log;
 #[macro_use] extern crate mydht_base;
 extern crate bincode;
+extern crate serde;
 #[cfg(test)]
 extern crate mydht_basetest;
 
+use serde::{Serializer,Serialize,Deserialize,Deserializer};
+use serde::de::{DeserializeOwned};
 //use rustc_serialize::{Serialize,Decodable};
 use mydht_base::msgenc::MsgEnc;
 use mydht_base::keyval::{KeyVal,Attachment};
@@ -36,7 +39,7 @@ impl From<BinErr> for Error {
 #[derive(Debug,Clone)]
 pub struct Bincode;
 
-impl MsgEnc for Bincode {
+impl<P : Peer, M : Serialize + DeserializeOwned> MsgEnc<P,M> for Bincode {
 
 /*  fn encode<P : Peer, V : KeyVal> (&self, mesg : &ProtoMessage<P,V>) -> Option<Vec<u8>>{
     debug!("encode msg {:?}", mesg);
@@ -49,23 +52,31 @@ impl MsgEnc for Bincode {
     bincode::decode(buff).ok()
   }*/
 
-  fn encode_into<'a,W : Write, P : Peer + 'a, V : KeyVal + 'a> (&self, w : &mut W, mesg : &ProtoMessageSend<'a,P,V>) -> MDHTResult<()>
+  fn encode_into<'a,W : Write> (&self, w : &mut W, mesg : &ProtoMessageSend<'a,P>) -> MDHTResult<()>
 where <P as Peer>::Address : 'a,
-      <P as KeyVal>::Key : 'a,
-      <V as KeyVal>::Key : 'a {
+      <P as KeyVal>::Key : 'a {
   
      tryfor!(BinErr,bincode::serialize_into(w, mesg, Infinite));
      Ok(())
   }
+  fn encode_msg_into<W : Write> (&self, w : &mut W, mesg : &M) -> MDHTResult<()> {
+     tryfor!(BinErr,bincode::serialize_into(w, mesg, Infinite));
+     Ok(())
+  }
+
 
   fn attach_into<W : Write> (&self, w : &mut W, a : &Attachment) -> MDHTResult<()> {
 //    try!(w.write_all(&[if a.is_some(){1}else{0}]));
     write_attachment(w,a)
   }
 
-  fn decode_from<R : Read, P : Peer, V : KeyVal>(&self, r : &mut R) -> MDHTResult<ProtoMessage<P,V>> {
+  fn decode_from<R : Read>(&self, r : &mut R) -> MDHTResult<ProtoMessage<P>> {
     Ok(tryfor!(BinErr,bincode::deserialize_from(r, Infinite)))
   }
+  fn decode_msg_from<R : Read>(&self, r : &mut R) -> MDHTResult<M> {
+    Ok(tryfor!(BinErr,bincode::deserialize_from(r, Infinite)))
+  }
+
 
   fn attach_from<R : Read>(&self, r : &mut R, mlen : usize) -> MDHTResult<Attachment> {
 /*    let mut buf = [0];

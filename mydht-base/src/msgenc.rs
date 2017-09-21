@@ -2,7 +2,10 @@
 //! msgenc : encoding of message exchanged between peers.
 
 
-use keyval::{KeyVal,Attachment};
+use keyval::{
+  KeyVal,
+  Attachment,
+};
 use peer::{Peer};
 use query::{QueryID,QueryMsg};
 use serde::{Serializer,Serialize,Deserializer,Deserialize};
@@ -24,19 +27,20 @@ use self::send_variant::ProtoMessage as ProtoMessageSend;
 /// Trait for message encoding between peers.
 /// It use bytes which will be used by transport.
 /// TODO split in read/write and make mut??
-pub trait MsgEnc : Send + Sync + 'static {
+pub trait MsgEnc<P : Peer,M> : Send + Sync + 'static {
   //fn encode<P : Peer, V : KeyVal>(&self, &ProtoMessage<P,V>) -> Option<Vec<u8>>;
   
   /// encode
-  fn encode_into<'a,W : Write, P : Peer + 'a, V : KeyVal + 'a> (&self, w : &mut W, mesg : &ProtoMessageSend<'a,P,V>) -> MDHTResult<()>
-where <P as Peer>::Address : 'a,
-      <P as KeyVal>::Key : 'a,
-      <V as KeyVal>::Key : 'a ;
- 
+  fn encode_into<'a,W : Write> (&self, w : &mut W, mesg : &ProtoMessageSend<'a,P>) -> MDHTResult<()>
+where <P as Peer>::Address : 'a;
+  fn decode_from<R : Read>(&self, &mut R) -> MDHTResult<ProtoMessage<P>>;
+
+  fn encode_msg_into<'a,W : Write> (&self, w : &mut W, mesg : &M) -> MDHTResult<()>;
+
   fn attach_into<W : Write> (&self, &mut W, &Attachment) -> MDHTResult<()>;
 //  fn decode<P : Peer, V : KeyVal>(&self, &[u8]) -> Option<ProtoMessage<P,V>>;
   /// decode
-  fn decode_from<R : Read, P : Peer, V : KeyVal>(&self, &mut R) -> MDHTResult<ProtoMessage<P,V>>;
+  fn decode_msg_from<R : Read>(&self, &mut R) -> MDHTResult<M>;
   /// error if attachment more than a treshold (0 if no limit).
   fn attach_from<R : Read>(&self, &mut R, usize) -> MDHTResult<Attachment>;
 }
@@ -50,17 +54,17 @@ pub mod send_variant {
   use super::{DistantEnc,DistantEncAtt};
 
   #[derive(Serialize,Debug)]
-  pub enum ProtoMessage<'a,P : Peer + 'a, V : KeyVal + 'a> {
+  pub enum ProtoMessage<'a,P : Peer + 'a> {
     PING(&'a P,Vec<u8>,Vec<u8>), // TODO vec to &[u8]?? ort at least &Vec<u8> : yes TODO with challenge as ref refacto
     /// reply contain peer for update of distant peer info, for instance its listener address for a
     /// tcp transport.
     PONG(&'a P,Vec<u8>,Vec<u8>,Option<Vec<u8>>),
-    STORENODE(Option<QueryID>, Option<DistantEnc<&'a P>>),
+/*    STORENODE(Option<QueryID>, Option<DistantEnc<&'a P>>),
     STOREVALUE(Option<QueryID>, Option<DistantEnc<&'a V>>),
     STOREVALUEATT(Option<QueryID>, Option<DistantEncAtt<&'a V>>),
     FINDNODE(QueryMsg<P>, P::Key),
     FINDVALUE(QueryMsg<P>, V::Key),
-    PROXY(Option<usize>), // No content as message decode will be done by reading following payload
+    PROXY(Option<usize>), // No content as message decode will be done by reading following payload*/
   }
 
 }
@@ -71,7 +75,7 @@ pub mod send_variant {
 /// Messages between peers
 /// TODO ref variant for send !!!!
 #[serde(bound(deserialize = ""))]
-pub enum ProtoMessage<P : Peer, V : KeyVal> {
+pub enum ProtoMessage<P : Peer> {
   /// Our node pinging plus challenge and message signing
   PING(P,Vec<u8>,Vec<u8>), 
   /// Ping reply with signature with
@@ -81,7 +85,7 @@ pub enum ProtoMessage<P : Peer, V : KeyVal> {
   ///  - Optionnally a challeng for authentifying back (second challenge)
   ///  P is added for reping on lost PING, TODO could be remove and simply origin key in pong
   PONG(P,Vec<u8>,Vec<u8>,Option<Vec<u8>>),
-  /// reply to query of propagate, if no queryid is used it is a node propagate
+/*  /// reply to query of propagate, if no queryid is used it is a node propagate
   STORENODE(Option<QueryID>, Option<DistantEnc<P>>), // reply to synch or asynch query - note no mix in query mode -- no signature, since we go with a ping before adding a node (ping is signed) TODO allow a signing with primitive only for this ?? and possible not ping afterwad
   /// reply to query of propagate, if no queryid is used it is a node propagate
   STOREVALUE(Option<QueryID>, Option<DistantEnc<V>>), // reply to synch or asynch query - note no mix in query mode
@@ -90,7 +94,7 @@ pub enum ProtoMessage<P : Peer, V : KeyVal> {
   /// Query for Peer
   FINDNODE(QueryMsg<P>, P::Key), // int is remaining nb hop -- TODO plus message signing for private node communication (add a primitive to check mess like those
   /// Query for Value
-  FINDVALUE(QueryMsg<P>, V::Key),
+  FINDVALUE(QueryMsg<P>, V::Key),*/
 }
 
 

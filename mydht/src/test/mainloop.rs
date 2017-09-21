@@ -3,6 +3,17 @@
 
 extern crate mydht_tcp_loop;
 extern crate mydht_slab;
+use procs::{
+  ApiCommand,
+  ApiSendIn,
+  MyDHTService,
+};
+use procs::{
+  MainLoopReply,
+  MainLoopCommand,
+};
+use kvcache::KVCache;
+
 use std::sync::Arc;
 use std::mem::replace;
 use std::thread;
@@ -15,7 +26,12 @@ use std::sync::mpsc::{
 };
 
 use std::collections::HashMap;
-use keyval::KeyVal;
+use keyval::{
+  KeyVal,
+  GettableAttachments,
+  SettableAttachments,
+  Attachment,
+};
 use msgenc::json::Json;
 use msgenc::MsgEnc;
 use self::mydht_slab::slab::{
@@ -27,12 +43,19 @@ use self::mydht_tcp_loop::{
 use procs::{
   MyDHTConf,
   RWSlabEntry,
+  ShadowAuthType,
+  Route,
 };
 use procs::{
   PeerCacheEntry,
   ChallengeEntry,
-  ApiCommand,
 };
+use procs::deflocal::{
+  GlobalCommand,
+  DefLocalService,
+  GlobalReply,
+};
+
 use std::net::{SocketAddr,Ipv4Addr};
 use transport::{
   Transport,
@@ -40,12 +63,15 @@ use transport::{
 };
 use node::Node;
 use service::{
+  Service,
+  MioChannel,
   SpawnChannel,
   MpscChannel,
   MpscChannelRef,
   NoChannel,
+  NoRecv,
   LocalRcChannel,
-
+  SpawnerYield,
   SpawnSend,
   LocalRc,
  // MpscSender,
@@ -86,23 +112,106 @@ use utils::{
   CloneRef,
 };
 use simplecache::SimpleCache;
-
+use std::marker::PhantomData;
 use rules::simplerules::{
   SimpleRules,
   DhtRules,
 };
+
+/// test service message
+#[derive(Serialize,Deserialize,Debug)]
+/// Messages between peers
+/// TODO ref variant for send !!!!
+#[serde(bound(deserialize = ""))]
+pub enum TestMessage {
+  Touch,
+}
+impl GettableAttachments for TestMessage {
+  fn get_attachments(&self) -> Vec<&Attachment> {
+    Vec::new()
+  }
+}
+
+impl SettableAttachments for TestMessage {
+  fn attachment_expected_sizes(&self) -> Vec<usize> {
+    Vec::new()
+  }
+  fn set_attachments(& mut self, at : &[Attachment]) -> bool {
+    at.len() == 0
+  }
+}
+
+#[derive(Clone)]
+pub enum TestCommand {
+  Touch,
+}
+
+impl Into<TestCommand> for TestMessage {
+  fn into(self) -> TestCommand {
+    match self {
+      TestMessage::Touch => TestCommand::Touch,
+    }
+  }
+}
+impl Into<TestMessage> for TestCommand {
+  fn into(self) -> TestMessage {
+    match self {
+      TestCommand::Touch => TestMessage::Touch,
+    }
+  }
+}
+
+
+pub struct TestRoute<MDC : MyDHTConf>(PhantomData<MDC>);
+
+
+pub struct TestService<MDC : MyDHTConf>(PhantomData<MDC>);
 
 /// peer name, listener port, is_multiplexed
 pub struct TestMdhtConf (pub String, pub usize, pub bool);
 
 mod test_tcp_all_block_thread {
   use super::*;
+
+  impl Service for TestService<TestMdhtConf> 
+  {
+    type CommandIn = GlobalCommand<TestMdhtConf>;
+    type CommandOut = GlobalReply<TestMdhtConf>;
+    fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+      match req {
+        GlobalCommand(owith,TestCommand::Touch) => {
+          println!("TOUCH!!!")
+        },
+      }
+      Ok(GlobalReply(PhantomData))
+    }
+  }
+  impl Route<TestMdhtConf> for TestRoute<TestMdhtConf> {
+
+    fn route(&mut self, c : TestCommand,_ : &<TestMdhtConf as MyDHTConf>::Slab, cache : &<TestMdhtConf as MyDHTConf>::PeerCache) -> Result<(TestCommand,Vec<usize>)> {
+      let mut res = Vec::new();
+      match c {
+        TestCommand::Touch => {
+          cache.strict_fold_c(&mut res,|res, kv|{
+            if let Some(t) = kv.1.get_write_token() {
+              res.push(t)
+            }
+            res
+          });
+        },
+      }
+      Ok((c,res))
+    }
+  }
+
   impl MyDHTConf for TestMdhtConf {
 
     const loop_name : &'static str = "Conf test spawner";
     const events_size : usize = 1024;
     const send_nb_iter : usize = 1;
-    type MainloopSpawn = ThreadParkRef;// -> failure to send into spawner cf command in of spawner need send so the mpsc channel recv could be send in impl -» need to change command in to commandin as ref :: toref
+    type Route = TestRoute<Self>;
+    type MainloopSpawn = ThreadPark;// -> failure to send into spawner cf command in of spawner need send so the mpsc channel recv could be send in impl -» need to change command in to commandin as ref :: toref
+    //type MainloopSpawn = ThreadParkRef;// -> failure to send into spawner cf command in of spawner need send so the mpsc channel recv could be send in impl -» need to change command in to commandin as ref :: toref
 //    type MainloopSpawn = Blocker;
     //type MainLoopChannelIn = MpscChannelRef;
     type MainLoopChannelIn = MpscChannel;
@@ -112,7 +221,6 @@ mod test_tcp_all_block_thread {
     type Peer = Node;
     type PeerRef = ArcRef<Self::Peer>;
     //type PeerRef = RcRef<Self::Peer>;
-    type KeyVal = Node;
     type PeerMgmtMeths = TestingRules;
     type DHTRules = Arc<SimpleRules>;
     type Slab = Slab<RWSlabEntry<Self>>;
@@ -128,6 +236,23 @@ mod test_tcp_all_block_thread {
    // type WriteSpawn = Blocker;
     type WriteSpawn = ThreadPark;
 
+    // TODO default associated type must be set manually (TODO check if still needed with next
+    // versions)
+    type ProtoMsg = TestMessage;
+    type LocalServiceCommand = TestCommand;
+  /*  type GlobalServiceCommand  = GlobalCommand<Self>; // def
+    type LocalService = DefLocalService<Self>; // def
+    const LOCAL_SERVICE_NB_ITER : usize = 1; // def
+    type LocalServiceSpawn = Blocker; // def
+    type LocalServiceChannelIn = NoChannel; // def*/
+    nolocal!();
+    type GlobalService = TestService<Self>;
+    type GlobalServiceSpawn = ThreadPark;
+    type GlobalServiceChannelIn = MpscChannel;
+    type GlobalDest = NoSend;
+
+
+
     fn init_ref_peer(&mut self) -> Result<Self::PeerRef> {
        let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), self.1 as u16);
        let val = Node {nodeid: self.0.clone(), address : SerSocketAddr(addr)};
@@ -136,8 +261,8 @@ mod test_tcp_all_block_thread {
     }
     fn get_main_spawner(&mut self) -> Result<Self::MainloopSpawn> {
       //Ok(Blocker)
-      //Ok(ThreadPark)
-      Ok(ThreadParkRef)
+      Ok(ThreadPark)
+//      Ok(ThreadParkRef)
     }
 
     fn init_main_loop_slab_cache(&mut self) -> Result<Self::Slab> {
@@ -170,6 +295,12 @@ mod test_tcp_all_block_thread {
       //Ok(Blocker)
     }
 
+    fn init_global_spawner(&mut self) -> Result<Self::GlobalServiceSpawn> {
+      Ok(ThreadPark)
+      //Ok(Blocker)
+    }
+
+
     fn init_write_spawner_out() -> Result<Self::WriteDest> {
       Ok(NoSend)
     }
@@ -201,7 +332,20 @@ mod test_tcp_all_block_thread {
       Ok(Arc::new(SimpleRules::new(DHTRULES_DEFAULT)))
     }
 
+    fn init_global_service(&mut self) -> Result<Self::GlobalService> {
+      Ok(TestService(PhantomData))
+    }
 
+    fn init_global_dest(&mut self) -> Result<Self::GlobalDest> {
+      Ok(NoSend)
+    }
+    fn init_global_channel_in(&mut self) -> Result<Self::GlobalServiceChannelIn> {
+      Ok(MpscChannel)
+    }
+
+    fn init_route(&mut self) -> Result<Self::Route> {
+      Ok(TestRoute(PhantomData))
+    }
 
   }
 
@@ -227,6 +371,9 @@ mod test_tcp_all_block_thread {
   //  thread::sleep_ms(1000); // issue with this sleep : needded
     sendcommand1.send(command).unwrap();
     thread::sleep_ms(1000);
+//    let touch = ApiCommand::local_service(TestCommand::Touch);
+    let touch = ApiCommand::call_service(TestCommand::Touch);
+    sendcommand1.send(touch).unwrap();
 //    sendcommand1.send(command2).unwrap();
 
     // no service to check connection, currently only for testing and debugging : sleep
@@ -235,7 +382,7 @@ mod test_tcp_all_block_thread {
   }
 }
 
-mod test_dummy_all_block_thread {
+/*mod test_dummy_all_block_thread {
   use super::*;
   use std::time::Duration;
   pub struct TestMdhtConf1(pub TestMdhtConf,pub Option<AsynchTransportTest>);
@@ -251,7 +398,6 @@ mod test_dummy_all_block_thread {
     type MsgEnc = Json;
     type Peer = PeerTest;
     type PeerRef = ArcRef<Self::Peer>;
-    type KeyVal = PeerTest;
     type PeerMgmtMeths = TestingRules;
     type DHTRules = Arc<SimpleRules>;
     type Slab = Slab<RWSlabEntry<Self>>;
@@ -263,6 +409,7 @@ mod test_dummy_all_block_thread {
     type WriteDest = NoSend;
     type WriteChannelIn = MpscChannel;
     type WriteSpawn = ThreadPark;
+    type GlobalServiceCommand = GlobalCommand<Self>;
 
     fn init_ref_peer(&mut self) -> Result<Self::PeerRef> {
       Ok(ArcRef::new(PeerTest {
@@ -367,4 +514,4 @@ fn test_connect_l() {
     thread::sleep_ms(10000);
 
   }
-}
+}*/
