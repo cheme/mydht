@@ -330,8 +330,6 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
               replace(&mut self.local_sp, Some((send,nlocal_handle)));
             }
           }
-          // spawn service local with pmess
-          panic!("spawn sloc");
 
         };
         // for initial testing only TODO replace by deser

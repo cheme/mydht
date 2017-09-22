@@ -194,7 +194,7 @@ mod test_tcp_all_block_thread {
         TestCommand::Touch => {
           cache.strict_fold_c(&mut res,|res, kv|{
             if let Some(t) = kv.1.get_write_token() {
-              res.push(t)
+              res.push(t);
             }
             res
           });

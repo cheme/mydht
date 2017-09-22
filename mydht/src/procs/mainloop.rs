@@ -391,7 +391,8 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
   }
 
   fn update_peer(&mut self, pr : MDC::PeerRef, pp : PeerPriority, owtok : Option<usize>, owread : Option<usize>) -> Result<()> {
-    println!("upd pee\n");
+    debug!("Peer added with slab entries : w{:?}, r{:?}",owtok,owread);
+    println!("Peer added with slab entries : w{:?}, r{:?}",owtok,owread);
     let pk = pr.borrow().get_key();
     // TODO conflict for existing peer (close )
     // TODO useless has_val_c : u
@@ -403,14 +404,14 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
       // TODO add a logg for this removeal and one for double read_token
       // TODO clean close??
       // TODO check if read is finished and remove if finished
-      if p_entry.write.get() != CACHE_NO_STREAM {
-        self.slab_cache.remove(p_entry.write.get());
+      if let Some(t) = p_entry.get_write_token() {
+        self.slab_cache.remove(t);
       }
     };
     self.peer_cache.add_val_c(pk, PeerCacheEntry {
       peer : pr,
-      read : Rc::new(Cell::new(owread.unwrap_or(CACHE_NO_STREAM))),
-      write : Rc::new(Cell::new(owtok.unwrap_or(CACHE_NO_STREAM))),
+      read : owread,
+      write : owtok,
       prio : Rc::new(Cell::new(pp)),
     });
     // TODO peer_service update ??? through peer cache ???
@@ -447,6 +448,8 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
         if dests.len() == 0 {
           // TODO log
 
+          debug!("Local command not forwarded, no dest found by route");
+          println!("no dest for command");
           return Ok(());
         }
 
@@ -455,10 +458,10 @@ impl<MDC : MyDHTConf> MDHTState<MDC> {
           if let Some(d) = ldest {
             self.write_stream_send(d,WriteCommand::Service(sc.clone()), <MDC>::init_write_spawner_out()?, None)?;
           }
-          let ldest = Some(dest);
+          ldest = Some(dest);
         }
         if let Some(d) = ldest {
-          self.write_stream_send(ldest.unwrap(),WriteCommand::Service(sc), <MDC>::init_write_spawner_out()?, None)?;
+          self.write_stream_send(d,WriteCommand::Service(sc), <MDC>::init_write_spawner_out()?, None)?;
         }
       },
       MainLoopCommand::TryConnect(dest_address) => {
@@ -828,35 +831,39 @@ pub struct PeerCacheEntry<RP> {
   /// ref peer
   peer : RP,
   ///  if not initialized CACHE_NO_STREAM, if needed in sub process could switch to arc atomicusize
-  read : Rc<Cell<usize>>,
+  read : Option<usize>,
   ///  if not initialized CACHE_NO_STREAM, if 
-  write : Rc<Cell<usize>>,
+  write : Option<usize>,
   /// peer priority
   prio : Rc<Cell<PeerPriority>>,
 }
 
 impl<P> PeerCacheEntry<P> {
   pub fn get_read_token(&self) -> Option<usize> {
-    let v = self.read.get();
+    self.read.clone()
+/*    let v = self.read.get();
     if v < START_STREAM_IX {
       None
     } else {
       Some(v)
-    }
+    }*/
   }
   pub fn get_write_token(&self) -> Option<usize> {
-    let v = self.write.get();
+    self.write.clone()
+/*    let v = self.write.get();
     if v < START_STREAM_IX {
       None
     } else {
       Some(v)
-    }
+    }*/
   }
-  pub fn set_read_token(&self, v : usize) {
-    self.read.set(v)
+  pub fn set_read_token(&mut self, v : usize) {
+    self.read = Some(v)
+//    self.read.set(v)
   }
-  pub fn set_write_token(&self, v : usize) {
-    self.write.set(v)
+  pub fn set_write_token(&mut self, v : usize) {
+    self.write = Some(v)
+//    self.write.set(v)
   }
 }
 
