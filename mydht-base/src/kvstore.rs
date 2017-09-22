@@ -85,7 +85,7 @@ pub trait KVStoreRel2<V : KeyVal<Key=(Self::K1,Self::K2)>> : KVStore<V> {
 /// Storage priority (closely related to rules implementation)
 pub enum StoragePriority {
   /// local only
-  Local, 
+  Local,
   /// depend on rules, but typically mean propagate low up to nb hop
   PropagateL(usize), 
   /// depend on rules, but typically mean propagate high up to nb hop

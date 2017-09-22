@@ -61,7 +61,6 @@ pub trait DHTRules : Sync + Send + 'static {
 
 
 
-
   /// Define if we require authentication, this way Ping/Pong challenge exchange could be skip and peers is
   /// immediatly stored.
   /// So if this function reply no, implementation of challenge, signmsg and checkmsg for

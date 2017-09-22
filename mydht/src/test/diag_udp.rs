@@ -17,7 +17,7 @@ use utils;
 use keyval::KeyVal;
 use std::net::{SocketAddr,Ipv4Addr};
 use kvstore::StoragePriority;
-use query::{QueryConf,QueryMode,QueryChunk,QueryPriority};
+use query::{QueryConf,QueryMode,QueryPriority};
 use super::{
   initpeers,
   ALLTESTMODE,
@@ -108,7 +108,7 @@ fn simpeer1hopfindval_udp () {
     for conf in ALLTESTMODE.iter(){
       let queryconf = QueryConf {
         mode : conf.clone(), 
-        chunk : QueryChunk::None, 
+//        chunk : QueryChunk::None, 
         hop_hist : Some((7,false))
       };
       assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
@@ -140,7 +140,7 @@ fn simpeer2hopfindval_udp () {
     for conf in ALLTESTMODE.iter(){
       let queryconf = QueryConf {
         mode : conf.clone(), 
-        chunk : QueryChunk::None, 
+//        chunk : QueryChunk::None, 
         hop_hist : Some((7,false))
       };
       assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
@@ -171,7 +171,7 @@ fn testpeer2hopfindval_udp () {
     for conf in ALLTESTMODE.iter(){
       let queryconf = QueryConf {
         mode : conf.clone(), 
-        chunk : QueryChunk::None, 
+//        chunk : QueryChunk::None, 
         hop_hist : Some((7,false))
       };
       assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));

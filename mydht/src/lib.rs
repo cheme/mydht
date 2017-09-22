@@ -105,7 +105,7 @@ mod test;
 pub use peer::{PeerPriority,PeerState};
 pub use procs::{DHT, RunningContext, RunningProcesses, ArcRunningContext, RunningTypes};
 pub use procs::{store_val, find_val, find_local_val};
-pub use query::{QueryConf,QueryPriority,QueryMode,QueryChunk,LastSentConf};
+pub use query::{QueryConf,QueryPriority,QueryMode,LastSentConf};
 pub use kvstore::{CachePolicy};
 pub use mydht_base::kvstore::{StoragePriority};
 pub use mydht_base::keyval::{Attachment,SettableAttachment};

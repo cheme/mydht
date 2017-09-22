@@ -1,21 +1,25 @@
 use std::sync::{Arc,Mutex,Condvar};
 use serde::{Serializer,Serialize,Deserializer};
+use serde::de::{DeserializeOwned};
 //use peer::{PeerPriority};
 use time::Duration;
 use time::{self,Timespec};
 use peer::Peer;
 use std::sync::mpsc::{Sender};
-use procs::mesgs::{KVStoreMgmtMessage,PeerMgmtMessage,QueryMgmtMessage};
+use procs::mesgs::{KVStoreMgmtMessage,PeerMgmtMessage};
 use kvstore::CachePolicy;
 use std::collections::VecDeque;
 //use procs::RunningProcesses;
 use keyval::{KeyVal};
 use kvstore::{StoragePriority};
-use utils::Either;
+use utils::{
+  Either,
+  Ref,
+};
+use procs::api::ApiQueryId;
 //use num::traits::ToPrimitive;
 use rules::DHTRules;
 use transport::{ReadTransportStream,WriteTransportStream};
-
 pub use mydht_base::query::*;
 
 pub mod cache;
@@ -39,9 +43,8 @@ pub type LastSentConf = Option<(usize,bool)>; // if bool true then ls hop else l
 #[derive(Clone)]
 /// Internal data type to manage query reply
 pub enum QReply<P : Peer,V> {
-  /// a local thread is waiting for a reply on a condvar
-  /// when querying we start a query and wait on the semaphore (actually a condvar/mutex) for a result
-  Local(QRepLoc<V>),
+  /// send reply to api
+  Local(ApiQueryId,V),
   /// reply should be forwarded given a query conf.
   Dist(QueryMsg<P>,V),
 }
@@ -61,37 +64,22 @@ pub enum QueryHandle<P : Peer, V : KeyVal> {
 
 pub struct QueryConf {
   pub mode : QueryMode,
-  pub chunk : QueryChunk,
+//  pub chunk : QueryChunk,
   pub hop_hist : LastSentConf,
 }
 
 
 
 //#[derive(Clone)]
-///  Query type, it is related to a kind of `Peer` and a `KeyVal`.
 /// The query is seen as ok when all peer reply None or the first peer replies something (if number
-/// of result needed is one (common case), otherwhise n).
-/// TODO !!! move arc mutex in qreply (and non mutex/arc for dist query), plus remove arc
-pub enum Query<P : Peer, V : KeyVal> {
-  /// Querying for peer. With reply info, current query reply value (initiated to None the second
-  /// pair value is the number of replies send (or to send)) and the possible query timeout (a
-  /// must have for managed query).
-  PeerQuery(QReply<P,(Option<Arc<P>>,usize)>, Option<CachePolicy>),
-  /// Querying for KeyVal. Same as `PeerQuery`, with an additional storage policy (pair is local
-  /// plus possible timeout for cache). Typically storage policiy is used to automatically store
-  /// on query with one result needed only, otherwhise application may choose the right result
-  /// and storage may happen later.
-  KVQuery(QReply<P,(Vec<Option<V>>,usize)>, Option<CachePolicy>, (bool, Option<CachePolicy>), usize),
-}  // boolean being pending or not (if not pending and option at none : nothing were found : replace by semaphore // TODO option is not the right type) - TODO replace duration by start time!!
-// to free all semaphore of a query
-
+pub struct Query<P : Peer, V> (QueryID, QReply<P,V>, Option<CachePolicy>);
+/*
 impl<P : Peer, V : KeyVal> QueryHandle<P, V> {
   #[inline]
   /// release query
   pub fn release_query<TR : ReadTransportStream, TW : WriteTransportStream>
   (self, 
    sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>,
-   sq : &Sender<QueryMgmtMessage<P,V>>,
   )
   where PeerMgmtMessage<P,V,TR,TW> : Send {
     debug!("Query handle Full release");
@@ -197,17 +185,18 @@ pub fn wait_query_result (&self) -> Either<Option<Arc<P>>,Vec<Option<V>>> { // T
 
 
 }
+*/
 /// Query methods
-impl<P : Peer, V : KeyVal> Query<P, V> {
+impl<P : Peer,V> Query<P,V> {
    
   pub fn is_local(&self) -> bool {
-    match self {
-      &Query::PeerQuery(QReply::Local(..), _) => true,
-      &Query::KVQuery(QReply::Local(..),_,_,_) => true,
-      _ => false,
+    if let &Query(_,QReply::Local(..),_) = self {
+      true
+    } else {
+      false
     }
   }
-
+/*
   /// get handle for query.
   /// Method does no work when in Asynch mode on dist.
   /// Result should not be send to client (client use querymanager handle or no handle (not local
@@ -228,8 +217,8 @@ impl<P : Peer, V : KeyVal> Query<P, V> {
       },
     }
   }
-
-  #[inline]
+*/
+/*  #[inline]
   /// Reply with current query value TODO might consume query (avoiding some clone and clearer
   /// semantic : check this)!! TODO right now error results in panic, rightfull err mgmet could be
   /// nice
@@ -269,18 +258,17 @@ impl<P : Peer, V : KeyVal> Query<P, V> {
       },
     };
   }
-
+*/
 #[inline] // TODO closure to avoid redundant code??
 // return true if unlock query (so that cache man know it can remove its query
 /// Remove one peer to wait on
 /// return true if there is no remaining query to wait for (so we can release)
-pub fn lessen_query<TR : ReadTransportStream, TW : WriteTransportStream>
-
+pub fn lessen_query
  (&mut self, 
-  i : usize, 
-  sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>)
+  i : usize) 
+//  sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>)
  -> bool
- where PeerMgmtMessage<P,V,TR,TW> : Send {
+ {
   fn minus_val_is_zero(initval : &mut usize, minus : usize) -> bool {
     let nowcount = if minus < *initval {
       *initval - minus
@@ -291,8 +279,9 @@ pub fn lessen_query<TR : ReadTransportStream, TW : WriteTransportStream>
     nowcount == 0
   }
 
+    panic!("TODO del ? ");
   debug!("Query lessen {:?}", i);
-  match self {
+/*  match self {
     &mut Query::PeerQuery(QReply::Local(ref cv),_) => {
           let mut c = &mut cv.1.lock().unwrap().1;
           minus_val_is_zero(c, i)
@@ -307,8 +296,9 @@ pub fn lessen_query<TR : ReadTransportStream, TW : WriteTransportStream>
     &mut Query::KVQuery(QReply::Dist(_, ref mut v),_,_,_) => {
           minus_val_is_zero(&mut v.1, i)
     },
-  }
+  }*/
 }
+/*
 #[inline]
 /// Update query result. If the query is keyval result, the value is send to its KeyVal storage.
 /// It return true if we got enough result, otherwhise false.
@@ -369,27 +359,29 @@ pub fn set_query_result (&mut self, r: Either<Option<Arc<P>>,Option<V>>,
     },
   }
 }
-
+*/
 #[inline]
 /// Get expire date for query (used by cleaning process of query cache).
 pub fn get_expire(&self) -> Option<Timespec> {
-  match self {
+  self.2.map(|cp|cp.0)
+/*  match self {
     &Query::PeerQuery(_, ref q) => q.map(|c|c.0.clone()),
     &Query::KVQuery(_, ref q, _, _) =>  q.map(|c|c.0.clone()),
-  }
+  }*/
 }
 
 #[inline]
 /// Update expire date of query.
 pub fn set_expire(&mut self, expire : Timespec) {
-  let mut d = match self {
+  self.2 = Some(CachePolicy(expire))
+/*  let mut d = match self {
     &mut Query::PeerQuery(_, ref mut q) => q,
     &mut Query::KVQuery(_, ref mut q, _, _) => q,
   };
   if d.is_some() {
     debug!("overriding expire");
   };
-  (*d) = Some(CachePolicy(expire));
+  (*d) = Some(CachePolicy(expire));*/
 }
 
 }
@@ -405,15 +397,16 @@ pub fn init_query<P : Peer, V : KeyVal>
  (nbquer : usize,
  nbresp   : usize,
  lifetime : Duration, 
- replyto : Option<QueryMsg<P>>, 
+ replyto : Option<()>, 
 // senthist : Option<LastSent<P>>, 
 // storepol : (bool,Option<CachePolicy>),
  peerquery : Option<(bool,Option<CachePolicy>)>) 
 -> Query<P,V> {
-  let expire = CachePolicy(time::get_time() + lifetime);
+  panic!("todel");
+/*  let expire = CachePolicy(time::get_time() + lifetime);
   let q : Query<P,V> = match peerquery { 
     None => {
-      let query = match replyto {
+/     let query = match replyto {
         Some(qconf) => 
           QReply::Dist(qconf, (None, nbquer)),
         None =>
@@ -441,7 +434,7 @@ pub fn init_query<P : Peer, V : KeyVal>
         Query::KVQuery(query, Some(expire), storeconf, nbresp)
     },
   };
-  q
+  q*/
 }
 /*
 // for dist query

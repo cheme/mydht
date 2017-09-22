@@ -12,6 +12,7 @@ use std::env;
 use std::path::{Path,PathBuf};
 use std::fs::{self,File};
 use std::io::Result as IoResult;
+use std::result::Result as StdResult;
 //use rand::Rng;
 use rand::thread_rng;
 use std::rc::Rc;
@@ -74,6 +75,15 @@ pub trait Ref<T> : Clone + Borrow<T> {
   fn get_sendable(&self) -> Self::Send;
   fn new(t : T) -> Self;
 }
+/*impl<'de,R> Deserialize<'de> for R 
+where  
+T : Deserialize<'de>,
+R : Ref<T> {
+    fn deserialize<D>(deserializer: D) -> StdResult<Self, D::Error>
+        where D: Deserializer<'de> {
+    }
+}*/
+
 //pub trait ToRef<T, RT : Ref<T>> : Send + Sized + Borrow<T> {
 pub trait ToRef<T, RT : Ref<T>> : Send + Sized + Borrow<T> {
 //  type Ref : Ref<T,Send=Self>;

@@ -1,3 +1,6 @@
+
+use serde::{Serialize};
+use serde::de::{DeserializeOwned};
 use std::collections::{HashMap};
 use std::hash::Hash;
 use query::{QueryID, Query};
@@ -21,7 +24,7 @@ use std::io::{SeekFrom,Write,Read,Seek};
 use std::fs::OpenOptions;
 use rand::{thread_rng,Rng};
 use num::traits::ToPrimitive;
-
+use utils::Ref;
 /*
 //impl<T : KeyVal> KVCache<T> for SimpleCache<T> {
 //impl<T : KeyVal> KVCache for SimpleCache<T> {
@@ -98,7 +101,7 @@ impl<P : Peer, V : KeyVal, C : KVCache<QueryID, Query<P,V>>> QueryCache<P,V> for
       let mut rng = thread_rng();
       // (eg database connection)
       //rng.gen_range(0,65555)
-      rng.next_u64().to_usize().unwrap()
+      rng.next_u64() as usize
     } else {
       // TODO implement ID recycling!!! a stack (plug it in query rem)
       self.lastid += 1;
@@ -154,4 +157,3 @@ impl<P : Peer, V : KeyVal, C : KVCache<QueryID, Query<P,V>>> QueryCache<P,V> for
     remq
   }
 }
-

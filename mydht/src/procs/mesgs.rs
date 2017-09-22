@@ -1,7 +1,7 @@
 //! Message used in channel between processes.
 
 use peer::{Peer,PeerPriority,PeerState,PeerStateChange};
-use query::{Query,QueryID,QueryMsg,QueryChunk,QueryHandle};
+use query::{QueryID,QueryMsg,QueryHandle};
 use std::sync::{Arc};
 //use rustc_serialize::{Encodable,Decodable};
 use keyval::KeyVal;
@@ -61,9 +61,9 @@ pub enum PeerMgmtMessage<P : Peer,V : KeyVal,TR : ReadTransportStream, TW : Writ
   ///  - third is query msg
   ///  - fourth tell if we simply proxy (it is the case when the query just has been added to
   ///  cache)
-  PeerFind(P::Key,Option<Query<P,V>>, QueryMsg<P>, bool),
-  /// Find a value by its key. Similar to `PeerPing`
-  KVFind(V::Key, QueryMsg<P>), // option on query node indicate if it is local or not(must known for asynch) // used for local find or proxied find, , first int is remaining hop, second is nbquery to propagate, query node is used to receive the reply
+//  PeerFind(P::Key,Option<Query<P,V>>, QueryMsg<P>, bool),
+  // Find a value by its key. Similar to `PeerPing`
+//  KVFind(V::Key, QueryMsg<P>), // option on query node indicate if it is local or not(must known for asynch) // used for local find or proxied find, , first int is remaining hop, second is nbquery to propagate, query node is used to receive the reply
     // TODO check that option query is needed for kvfind (or just query)
   /// Shutdown peer cache.
   ShutDown,
@@ -74,16 +74,16 @@ pub enum PeerMgmtMessage<P : Peer,V : KeyVal,TR : ReadTransportStream, TW : Writ
   PeerQueryPlus(Arc<P>),
   /// Same as `PeerQueryPlus` but minus
   PeerQueryMinus(Arc<P>, PhantomData<TR>),
-  /// Store peer depending on queryconf (locally plus possibly propagate)
-  StoreNode(QueryMsg<P>,Option<Arc<P>>), // destination storage node must be in query conf
-  /// Store value depending on queryconf (locally plus possibly propagate)
-  StoreKV(QueryMsg<P>,Option<V>),
+  // Store peer depending on queryconf (locally plus possibly propagate)
+//  StoreNode(QueryMsg<P>,Option<Arc<P>>), // destination storage node must be in query conf
+  // Store value depending on queryconf (locally plus possibly propagate)
+//  StoreKV(QueryMsg<P>,Option<V>),
 
 
   /// for client send message without client thread : should only be used by clienthandle
   ClientMsg(ClientMessage<P,V,TW>,P::Key),
 }
-
+/*
 /// message for query management process
 pub enum QueryMgmtMessage<P : Peer, V : KeyVal + Send> {
   /// add a new query to query cache
@@ -98,33 +98,36 @@ pub enum QueryMgmtMessage<P : Peer, V : KeyVal + Send> {
   PerformClean,
   Lessen(QueryID,usize),
   Release(QueryID), // TODO remove release (first queryhandle lessen should include release code
-}
+}*/
 
 /// message for key value store process
 pub enum KVStoreMgmtMessage<P : Peer, V : KeyVal> {
-  /// add a keyval, with optional reply and possible propagate based on queryconf
-  KVAddPropagate(V,Option<OneResult<bool>>, QueryMsg<P>), // Note that the KeyVal rather be of type Arc<something> otherwhise lot of clone involved - query conf is used to propagate the add
+  // add a keyval, with optional reply and possible propagate based on queryconf
+  //KVAddPropagate(V,Option<OneResult<bool>>, QueryMsg<P>), // Note that the KeyVal rather be of type Arc<something> otherwhise lot of clone involved - query conf is used to propagate the add
   /// add a keyval, with optional reply, and given storing config
   KVAdd(V,Option<OneResult<bool>>, (bool, Option<CachePolicy>)), // Note that the KeyVal rather be of type Arc<something> otherwhise lot of clone involved - query conf is used to propagate the add
   /// look up in stor for a value, reply through optinal query or queryconf reply, propagate like
   /// KVAddPropagate.
   /// last bool is true if query exist (second param) but is not stored in query manager : if we
   /// need to store query (not local query)
-  KVFind(V::Key,Option<Query<P,V>>, QueryMsg<P>), // option on query node indicate if it is local or not(must known for asynch) // if result and query return through query else send to peermanager for proxy
+  //KVFind(V::Key,Option<Query<P,V>>, QueryMsg<P>), // option on query node indicate if it is local or not(must known for asynch) // if result and query return through query else send to peermanager for proxy
   /// like kvadd, act locally only
   KVFindLocally(V::Key,Option<OneResult<Option<V>>>),
     // for simple local find only
 //    KVLocalFind(V::Key, (Condvar,Mutex<V>)),
   Shutdown,
   Commit,
+  TODODEL(P,V),
 }
 
 pub enum PeerMgmtInitMessage<P : Peer,V : KeyVal> {
-  /// Find a peer by its key, (first local lookup, then depending on query conf propagate).
-  PeerFind(P::Key, QueryMsg<P>),
-  /// Find a value by its key. Similar to `PeerPing`
-  KVFind(V::Key, QueryMsg<P>), // option on query node indicate if it is local or not(must known for asynch) // used for local find or proxied find, , first int is remaining hop, second is nbquery to propagate, query node is used to receive the reply
+  TODODEL(P,V),
+  // Find a peer by its key, (first local lookup, then depending on query conf propagate).
+ // PeerFind(P::Key, QueryMsg<P>),
+  // Find a value by its key. Similar to `PeerPing`
+  //KVFind(V::Key, QueryMsg<P>), // option on query node indicate if it is local or not(must known for asynch) // used for local find or proxied find, , first int is remaining hop, second is nbquery to propagate, query node is used to receive the reply
 }
+/*
 impl <P : Peer, V : KeyVal> PeerMgmtInitMessage<P,V> {
   pub fn change_query_id(&mut self, qid : QueryID) {
     match self {
@@ -145,7 +148,7 @@ impl <P : Peer, V : KeyVal> PeerMgmtInitMessage<P,V> {
   }
   // TODO fn to create PeerMgmtMessage from init (consume it)
 }
-
+*/
 
 //pub type ClientMessageIx<P : Peer, V : KeyVal> = (ClientMessage<P,V>,usize);
 pub type ClientMessageIx<P, V, TW> = (ClientMessage<P,V,TW>,usize);
@@ -164,14 +167,14 @@ pub enum ClientMessage<P : Peer, V : KeyVal, TW : WriteTransportStream> {
   // signed challenge
   PeerPong(Vec<u8>),
   /// Find a peer, option on query depends on query mode and is used for error management (lessen
-  /// or not the number of send query)
-  PeerFind(P::Key, QueryHandle<P,V>, QueryMsg<P>),
-  /// find a `KeyVal`
-  KVFind(V::Key, QueryHandle<P,V>, QueryMsg<P>),
+  // or not the number of send query)
+ // PeerFind(P::Key, QueryHandle<P,V>, QueryMsg<P>),
+  // find a `KeyVal`
+//  KVFind(V::Key, QueryHandle<P,V>, QueryMsg<P>),
   /// reply to a find peer or propagate TODO change Option<QueryID> to QueryID
   StoreNode(Option<QueryID>, Option<Arc<P>>), // proxy a request and do some control if needed
   /// reply to a find keyval or propagate
-  StoreKV(Option<QueryID>, QueryChunk, Option<V>), // proxy a request and do some control if needed
+  StoreKV(Option<QueryID>, Option<V>), // proxy a request and do some control if needed
   /// end communication with a peer (using usize index)
   // End(usize), // when issue with receiving on channel or other, use this to drop your client
   /// multiplex peer add, token is managed by peermanager and put in param

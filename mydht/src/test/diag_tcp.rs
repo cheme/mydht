@@ -27,7 +27,7 @@ use rules::simplerules::{DhtRules};
 use node::Node;
 
 use peer::test::TestingRules;
-use query::{QueryConf,QueryMode,QueryChunk,QueryPriority};
+use query::{QueryConf,QueryMode,QueryPriority};
 use peer::PeerMgmtMeths;
 use procs::RunningTypes;
 use std::marker::PhantomData;

@@ -27,6 +27,13 @@ use service::{
   MioSend,
 };
 
+
+/// local apiQuery
+pub struct ApiQuery(ApiQueryId);
+
+#[derive(Clone)]
+pub struct ApiQueryId(usize);
+
 pub enum ApiCommand<MC : MyDHTConf> {
   Mainloop(MainLoopCommand<MC>),
 }

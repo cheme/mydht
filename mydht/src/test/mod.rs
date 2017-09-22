@@ -24,7 +24,7 @@ use peer::test::{
 };
 use keyval::KeyVal;
 use rand::{thread_rng,Rng};
-use query::{QueryConf,QueryMode,QueryChunk,QueryPriority};
+use query::{QueryConf,QueryMode,QueryPriority};
 use kvstore::StoragePriority;
 use msgenc::json::Json;
 use utils::ArcKV;
@@ -72,7 +72,7 @@ fn simu_aproxy_peer_discovery () {
   let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::AProxy,
-    chunk : QueryChunk::None,
+//    chunk : QueryChunk::None,
     hop_hist : Some((4,false)),
   };
   peerconnect_scenario(&qconf, 2, rcs)
@@ -87,7 +87,7 @@ fn simu_amix_proxy_peer_discovery () {
   let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::AMix(9),
-    chunk : QueryChunk::None,
+//    chunk : QueryChunk::None,
     hop_hist : None,
   };
   peerconnect_scenario(&qconf, 2, rcs)
@@ -102,7 +102,7 @@ fn simu_asynch_peer_discovery () {
   let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::Asynch,
-    chunk : QueryChunk::None,
+//    chunk : QueryChunk::None,
     hop_hist : Some((3,true)),
   };
   peerconnect_scenario(&qconf, 2, rcs)
@@ -117,7 +117,7 @@ fn aproxy_peer_discovery () {
   let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::AProxy,
-    chunk : QueryChunk::None,
+//    chunk : QueryChunk::None,
     hop_hist : Some((4,false)),
   };
   peerconnect_test(&qconf, rcs)
@@ -131,7 +131,7 @@ fn amix_proxy_peer_discovery () {
   let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::AMix(9),
-    chunk : QueryChunk::None,
+//    chunk : QueryChunk::None,
     hop_hist : None,
   };
   peerconnect_test(&qconf, rcs)
@@ -145,7 +145,7 @@ fn asynch_peer_discovery () {
   let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::Asynch,
-    chunk : QueryChunk::None,
+//    chunk : QueryChunk::None,
     hop_hist : Some((5,true)),
   };
   peerconnect_test(&qconf, rcs)
@@ -517,7 +517,7 @@ fn simloopget (){ // TODO this only test loop over our node TODO circuit loop t
 fn finddistantpeer<RT : RunningTypes> (peers : Vec<(RT::P,DHT<RT>)>, nbpeer : usize, qm : QueryMode, prio : QueryPriority, map : &[&[usize]], find : bool) {
     let queryconf = QueryConf {
       mode : qm.clone(), 
-      chunk : QueryChunk::None, 
+//      chunk : QueryChunk::None, 
       hop_hist : Some((3,true))
     }; // note that we only unloop to 3 hop 
     let dest = peers.get(nbpeer -1).unwrap().0.clone();
@@ -631,7 +631,7 @@ fn simpeer2hopfindval () {
     for conf in ALLTESTMODE.iter(){
     let queryconf = QueryConf {
       mode : conf.clone(), 
-      chunk : QueryChunk::None, 
+//      chunk : QueryChunk::None, 
       hop_hist : Some((7,false))
     };
     assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
@@ -662,7 +662,7 @@ fn simpeer2hopstoreval () {
     let conf = ALLTESTMODE.get(0).unwrap();
     let queryconf = QueryConf {
       mode : conf.clone(), 
-      chunk : QueryChunk::None, 
+//      chunk : QueryChunk::None, 
       hop_hist : Some((4,true))
     };
     assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
@@ -696,7 +696,7 @@ fn testpeer2hopstoreval () {
     let conf = ALLTESTMODE.get(0).unwrap();
     let queryconf = QueryConf {
       mode : conf.clone(), 
-      chunk : QueryChunk::None, 
+//      chunk : QueryChunk::None, 
       hop_hist : Some((4,true))
     };
     assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
