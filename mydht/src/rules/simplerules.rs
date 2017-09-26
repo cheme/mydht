@@ -1,13 +1,13 @@
 use kvstore::{StoragePriority};
-use time::Duration;
+use std::time::Duration;
 use kvstore::{CachePolicy};
-use query::{QueryPriority,QueryID};
+use query::{QueryPriority,QueryID,QueryMode};
 use rules::DHTRules as DHTRulesIf;
 //use peer::{PeerPriority};
 use std::sync::Mutex;
 use rand::{thread_rng,Rng};
 use num::traits::ToPrimitive;
-use time;
+use std::time::Instant;
 use procs::ClientMode;
 
 pub struct SimpleRules (Mutex<usize>, DhtRules);
@@ -23,16 +23,17 @@ pub struct DhtRules {
   pub randqueryid : bool, // used to conf querycache : remnant from old code, still use in fs
   pub nbhopfact : u8, // nbhop is prio * fact or nbhopfact if normal // TODO invert prio (higher being 1)
   pub nbqueryfact : f32, // nbquery is 1 + query * fact
-  pub lifetime : i64, // seconds of lifetime, static bound
+  pub lifetime : u64, // seconds of lifetime, static bound
   pub lifetimeinc : u8, // increment of lifetime per priority inc
-  pub cleaninterval : Option<i64>, // in seconds if needed
-  pub cacheduration : Option<i64>, // cache in seconds
+  pub cleaninterval : Option<u64>, // in seconds if needed
+  pub cacheduration : Option<u64>, // cache in seconds
   pub cacheproxied : bool, // do you cache proxied result
   pub storelocal : bool, // is result stored locally
   pub storeproxied : Option<usize>, // store only if less than nbhop // TODO implement other alternative (see comment)
   pub heavyaccept : bool,
   pub clientmode : ClientMode,
   pub tunnellength : u8,
+  pub not_found_reply : bool,
   // TODO further params : clientmode, heavy...
 }
 
@@ -47,6 +48,9 @@ impl DHTRulesIf for SimpleRules {
     1
   }
 
+  fn notfoundreply (&self, mode : &QueryMode) -> bool {
+    self.1.not_found_reply
+  }
   // here both a static counter and a rand one just for show // TODO switch QueryID to BigInt
   /*fn newid (&self) -> QueryID {
     if self.1.randqueryid {
@@ -66,7 +70,7 @@ impl DHTRulesIf for SimpleRules {
   }
 
   fn lifetime (&self, prio : QueryPriority) -> Duration {
-    Duration::seconds(self.1.lifetime + (prio * self.1.lifetimeinc).to_i64().unwrap())
+    Duration::from_secs(self.1.lifetime + (prio * self.1.lifetimeinc).to_u64().unwrap())
   }
 
   fn nbquery (&self, prio : QueryPriority) -> u8 {
@@ -74,39 +78,16 @@ impl DHTRulesIf for SimpleRules {
   }
 
   fn asynch_clean(&self) -> Option<Duration> {
-    self.1.cleaninterval.map(|s|Duration::seconds(s))
+    self.1.cleaninterval.map(|s|Duration::from_secs(s))
   }
   
-  fn do_store (&self, islocal : bool, _ : QueryPriority, sprio : StoragePriority, hopnb : Option<usize>) -> (bool,Option<CachePolicy>) {
-    let cacheduration = self.1.cacheduration.map(|s|Duration::seconds(s));
-    let res = match sprio {
-      StoragePriority::Local =>
-        if islocal && self.1.storelocal { (true,cacheduration) } else { (false,cacheduration) },
-      StoragePriority::PropagateL(_) | StoragePriority::PropagateH(_) => 
-        if islocal { (true,cacheduration)  } else {
-          match hopnb {
-            None => (false, None),
-            Some(esthop) => { 
-              match self.1.storeproxied {
-                None => {
-                  (false, None)
-                },
-                Some(hoptresh) => {
-              if esthop > hoptresh {
-                  (false, None)
-              } else {
-                  (false, cacheduration)
-              }
-                },
-              }
-            },
-          }
-        },
-        StoragePriority::Trensiant => (false,cacheduration),
-        StoragePriority::All =>  (true,cacheduration),
-        StoragePriority::NoStore => (false,None),
-      };
-      (res.0, res.1.map(|d| CachePolicy(time::get_time() + d)))
+  fn do_store (&self, islocal : bool, _ : QueryPriority) -> (bool,Option<CachePolicy>) {
+    let cacheduration = self.1.cacheduration.map(|s|CachePolicy(Duration::from_secs(s)));
+    if islocal && self.1.storelocal { 
+      (true,cacheduration) 
+    } else { 
+      (false,cacheduration) 
+    }
   } // wether you need to store the keyval or not
 
   #[inline]

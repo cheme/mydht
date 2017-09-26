@@ -19,6 +19,7 @@ pub trait Cache<K, V> {
   fn add_val_c(& mut self, K, V);
   /// Get value TODO ret ref
   fn get_val_c<'a>(&'a self, &K) -> Option<&'a V>;
+  fn get_val_mut_c<'a>(&'a mut self, &K) -> Option<&'a mut V>;
   fn has_val_c<'a>(&'a self, k : &K) -> bool {
     self.get_val_c(k).is_some()
   }
@@ -200,7 +201,9 @@ impl<K,V> Cache<K,V> for NoCache<K,V> {
   fn get_val_c<'a>(&'a self, _ : &K) -> Option<&'a V> {
     None
   }
-
+  fn get_val_mut_c<'a>(&'a mut self, _ : &K) -> Option<&'a mut V> {
+    None
+  }
   fn remove_val_c(&mut self, _ : &K) -> Option<V> {
     None
   }
@@ -234,6 +237,10 @@ impl<K: Hash + Eq, V> Cache<K,V> for HashMap<K,V> {
   fn get_val_c<'a>(&'a self, key : &K) -> Option<&'a V> {
     self.get(key)
   }
+  fn get_val_mut_c<'a>(&'a mut self, key : &K) -> Option<&'a mut V> {
+    self.get_mut(key)
+  }
+
 
   fn has_val_c<'a>(&'a self, key : &K) -> bool {
     self.contains_key(key)

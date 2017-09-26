@@ -2,8 +2,7 @@ use std::sync::{Arc,Mutex,Condvar};
 use serde::{Serializer,Serialize,Deserializer};
 use serde::de::{DeserializeOwned};
 //use peer::{PeerPriority};
-use time::Duration;
-use time::{self,Timespec};
+use std::time::{Instant,Duration};
 use peer::Peer;
 use std::sync::mpsc::{Sender};
 use procs::mesgs::{KVStoreMgmtMessage,PeerMgmtMessage};
@@ -43,10 +42,10 @@ pub type LastSentConf = Option<(usize,bool)>; // if bool true then ls hop else l
 #[derive(Clone)]
 /// Internal data type to manage query reply
 pub enum QReply<P : Peer,V> {
-  /// send reply to api
-  Local(ApiQueryId,V),
+  /// send reply to api of query id, wait for nb res in vec or nb error
+  Local(ApiQueryId,usize,Vec<V>,usize,QueryPriority),
   /// reply should be forwarded given a query conf.
-  Dist(QueryMsg<P>,V),
+  Dist(QueryModeMsg<P>,usize,Vec<V>,usize),
 }
 
 pub type QRepLoc<V> = Arc<(Condvar, Mutex<V>)>;
@@ -72,7 +71,8 @@ pub struct QueryConf {
 
 //#[derive(Clone)]
 /// The query is seen as ok when all peer reply None or the first peer replies something (if number
-pub struct Query<P : Peer, V> (QueryID, QReply<P,V>, Option<CachePolicy>);
+/// TODO remove QueryID (useless)
+pub struct Query<P : Peer, V> (pub QueryID, pub QReply<P,V>, pub Option<Instant>);
 /*
 impl<P : Peer, V : KeyVal> QueryHandle<P, V> {
   #[inline]
@@ -362,8 +362,8 @@ pub fn set_query_result (&mut self, r: Either<Option<Arc<P>>,Option<V>>,
 */
 #[inline]
 /// Get expire date for query (used by cleaning process of query cache).
-pub fn get_expire(&self) -> Option<Timespec> {
-  self.2.map(|cp|cp.0)
+pub fn get_expire(&self) -> Option<Instant> {
+  self.2.clone()
 /*  match self {
     &Query::PeerQuery(_, ref q) => q.map(|c|c.0.clone()),
     &Query::KVQuery(_, ref q, _, _) =>  q.map(|c|c.0.clone()),
@@ -372,8 +372,8 @@ pub fn get_expire(&self) -> Option<Timespec> {
 
 #[inline]
 /// Update expire date of query.
-pub fn set_expire(&mut self, expire : Timespec) {
-  self.2 = Some(CachePolicy(expire))
+pub fn set_expire(&mut self, expire : Instant) {
+  self.2 = Some(expire)
 /*  let mut d = match self {
     &mut Query::PeerQuery(_, ref mut q) => q,
     &mut Query::KVQuery(_, ref mut q, _, _) => q,

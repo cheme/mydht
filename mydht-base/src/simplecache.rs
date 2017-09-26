@@ -90,12 +90,8 @@ impl<T : KeyVal, C : KVCache<<T as KeyVal>::Key, T>> KVStore<T> for SimpleCache<
   where T::Key : Hash  {
 
   #[inline]
-  fn add_val(& mut self,  v : T, (persistent, _) : (bool, Option<CachePolicy>)){
-    // if cache we should consider caching priority and 
-    // time in cache In fact only for testing cause persistent is not even persistent
-    if persistent {
+  fn add_val(& mut self,  v : T, _ : Option<CachePolicy>) {
       self.cache.add_val_c(v.get_key(), v);
-    }
   }
 
   #[inline]

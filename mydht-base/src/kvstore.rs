@@ -1,19 +1,19 @@
 use serde::{Serializer,Serialize,Deserialize,Deserializer};
 use std::sync::{Arc};
 use keyval::{KeyVal,Key};
-use time::Timespec;
+use std::time::Duration;
 
 
 /// cache policies apply to queries to know how long they may cache before we consider current
 /// result ok. Currently our cache policies are only an expiration date.
 #[derive(Debug,Copy,Clone)]
-pub struct CachePolicy(pub Timespec);
+pub struct CachePolicy(pub Duration);
 
 impl<'de> Deserialize<'de> for CachePolicy {
     fn deserialize<D:Deserializer<'de>> (d : D) -> Result<CachePolicy, D::Error> {
         //d.deserialize_i64().and_then(|sec| d.deserialize_i32().map(|nsec| CachePolicy(Timespec{sec : sec, nsec : nsec})))
-        let (sec,nsec) = <(i64,i32)>::deserialize(d)?;
-        Ok(CachePolicy(Timespec{sec : sec, nsec : nsec}))
+        let (sec,nsec) = <(u64,u32)>::deserialize(d)?;
+        Ok(CachePolicy(Duration::new(sec, nsec)))
     }
 }
 
@@ -21,7 +21,7 @@ impl Serialize for CachePolicy {
     fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
     //    s.serialize_i64(self.0.sec).and_then(|_| s.serialize_i32(self.0.nsec))
 //        self.0.sec.serialize(s)?;
-        (self.0.sec,self.0.nsec).serialize(s)
+        (self.0.as_secs(),self.0.subsec_nanos()).serialize(s)
     }
 }
 
@@ -30,8 +30,8 @@ impl Serialize for CachePolicy {
 /// Storage for `KeyVal`
 pub trait KVStore<V : KeyVal> {
   /// Add value, pair is boolean for do persistent local store, and option for do cache value for
-  /// CachePolicy duration // TODO return MDHTResult<()>
-  fn add_val(& mut self, V, (bool, Option<CachePolicy>));
+  /// CachePolicy duration // TODO return MDHTResult<()> 
+  fn add_val(& mut self, V, Option<CachePolicy>);
   /*  #[inline]
   fn add_val(& mut self, kv : Arc<V>, op : (bool, Option<CachePolicy>)){
     self.c_add_val(kv.get_key(), kv,op)
@@ -83,6 +83,7 @@ pub trait KVStoreRel2<V : KeyVal<Key=(Self::K1,Self::K2)>> : KVStore<V> {
 
 #[derive(Deserialize,Serialize,Debug,Clone,Copy)]
 /// Storage priority (closely related to rules implementation)
+/// TODO delet as currently we run it local only
 pub enum StoragePriority {
   /// local only
   Local,

@@ -60,6 +60,7 @@ const DHTRULES_DEFAULT : DhtRules = DhtRules {
   // TODO client mode param + testing for local tcp and mult tcp in max 2 thread and in pool 2
   // thread
   tunnellength : 3,
+  not_found_reply : true,
 };
 
 

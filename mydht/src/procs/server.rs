@@ -84,7 +84,7 @@ pub fn update_query_conf<P : Peer, R : DHTRules> (qconf  : &mut QueryMsg<P>, r :
 
 /// new query mode to use when proxying a query (not for proxy mode and asynch mode where nothing
 /// change).
-/// The query id is set to 0 (unset) and may need to be replace by querymanager
+/// The query id is set to 0 (unset) and may need to be replace by querymanager TODO remove
 fn new_query_mode<P : Peer> (qm : &QueryModeMsg<P>, me : &Arc<P>) -> QueryModeMsg<P> {
    match qm {
      &QueryModeMsg::AMix(0, _, _)  => 
@@ -483,7 +483,7 @@ fn request_handler_internal <RT : RunningTypes>
       try!(rp.peers.send(PeerMgmtMessage::PeerAuth(node,sign)));
     },
     // asynch mode we do not need to keep trace of the query
-    ProtoMessage::FINDNODE(mut qconf@QueryMsg{ modeinfo : QueryModeMsg::Asynch(..),..}, nid) => {
+    ProtoMessage::FINDNODE(mut qconf@QueryMsg{ mode_info : QueryModeMsg::Asynch(..),..}, nid) => {
       update_query_conf (&mut qconf ,&rc.rules);
       debug!("Asynch Find peer {:?}", nid);
       try!(rp.peers.send(PeerMgmtMessage::PeerFind(nid,None,qconf,false)));
@@ -498,8 +498,8 @@ fn request_handler_internal <RT : RunningTypes>
         // TODO server query initialization is not really efficient it should be done after local
         debug!("Proxying Find peer {:?}", nid);
         let lifetime = rc.rules.lifetime(qp); // TODO special lifetime when hoping?
-        qconf.modeinfo = new_query_mode (&qconf.modeinfo, &rc.me);
-        let nbrep = rc.rules.notfoundtreshold(nbquer,qconf.rem_hop,&qconf.modeinfo.get_mode());
+        qconf.mode_info = new_query_mode (&qconf.modeinfo, &rc.me);
+        let nbrep = rc.rules.notfoundtreshold(nbquer,qconf.rem_hop,&qconf.mode_info.get_mode());
         // Warning here is old qmode stored in conf new mode is for proxied query
         let query : query::Query<RT::P,RT::V> = query::init_query(nbrep, 1, lifetime, Some(old_qconf), None);
         debug!("Asynch Find peer {:?}", nid);
@@ -513,7 +513,7 @@ fn request_handler_internal <RT : RunningTypes>
     //  }
     },
     // particular case for asynch where we skip node during reply process
-    ProtoMessage::FINDVALUE(mut qconf@QueryMsg{ modeinfo : QueryModeMsg::Asynch(..), ..}, nid) => {
+    ProtoMessage::FINDVALUE(mut qconf@QueryMsg{ mode_info : QueryModeMsg::Asynch(..), ..}, nid) => {
       update_query_conf (&mut qconf ,&rc.rules);
       debug!("Asynch Find val {:?}", nid);
       try!(rp.store.send(KVStoreMgmtMessage::KVFind(nid,None,qconf)));
@@ -531,11 +531,11 @@ fn request_handler_internal <RT : RunningTypes>
         debug!("Proxying Find value {:?}", nid);
         let lifetime = rc.rules.lifetime(qp); // TODO special lifetime when hoping
         // TODO same thing for prio that is 
-        queryconf.modeinfo = new_query_mode (&queryconf.modeinfo, &rc.me);
+        queryconf.modeinfo = new_query_mode (&queryconf.mode_info, &rc.me);
         let esthop = (rc.rules.nbhop(oldqp) - oldhop).to_usize().unwrap();
         let store = rc.rules.do_store(false, qp, sprio, Some(esthop)); // first hop
         // TODO conditional from new_query_mode??
-        let nbfrep = rc.rules.notfoundtreshold(queryconf.nb_forw,queryconf.rem_hop,&queryconf.modeinfo.get_mode());
+        let nbfrep = rc.rules.notfoundtreshold(queryconf.nb_forw,queryconf.rem_hop,&queryconf.mode_info.get_mode());
         // Warning here is old qmode stored in conf; new mode is for proxied query
         let query : query::Query<RT::P,RT::V> = query::init_query(nbfrep, nb_req, lifetime, Some(old_qconf), Some(store));
         debug!("Asynch Find val {:?}", nid);

@@ -5,6 +5,7 @@ use peer::{
   PeerMgmtMeths,
   PeerPriority,
 };
+use super::api::ApiQueryId;
 use keyval::{
   KeyVal,
   SettableAttachment,
@@ -263,7 +264,6 @@ impl<MC : MyDHTConf> SToRef<WriteCommand<MC>> for WriteCommandSend<MC>
 }
 
 
-#[derive(Clone)]
 pub enum WriteReply<MDC : MyDHTConf> {
   NoRep,
   Api(ApiReply<MDC>),

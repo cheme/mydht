@@ -1,4 +1,3 @@
-
 use serde::{Serialize};
 use serde::de::{DeserializeOwned};
 use std::collections::{HashMap};
@@ -7,7 +6,7 @@ use query::{QueryID, Query};
 use query::cache::QueryCache;
 //use std::time::Duration;
 use peer::Peer;
-use time;
+use std::time::Instant;
 use keyval::{KeyVal,Key};
 use kvstore::{KVStore,KVStoreRel};
 use kvcache::{KVCache};
@@ -89,6 +88,10 @@ impl<P : Peer, V : KeyVal, C : KVCache<QueryID, Query<P,V>>> QueryCache<P,V> for
   fn query_get(&mut self, qid : &QueryID) -> Option<&Query<P,V>> {
     self.cache.get_val_c(qid)
   }
+  #[inline]
+  fn query_get_mut(&mut self, qid : &QueryID) -> Option<&mut Query<P,V>> {
+    self.cache.get_val_mut_c(qid)
+  }
   fn query_update<F>(&mut self, qid : &QueryID, f : F) -> MDHTResult<bool> where F : FnOnce(&mut Query<P,V>) -> MDHTResult<()> {
     self.cache.update_val_c(qid,f)
   }
@@ -96,7 +99,7 @@ impl<P : Peer, V : KeyVal, C : KVCache<QueryID, Query<P,V>>> QueryCache<P,V> for
   fn query_remove(&mut self, quid : &QueryID) -> Option<Query<P,V>> {
       self.cache.remove_val_c(quid)
   }
-  fn newid (&mut self) -> QueryID {
+  fn new_id (&mut self) -> QueryID {
     if self.randomids {
       let mut rng = thread_rng();
       // (eg database connection)
@@ -112,7 +115,7 @@ impl<P : Peer, V : KeyVal, C : KVCache<QueryID, Query<P,V>>> QueryCache<P,V> for
 
 
   fn cache_clean_nodes(& mut self)-> Vec<Query<P,V>> {
-    let expire = time::get_time();
+    let expire = Instant::now();
     let mut remqid : Vec<QueryID> = Vec::new();
     let mut initexpire : Vec<QueryID> = Vec::new();
     // use of fnmut (should be cleaner with foldm and vec in params
@@ -144,6 +147,7 @@ impl<P : Peer, V : KeyVal, C : KVCache<QueryID, Query<P,V>>> QueryCache<P,V> for
       }
     }*/
     for mut q in initexpire.iter() {
+      // clean cache at next clean : why ?? TODO document it
       self.cache.update_val_c(q,|mut mq| {mq.set_expire(expire); Ok(())});
     };
 

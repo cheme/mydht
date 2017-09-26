@@ -391,7 +391,7 @@ fn peermanager_internal<RT : RunningTypes,
         if rsize == 0 {
           ok = false;
         } else {
-          let qh = if let QueryModeMsg::Asynch(..) = queryconf.modeinfo {
+          let qh = if let QueryModeMsg::Asynch(..) = queryconf.mode_info {
               QueryHandle::NoHandle
            } else {
               QueryHandle::QueryManager(queryconf.get_query_id())
@@ -506,8 +506,8 @@ fn peermanager_internal<RT : RunningTypes,
               // asynch)
               if asyncproxy {
                   debug!("!!!AsyncResult returning {:?}", r); 
-               let recnode = queryconf.modeinfo.get_rec_node();
-                  let mess = ClientMessage::StoreNode(Some(queryconf.modeinfo.get_qid_clone()), r);
+               let recnode = queryconf.mode_info.get_rec_node();
+                  let mess = ClientMessage::StoreNode(Some(queryconf.mode_info.get_qid_clone()), r);
                   let nodeid = recnode.get_key();
                   let upd = !route.has_node(&nodeid) || match route.get_node(&nodeid) {
                     Some(&(_,PeerState::Offline(_), _)) => true,
@@ -549,7 +549,7 @@ fn peermanager_internal<RT : RunningTypes,
               Some(mut query) => {
                 // TODO nf treashold in queryconf?? TODO check this with fail in kvfind (unclear,
                 // overcomplicated)
-                let nftresh = rc.rules.notfoundtreshold(nbquery, remhop, &newqueryconf.modeinfo.get_mode());
+                let nftresh = rc.rules.notfoundtreshold(nbquery, remhop, &newqueryconf.mode_info.get_mode());
                 let nbless = calc_adj(nbquery, rsize, nftresh);
                 // Note that it doesnot prevent unresponsive client
                 if query.lessen_query(nbless,&rp.peers) {
@@ -617,10 +617,10 @@ fn peermanager_internal<RT : RunningTypes,
        return Ok(false);
      },
      PeerMgmtMessage::StoreNode(qconf, result) => {
-       let rec = qconf.modeinfo.get_rec_node();
+       let rec = qconf.mode_info.get_rec_node();
            let nodeid = rec.get_key();
            if nodeid != rc.me.get_key() {
-             let mess = ClientMessage::StoreNode(Some(qconf.modeinfo.get_qid_clone()), result);
+             let mess = ClientMessage::StoreNode(Some(qconf.mode_info.get_qid_clone()), result);
              // TODO this upd check should be only for asynch modes
              let upd = !route.has_node(&nodeid) || match route.get_node(&nodeid) {
                Some(&(_,PeerState::Offline(_), _)) => true,
@@ -648,10 +648,10 @@ fn peermanager_internal<RT : RunningTypes,
      PeerMgmtMessage::StoreKV(qconf, result) => {
        // (query sync over clients(the query contains nothing)) // TODO factorize a fun
        // for proxied msg 
-       let rec = qconf.modeinfo.get_rec_node();
+       let rec = qconf.mode_info.get_rec_node();
            let nodeid = rec.get_key();
            if nodeid != rc.me.get_key() {
-             let mess = ClientMessage::StoreKV(Some(qconf.modeinfo.get_qid_clone()), qconf.chunk, result);
+             let mess = ClientMessage::StoreKV(Some(qconf.mode_info.get_qid_clone()), qconf.chunk, result);
              // TODO this upd check should be only for asynch modes
              let upd = !route.has_node(&nodeid) || match route.get_node(&nodeid) {
                Some(&(_,PeerState::Offline(_), _)) => true,

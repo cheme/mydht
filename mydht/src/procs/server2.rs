@@ -46,6 +46,7 @@ use super::{
   PeerRefSend,
   ShadowAuthType,
   GlobalHandleSend,
+  ApiHandleSend,
 };
 use peer::Peer;
 use keyval::{
@@ -112,6 +113,7 @@ pub struct ReadService<MC : MyDHTConf> {
   local_channel_in : MC::LocalServiceChannelIn,
   read_dest_proto : ReadDest<MC>,
   global_dest_proto : Option<GlobalHandleSend<MC>>,
+  api_dest_proto : Option<ApiHandleSend<MC>>,
 //      dhtrules_proto : conf.init_dhtrules_proto()?,
 }
 
@@ -126,6 +128,7 @@ impl<MC : MyDHTConf> ReadService<MC> {
     local_channel_in : MC::LocalServiceChannelIn,
     read_dest_proto : ReadDest<MC>,
     global_dest_proto : Option<GlobalHandleSend<MC>>,
+    api_dest_proto : Option<ApiHandleSend<MC>>,
     ) -> Self {
   //pub fn new(token :usize, rs : <MC::Transport as Transport>::ReadStream, me : PeerRefSend<MC>, with : Option<PeerRefSend<MC>>, enc : MC::MsgEnc, peermgmt : MC::PeerMgmtMeths) -> Self {
     let is_auth = if MC::AUTH_MODE == ShadowAuthType::NoAuth {
@@ -149,6 +152,7 @@ impl<MC : MyDHTConf> ReadService<MC> {
       local_channel_in : local_channel_in,
       read_dest_proto : read_dest_proto,
       global_dest_proto : global_dest_proto,
+      api_dest_proto : api_dest_proto,
     }
   }
 }
@@ -307,6 +311,7 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
             let (send,recv) = self.local_channel_in.new()?;
             let sender = LocalDest{
               read : self.read_dest_proto.clone(),
+              api : self.api_dest_proto.clone(),
               global : self.global_dest_proto.clone(),
             };
             let local_handle = self.local_spawner.spawn(service, sender, Some(pmess.into()), recv, MDC::LOCAL_SERVICE_NB_ITER)?;

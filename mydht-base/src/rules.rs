@@ -1,12 +1,15 @@
-use time::Duration;
+use std::time::Duration;
+use peer::Peer;
 use query::QueryPriority;
-use query::QueryMode;
+use query::{QueryMode,QueryMsg};
 use kvstore::StoragePriority;
 use kvstore::CachePolicy;
 //use transport::Transport;
 use procs::ClientMode;
 //use procs::ServerMode;
 use num;
+use std::cmp::max;
+use std::cmp::min;
 use num::traits::ToPrimitive;
 use std::sync::Arc;
 use std::ops::Deref;
@@ -25,6 +28,10 @@ pub trait DHTRules : Sync + Send + 'static {
   fn nbhop (&self, QueryPriority) -> u8;
   /// Number of peers to transmit to at each hop, the method is currently called in main peermgmt process, therefore it must be fast (a mapping not a db access).
   fn nbquery (&self, QueryPriority) -> u8;
+
+  /// if reply true not found is replied (faster reply than timeout)
+  fn notfoundreply (&self, mode : &QueryMode) -> bool;
+
   /// Number of no reply requires to consider no result, default implementation is suitable for
   /// many transports, but some may require some tunning depending on network to avoid timeout (for
   /// exemple asynch that is here by default (depth ^ nb_proxy) * 2 / 3 (2 / 3 is a lot it should
@@ -43,14 +50,23 @@ pub trait DHTRules : Sync + Send + 'static {
       _ => nbquer.to_usize().unwrap(),
     }
   }
+  #[inline]
+  fn nb_proxy_with_nb_res<P : Peer>(&self, qm : &QueryMsg<P>) -> (u8,usize) {
+    let nb_proxy = min(qm.nb_forw, qm.nb_res as u8);
+    let nb_for = if qm.nb_res  > qm.nb_forw as usize {
+      (qm.nb_res / qm.nb_forw as usize) + 1
+    } else {
+      1
+    };
+    (nb_proxy,nb_for)
+  }
   /// delay between to cleaning of cache query
   fn asynch_clean(&self) -> Option<Duration>; 
   /// get the lifetime of a query (before clean and possibly no results).
   fn lifetime (&self, prio : QueryPriority) -> Duration;
   /// get the storage rules (a pair with persistent storage as bool plus cache storage as possible
   /// duration), depending on we beeing query originator, query priority, query storage priority
-  /// and possible estimation of the number of hop at this point, very important
-  fn do_store (&self, islocal : bool, qprio : QueryPriority, sprio : StoragePriority, hopnb : Option <usize>) -> (bool,Option<CachePolicy>); // wether you need to store the keyval or not
+  fn do_store (&self, islocal : bool, qprio : QueryPriority) -> (bool,Option<CachePolicy>); // wether you need to store the keyval or not
   /// Most of the time return one, as when proxying we want to decrease by one hop the number of
   /// hop, but sometimes we may by random  this nbhop to be 0 (this way a received query with
   /// seemingly remaining number of hop equal to max number of hop mode may not be send by the
@@ -126,6 +142,11 @@ macro_rules! deref_impl {() => {
     self.deref().nbquery(qp)
   }
   #[inline]
+  fn notfoundreply (&self, mode : &QueryMode) -> bool {
+    self.deref().notfoundreply(mode)
+  }
+ 
+  #[inline]
   fn notfoundtreshold (&self, nbquer : u8, maxhop : u8, mode : &QueryMode) -> usize {
     self.deref().notfoundtreshold(nbquer,maxhop,mode)
   }
@@ -138,8 +159,8 @@ macro_rules! deref_impl {() => {
     self.deref().lifetime(prio)
   }
   #[inline]
-  fn do_store (&self, islocal : bool, qprio : QueryPriority, sprio : StoragePriority, hopnb : Option <usize>) -> (bool,Option<CachePolicy>) {
-    self.deref().do_store(islocal,qprio,sprio,hopnb)
+  fn do_store (&self, islocal : bool, qprio : QueryPriority) -> (bool,Option<CachePolicy>) {
+    self.deref().do_store(islocal,qprio)
   }
   #[inline]
   fn nbhop_dec (&self) -> u8 {

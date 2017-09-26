@@ -6,6 +6,7 @@ use rules::DHTRules;
 use kvstore::StoragePriority;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::mem::replace;
 use utils::{
   Ref,
 };
@@ -32,7 +33,7 @@ pub enum LastSent<P : Peer> {
 pub struct QueryMsg<P : Peer> {
   /// Info required to identify query and its mode
   /// TODO most of internal info should be in queryconfmsg
-  pub modeinfo : QueryModeMsg<P>,
+  pub mode_info : QueryModeMsg<P>,
 //  /// Query chunk
 //  pub chunk : QueryChunk,
   /// history of previous hop for routing (especialy in small non anonymous networks)
@@ -68,8 +69,55 @@ impl<P : Peer> QueryMsg<P> {
     self.rem_hop -= qr.nbhop_dec();
   }
   pub fn get_query_id(&self) -> QueryID {
-    self.modeinfo.get_qid().clone()
+    self.mode_info.get_qid().clone()
   }
+
+  pub fn to_next_hop<QR : DHTRules> (&mut self, p : &P, qid : QueryID, qr : &QR) -> QueryModeMsg<P> {
+    let nbdec = qr.nbhop_dec();
+    self.rem_hop -= nbdec;
+    let n_mode_info = self.mode_info.new_hop(p,qid,nbdec);
+    let o_mode_info = replace(&mut self.mode_info, n_mode_info);
+    let (nb_for, nb_res_for) =  qr.nb_proxy_with_nb_res(self);
+    self.nb_res = nb_res_for;
+    self.nb_forw = nb_for;
+
+    o_mode_info
+
+
+  }
+  /// after getting a route, update query
+  pub fn update_lastsent_conf<RP : Ref<P>>(&mut self,  peers : &Vec<RP>, nbquery : u8) {
+    match self.hop_hist {
+      Some(LastSent::LastSentPeer(maxnb,ref mut lpeers)) => {
+        let totalnb = peers.len() + lpeers.len();
+        if totalnb > maxnb {
+          for _ in 0..(totalnb - maxnb) {
+            lpeers.pop_front();
+          };
+        }else{};
+        for p in peers.iter(){
+          lpeers.push_back(p.borrow().get_key());
+        };
+      },
+      Some(LastSent::LastSentHop(ref mut hop,ref mut lpeers)) => {
+
+        if *hop > 0 {
+          // buffer one more hop
+          *hop -= 1;
+        } else {
+          for _ in 0..nbquery { // this is an approximation (could be less)
+            lpeers.pop_front();
+          };
+        };
+        for p in peers.iter(){
+          lpeers.push_back(p.borrow().get_key());
+        };
+      },
+      None => (),
+    };
+  }
+
+
 }
 
 
@@ -133,6 +181,13 @@ pub enum QueryModeMsg<P : Peer> {
 
 /// Query mode utilities
 impl<R : Peer> QueryModeMsg<R> {
+  pub fn do_store (&self) -> bool {
+    match self {
+      &QueryModeMsg::AProxy (..) => false,
+      &QueryModeMsg::Asynch (..) => true,
+      &QueryModeMsg::AMix (..) => true,
+    }
+  }
   /// get corresponding querymode
   pub fn get_mode (&self) -> QueryMode {
     match self {
@@ -168,14 +223,14 @@ impl<R : Peer> QueryModeMsg<R> {
         }
     }
 
- 
     /// Copy conf with a new qid and peer to reply to : when proxying a managed query we do not use the previous id.
+    /// return bool true if the query need storage
     /// TODO see in mut not better
-    pub fn new_hop<QR : DHTRules> (&self, p : R, qid : QueryID, qr : &QR) -> Self {
+    pub fn new_hop (&self, p : &R, qid : QueryID,nbdec : u8) -> Self {
         match self {
             &QueryModeMsg::AProxy (_,_,_) => QueryModeMsg::AProxy (p.get_key(), p.get_address().clone(), qid),
-            &QueryModeMsg::Asynch (_,_,_) => QueryModeMsg::Asynch (p.get_key(), p.get_address().clone(), qid),
-            &QueryModeMsg::AMix (a,_,_, _) if a > 0 => QueryModeMsg::AMix (a - min(a,qr.nbhop_dec()),p.get_key(), p.get_address().clone(),qid),
+            &QueryModeMsg::Asynch (ref k,ref a,ref qid) => QueryModeMsg::Asynch (k.clone(), a.clone(), qid.clone()),
+            &QueryModeMsg::AMix (a,_,_, _) if a > 0 => QueryModeMsg::AMix (a - min(a,nbdec),p.get_key(), p.get_address().clone(),qid),
             &QueryModeMsg::AMix (_,_,_, _)  => QueryModeMsg::Asynch (p.get_key(), p.get_address().clone(), qid),
         }
     }
@@ -186,6 +241,6 @@ impl<R : Peer> QueryModeMsg<R> {
             &mut QueryModeMsg::AMix (_,_,_,ref mut q) => *q = qid,
         }
     }
- 
+
 }
 

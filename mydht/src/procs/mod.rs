@@ -4,6 +4,12 @@ use peer::{PeerMgmtMeths};
 use query::{self,QueryConf,QueryPriority,QueryMode,QueryModeMsg,LastSent,QueryMsg};
 use rules::DHTRules;
 use kvstore::{StoragePriority, KVStore};
+use procs::api::{
+  ApiQueriable,
+  ApiRepliable,
+  ApiDest,
+  ApiReturn,
+};
 use keyval::{
   KeyVal,
   GettableAttachments,
@@ -125,10 +131,18 @@ pub use self::mainloop::{
 };
 pub use self::api::{
   ApiCommand,
+  ApiReply,
   ApiSendIn,
 };
 
-pub struct MyDHTService<MDC : MyDHTConf>(pub MDC, pub MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>, pub <MDC::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Send,pub MioSend<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Send>);
+/// Optional into trait, use for conversion between message (if into return None the message is not
+/// send)
+pub trait OptInto<T>: Sized {
+  fn can_into(&self) -> bool;
+  fn opt_into(self) -> Option<T>;
+}
+
+pub struct MyDHTService<MC : MyDHTConf>(pub MC, pub MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>, pub <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Send,pub MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>);
 
 #[derive(Clone,Eq,PartialEq)]
 pub enum ShadowAuthType {
@@ -141,8 +155,8 @@ pub enum ShadowAuthType {
   Private,
 }
 
-impl<MDC : MyDHTConf> Service for MyDHTService<MDC> {
-  type CommandIn = MainLoopCommand<MDC>;
+impl<MC : MyDHTConf> Service for MyDHTService<MC> {
+  type CommandIn = MainLoopCommand<MC>;
   type CommandOut = MainLoopReply;
 
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
@@ -161,16 +175,16 @@ impl<MDC : MyDHTConf> Service for MyDHTService<MDC> {
 }
 
 
-pub type RWSlabEntry<MDC : MyDHTConf> = SlabEntry<
-  MDC::Transport,
+pub type RWSlabEntry<MC : MyDHTConf> = SlabEntry<
+  MC::Transport,
 //  (),
-  //SpawnerRefsRead2<ReadService<MDC>, MDC::ReadDest, MDC::ReadChannelIn, MDC::ReadSpawn>,
-  SpawnerRefsDefRecv2<ReadService<MDC>,ReadCommand, ReadDest<MDC>, MDC::ReadChannelIn, MDC::ReadSpawn>,
-//  SpawnerRefs<ReadService<MDC>,MDC::ReadDest,DefaultRecvChannel<ReadCommand,MDC::ReadChannelIn>,MDC::ReadSpawn>,
-  SpawnerRefs2<WriteService<MDC>,WriteCommand<MDC>,MDC::WriteDest,MDC::WriteChannelIn,MDC::WriteSpawn>,
+  //SpawnerRefsRead2<ReadService<MC>, MC::ReadDest, MC::ReadChannelIn, MC::ReadSpawn>,
+  SpawnerRefsDefRecv2<ReadService<MC>,ReadCommand, ReadDest<MC>, MC::ReadChannelIn, MC::ReadSpawn>,
+//  SpawnerRefs<ReadService<MC>,MC::ReadDest,DefaultRecvChannel<ReadCommand,MC::ReadChannelIn>,MC::ReadSpawn>,
+  SpawnerRefs2<WriteService<MC>,WriteCommand<MC>,MC::WriteDest,MC::WriteChannelIn,MC::WriteSpawn>,
   // bool is has_connect
-  (<MDC::WriteChannelIn as SpawnChannel<WriteCommand<MDC>>>::Send,<MDC::WriteChannelIn as SpawnChannel<WriteCommand<MDC>>>::Recv,bool),
-  MDC::PeerRef>;
+  (<MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::Send,<MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::Recv,bool),
+  MC::PeerRef>;
 
 type SpawnerRefs<S : Service,D,CI : SpawnChannel<S::CommandIn>,SP : Spawner<S,D,CI::Recv>> = (SP::Handle,CI::Send); 
 type SpawnerRefs2<S : Service,COM_IN, D,CI : SpawnChannel<COM_IN>,SP : Spawner<S,D,CI::Recv>> = (SP::Handle,CI::Send); 
@@ -183,21 +197,21 @@ type SpawnerRefsRead2<S : Service,D, CI : SpawnChannel<ReadCommand>, RS : Spawne
   R : SpawnRecv<<S as Service>::CommandIn>> {
 */ 
   //CI::Send); 
-type MainLoopRecvIn<MDC : MyDHTConf> = MioRecv<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Recv>;
-type MainLoopSendIn<MDC : MyDHTConf> = MioSend<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Send>;
+type MainLoopRecvIn<MC : MyDHTConf> = MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>;
+type MainLoopSendIn<MC : MyDHTConf> = MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>;
 
 pub enum MainLoopReply {
   /// TODO
   Ended,
 }
 
-pub trait Route<MDC : MyDHTConf> {
+pub trait Route<MC : MyDHTConf> {
   /// if set to true, all function return an expected error and result is receive as a mainloop
   /// command containing the message and tokens
   const USE_SERVICE : bool = false;
   /// return an array of write token as dest TODO refactor to return iterator?? (avoid vec aloc,
   /// allow nice implementation for route)
-  fn route(&mut self, MDC::LocalServiceCommand,&MDC::Slab, &MDC::PeerCache) -> Result<(MDC::LocalServiceCommand,Vec<usize>)>;
+  fn route(&mut self, MC::LocalServiceCommand,&MC::Slab, &MC::PeerCache) -> Result<(MC::LocalServiceCommand,Vec<usize>)>;
 }
 pub type PeerRefSend<MC:MyDHTConf> = <MC::PeerRef as Ref<MC::Peer>>::Send;
 //pub type BorRef<
@@ -215,6 +229,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// little more should be better, in a pool infinite (0) could be fine to.
   const send_nb_iter : usize;
   const GLOBAL_NB_ITER : usize = 0;
+  const API_NB_ITER : usize = 0;
   /// Spawner for main loop
   type MainloopSpawn : Spawner<
     MyDHTService<Self>,
@@ -281,15 +296,17 @@ pub trait MyDHTConf : 'static + Send + Sized
 //  type ProtoMsgSend<'a> : Into<Self::LocalServiceCommand> + SettableAttachments + GettableAttachments;
   /// global service command : by default it should be protoMsg, depending on spawner use, should
   /// be Send or SRef... Local command require clone (sent to multiple peer)
-  type LocalServiceCommand : Into<Self::ProtoMsg> + Clone;
+  type LocalServiceCommand : ApiQueriable + Into<Self::ProtoMsg> + Clone;
+  type LocalServiceReply : ApiRepliable + OptInto<Self::ProtoMsg>;
   /// global service command : by default it should be protoMsg see macro `nolocal`.
   /// For default proxy command, this use a globalCommand struct, the only command to define is
   /// LocalServiceCommand
-  type GlobalServiceCommand : GetOrigin<Self>;// = GlobalCommand<Self>;
+  type GlobalServiceCommand : ApiQueriable + GetOrigin<Self>;// = GlobalCommand<Self>;
+  type GlobalServiceReply : ApiRepliable + OptInto<Self::ProtoMsg>;// = GlobalCommand<Self>;
   // ref for protomsg : need to be compatible with spawners -> this has been disabled, ref will
   // need to be included in service command (which are
-//  type LocalServiceCommandRef : Ref<Self::LocalServiceCommand>;
-//  type GlobalServiceCommandRef : Ref<Self::GlobalServiceCommand>;
+  // type LocalServiceCommandRef : Ref<Self::LocalServiceCommand>;
+  // type GlobalServiceCommandRef : Ref<Self::GlobalServiceCommand>;
   /// Main service spawned from ReadService.
   /// In most use case it is a global service that is used, therefore a default implementation ( see macro `nolocal`). is
   /// defined here (proxy command to global service and spawn locally with no suspend strategie).
@@ -330,6 +347,16 @@ pub trait MyDHTConf : 'static + Send + Sized
   >;
   type GlobalServiceChannelIn : SpawnChannel<Self::GlobalServiceCommand>;
   type GlobalDest : SpawnSend<GlobalReply<Self>>;
+
+  type ApiReturn : Clone + Send + ApiReturn<Self>;
+  type ApiService : Service<CommandIn = ApiCommand<Self>, CommandOut = ApiReply<Self>>;
+  type ApiServiceSpawn : Spawner<
+    Self::ApiService,
+    ApiDest<Self>,
+    <Self::ApiServiceChannelIn as SpawnChannel<ApiCommand<Self>>>::Recv
+  >;
+  type ApiServiceChannelIn : SpawnChannel<ApiCommand<Self>>;
+ 
 
   /// Start the main loop TODO change sender to avoid mainloop proxies (an API sender like for
   /// others services)
@@ -401,13 +428,16 @@ pub trait MyDHTConf : 'static + Send + Sized
   fn init_transport(&mut self) -> Result<Self::Transport>;
   fn init_route(&mut self) -> Result<Self::Route>;
 
-
+  fn init_api_channel_in(&mut self) -> Result<Self::ApiServiceChannelIn>;
+  fn init_api_spawner(&mut self) -> Result<Self::ApiServiceSpawn>;
+  fn init_api_service(&mut self) -> Result<Self::ApiService>;
+ 
 
 }
 
 /// trait for global message to keep reference to read peer
-pub trait GetOrigin<MDC : MyDHTConf> {
-  fn get_origin(&self) -> Option<&MDC::PeerRef>;
+pub trait GetOrigin<MC : MyDHTConf> {
+  fn get_origin(&self) -> Option<&MC::PeerRef>;
 }
 
 /// entry cache for challenge
@@ -892,13 +922,22 @@ fn sphandler_res<A, E : Debug + Display> (res : StdResult<A, E>) {
 }
 
 static NULL_QUERY_ID : usize = 0; // TODO replace by optional value to None!!
-pub type GlobalHandle<MDC : MyDHTConf> = <MDC::GlobalServiceSpawn as Spawner<MDC::GlobalService,MDC::GlobalDest,<MDC::GlobalServiceChannelIn as SpawnChannel<MDC::GlobalServiceCommand>>::Recv>>::Handle;
+pub type GlobalHandle<MC : MyDHTConf> = <MC::GlobalServiceSpawn as Spawner<MC::GlobalService,MC::GlobalDest,<MC::GlobalServiceChannelIn as SpawnChannel<MC::GlobalServiceCommand>>::Recv>>::Handle;
 
-pub type GlobalHandleSend<MDC : MyDHTConf> = HandleSend<<MDC::GlobalServiceChannelIn as SpawnChannel<MDC::GlobalServiceCommand>>::Send,
+pub type GlobalHandleSend<MC : MyDHTConf> = HandleSend<<MC::GlobalServiceChannelIn as SpawnChannel<MC::GlobalServiceCommand>>::Send,
   <<
-    MDC::GlobalServiceSpawn as Spawner<MDC::GlobalService,MDC::GlobalDest,<MDC::GlobalServiceChannelIn as SpawnChannel<MDC::GlobalServiceCommand>>::Recv>>::Handle as 
-    SpawnHandle<MDC::GlobalService,MDC::GlobalDest,<MDC::GlobalServiceChannelIn as SpawnChannel<MDC::GlobalServiceCommand>>::Recv>
+    MC::GlobalServiceSpawn as Spawner<MC::GlobalService,MC::GlobalDest,<MC::GlobalServiceChannelIn as SpawnChannel<MC::GlobalServiceCommand>>::Recv>>::Handle as 
+    SpawnHandle<MC::GlobalService,MC::GlobalDest,<MC::GlobalServiceChannelIn as SpawnChannel<MC::GlobalServiceCommand>>::Recv>
     >::WeakHandle
     >;
+pub type ApiHandle<MC : MyDHTConf> = <MC::ApiServiceSpawn as Spawner<MC::ApiService,ApiDest<MC>,<MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Recv>>::Handle;
+pub type ApiHandleSend<MC : MyDHTConf> = HandleSend<<MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Send,
+  <<
+    MC::ApiServiceSpawn as Spawner<MC::ApiService,ApiDest<MC>,<MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Recv>>::Handle as 
+    SpawnHandle<MC::ApiService,ApiDest<MC>,<MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Recv>
+    >::WeakHandle
+    >;
+
+
 
 

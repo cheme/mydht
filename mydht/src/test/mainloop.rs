@@ -3,6 +3,18 @@
 
 extern crate mydht_tcp_loop;
 extern crate mydht_slab;
+use std::time::Instant;
+use std::time::Duration;
+use utils::OneResult;
+use procs::OptInto;
+use procs::api::{
+  Api,
+  ApiReply,
+  ApiResult,
+  ApiQueriable,
+  ApiQueryId,
+  ApiRepliable,
+};
 use procs::{
   ApiCommand,
   ApiSendIn,
@@ -52,8 +64,8 @@ use procs::{
 };
 use procs::deflocal::{
   GlobalCommand,
-  DefLocalService,
   GlobalReply,
+  DefLocalService,
 };
 
 use std::net::{SocketAddr,Ipv4Addr};
@@ -145,6 +157,18 @@ impl SettableAttachments for TestMessage {
 pub enum TestCommand {
   Touch,
 }
+#[derive(Clone)]
+pub enum TestReply {
+  Touch,
+}
+impl OptInto<TestMessage> for TestReply {
+  fn can_into(&self) -> bool {
+    false
+  }
+  fn opt_into(self) -> Option<TestMessage> {
+    None
+  }
+}
 
 impl Into<TestCommand> for TestMessage {
   fn into(self) -> TestCommand {
@@ -158,6 +182,23 @@ impl Into<TestMessage> for TestCommand {
     match self {
       TestCommand::Touch => TestMessage::Touch,
     }
+  }
+}
+
+impl ApiQueriable for TestCommand {
+  #[inline]
+  fn is_api_reply(&self) -> bool {
+    false
+  }
+  #[inline]
+  fn set_api_reply(&mut self, aid : ApiQueryId) {
+  }
+}
+
+impl ApiRepliable for TestReply {
+  #[inline]
+  fn get_api_reply(&self) -> Option<ApiQueryId> {
+    None
   }
 }
 
@@ -183,7 +224,7 @@ mod test_tcp_all_block_thread {
           println!("TOUCH!!!")
         },
       }
-      Ok(GlobalReply(PhantomData))
+      Ok(GlobalReply(TestReply::Touch))
     }
   }
   impl Route<TestMdhtConf> for TestRoute<TestMdhtConf> {
@@ -240,6 +281,7 @@ mod test_tcp_all_block_thread {
     // versions)
     type ProtoMsg = TestMessage;
     type LocalServiceCommand = TestCommand;
+    type LocalServiceReply = TestReply;
   /*  type GlobalServiceCommand  = GlobalCommand<Self>; // def
     type LocalService = DefLocalService<Self>; // def
     const LOCAL_SERVICE_NB_ITER : usize = 1; // def
@@ -250,6 +292,12 @@ mod test_tcp_all_block_thread {
     type GlobalServiceSpawn = ThreadPark;
     type GlobalServiceChannelIn = MpscChannel;
     type GlobalDest = NoSend;
+    type ApiReturn = OneResult<Option<ApiResult<Self>>>;
+    type ApiService = Api<Self,HashMap<ApiQueryId,(OneResult<Option<ApiResult<Self>>>,Instant)>>;
+
+    type ApiServiceSpawn = ThreadPark;
+    type ApiServiceChannelIn = MpscChannel;
+
 
 
 
@@ -347,6 +395,20 @@ mod test_tcp_all_block_thread {
       Ok(TestRoute(PhantomData))
     }
 
+    fn init_api_service(&mut self) -> Result<Self::ApiService> {
+      Ok(Api(HashMap::new(),Duration::from_millis(3000),0,PhantomData))
+    }
+
+    fn init_api_channel_in(&mut self) -> Result<Self::ApiServiceChannelIn> {
+      Ok(MpscChannel)
+    }
+    fn init_api_spawner(&mut self) -> Result<Self::ApiServiceSpawn> {
+      Ok(ThreadPark)
+      //Ok(Blocker)
+    }
+
+
+
   }
 
 
@@ -372,7 +434,7 @@ mod test_tcp_all_block_thread {
     sendcommand1.send(command).unwrap();
     thread::sleep_ms(1000);
 //    let touch = ApiCommand::local_service(TestCommand::Touch);
-    let touch = ApiCommand::call_service(TestCommand::Touch);
+    let touch = ApiCommand::call_service(GlobalCommand(None,TestCommand::Touch));
     sendcommand1.send(touch).unwrap();
 //    sendcommand1.send(command2).unwrap();
 

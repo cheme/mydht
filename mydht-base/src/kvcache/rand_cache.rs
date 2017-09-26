@@ -65,6 +65,10 @@ impl<K,V, C : KVCache<K,V>> Cache<K, V> for RandCache<K,V,C> {
   fn get_val_c<'a>(&'a self, k : &K) -> Option<&'a V> {
     self.cache.get_val_c(k)
   }
+  fn get_val_mut_c<'a>(&'a mut self, k : &K) -> Option<&'a mut V> {
+    self.cache.get_val_mut_c(k)
+  }
+ 
   fn has_val_c<'a>(&'a self, k : &K) -> bool {
     self.cache.has_val_c(k)
   }
