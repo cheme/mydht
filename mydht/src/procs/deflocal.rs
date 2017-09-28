@@ -56,6 +56,7 @@ use peer::Peer;
 use std::marker::PhantomData;
 
 pub struct GlobalCommand<MC : MyDHTConf>(pub Option<MC::PeerRef>, pub MC::GlobalServiceCommand);
+//pub struct GlobalCommand<PR,GSC>(pub Option<PR>, pub GSC);
 
 pub struct GlobalCommandSend<MC : MyDHTConf>(pub Option<<MC::PeerRef as Ref<MC::Peer>>::Send>, <MC::GlobalServiceCommand as SRef>::Send)
   where MC::GlobalServiceCommand : SRef;
@@ -87,6 +88,16 @@ pub enum GlobalReply<MC : MyDHTConf> {
   NoRep,
   Mult(Vec<GlobalReply<MC>>),
 }
+/*pub enum GlobalReply<P : KeyVal,PR,GSC,GSR> {
+  /// forward command to list of peers or/and to nb peers from route
+  Forward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,usize,GSC),
+  /// reply to api
+  Api(GSR),
+  /// no rep
+  NoRep,
+  Mult(Vec<GlobalReply<P,PR,GSC,GSR>>),
+}*/
+
 
 impl<MC : MyDHTConf> Clone for GlobalCommand<MC> where MC::GlobalServiceCommand : Clone {
   fn clone(&self) -> Self {

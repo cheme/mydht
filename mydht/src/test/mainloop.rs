@@ -5,6 +5,9 @@ extern crate mydht_tcp_loop;
 extern crate mydht_slab;
 use std::time::Instant;
 use std::time::Duration;
+use procs::storeprop::{
+  KVStoreCommand,
+};
 use utils::{
   OneResult,
   new_oneresult,
@@ -159,13 +162,36 @@ impl SettableAttachments for TestMessage {
   }
 }
 
-#[derive(Clone)]
-pub enum TestCommand {
+pub enum TestCommand<MC : MyDHTConf> {
   Touch,
   /// first is query ix, second nb forward for q
   TouchQ(Option<usize>,usize),
   /// param is query ix from which we receive q : this is a distant reply to a touchq
   TouchQR(Option<usize>),
+  Ph(PhantomData<MC>),
+}
+impl<MC : MyDHTConf> Clone for TestCommand<MC> {
+  fn clone(&self) -> Self {
+    match *self {
+      TestCommand::Touch => TestCommand::Touch,
+      TestCommand::TouchQ(a,b) => TestCommand::TouchQ(a,b),
+      TestCommand::TouchQR(a) => TestCommand::TouchQR(a),
+      TestCommand::Ph(..) => TestCommand::Ph(PhantomData),
+    }
+  }
+}
+// communicate peers ??
+impl<MC : MyDHTConf> OptInto<KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>> for TestCommand<MC> {
+  #[inline]
+  fn can_into(&self) -> bool {
+    false
+  }
+
+  #[inline]
+  fn opt_into(self) -> Option<KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>> {
+    None
+  }
+
 }
 #[derive(Clone)]
 pub enum TestReply {
@@ -184,8 +210,8 @@ pub enum TestReply {
   }
 }
 */
-impl Into<TestCommand> for TestMessage {
-  fn into(self) -> TestCommand {
+impl<MC : MyDHTConf> Into<TestCommand<MC>> for TestMessage {
+  fn into(self) -> TestCommand<MC> {
     match self {
       TestMessage::Touch => TestCommand::Touch,
       TestMessage::TouchQ(qid,nbfor) => TestCommand::TouchQ(qid,nbfor),
@@ -193,12 +219,13 @@ impl Into<TestCommand> for TestMessage {
     }
   }
 }
-impl OptInto<TestMessage> for TestCommand {
+impl<MC : MyDHTConf> OptInto<TestMessage> for TestCommand<MC> {
   fn can_into(&self) -> bool {
     match *self {
       TestCommand::Touch => true,
       TestCommand::TouchQ(..) => true,
       TestCommand::TouchQR(..) => true,
+      TestCommand::Ph(..) => false,
     }
   }
   fn opt_into(self) -> Option<TestMessage> {
@@ -206,17 +233,19 @@ impl OptInto<TestMessage> for TestCommand {
       TestCommand::Touch => Some(TestMessage::Touch),
       TestCommand::TouchQ(qid,nbfor) => Some(TestMessage::TouchQ(qid,nbfor)),
       TestCommand::TouchQR(qid) => Some(TestMessage::TouchQR(qid)),
+      TestCommand::Ph(..) => None,
     }
   }
 }
 
-impl ApiQueriable for TestCommand {
+impl<MC : MyDHTConf> ApiQueriable for TestCommand<MC> {
   #[inline]
   fn is_api_reply(&self) -> bool {
     match *self {
       TestCommand::Touch => false,
       TestCommand::TouchQ(qid,_) => true,
       TestCommand::TouchQR(..) => false,
+      TestCommand::Ph(..) => false,
     }
   }
   #[inline]
@@ -225,6 +254,7 @@ impl ApiQueriable for TestCommand {
       TestCommand::Touch => (),
       TestCommand::TouchQ(ref mut qid,_) => *qid = Some(aid.0),
       TestCommand::TouchQR(..) => (),
+      TestCommand::Ph(..) => (),
     }
 
   }
@@ -258,6 +288,7 @@ mod test_tcp_all_block_thread {
     type CommandOut = GlobalReply<TestMdhtConf>;
     fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
       match req {
+        GlobalCommand(_,TestCommand::Ph(..)) => unreachable!(),
         GlobalCommand(owith,TestCommand::Touch) => {
           println!("TOUCH!!!");
           Ok(GlobalReply::NoRep)
@@ -287,12 +318,13 @@ mod test_tcp_all_block_thread {
   }
   impl Route<TestMdhtConf> for TestRoute<TestMdhtConf> {
 
-    fn route_global(&mut self, targetted_nb : usize, c : TestCommand,sl : &<TestMdhtConf as MyDHTConf>::Slab, cache : &<TestMdhtConf as MyDHTConf>::PeerCache) -> Result<(TestCommand,Vec<usize>)> {
+    fn route_global(&mut self, targetted_nb : usize, c : TestCommand<TestMdhtConf>,sl : &<TestMdhtConf as MyDHTConf>::Slab, cache : &<TestMdhtConf as MyDHTConf>::PeerCache) -> Result<(TestCommand<TestMdhtConf>,Vec<usize>)> {
       self.route(targetted_nb,c,sl,cache)
     }
-    fn route(&mut self, targetted_nb : usize, c : TestCommand,_ : &<TestMdhtConf as MyDHTConf>::Slab, cache : &<TestMdhtConf as MyDHTConf>::PeerCache) -> Result<(TestCommand,Vec<usize>)> {
+    fn route(&mut self, targetted_nb : usize, c : TestCommand<TestMdhtConf>,_ : &<TestMdhtConf as MyDHTConf>::Slab, cache : &<TestMdhtConf as MyDHTConf>::PeerCache) -> Result<(TestCommand<TestMdhtConf>,Vec<usize>)> {
       let mut res = Vec::with_capacity(targetted_nb);
       match c {
+        TestCommand::Ph(..) => unreachable!(),
         TestCommand::Touch | TestCommand::TouchQ(..) => {
           cache.strict_fold_c(&mut res,|res, kv|{
             if let Some(t) = kv.1.get_write_token() {
@@ -344,7 +376,7 @@ mod test_tcp_all_block_thread {
     // TODO default associated type must be set manually (TODO check if still needed with next
     // versions)
     type ProtoMsg = TestMessage;
-    type LocalServiceCommand = TestCommand;
+    type LocalServiceCommand = TestCommand<Self>;
     type LocalServiceReply = TestReply;
   /*  type GlobalServiceCommand  = GlobalCommand<Self>; // def
     type LocalService = DefLocalService<Self>; // def

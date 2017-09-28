@@ -75,6 +75,7 @@ pub trait Ref<T> : Clone + Borrow<T> {
   fn get_sendable(&self) -> Self::Send;
   fn new(t : T) -> Self;
 }
+
 /*impl<'de,R> Deserialize<'de> for R 
 where  
 T : Deserialize<'de>,

@@ -5,6 +5,10 @@ use kvstore::StoragePriority;
 use rules::DHTRules;
 use std::time;
 use std::time::Instant;
+use procs::deflocal::{
+  GlobalReply,
+  GlobalCommand,
+};
 use query::cache::{
   QueryCache,
 };
@@ -76,6 +80,11 @@ use utils::{
   Ref,
 };
 
+
+/// kvstore service usable as standard global service
+pub struct KVStoreServiceMD<MC : MyDHTConf,V,S,I,QC> (pub KVStoreService<MC::Peer,MC::PeerRef,V,S,I,MC::DHTRules,QC>);
+
+/// kvstore service inner implementation
 pub struct KVStoreService<P,RP,V,S,I,DR,QC> {
 //pub struct KVStoreService<V : KeyVal, S : KVStore<V>> {
   /// Fn to init store, is expected to be called only once (so returning error at second call
@@ -148,11 +157,12 @@ pub enum KVStoreCommand<P : Peer, V : KeyVal, PR : Ref<P>> {
   StoreLocally(V,QueryPriority,ApiQueryId),
 }
 
-pub struct GlobalCommand<MC : MyDHTConf>(pub Option<MC::PeerRef>, pub MC::GlobalServiceCommand);
-/*impl<MDC : MyDHTConf,V : KeyVal> Into<KVStoreCommand<MDC::Peer,MDC::KeyVal,MDC:PeerRef>> GlobalCommand<MDC> {
-  fn into(self) -> KVStoreCommand<MDC:Peer,MDC:KeyVal,MDC:PeerRef> {
-  }
-}*/
+  
+
+
+//type GlobalServiceCommand : ApiQueriable + OptInto<Self::ProtoMsg> + OptInto<KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>> + Clone;// = GlobalCommand<Self>;
+
+
 pub enum KVStoreReply<P : Peer, V : KeyVal, PR : Ref<P>> {
   Nope,
   Found(QueryModeMsg<P>, Option<PR>, V),
@@ -165,6 +175,42 @@ pub enum KVStoreReply<P : Peer, V : KeyVal, PR : Ref<P>> {
   ProxyQuery(QueryMsg<P>, <V as KeyVal>::Key),
 }
 
+/*
+//KVStoreCommand<MC::Peer,V,MC::PeerRef>
+impl<
+  MC : MyDHTConf,
+  V : KeyVal, 
+  S : KVStore<V>, 
+  F : Fn() -> Result<S> + Send + 'static,
+  QC : QueryCache<MC::Peer,V,MC::PeerRef>,
+  > Service for KVStoreServiceMD<MC,V,S,F,QC> 
+  where MC::GlobalServiceCommand : Into<KVStoreCommand<MC::Peer,V,MC::PeerRef>>
+{
+  type CommandIn = GlobalCommand<MC>;
+  type CommandOut = KVStoreReply<MC::Peer,V,MC::PeerRef>;
+/*
+  pub enum GlobalReply<MC : MyDHTConf> {
+  /// forward command to list of peers or/and to nb peers from route
+  Forward(Option<Vec<MC::PeerRef>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,MC::GlobalServiceCommand),
+  /// reply to api
+  Api(MC::GlobalServiceReply),
+  /// no rep
+  NoRep,
+  Mult(Vec<GlobalReply<MC>>),
+}
+*/
+
+  fn call<Y : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut Y) -> Result<Self::CommandOut> {
+    let GlobalCommand(owith,cmd) = req;
+    let c = match cmd.into() {
+      KVStoreCommand::Find(a,b,c,_) => KVStoreCommand::Find(a,b,c,owith),
+      c => c,
+    };
+
+    self.0.call(c,async_yield)
+  }
+}
+*/
 impl<
   P : Peer,
   RP : Ref<P>,

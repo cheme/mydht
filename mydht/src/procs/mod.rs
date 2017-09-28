@@ -3,7 +3,14 @@ use std::borrow::Borrow;
 use peer::{PeerMgmtMeths};
 use query::{self,QueryConf,QueryPriority,QueryMode,QueryModeMsg,LastSent,QueryMsg};
 use rules::DHTRules;
-use kvstore::{StoragePriority, KVStore};
+use kvstore::{
+  StoragePriority, 
+  KVStore,
+};
+use procs::storeprop::{
+  KVStoreCommand,
+  KVStoreService,
+};
 use procs::api::{
   ApiQueriable,
   ApiRepliable,
@@ -308,7 +315,8 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// For default proxy command, this use a globalCommand struct, the only command to define is
   /// LocalServiceCommand
   /// Need clone to be forward to multiple peers
-  type GlobalServiceCommand : ApiQueriable + OptInto<Self::ProtoMsg> + Clone;// = GlobalCommand<Self>;
+  /// Opt into store of peer command to route those command if global command allows it
+  type GlobalServiceCommand : ApiQueriable + OptInto<Self::ProtoMsg> + OptInto<KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>> + Clone;// = GlobalCommand<Self>;
   type GlobalServiceReply : ApiRepliable;// = GlobalCommand<Self>;
   // ref for protomsg : need to be compatible with spawners -> this has been disabled, ref will
   // need to be included in service command (which are
