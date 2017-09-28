@@ -211,8 +211,11 @@ pub trait Route<MC : MyDHTConf> {
   const USE_SERVICE : bool = false;
   /// return an array of write token as dest TODO refactor to return iterator?? (avoid vec aloc,
   /// allow nice implementation for route)
-  fn route(&mut self, MC::LocalServiceCommand,&MC::Slab, &MC::PeerCache) -> Result<(MC::LocalServiceCommand,Vec<usize>)>;
+  /// second param usize is targetted nb forward
+  fn route(&mut self, usize, MC::LocalServiceCommand,&MC::Slab, &MC::PeerCache) -> Result<(MC::LocalServiceCommand,Vec<usize>)>;
+  fn route_global(&mut self, usize, MC::GlobalServiceCommand,&MC::Slab, &MC::PeerCache) -> Result<(MC::GlobalServiceCommand,Vec<usize>)>;
 }
+
 pub type PeerRefSend<MC:MyDHTConf> = <MC::PeerRef as Ref<MC::Peer>>::Send;
 //pub type BorRef<
 pub trait MyDHTConf : 'static + Send + Sized 
@@ -297,11 +300,14 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// global service command : by default it should be protoMsg, depending on spawner use, should
   /// be Send or SRef... Local command require clone (sent to multiple peer)
   type LocalServiceCommand : ApiQueriable + Into<Self::ProtoMsg> + Clone;
+  /// OptInto proto for forwarding query to other peers TODO looks useless as service command for
+  /// it -> TODO consider removal after impl
   type LocalServiceReply : ApiRepliable + OptInto<Self::ProtoMsg>;
   /// global service command : by default it should be protoMsg see macro `nolocal`.
   /// For default proxy command, this use a globalCommand struct, the only command to define is
   /// LocalServiceCommand
-  type GlobalServiceCommand : ApiQueriable + GetOrigin<Self>;// = GlobalCommand<Self>;
+  /// Need clone to be forward to multiple peers
+  type GlobalServiceCommand : ApiQueriable + Into<Self::ProtoMsg> + Clone;// = GlobalCommand<Self>;
   type GlobalServiceReply : ApiRepliable + OptInto<Self::ProtoMsg>;// = GlobalCommand<Self>;
   // ref for protomsg : need to be compatible with spawners -> this has been disabled, ref will
   // need to be included in service command (which are
@@ -338,14 +344,14 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// Main Service for the application, most of the time it is composed of several service (except
   /// peer management).
   /// Global service is initiated with from peer only, dest peer must be in service command.
-  type GlobalService : Service<CommandIn = Self::GlobalServiceCommand, CommandOut = GlobalReply<Self>>;
+  type GlobalService : Service<CommandIn = GlobalCommand<Self>, CommandOut = GlobalReply<Self>>;
   /// GlobalService is spawned from the main loop, and most of the time should use its own thread.
   type GlobalServiceSpawn : Spawner<
     Self::GlobalService,
     Self::GlobalDest,
-    <Self::GlobalServiceChannelIn as SpawnChannel<Self::GlobalServiceCommand>>::Recv
+    <Self::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<Self>>>::Recv
   >;
-  type GlobalServiceChannelIn : SpawnChannel<Self::GlobalServiceCommand>;
+  type GlobalServiceChannelIn : SpawnChannel<GlobalCommand<Self>>;
   type GlobalDest : SpawnSend<GlobalReply<Self>>;
 
   type ApiReturn : Clone + Send + ApiReturn<Self>;
@@ -922,12 +928,12 @@ fn sphandler_res<A, E : Debug + Display> (res : StdResult<A, E>) {
 }
 
 static NULL_QUERY_ID : usize = 0; // TODO replace by optional value to None!!
-pub type GlobalHandle<MC : MyDHTConf> = <MC::GlobalServiceSpawn as Spawner<MC::GlobalService,MC::GlobalDest,<MC::GlobalServiceChannelIn as SpawnChannel<MC::GlobalServiceCommand>>::Recv>>::Handle;
+pub type GlobalHandle<MC : MyDHTConf> = <MC::GlobalServiceSpawn as Spawner<MC::GlobalService,MC::GlobalDest,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>>::Handle;
 
-pub type GlobalHandleSend<MC : MyDHTConf> = HandleSend<<MC::GlobalServiceChannelIn as SpawnChannel<MC::GlobalServiceCommand>>::Send,
+pub type GlobalHandleSend<MC : MyDHTConf> = HandleSend<<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Send,
   <<
-    MC::GlobalServiceSpawn as Spawner<MC::GlobalService,MC::GlobalDest,<MC::GlobalServiceChannelIn as SpawnChannel<MC::GlobalServiceCommand>>::Recv>>::Handle as 
-    SpawnHandle<MC::GlobalService,MC::GlobalDest,<MC::GlobalServiceChannelIn as SpawnChannel<MC::GlobalServiceCommand>>::Recv>
+    MC::GlobalServiceSpawn as Spawner<MC::GlobalService,MC::GlobalDest,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>>::Handle as 
+    SpawnHandle<MC::GlobalService,MC::GlobalDest,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>
     >::WeakHandle
     >;
 pub type ApiHandle<MC : MyDHTConf> = <MC::ApiServiceSpawn as Spawner<MC::ApiService,ApiDest<MC>,<MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Recv>>::Handle;

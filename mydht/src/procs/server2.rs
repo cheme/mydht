@@ -158,16 +158,16 @@ impl<MC : MyDHTConf> ReadService<MC> {
 }
 
 
-impl<MDC : MyDHTConf> Service for ReadService<MDC> {
+impl<MC : MyDHTConf> Service for ReadService<MC> {
   type CommandIn = ReadCommand;
-  type CommandOut = ReadReply<MDC>;
+  type CommandOut = ReadReply<MC>;
 
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
     let mut stream = ReadYield(&mut self.stream, async_yield);
     match req {
       ReadCommand::Run => {
         if !self.is_auth {
-          let mut shad = match MDC::AUTH_MODE {
+          let mut shad = match MC::AUTH_MODE {
             ShadowAuthType::NoAuth => {
               /*self.is_auth = true;
               return self.call(req,async_yield);*/
@@ -185,7 +185,7 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
           shad_read_header(&mut shad, &mut stream)?;
           // read in single pass
           // TODO specialize ping pong messages with MaxSize. - 
-          let msg : ProtoMessage<MDC::Peer> = receive_msg(&mut stream, &self.enc, &mut shad)?;
+          let msg : ProtoMessage<MC::Peer> = receive_msg(&mut stream, &self.enc, &mut shad)?;
 
           match msg {
             ProtoMessage::PING(mut p, chal, sig) => {
@@ -205,13 +205,13 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
                   self.prio = Some(peer_prio.clone());
                   if peer_prio == PeerPriority::Unchecked {
                     // send accept query to peermgmt service : it will update cache
-                    let pref = MDC::PeerRef::new(p);
+                    let pref = MC::PeerRef::new(p);
                     return Ok(ReadReply::PeerMgmt(PeerMgmtCommand::Accept(pref.clone(),MainLoopCommand::NewPeerChallenge(pref,peer_prio,self.token,chal))));
                   } else {
                     // send RefPeer to peermgmt with new priority
-//                    return Ok(ReadReply::PeerMgmt(PeerMgmtCommand::NewPrio(MDC::PeerRef::new(p),peer_prio)))
-//                    return Ok(ReadReply::NewPeer(MDC::PeerRef::new(p),peer_prio,self.token,chal))
-                    return Ok(ReadReply::MainLoop(MainLoopCommand::NewPeerChallenge(MDC::PeerRef::new(p),peer_prio,self.token,chal)));
+//                    return Ok(ReadReply::PeerMgmt(PeerMgmtCommand::NewPrio(MC::PeerRef::new(p),peer_prio)))
+//                    return Ok(ReadReply::NewPeer(MC::PeerRef::new(p),peer_prio,self.token,chal))
+                    return Ok(ReadReply::MainLoop(MainLoopCommand::NewPeerChallenge(MC::PeerRef::new(p),peer_prio,self.token,chal)));
                   }
                 } else {
                   // send refuse peer with token to mainloop 
@@ -240,7 +240,7 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
                       self.prio = Some(peer_prio.clone());
                       if peer_prio == PeerPriority::Unchecked {
                           // send accept query to peermgmt service : it will update cache
-                          let pref = MDC::PeerRef::new(withpeer);
+                          let pref = MC::PeerRef::new(withpeer);
                           // not really auth actually : could still be refused, but message
                           // received next will not be auth message (service drop on failure so if
                           // new connect it is on new service)
@@ -258,7 +258,7 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
                   },
                 };
                 self.is_auth = true;
-                let pref = MDC::PeerRef::new(withpeer);
+                let pref = MC::PeerRef::new(withpeer);
                 //self.with = Some(pref.get_sendable());
                 self.with = Some(pref.clone());
                 return Ok(ReadReply::MainLoop(MainLoopCommand::NewPeerUncheckedChallenge(pref,prio,self.token,initial_chal,next_chal)));
@@ -271,7 +271,7 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
         } else {
           // init shad if needed
           if self.shad_msg.is_none() {
-            let mut shad = match MDC::AUTH_MODE {
+            let mut shad = match MC::AUTH_MODE {
               ShadowAuthType::NoAuth => {
                 self.from.borrow().get_shadower_r_msg()
               },
@@ -286,7 +286,7 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
             self.shad_msg = Some(shad);
           }
           let shad = self.shad_msg.as_mut().unwrap();
-          let mut pmess : MDC::ProtoMsg = receive_msg_msg(&mut stream, &self.enc, shad)?;
+          let mut pmess : MC::ProtoMsg = receive_msg_msg(&mut stream, &self.enc, shad)?;
           let atts_s = pmess.attachment_expected_sizes();
           if atts_s.len() > 0 {
             let mut atts = Vec::with_capacity(atts_s.len());
@@ -307,14 +307,14 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
               Some(pmess) 
             }
           } else {
-            let service = MDC::init_local_service(self.from.clone(),self.with.clone())?;
+            let service = MC::init_local_service(self.from.clone(),self.with.clone())?;
             let (send,recv) = self.local_channel_in.new()?;
             let sender = LocalDest{
               read : self.read_dest_proto.clone(),
               api : self.api_dest_proto.clone(),
               global : self.global_dest_proto.clone(),
             };
-            let local_handle = self.local_spawner.spawn(service, sender, Some(pmess.into()), recv, MDC::LOCAL_SERVICE_NB_ITER)?;
+            let local_handle = self.local_spawner.spawn(service, sender, Some(pmess.into()), recv, MC::LOCAL_SERVICE_NB_ITER)?;
             self.local_sp = Some((send,local_handle));
             None
           };
@@ -325,12 +325,12 @@ impl<MDC : MyDHTConf> Service for ReadService<MDC> {
               let nlocal_handle = if res.is_err() {
                 // TODO log try restart ???
                 // reinit service, reuse receiver as may not be empty (do not change our send)
-                let service = MDC::init_local_service(self.from.clone(),self.with.clone())?;
+                let service = MC::init_local_service(self.from.clone(),self.with.clone())?;
                 // TODO reinit channel and sender plus empty receiver in sender seems way better!!!
-                self.local_spawner.spawn(service, sender, Some(pmess.into()), receiver, MDC::LOCAL_SERVICE_NB_ITER)?
+                self.local_spawner.spawn(service, sender, Some(pmess.into()), receiver, MC::LOCAL_SERVICE_NB_ITER)?
               } else {
                 // restart
-                self.local_spawner.spawn(service, sender, Some(pmess.into()), receiver, MDC::LOCAL_SERVICE_NB_ITER)?
+                self.local_spawner.spawn(service, sender, Some(pmess.into()), receiver, MC::LOCAL_SERVICE_NB_ITER)?
               };
               replace(&mut self.local_sp, Some((send,nlocal_handle)));
             }
@@ -368,15 +368,15 @@ pub enum ReadReply<MC : MyDHTConf> {
   NoReply,
 }
 
-pub struct ReadDest<MDC : MyDHTConf> {
-  pub mainloop : MioSend<<MDC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MDC>>>::Send>,
+pub struct ReadDest<MC : MyDHTConf> {
+  pub mainloop : MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>,
   // TODO switch to optionnal handle send similar to write
-  pub peermgmt : <MDC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MDC>>>::Send,
-  pub write : Option<WriteHandleSend<MDC>>,
+  pub peermgmt : <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send,
+  pub write : Option<WriteHandleSend<MC>>,
   pub read_token : usize,
 }
 
-impl<MDC : MyDHTConf> Clone for ReadDest<MDC> {
+impl<MC : MyDHTConf> Clone for ReadDest<MC> {
     fn clone(&self) -> Self {
       ReadDest{
         mainloop : self.mainloop.clone(),
@@ -386,9 +386,9 @@ impl<MDC : MyDHTConf> Clone for ReadDest<MDC> {
       }
     }
 }
-impl<MDC : MyDHTConf> SpawnSend<ReadReply<MDC>> for ReadDest<MDC> {
+impl<MC : MyDHTConf> SpawnSend<ReadReply<MC>> for ReadDest<MC> {
   const CAN_SEND : bool = true;
-  fn send(&mut self, r : ReadReply<MDC>) -> Result<()> {
+  fn send(&mut self, r : ReadReply<MC>) -> Result<()> {
     match r {
       ReadReply::MainLoop(mlc) => {
         self.mainloop.send(mlc)?

@@ -33,8 +33,8 @@ extern crate mio;
 #[macro_export]
 macro_rules! nolocal(() => (
 
-    type GlobalServiceCommand  = GlobalCommand<Self>; // def
-    type GlobalServiceReply  = GlobalReply<Self>; // def
+    type GlobalServiceCommand = Self::LocalServiceCommand; // def
+    type GlobalServiceReply  = Self::LocalServiceReply; // def
     type LocalService = DefLocalService<Self>; // def
     const LOCAL_SERVICE_NB_ITER : usize = 1; // def
     type LocalServiceSpawn = Blocker; // def

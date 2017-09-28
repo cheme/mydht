@@ -25,6 +25,13 @@ use super::{
 use transport::{
   Transport,
 };
+use super::deflocal::{
+  GlobalCommand,
+  GlobalCommandSend,
+  GlobalReply,
+};
+
+
 use service::{
   HandleSend,
   Service,
@@ -78,7 +85,7 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
       ApiCommand::Failure(..) => {
         panic!("TODO implement : return error to oneresult");
       },
-      ApiCommand::LocalServiceCommand(mut lsc,ret) => {
+      ApiCommand::LocalServiceCommand(mut lsc,nb_for,ret) => {
         if lsc.is_api_reply() {
           self.2 += 1;
           let qid = ApiQueryId(self.2);
@@ -86,7 +93,7 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
           let end = Instant::now() + self.1;
           self.0.add_val_c(qid.clone(),(ret,end));
         }
-        ApiReply::ProxyMainloop(MainLoopCommand::ForwardServiceLocal(lsc))
+        ApiReply::ProxyMainloop(MainLoopCommand::ForwardServiceLocal(lsc,nb_for))
       },
       ApiCommand::GlobalServiceCommand(mut gsc,ret) => {
         if gsc.is_api_reply() {
@@ -123,13 +130,13 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
 }
 
 #[derive(Clone,PartialEq,Eq,Hash)]
-pub struct ApiQueryId(usize);
+pub struct ApiQueryId(pub usize);
 
 pub enum ApiCommand<MC : MyDHTConf> {
   Mainloop(MainLoopCommand<MC>),
   Failure(Option<ApiQueryId>,Error),
-  LocalServiceCommand(MC::LocalServiceCommand,MC::ApiReturn),
-  GlobalServiceCommand(MC::GlobalServiceCommand,MC::ApiReturn),
+  LocalServiceCommand(MC::LocalServiceCommand,usize,MC::ApiReturn),
+  GlobalServiceCommand(GlobalCommand<MC>,MC::ApiReturn),
   LocalServiceReply(MC::LocalServiceReply),
   GlobalServiceReply(MC::GlobalServiceReply),
 }
@@ -143,20 +150,20 @@ impl<MC : MyDHTConf> ApiCommand<MC> {
     ApiCommand::Mainloop(MainLoopCommand::TryConnect(ad))
   }
   pub fn call_service_reply(mut c : MC::GlobalServiceCommand, ret : MC::ApiReturn) -> ApiCommand<MC> {
-    ApiCommand::GlobalServiceCommand(c,ret)
+    ApiCommand::GlobalServiceCommand(GlobalCommand(None,c),ret)
   }
  
   pub fn call_service(mut c : MC::GlobalServiceCommand) -> ApiCommand<MC> {
-    let cmd = MainLoopCommand::ProxyGlobal(c);
+    let cmd = MainLoopCommand::ProxyGlobal(GlobalCommand(None,c));
     ApiCommand::Mainloop(cmd)
   }
  
-  pub fn call_service_local(mut c : MC::LocalServiceCommand) -> ApiCommand<MC> {
-    let cmd = MainLoopCommand::ForwardServiceLocal(c);
+  pub fn call_service_local(mut c : MC::LocalServiceCommand, nb_for : usize) -> ApiCommand<MC> {
+    let cmd = MainLoopCommand::ForwardServiceLocal(c,nb_for);
     ApiCommand::Mainloop(cmd)
   }
-  pub fn call_service_local_reply(mut c : MC::LocalServiceCommand, ret : MC::ApiReturn) -> ApiCommand<MC> {
-    ApiCommand::LocalServiceCommand(c,ret)
+  pub fn call_service_local_reply(mut c : MC::LocalServiceCommand, nb_for : usize, ret : MC::ApiReturn) -> ApiCommand<MC> {
+    ApiCommand::LocalServiceCommand(c,nb_for,ret)
   }
 
 }
@@ -173,6 +180,20 @@ pub enum ApiReply<MC : MyDHTConf> {
 pub enum ApiResult<MC : MyDHTConf> {
   LocalServiceReply(MC::LocalServiceReply),
   GlobalServiceReply(MC::GlobalServiceReply),
+  NoResult,
+}
+
+impl<MC : MyDHTConf> Clone for ApiResult<MC> 
+where MC::LocalServiceReply : Clone,
+      MC::GlobalServiceReply : Clone,
+{
+  fn clone(&self) -> Self {
+    match *self {
+      ApiResult::LocalServiceReply(ref lsr) => ApiResult::LocalServiceReply(lsr.clone()),
+      ApiResult::GlobalServiceReply(ref lsr) => ApiResult::GlobalServiceReply(lsr.clone()),
+      ApiResult::NoResult => ApiResult::NoResult,
+    }
+  }
 }
 
 pub struct ApiSendIn<MC : MyDHTConf> {
@@ -202,17 +223,46 @@ impl<MC : MyDHTConf> SpawnSend<ApiReply<MC>> for ApiDest<MC> {
 
 
 pub trait ApiReturn<MC : MyDHTConf> {
-  fn api_return(self, ApiResult<MC>) -> Result<()>;
+  fn api_return(&self, ApiResult<MC>) -> Result<()>;
 }
 
-
-impl<MC : MyDHTConf> ApiReturn<MC> for OneResult<Option<ApiResult<MC>>> 
+/// contains a Vec of result, and nb_result and nb_error, notify as complete when nb_result receive
+/// or when nb_error or result receive.
+impl<MC : MyDHTConf> ApiReturn<MC> for OneResult<(Vec<ApiResult<MC>>,usize,usize)>
 where 
-MC::LocalServiceReply : Send,
-MC::GlobalServiceReply : Send,
+  MC::LocalServiceReply : Send,
+  MC::GlobalServiceReply : Send,
 {
-  fn api_return(self, rep : ApiResult<MC>) -> Result<()> {
-    ret_one_result(&self, Some(rep));
+  fn api_return(&self, rep : ApiResult<MC>) -> Result<()> {
+    let no_res = if let ApiResult::NoResult = rep {true} else {false};
+    if match self.0.lock() {
+      Ok(mut res) => {
+        if no_res {
+          (res.0).2 -= 1;
+        } else {
+          (res.0).0.push(rep);
+          (res.0).1 -= 1;
+          (res.0).2 -= 1;
+        }
+        if (res.0).1 == 0 || (res.0).2 == 0 {
+          res.1 = true;
+          // avoid overflow and notify on each next result or error (allow stream)
+          (res.0).1 = 1;
+          (res.0).2 = 1;
+          true
+        } else {
+          false
+        }
+      },
+      Err(m) => {
+        error!("poisoned mutex for api result : {:?}", m);
+        false
+      },
+    } {
+      self.1.notify_all();
+    }
+
+
     // TODO refact oneresult
     Ok(())
   }
@@ -233,7 +283,7 @@ impl<MC : MyDHTConf> SpawnSend<ApiCommand<MC>> for ApiSendIn<MC> {
     match c {
       ApiCommand::Mainloop(ic) => self.main_loop.send(ic)?,
       ApiCommand::Failure(_,_) => unreachable!(),
-      ApiCommand::LocalServiceCommand(cmd,ret) => self.main_loop.send(MainLoopCommand::ForwardServiceApi(cmd,ret))?,
+      ApiCommand::LocalServiceCommand(cmd,nb_f,ret) => self.main_loop.send(MainLoopCommand::ForwardServiceApi(cmd,nb_f,ret))?,
 //  ForwardServiceLocal(MC::LocalServiceCommand,MC::PeerRef),
       ApiCommand::GlobalServiceCommand(cmd,ret) => self.main_loop.send(MainLoopCommand::GlobalApi(cmd,ret))?,
       ApiCommand::LocalServiceReply(rep) => {

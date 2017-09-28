@@ -107,9 +107,9 @@ impl<MC : MyDHTConf> WriteService<MC> {
 }
 
 
-pub fn get_shad_auth<MDC : MyDHTConf>(from : &MDC::PeerRef,with : &Option<MDC::PeerRef>) -> <MDC::Peer as Peer>::ShadowWAuth {
-//pub fn get_shad_auth<MDC : MyDHTConf>(from : &PeerRefSend<MDC>,with : &Option<PeerRefSend<MDC>>) -> <MDC::Peer as Peer>::ShadowWAuth {
-  match MDC::AUTH_MODE {
+pub fn get_shad_auth<MC : MyDHTConf>(from : &MC::PeerRef,with : &Option<MC::PeerRef>) -> <MC::Peer as Peer>::ShadowWAuth {
+//pub fn get_shad_auth<MC : MyDHTConf>(from : &PeerRefSend<MC>,with : &Option<PeerRefSend<MC>>) -> <MC::Peer as Peer>::ShadowWAuth {
+  match MC::AUTH_MODE {
     ShadowAuthType::NoAuth => {
       /*self.is_auth = true;
       return self.call(req,async_yield);*/
@@ -125,10 +125,36 @@ pub fn get_shad_auth<MDC : MyDHTConf>(from : &MDC::PeerRef,with : &Option<MDC::P
     },
   }
 }
+/// macro to avoid duplicate code and keep local var use
+macro_rules! send_proto(($self:ident,$stream:ident,$command:ident) => (
+    if $self.shad_msg.is_none() {
+      let mut shad = match MC::AUTH_MODE {
+        ShadowAuthType::NoAuth => {
+          $self.from.borrow().get_shadower_w_msg()
+        },
+        ShadowAuthType::Public | ShadowAuthType::Private => {
+          match $self.with {
+            Some(ref w) => w.borrow().get_shadower_w_msg(),
+            None => {return Err(Error("route return slab may contain write ref of non initialized (connected), a route impl issue".to_string(), ErrorKind::Bug,None));},
+          }
+        },
+      };
+      // write head before storing
+      shad_write_header(&mut shad, &mut $stream)?;
+      $self.shad_msg = Some(shad);
+    }
 
-impl<MDC : MyDHTConf> Service for WriteService<MDC> {
-  type CommandIn = WriteCommand<MDC>;
-  type CommandOut = WriteReply<MDC>;
+    let mut shad = $self.shad_msg.as_mut().unwrap();
+    let pmess = $command.into();
+    send_msg_msg(&pmess, &mut $stream, &$self.enc, &mut shad)?;
+    for att in pmess.get_attachments() {
+      send_att(att, &mut $stream, &$self.enc, &mut shad)?;
+    }
+));
+
+impl<MC : MyDHTConf> Service for WriteService<MC> {
+  type CommandIn = WriteCommand<MC>;
+  type CommandOut = WriteReply<MC>;
 
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
     let mut stream = WriteYield(&mut self.stream, async_yield);
@@ -144,9 +170,9 @@ impl<MDC : MyDHTConf> Service for WriteService<MDC> {
         // contain initializing shared secret for message shadow.
         self.with = Some(rp);
         let sig = self.peermgmt.signmsg(self.from.borrow(), &chal[..]);
-        let pmess : ProtoMessage<MDC::Peer> = ProtoMessage::PONG(self.from.borrow(),chal,sig,option_chal2);
+        let pmess : ProtoMessage<MC::Peer> = ProtoMessage::PONG(self.from.borrow(),chal,sig,option_chal2);
         // once shadower
-        let mut shad = get_shad_auth::<MDC>(&self.from,&self.with);
+        let mut shad = get_shad_auth::<MC>(&self.from,&self.with);
         shad_write_header(&mut shad, &mut stream)?;
 
         send_msg(&pmess, &mut stream, &self.enc, &mut shad)?;
@@ -161,8 +187,8 @@ impl<MDC : MyDHTConf> Service for WriteService<MDC> {
  //       let chal = self.peermgmt.challenge(self.from.borrow());
         let sign = self.peermgmt.signmsg(self.from.borrow(), &chal);
         // we do not wait for a result
-        let pmess : ProtoMessage<MDC::Peer> = ProtoMessage::PING(self.from.borrow(), chal.clone(), sign);
-        let mut shad = get_shad_auth::<MDC>(&self.from,&self.with);
+        let pmess : ProtoMessage<MC::Peer> = ProtoMessage::PING(self.from.borrow(), chal.clone(), sign);
+        let mut shad = get_shad_auth::<MC>(&self.from,&self.with);
         shad_write_header(&mut shad, &mut stream)?;
 
         send_msg(&pmess, &mut stream, &self.enc, &mut shad)?;
@@ -176,35 +202,23 @@ impl<MDC : MyDHTConf> Service for WriteService<MDC> {
 
       },
       WriteCommand::Service(command) => {
-        if self.shad_msg.is_none() {
-          let mut shad = match MDC::AUTH_MODE {
-            ShadowAuthType::NoAuth => {
-              self.from.borrow().get_shadower_w_msg()
-            },
-            ShadowAuthType::Public | ShadowAuthType::Private => {
-              match self.with {
-                Some(ref w) => w.borrow().get_shadower_w_msg(),
-                None => {return Err(Error("route return slab may contain write ref of non initialized (connected), a route impl issue".to_string(), ErrorKind::Bug,None));},
-              }
-            },
-          };
-          // write head before storing
-          shad_write_header(&mut shad, &mut stream)?;
-          self.shad_msg = Some(shad);
-        }
-
-        let mut shad = self.shad_msg.as_mut().unwrap();
-        let pmess = command.into();
-        send_msg_msg(&pmess, &mut stream, &self.enc, &mut shad)?;
-        for att in pmess.get_attachments() {
-          send_att(att, &mut stream, &self.enc, &mut shad)?;
-        }
+        send_proto!(self,stream,command);
+      },
+      WriteCommand::GlobalService(command) => {
+        send_proto!(self,stream,command);
       },
     }
     // default to no rep
     Ok(WriteReply::NoRep)
   }
 }
+
+//impl<MC : MyDHTConf> WriteService<MC> {
+
+ // fn forward_proto<S : SpawnerYield, R : Into<MC::ProtoMsg>>(&mut self, command: R, mut stream : WriteYield<<MC::Transport as Transport>::WriteStream,S>) -> Result<()> {
+  //  Ok(())
+ // }
+//}
 /// command for readservice
 pub enum WriteCommand<MC : MyDHTConf> {
   Write,
@@ -214,10 +228,12 @@ pub enum WriteCommand<MC : MyDHTConf> {
   /// replying to a ping not a pong)
   Pong(MC::PeerRef, Vec<u8>, usize, Option<Vec<u8>>),
   Service(MC::LocalServiceCommand),
+  GlobalService(MC::GlobalServiceCommand),
 }
 
 pub enum WriteCommandSend<MC : MyDHTConf> 
-  where MC::LocalServiceCommand : SRef
+  where MC::LocalServiceCommand : SRef,
+        MC::GlobalServiceCommand : SRef,
   {
   Write,
   /// Vec<u8> being chalenge store in mainloop process
@@ -225,6 +241,7 @@ pub enum WriteCommandSend<MC : MyDHTConf>
   /// pong a peer with challenge and read token
   Pong(<MC::PeerRef as Ref<MC::Peer>>::Send, Vec<u8>, usize, Option<Vec<u8>>),
   Service(<MC::LocalServiceCommand as SRef>::Send),
+  GlobalService(<MC::GlobalServiceCommand as SRef>::Send),
 }
 
 impl<MC : MyDHTConf> Clone for WriteCommand<MC> {
@@ -234,11 +251,13 @@ impl<MC : MyDHTConf> Clone for WriteCommand<MC> {
       WriteCommand::Ping(ref chal) => WriteCommand::Ping(chal.clone()),
       WriteCommand::Pong(ref pr,ref v,s,ref v2) => WriteCommand::Pong(pr.clone(),v.clone(),s,v2.clone()),
       WriteCommand::Service(ref p) => WriteCommand::Service(p.clone()),
+      WriteCommand::GlobalService(ref p) => WriteCommand::GlobalService(p.clone()),
     }
   }
 }
 impl<MC : MyDHTConf> SRef for WriteCommand<MC>
-  where MC::LocalServiceCommand : SRef
+  where MC::LocalServiceCommand : SRef,
+        MC::GlobalServiceCommand : SRef,
   {
   type Send = WriteCommandSend<MC>;
   fn get_sendable(&self) -> Self::Send {
@@ -247,11 +266,13 @@ impl<MC : MyDHTConf> SRef for WriteCommand<MC>
       WriteCommand::Ping(ref chal) => WriteCommandSend::Ping(chal.clone()),
       WriteCommand::Pong(ref pr,ref v,s,ref v2) => WriteCommandSend::Pong(pr.get_sendable(),v.clone(),s,v2.clone()),
       WriteCommand::Service(ref p) => WriteCommandSend::Service(p.get_sendable()),
+      WriteCommand::GlobalService(ref p) => WriteCommandSend::GlobalService(p.get_sendable()),
     }
   }
 }
 impl<MC : MyDHTConf> SToRef<WriteCommand<MC>> for WriteCommandSend<MC>
-  where MC::LocalServiceCommand : SRef
+  where MC::LocalServiceCommand : SRef,
+        MC::GlobalServiceCommand : SRef,
   {
   fn to_ref(self) -> WriteCommand<MC> {
     match self {
@@ -259,14 +280,15 @@ impl<MC : MyDHTConf> SToRef<WriteCommand<MC>> for WriteCommandSend<MC>
       WriteCommandSend::Ping(chal) => WriteCommand::Ping(chal),
       WriteCommandSend::Pong(pr,v,s,v2) => WriteCommand::Pong(pr.to_ref(),v,s,v2),
       WriteCommandSend::Service(p) => WriteCommand::Service(p.to_ref()),
+      WriteCommandSend::GlobalService(p) => WriteCommand::GlobalService(p.to_ref()),
     }
   }
 }
 
 
-pub enum WriteReply<MDC : MyDHTConf> {
+pub enum WriteReply<MC : MyDHTConf> {
   NoRep,
-  Api(ApiReply<MDC>),
+  Api(ApiReply<MC>),
 }
 
 

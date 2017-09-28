@@ -5,7 +5,11 @@ extern crate mydht_tcp_loop;
 extern crate mydht_slab;
 use std::time::Instant;
 use std::time::Duration;
-use utils::OneResult;
+use utils::{
+  OneResult,
+  new_oneresult,
+  clone_wait_one_result,
+};
 use procs::OptInto;
 use procs::api::{
   Api,
@@ -137,6 +141,7 @@ use rules::simplerules::{
 #[serde(bound(deserialize = ""))]
 pub enum TestMessage {
   Touch,
+  TouchQ(Option<usize>),
 }
 impl GettableAttachments for TestMessage {
   fn get_attachments(&self) -> Vec<&Attachment> {
@@ -156,14 +161,19 @@ impl SettableAttachments for TestMessage {
 #[derive(Clone)]
 pub enum TestCommand {
   Touch,
+  TouchQ(Option<usize>),
 }
 #[derive(Clone)]
 pub enum TestReply {
   Touch,
+  TouchQ(Option<usize>),
 }
 impl OptInto<TestMessage> for TestReply {
   fn can_into(&self) -> bool {
-    false
+    match *self {
+      TestReply::Touch => false,
+      TestReply::TouchQ(_) => false,
+    }
   }
   fn opt_into(self) -> Option<TestMessage> {
     None
@@ -174,6 +184,7 @@ impl Into<TestCommand> for TestMessage {
   fn into(self) -> TestCommand {
     match self {
       TestMessage::Touch => TestCommand::Touch,
+      TestMessage::TouchQ(qid) => TestCommand::TouchQ(qid),
     }
   }
 }
@@ -181,6 +192,7 @@ impl Into<TestMessage> for TestCommand {
   fn into(self) -> TestMessage {
     match self {
       TestCommand::Touch => TestMessage::Touch,
+      TestCommand::TouchQ(qid) => TestMessage::TouchQ(qid),
     }
   }
 }
@@ -188,17 +200,28 @@ impl Into<TestMessage> for TestCommand {
 impl ApiQueriable for TestCommand {
   #[inline]
   fn is_api_reply(&self) -> bool {
-    false
+    match *self {
+      TestCommand::Touch => false,
+      TestCommand::TouchQ(qid) => true,
+    }
   }
   #[inline]
   fn set_api_reply(&mut self, aid : ApiQueryId) {
+    match *self {
+      TestCommand::Touch => (),
+      TestCommand::TouchQ(ref mut qid) => *qid = Some(aid.0),
+    }
+
   }
 }
 
 impl ApiRepliable for TestReply {
   #[inline]
   fn get_api_reply(&self) -> Option<ApiQueryId> {
-    None
+    match *self {
+      TestReply::Touch => None,
+      TestReply::TouchQ(ref qid) => qid.as_ref().map(|id|ApiQueryId(*id)),
+    }
   }
 }
 
@@ -221,21 +244,32 @@ mod test_tcp_all_block_thread {
     fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
       match req {
         GlobalCommand(owith,TestCommand::Touch) => {
-          println!("TOUCH!!!")
+          println!("TOUCH!!!");
+          Ok(GlobalReply::NoRep)
+        },
+        GlobalCommand(owith,TestCommand::TouchQ(id)) => {
+          println!("TOUCHQ!!!");
+          //Ok(GlobalReply(TestReply::TouchQ(id)))
+          Ok(GlobalReply::Api(TestReply::TouchQ(id)))
+  //Forward(Option<Vec<MC::PeerRef>>,usize,MC::GlobalServiceCommand),
         },
       }
-      Ok(GlobalReply(TestReply::Touch))
     }
   }
   impl Route<TestMdhtConf> for TestRoute<TestMdhtConf> {
 
-    fn route(&mut self, c : TestCommand,_ : &<TestMdhtConf as MyDHTConf>::Slab, cache : &<TestMdhtConf as MyDHTConf>::PeerCache) -> Result<(TestCommand,Vec<usize>)> {
-      let mut res = Vec::new();
+    fn route_global(&mut self, targetted_nb : usize, c : TestCommand,sl : &<TestMdhtConf as MyDHTConf>::Slab, cache : &<TestMdhtConf as MyDHTConf>::PeerCache) -> Result<(TestCommand,Vec<usize>)> {
+      self.route(targetted_nb,c,sl,cache)
+    }
+    fn route(&mut self, targetted_nb : usize, c : TestCommand,_ : &<TestMdhtConf as MyDHTConf>::Slab, cache : &<TestMdhtConf as MyDHTConf>::PeerCache) -> Result<(TestCommand,Vec<usize>)> {
+      let mut res = Vec::with_capacity(targetted_nb);
       match c {
-        TestCommand::Touch => {
+        TestCommand::Touch | TestCommand::TouchQ(..) => {
           cache.strict_fold_c(&mut res,|res, kv|{
             if let Some(t) = kv.1.get_write_token() {
-              res.push(t);
+              if res.len() < targetted_nb {
+                res.push(t);
+              }
             }
             res
           });
@@ -292,8 +326,8 @@ mod test_tcp_all_block_thread {
     type GlobalServiceSpawn = ThreadPark;
     type GlobalServiceChannelIn = MpscChannel;
     type GlobalDest = NoSend;
-    type ApiReturn = OneResult<Option<ApiResult<Self>>>;
-    type ApiService = Api<Self,HashMap<ApiQueryId,(OneResult<Option<ApiResult<Self>>>,Instant)>>;
+    type ApiReturn = OneResult<(Vec<ApiResult<Self>>,usize,usize)>;
+    type ApiService = Api<Self,HashMap<ApiQueryId,(OneResult<(Vec<ApiResult<Self>>,usize,usize)>,Instant)>>;
 
     type ApiServiceSpawn = ThreadPark;
     type ApiServiceChannelIn = MpscChannel;
@@ -434,8 +468,17 @@ mod test_tcp_all_block_thread {
     sendcommand1.send(command).unwrap();
     thread::sleep_ms(1000);
 //    let touch = ApiCommand::local_service(TestCommand::Touch);
-    let touch = ApiCommand::call_service(GlobalCommand(None,TestCommand::Touch));
+    let touch = ApiCommand::call_service(TestCommand::Touch);
+    let o_res = new_oneresult((Vec::with_capacity(1),1,1));
+    let touchq = ApiCommand::call_service_reply(TestCommand::TouchQ(None),o_res.clone());
     sendcommand1.send(touch).unwrap();
+    sendcommand1.send(touchq).unwrap();
+    let o_res = clone_wait_one_result(&o_res,None).unwrap();
+    println!("res happened");
+    assert!(o_res.0.len() == 1);
+    for v in o_res.0.iter() {
+      assert!(if let &ApiResult::GlobalServiceReply(TestReply::TouchQ(Some(1))) = v {true} else {false});
+    }
 //    sendcommand1.send(command2).unwrap();
 
     // no service to check connection, currently only for testing and debugging : sleep
