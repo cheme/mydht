@@ -101,7 +101,6 @@ use transport::{
 };
 use utils::{
   Ref,
-  ToRef,
   SRef,
   SToRef,
 };
@@ -223,8 +222,8 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
   NewPeer(MC::PeerRef,PeerPriority,Option<usize>),
   /// first field is read token ix, write is obtain from os or a connection
   ProxyWrite(usize,WriteCommand<MC>),
-  ProxyGlobal(GlobalCommand<MC>),
-  GlobalApi(GlobalCommand<MC>,MC::ApiReturn),
+  ProxyGlobal(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>),
+  GlobalApi(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>,MC::ApiReturn),
   ProxyApiLocalReply(MC::LocalServiceReply),
   ProxyApiGlobalReply(MC::GlobalServiceReply),
 }
@@ -238,19 +237,19 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
   Start,
   TryConnect(<MC::Transport as Transport>::Address),
   ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
-  ForwardServiceGlobal(Option<Vec<<MC::PeerRef as Ref<MC::Peer>>::Send>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,<MC::GlobalServiceCommand as SRef>::Send),
+  ForwardServiceGlobal(Option<Vec<<MC::PeerRef as SRef>::Send>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,<MC::GlobalServiceCommand as SRef>::Send),
   ForwardServiceApi(<MC::LocalServiceCommand as SRef>::Send,usize,MC::ApiReturn),
   /// reject stream for this token and Address
   RejectReadSpawn(usize),
   /// reject a peer (accept fail), usize are write stream token and read stream token
   RejectPeer(<MC::Peer as KeyVal>::Key,Option<usize>,Option<usize>),
   /// new peer accepted with optionnal read stream token
-  NewPeer(<MC::PeerRef as Ref<MC::Peer>>::Send,PeerPriority,Option<usize>),
-  NewPeerChallenge(<MC::PeerRef as Ref<MC::Peer>>::Send,PeerPriority,usize,Vec<u8>),
-  NewPeerUncheckedChallenge(<MC::PeerRef as Ref<MC::Peer>>::Send,PeerPriority,usize,Vec<u8>,Option<Vec<u8>>),
+  NewPeer(<MC::PeerRef as SRef>::Send,PeerPriority,Option<usize>),
+  NewPeerChallenge(<MC::PeerRef as SRef>::Send,PeerPriority,usize,Vec<u8>),
+  NewPeerUncheckedChallenge(<MC::PeerRef as SRef>::Send,PeerPriority,usize,Vec<u8>,Option<Vec<u8>>),
   ProxyWrite(usize,WriteCommandSend<MC>),
-  ProxyGlobal(GlobalCommandSend<MC>),
-  GlobalApi(GlobalCommandSend<MC>,MC::ApiReturn),
+  ProxyGlobal(GlobalCommandSend<<MC::PeerRef as SRef>::Send,<MC::GlobalServiceCommand as SRef>::Send>),
+  GlobalApi(GlobalCommandSend<<MC::PeerRef as SRef>::Send,<MC::GlobalServiceCommand as SRef>::Send>,MC::ApiReturn),
   ProxyApiLocalReply(<MC::LocalServiceReply as SRef>::Send),
   ProxyApiGlobalReply(<MC::GlobalServiceReply as SRef>::Send),
 }
@@ -363,7 +362,7 @@ pub struct MDHTState<MC : MyDHTConf> {
   global_spawn : MC::GlobalServiceSpawn,
   global_channel_in : MC::GlobalServiceChannelIn,
   /// send to global service
-  global_send : <MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Send,
+  global_send : <MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Send,
   global_handle : GlobalHandle<MC>,
   local_spawn_proto : MC::LocalServiceSpawn,
   local_channel_in_proto : MC::LocalServiceChannelIn,

@@ -69,10 +69,7 @@ pub trait SToRef<T : SRef> : Send + Sized {
 /// 
 /// Principal use case is using Rc which is not sendable.
 /// TODO name should change to Immut
-pub trait Ref<T> : Clone + Borrow<T> {
-  type Send : ToRef<T,Self>;
-  /// get_sendable may involve a full copy or not (Ref is immutable)
-  fn get_sendable(&self) -> Self::Send;
+pub trait Ref<T> : SRef + Clone + Borrow<T> {
   fn new(t : T) -> Self;
 }
 
@@ -86,11 +83,11 @@ R : Ref<T> {
 }*/
 
 //pub trait ToRef<T, RT : Ref<T>> : Send + Sized + Borrow<T> {
-pub trait ToRef<T, RT : Ref<T>> : Send + Sized + Borrow<T> {
+/*pub trait ToRef<T, RT : Ref<T>> : Send + Sized + Borrow<T> {
 //  type Ref : Ref<T,Send=Self>;
   fn to_ref(self) -> RT;
   fn clone_to_ref(&self) -> RT;
-}
+}*/
 
 /// Arc is used to share peer or key val between threads
 /// useless if no threads in spawners.
@@ -105,18 +102,27 @@ impl<T> Borrow<T> for ArcRef<T> {
 }
 
 
-impl<T : Clone + Send + Sync> Ref<T> for ArcRef<T> {
+impl<T : Clone + Send + Sync> SRef for ArcRef<T> {
   type Send = ArcRef<T>;
   #[inline]
   fn get_sendable(&self) -> Self::Send {
     ArcRef(self.0.clone())
   }
-  #[inline]
+}
+impl<T : Clone + Send + Sync> Ref<T> for ArcRef<T> {
+    #[inline]
   fn new(t : T) -> Self {
     ArcRef(Arc::new(t))
   }
 
 }
+impl<T : Clone + Send + Sync> SToRef<ArcRef<T>> for ArcRef<T> {
+  #[inline]
+  fn to_ref(self) -> ArcRef<T> {
+    self
+  }
+}
+/* 
 impl<T : Clone + Send + Sync> ToRef<T,ArcRef<T>> for ArcRef<T> {
   #[inline]
   fn to_ref(self) -> ArcRef<T> {
@@ -127,7 +133,7 @@ impl<T : Clone + Send + Sync> ToRef<T,ArcRef<T>> for ArcRef<T> {
     self.clone()
   }
 
-}
+}*/
 
 /// Rc is used locally (the content size is not meaningless), a copy of the content is done if
 /// threads are used.
@@ -144,29 +150,31 @@ impl<T> Borrow<T> for RcRef<T> {
   }
 }
 
-impl<T : Send + Clone> Ref<T> for RcRef<T> {
+impl<T : Send + Clone> SRef for RcRef<T> {
   type Send = ToRcRef<T>;
   #[inline]
   fn get_sendable(&self) -> Self::Send {
     let t : &T = self.0.borrow();
     ToRcRef(t.clone())
   }
+}
+impl<T : Send + Clone> Ref<T> for RcRef<T> {
   #[inline]
   fn new(t : T) -> Self {
     RcRef(Rc::new(t))
   }
-
 }
 
-impl<T : Send + Clone> ToRef<T,RcRef<T>> for ToRcRef<T> {
+impl<T : Send + Clone> SToRef<RcRef<T>> for ToRcRef<T> {
   #[inline]
   fn to_ref(self) -> RcRef<T> {
     RcRef(Rc::new(self.0))
   }
+  /*
   #[inline]
   fn clone_to_ref(&self) -> RcRef<T> {
     RcRef(Rc::new(self.0.clone()))
-  }
+  }*/
 
 }
 
@@ -193,28 +201,30 @@ impl<T> Borrow<T> for CloneRef<T> {
   }
 }
 
-impl<T : Send + Clone> Ref<T> for CloneRef<T> {
+impl<T : Send + Clone> SRef for CloneRef<T> {
   type Send = ToCloneRef<T>;
   #[inline]
   fn get_sendable(&self) -> Self::Send {
     ToCloneRef(self.0.clone())
   }
+}
+impl<T : Send + Clone> Ref<T> for CloneRef<T> {
   #[inline]
   fn new(t : T) -> Self {
     CloneRef(t)
   }
 }
 
-impl<T : Send + Clone> ToRef<T,CloneRef<T>> for ToCloneRef<T> {
+impl<T : Send + Clone> SToRef<CloneRef<T>> for ToCloneRef<T> {
   #[inline]
   fn to_ref(self) -> CloneRef<T> {
     CloneRef(self.0)
   }
-  #[inline]
+/*  #[inline]
   fn clone_to_ref(&self) -> CloneRef<T> {
     CloneRef(self.0.clone())
   }
-
+*/
 }
 
 impl<T : Send + Clone> Borrow<T> for ToCloneRef<T> {

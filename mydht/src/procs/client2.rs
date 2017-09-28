@@ -23,7 +23,6 @@ use transport::{
 };
 use utils::{
   Ref,
-  ToRef,
   SRef,
   SToRef,
   shad_write_header,
@@ -243,7 +242,7 @@ pub enum WriteCommandSend<MC : MyDHTConf>
   /// Vec<u8> being chalenge store in mainloop process
   Ping(Vec<u8>),
   /// pong a peer with challenge and read token
-  Pong(<MC::PeerRef as Ref<MC::Peer>>::Send, Vec<u8>, usize, Option<Vec<u8>>),
+  Pong(<MC::PeerRef as SRef>::Send, Vec<u8>, usize, Option<Vec<u8>>),
   Service(<MC::LocalServiceCommand as SRef>::Send),
   GlobalService(<MC::GlobalServiceCommand as SRef>::Send),
 }

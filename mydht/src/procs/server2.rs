@@ -17,7 +17,6 @@ use super::client2::{
 
 use utils::{
   Ref,
-  ToRef,
   receive_msg,
   receive_msg_msg,
   receive_att,

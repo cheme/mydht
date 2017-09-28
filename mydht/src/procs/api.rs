@@ -140,7 +140,7 @@ pub enum ApiCommand<MC : MyDHTConf> {
   Mainloop(MainLoopCommand<MC>),
   Failure(Option<ApiQueryId>,Error),
   LocalServiceCommand(MC::LocalServiceCommand,usize,MC::ApiReturn),
-  GlobalServiceCommand(GlobalCommand<MC>,MC::ApiReturn),
+  GlobalServiceCommand(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>,MC::ApiReturn),
   LocalServiceReply(MC::LocalServiceReply),
   GlobalServiceReply(MC::GlobalServiceReply),
 }

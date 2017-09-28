@@ -224,7 +224,7 @@ pub trait Route<MC : MyDHTConf> {
   fn route_global(&mut self, usize, MC::GlobalServiceCommand,&MC::Slab, &MC::PeerCache) -> Result<(MC::GlobalServiceCommand,Vec<usize>)>;
 }
 
-pub type PeerRefSend<MC:MyDHTConf> = <MC::PeerRef as Ref<MC::Peer>>::Send;
+pub type PeerRefSend<MC:MyDHTConf> = <MC::PeerRef as SRef>::Send;
 //pub type BorRef<
 pub trait MyDHTConf : 'static + Send + Sized 
 {
@@ -316,7 +316,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// LocalServiceCommand
   /// Need clone to be forward to multiple peers
   /// Opt into store of peer command to route those command if global command allows it
-  type GlobalServiceCommand : ApiQueriable + OptInto<Self::ProtoMsg> + OptInto<KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>> + Clone;// = GlobalCommand<Self>;
+  type GlobalServiceCommand : ApiQueriable + OptInto<Self::ProtoMsg> + OptInto<KVStoreCommand<Self::Peer,Self::Peer>> + Clone;// = GlobalCommand<Self>;
   type GlobalServiceReply : ApiRepliable;// = GlobalCommand<Self>;
   // ref for protomsg : need to be compatible with spawners -> this has been disabled, ref will
   // need to be included in service command (which are
@@ -353,14 +353,14 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// Main Service for the application, most of the time it is composed of several service (except
   /// peer management).
   /// Global service is initiated with from peer only, dest peer must be in service command.
-  type GlobalService : Service<CommandIn = GlobalCommand<Self>, CommandOut = GlobalReply<Self>>;
+  type GlobalService : Service<CommandIn = GlobalCommand<Self::PeerRef,Self::GlobalServiceCommand>, CommandOut = GlobalReply<Self>>;
   /// GlobalService is spawned from the main loop, and most of the time should use its own thread.
   type GlobalServiceSpawn : Spawner<
     Self::GlobalService,
     GlobalDest<Self>,
-    <Self::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<Self>>>::Recv
+    <Self::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<Self::PeerRef,Self::GlobalServiceCommand>>>::Recv
   >;
-  type GlobalServiceChannelIn : SpawnChannel<GlobalCommand<Self>>;
+  type GlobalServiceChannelIn : SpawnChannel<GlobalCommand<Self::PeerRef,Self::GlobalServiceCommand>>;
 
   type ApiReturn : Clone + Send + ApiReturn<Self>;
   type ApiService : Service<CommandIn = ApiCommand<Self>, CommandOut = ApiReply<Self>>;
@@ -934,12 +934,12 @@ fn sphandler_res<A, E : Debug + Display> (res : StdResult<A, E>) {
 }
 
 static NULL_QUERY_ID : usize = 0; // TODO replace by optional value to None!!
-pub type GlobalHandle<MC : MyDHTConf> = <MC::GlobalServiceSpawn as Spawner<MC::GlobalService,GlobalDest<MC>,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>>::Handle;
+pub type GlobalHandle<MC : MyDHTConf> = <MC::GlobalServiceSpawn as Spawner<MC::GlobalService,GlobalDest<MC>,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Recv>>::Handle;
 
-pub type GlobalHandleSend<MC : MyDHTConf> = HandleSend<<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Send,
+pub type GlobalHandleSend<MC : MyDHTConf> = HandleSend<<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Send,
   <<
-    MC::GlobalServiceSpawn as Spawner<MC::GlobalService,GlobalDest<MC>,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>>::Handle as 
-    SpawnHandle<MC::GlobalService,GlobalDest<MC>,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>
+    MC::GlobalServiceSpawn as Spawner<MC::GlobalService,GlobalDest<MC>,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Recv>>::Handle as 
+    SpawnHandle<MC::GlobalService,GlobalDest<MC>,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Recv>
     >::WeakHandle
     >;
 pub type ApiHandle<MC : MyDHTConf> = <MC::ApiServiceSpawn as Spawner<MC::ApiService,ApiDest<MC>,<MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Recv>>::Handle;

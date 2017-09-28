@@ -1,7 +1,6 @@
 //! Default proxy local service implementation
 use utils::{
   Ref,
-  ToRef,
   SRef,
   SToRef,
 };
@@ -55,24 +54,26 @@ use keyval::KeyVal;
 use peer::Peer;
 use std::marker::PhantomData;
 
-pub struct GlobalCommand<MC : MyDHTConf>(pub Option<MC::PeerRef>, pub MC::GlobalServiceCommand);
-//pub struct GlobalCommand<PR,GSC>(pub Option<PR>, pub GSC);
+//pub struct GlobalCommand<MC : MyDHTConf>(pub Option<MC::PeerRef>, pub MC::GlobalServiceCommand);
+#[derive(Clone)]
+pub struct GlobalCommand<PR,GSC>(pub Option<PR>, pub GSC);
 
-pub struct GlobalCommandSend<MC : MyDHTConf>(pub Option<<MC::PeerRef as Ref<MC::Peer>>::Send>, <MC::GlobalServiceCommand as SRef>::Send)
-  where MC::GlobalServiceCommand : SRef;
+// TODO replace by standard GlobalCommand??
+pub struct GlobalCommandSend<PRS,GSCS>(pub Option<PRS>, pub GSCS);
+//pub struct GlobalCommandSend<MC : MyDHTConf>(pub Option<<MC::PeerRef as Ref<MC::Peer>>::Send>, <MC::GlobalServiceCommand as SRef>::Send)
+//  where MC::GlobalServiceCommand : SRef;
 
-impl<MC : MyDHTConf> SRef for GlobalCommand<MC> 
-  where MC::GlobalServiceCommand : SRef {
-  type Send = GlobalCommandSend<MC>;//: SToRef<Self>;
+impl<PR : SRef, GSC : SRef> SRef for GlobalCommand<PR,GSC> 
+   {
+  type Send = GlobalCommandSend<<PR as SRef>::Send, <GSC as SRef>::Send>;//: SToRef<Self>;
   fn get_sendable(&self) -> Self::Send {
     let GlobalCommand(ref opr,ref gsc) = *self;
     GlobalCommandSend(opr.as_ref().map(|pr|pr.get_sendable()), gsc.get_sendable())
   }
 }
 
-impl<MC : MyDHTConf> SToRef<GlobalCommand<MC>> for GlobalCommandSend<MC> 
-  where MC::GlobalServiceCommand : SRef {
-  fn to_ref(self) -> GlobalCommand<MC> {
+impl<PR : SRef, GSC : SRef> SToRef<GlobalCommand<PR,GSC>> for GlobalCommandSend<<PR as SRef>::Send, <GSC as SRef>::Send> {
+  fn to_ref(self) -> GlobalCommand<PR,GSC> {
     let GlobalCommandSend(opr,gsc) = self;
     GlobalCommand(opr.map(|pr|pr.to_ref()), gsc.to_ref())
   }
@@ -98,13 +99,13 @@ pub enum GlobalReply<MC : MyDHTConf> {
   Mult(Vec<GlobalReply<P,PR,GSC,GSR>>),
 }*/
 
-
-impl<MC : MyDHTConf> Clone for GlobalCommand<MC> where MC::GlobalServiceCommand : Clone {
+/*
+impl<A,B> Clone for GlobalCommand<MC> where MC::GlobalServiceCommand : Clone {
   fn clone(&self) -> Self {
     let &GlobalCommand(ref oref,ref lsc) = self;
     GlobalCommand(oref.clone(),lsc.clone())
   }
-}
+}*/
 impl<MC : MyDHTConf> Clone for GlobalReply<MC> where MC::GlobalServiceReply : Clone {
   fn clone(&self) -> Self {
     match *self {
@@ -138,7 +139,7 @@ impl<MC : MyDHTConf> OptInto<MC::ProtoMsg> for GlobalReply<MC> {
 
 pub enum LocalReply<MC : MyDHTConf> {
   /// transfer to global service
-  Global(GlobalCommand<MC>),
+  Global(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>),
   /// same capability as read dest, awkward as it targets internal call
   Read(ReadReply<MC>),
   /// reply to api
@@ -152,7 +153,7 @@ pub struct DefLocalService<MC : MyDHTConf> {
   pub with : Option<MC::PeerRef>,
 }
 
-impl<MC : MyDHTConf> ApiQueriable for GlobalCommand<MC> {
+impl<A,B : ApiQueriable> ApiQueriable for GlobalCommand<A,B> {
   #[inline]
   fn is_api_reply(&self) -> bool {
     self.1.is_api_reply()
@@ -172,9 +173,9 @@ impl<MC : MyDHTConf> ApiRepliable for GlobalReply<MC> {
 
 
 impl<MC : MyDHTConf> Service for DefLocalService<MC> 
-  where 
-   MC::GlobalServiceChannelIn: SpawnChannel<GlobalCommand<MC>>,
-   MC::GlobalServiceSpawn: Spawner<MC::GlobalService, GlobalDest<MC>, <MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>
+ // where 
+//   MC::GlobalServiceChannelIn: SpawnChannel<GlobalCommand<MC>>,
+//   MC::GlobalServiceSpawn: Spawner<MC::GlobalService, GlobalDest<MC>, <MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>
 {
   type CommandIn = MC::GlobalServiceCommand;
   type CommandOut = LocalReply<MC>;

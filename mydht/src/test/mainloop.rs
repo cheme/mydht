@@ -181,14 +181,14 @@ impl<MC : MyDHTConf> Clone for TestCommand<MC> {
   }
 }
 // communicate peers ??
-impl<MC : MyDHTConf> OptInto<KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>> for TestCommand<MC> {
+impl<MC : MyDHTConf> OptInto<KVStoreCommand<MC::Peer,MC::Peer>> for TestCommand<MC> {
   #[inline]
   fn can_into(&self) -> bool {
     false
   }
 
   #[inline]
-  fn opt_into(self) -> Option<KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>> {
+  fn opt_into(self) -> Option<KVStoreCommand<MC::Peer,MC::Peer>> {
     None
   }
 
@@ -284,7 +284,7 @@ mod test_tcp_all_block_thread {
 
   impl Service for TestService<TestMdhtConf> 
   {
-    type CommandIn = GlobalCommand<TestMdhtConf>;
+    type CommandIn = GlobalCommand<<TestMdhtConf as MyDHTConf>::PeerRef,<TestMdhtConf as MyDHTConf>::GlobalServiceCommand>;
     type CommandOut = GlobalReply<TestMdhtConf>;
     fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
       match req {

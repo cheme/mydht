@@ -147,10 +147,10 @@ pub enum LastSent<P : Peer> {
 */
 
 
-pub enum KVStoreCommand<P : Peer, V : KeyVal, PR : Ref<P>> {
+pub enum KVStoreCommand<P : Peer, V : KeyVal> {
   /// Do nothing but lazy initialize of store as any command.
   Start,
-  Find(QueryMsg<P>, V::Key,Option<ApiQueryId>,Option<PR>),
+  Find(QueryMsg<P>, V::Key,Option<ApiQueryId>),
   FindLocally(V::Key,ApiQueryId),
   Store(QueryID,V),
   NotFound(QueryID),
@@ -220,7 +220,7 @@ impl<
   DH : DHTRules,
   QC : QueryCache<P,V,RP>,
   > Service for KVStoreService<P,RP,V,S,F,DH,QC> {
-  type CommandIn = KVStoreCommand<P,V,RP>;
+  type CommandIn = GlobalCommand<RP,KVStoreCommand<P,V>>;
   type CommandOut = KVStoreReply<P,V,RP>;
 
   fn call<Y : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut Y) -> Result<Self::CommandOut> {
@@ -228,6 +228,7 @@ impl<
       self.store = Some(self.init_store.call(())?);
     }
     let store = self.store.as_mut().unwrap();
+    let GlobalCommand(owith,req) = req;
     match req {
       KVStoreCommand::Start => (),
       KVStoreCommand::Store(qid,v) => {
@@ -336,7 +337,7 @@ impl<
        return Ok(KVStoreReply::Nope);
       },
 
-      KVStoreCommand::Find(mut querymess, key,o_api_queryid,owith) => {
+      KVStoreCommand::Find(mut querymess, key,o_api_queryid) => {
         let oval = store.get_val(&key); 
         if oval.is_some() {
           querymess.nb_res -= 1;
