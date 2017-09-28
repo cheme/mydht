@@ -54,21 +54,21 @@ impl<T : KeyVal> KVCache<T::Key, Arc<T>> for SimpleCache<T> {
 
 */
 
-pub type HashMapQuery<P,V> = HashMap<QueryID, Query<P,V>>;
+pub type HashMapQuery<P,V,RP> = HashMap<QueryID, Query<P,V,RP>>;
 //pub type CacheQuery<P,V> = KVCache<QueryID, Query<P,V>>;
 /// A simple implementation (basic hashmap) to store/cache query
 //pub struct SimpleCacheQuery<P : Peer, V : KeyVal> {
-pub struct SimpleCacheQuery<P : Peer, V : KeyVal, C : KVCache<QueryID, Query<P,V>>> {
+pub struct SimpleCacheQuery<P : Peer, V : KeyVal, RP : Ref<P>, C : KVCache<QueryID, Query<P,V,RP>>> {
   cache : C,
  // cache : HashMap<QueryID, Query<P,V>>,
   /// use randow id, if false sequential ids will be used
   randomids : bool,
   lastid : QueryID,
-  _phdat : PhantomData<(P,V)>,
+  _phdat : PhantomData<(P,V,RP)>,
 }
 
 
-impl<P : Peer, V : KeyVal> SimpleCacheQuery<P,V, HashMapQuery<P,V>> {
+impl<P : Peer, V : KeyVal, RP : Ref<P>> SimpleCacheQuery<P,V,RP,HashMapQuery<P,V,RP>> {
   pub fn new (randid : bool) -> Self{
     SimpleCacheQuery{cache : HashMap::new(),randomids : randid,lastid : 0, _phdat : PhantomData}
   }
@@ -79,24 +79,24 @@ impl<P : Peer, V : KeyVal> SimpleCacheQuery<P,V, HashMapQuery<P,V>> {
 // TODO a transient cache with transient keyval which could also be stored 
 // -> need fn to_storable but also from_storable : this is only for query
 // not sure usefull -> more likely implement both when possible
-impl<P : Peer, V : KeyVal, C : KVCache<QueryID, Query<P,V>>> QueryCache<P,V> for SimpleCacheQuery<P,V,C>  where P::Key : Send {
+impl<P : Peer, V : KeyVal, RP : Ref<P>, C : KVCache<QueryID, Query<P,V,RP>>> QueryCache<P,V,RP> for SimpleCacheQuery<P,V,RP,C>  where P::Key : Send {
   #[inline]
-  fn query_add(&mut self, qid : QueryID, query : Query<P,V>) {
+  fn query_add(&mut self, qid : QueryID, query : Query<P,V,RP>) {
     self.cache.add_val_c(qid, query);
   }
   #[inline]
-  fn query_get(&mut self, qid : &QueryID) -> Option<&Query<P,V>> {
+  fn query_get(&mut self, qid : &QueryID) -> Option<&Query<P,V,RP>> {
     self.cache.get_val_c(qid)
   }
   #[inline]
-  fn query_get_mut(&mut self, qid : &QueryID) -> Option<&mut Query<P,V>> {
+  fn query_get_mut(&mut self, qid : &QueryID) -> Option<&mut Query<P,V,RP>> {
     self.cache.get_val_mut_c(qid)
   }
-  fn query_update<F>(&mut self, qid : &QueryID, f : F) -> MDHTResult<bool> where F : FnOnce(&mut Query<P,V>) -> MDHTResult<()> {
+  fn query_update<F>(&mut self, qid : &QueryID, f : F) -> MDHTResult<bool> where F : FnOnce(&mut Query<P,V,RP>) -> MDHTResult<()> {
     self.cache.update_val_c(qid,f)
   }
   #[inline]
-  fn query_remove(&mut self, quid : &QueryID) -> Option<Query<P,V>> {
+  fn query_remove(&mut self, quid : &QueryID) -> Option<Query<P,V,RP>> {
       self.cache.remove_val_c(quid)
   }
   fn new_id (&mut self) -> QueryID {
@@ -114,7 +114,7 @@ impl<P : Peer, V : KeyVal, C : KVCache<QueryID, Query<P,V>>> QueryCache<P,V> for
 
 
 
-  fn cache_clean_nodes(& mut self)-> Vec<Query<P,V>> {
+  fn cache_clean_nodes(& mut self)-> Vec<Query<P,V,RP>> {
     let expire = Instant::now();
     let mut remqid : Vec<QueryID> = Vec::new();
     let mut initexpire : Vec<QueryID> = Vec::new();
@@ -151,7 +151,7 @@ impl<P : Peer, V : KeyVal, C : KVCache<QueryID, Query<P,V>>> QueryCache<P,V> for
       self.cache.update_val_c(q,|mut mq| {mq.set_expire(expire); Ok(())});
     };
 
-    let mut remq : Vec<Query<P,V>> = Vec::with_capacity(remqid.len());
+    let mut remq : Vec<Query<P,V,RP>> = Vec::with_capacity(remqid.len());
     for qid in remqid.iter(){
       match self.cache.remove_val_c(qid) {
         Some(q) => remq.push(q),

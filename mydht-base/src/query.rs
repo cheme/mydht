@@ -171,12 +171,12 @@ pub trait ChunkTable<V : KeyVal> {
 /// QueryMode info to use in message between peers.
 /// R is PeerRef
 pub enum QueryModeMsg<P : Peer> {
-    /// The node to reply to, and the managed query id for this node (not our id).
-    AProxy(<P as KeyVal>::Key, <P as Peer>::Address, QueryID), // reply to preceding Node which keep a trace of this query  // TODO switc to arc node to avoid all clone
+    /// The node to reply to (is from with in read), and the managed query id for this node (not our id).
+    AProxy(QueryID), // reply to preceding Node which keep a trace of this query  // TODO switc to arc node to avoid all clone
     /// The node to reply to, and the managed query id for this node (not our id).
     Asynch(<P as KeyVal>::Key, <P as Peer>::Address, QueryID), // reply directly to given Node which keep a trace of this query
     /// The remaining number of hop before switching to AProxy. The node to reply to, and the managed query id for this node (not our id).
-    AMix(u8, <P as KeyVal>::Key, <P as Peer>::Address, QueryID), // after a few hop switch to asynch
+    AMix(u8, QueryID), // after a few hop switch to asynch
 }
 
 /// Query mode utilities
@@ -191,35 +191,32 @@ impl<R : Peer> QueryModeMsg<R> {
   /// get corresponding querymode
   pub fn get_mode (&self) -> QueryMode {
     match self {
-      &QueryModeMsg::AProxy (_,_,_) => QueryMode::AProxy,
+      &QueryModeMsg::AProxy (_) => QueryMode::AProxy,
       &QueryModeMsg::Asynch (_,_,_) => QueryMode::Asynch,
-      &QueryModeMsg::AMix (h,_,_,_) => QueryMode::AMix(h),
+      &QueryModeMsg::AMix (h,_) => QueryMode::AMix(h),
     }
    
   }
     /// Get peers to reply to
     pub fn get_rec_node(&self) -> &<R as KeyVal>::Key {
-        match self {
-            &QueryModeMsg::AProxy (ref n,_,_) => n,
-            &QueryModeMsg::Asynch (ref n,_,_) => n,
-            &QueryModeMsg::AMix (_,ref n,_,_) => n,
-        }
+      panic!("TODO remove")
     }
     /// Get peers to reply to
     pub fn get_rec_address(&self) -> &<R as Peer>::Address {
-        match self {
+      panic!("TODO remove")
+      /*  match self {
             &QueryModeMsg::AProxy (_,ref n,_) => n,
             &QueryModeMsg::Asynch (_,ref n,_) => n,
             &QueryModeMsg::AMix (_,_,ref n,_) => n,
-        }
+        }*/
     }
 
     /// Get queryid if the mode use managed query.
     pub fn get_qid (&self) -> &QueryID {
         match self {
-            &QueryModeMsg::AProxy (_,_,ref q) => q,
+            &QueryModeMsg::AProxy (ref q) => q,
             &QueryModeMsg::Asynch (_,_,ref q) => q,
-            &QueryModeMsg::AMix (_,_,_,ref q) => q,
+            &QueryModeMsg::AMix (_,ref q) => q,
         }
     }
 
@@ -228,17 +225,17 @@ impl<R : Peer> QueryModeMsg<R> {
     /// TODO see in mut not better
     pub fn new_hop (&self, p : &R, qid : QueryID,nbdec : u8) -> Self {
         match self {
-            &QueryModeMsg::AProxy (_,_,_) => QueryModeMsg::AProxy (p.get_key(), p.get_address().clone(), qid),
+            &QueryModeMsg::AProxy (_) => QueryModeMsg::AProxy (qid),
             &QueryModeMsg::Asynch (ref k,ref a,ref qid) => QueryModeMsg::Asynch (k.clone(), a.clone(), qid.clone()),
-            &QueryModeMsg::AMix (a,_,_, _) if a > 0 => QueryModeMsg::AMix (a - min(a,nbdec),p.get_key(), p.get_address().clone(),qid),
-            &QueryModeMsg::AMix (_,_,_, _)  => QueryModeMsg::Asynch (p.get_key(), p.get_address().clone(), qid),
+            &QueryModeMsg::AMix (a,_) if a > 0 => QueryModeMsg::AMix (a - min(a,nbdec),qid),
+            &QueryModeMsg::AMix (_,_)  => QueryModeMsg::Asynch (p.get_key(), p.get_address().clone(), qid),
         }
     }
     pub fn set_qid (&mut self, qid : QueryID) {
         match self {
-            &mut QueryModeMsg::AProxy (_,_,ref mut q) => *q = qid,
+            &mut QueryModeMsg::AProxy (ref mut q) => *q = qid,
             &mut QueryModeMsg::Asynch (_,_,ref mut q) => *q = qid,
-            &mut QueryModeMsg::AMix (_,_,_,ref mut q) => *q = qid,
+            &mut QueryModeMsg::AMix (_,ref mut q) => *q = qid,
         }
     }
 

@@ -209,7 +209,7 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
   Start,
   TryConnect(<MC::Transport as Transport>::Address),
   ForwardServiceLocal(MC::LocalServiceCommand,usize),
-  ForwardServiceGlobal(Option<Vec<MC::PeerRef>>,usize,MC::GlobalServiceCommand),
+  ForwardServiceGlobal(Option<Vec<MC::PeerRef>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,MC::GlobalServiceCommand),
   ForwardServiceApi(MC::LocalServiceCommand,usize,MC::ApiReturn),
   /// reject stream for this token and Address
   RejectReadSpawn(usize),
@@ -238,7 +238,7 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
   Start,
   TryConnect(<MC::Transport as Transport>::Address),
   ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
-  ForwardServiceGlobal(Option<Vec<<MC::PeerRef as Ref<MC::Peer>>::Send>>,usize,<MC::GlobalServiceCommand as SRef>::Send),
+  ForwardServiceGlobal(Option<Vec<<MC::PeerRef as Ref<MC::Peer>>::Send>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,<MC::GlobalServiceCommand as SRef>::Send),
   ForwardServiceApi(<MC::LocalServiceCommand as SRef>::Send,usize,MC::ApiReturn),
   /// reject stream for this token and Address
   RejectReadSpawn(usize),
@@ -265,7 +265,7 @@ impl<MC : MyDHTConf> Clone for MainLoopCommand<MC>
       MainLoopCommand::Start => MainLoopCommand::Start,
       MainLoopCommand::TryConnect(ref a) => MainLoopCommand::TryConnect(a.clone()),
       MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommand::ForwardServiceLocal(gc.clone(),nb),
-      MainLoopCommand::ForwardServiceGlobal(ref ovp,nb_for,ref c) => MainLoopCommand::ForwardServiceGlobal(ovp.clone(),nb_for,c.clone()),
+      MainLoopCommand::ForwardServiceGlobal(ref ovp,ref okad,nb_for,ref c) => MainLoopCommand::ForwardServiceGlobal(ovp.clone(),okad.clone(),nb_for,c.clone()),
       MainLoopCommand::ForwardServiceApi(ref gc,nb_for,ref ret) => MainLoopCommand::ForwardServiceApi(gc.clone(),nb_for,ret.clone()),
       MainLoopCommand::RejectReadSpawn(s) => MainLoopCommand::RejectReadSpawn(s),
       MainLoopCommand::RejectPeer(ref k,ref os,ref os2) => MainLoopCommand::RejectPeer(k.clone(),os.clone(),os2.clone()),
@@ -292,9 +292,9 @@ impl<MC : MyDHTConf> SRef for MainLoopCommand<MC>
       MainLoopCommand::Start => MainLoopCommandSend::Start,
       MainLoopCommand::TryConnect(ref a) => MainLoopCommandSend::TryConnect(a.clone()),
       MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommandSend::ForwardServiceLocal(gc.get_sendable(),nb),
-      MainLoopCommand::ForwardServiceGlobal(ref ovp,nb_for,ref c) => MainLoopCommandSend::ForwardServiceGlobal({
+      MainLoopCommand::ForwardServiceGlobal(ref ovp,ref okad,nb_for,ref c) => MainLoopCommandSend::ForwardServiceGlobal({
           ovp.as_ref().map(|vp|vp.iter().map(|p|p.get_sendable()).collect())
-        },nb_for,c.get_sendable()),
+        },okad.clone(),nb_for,c.get_sendable()),
       MainLoopCommand::ForwardServiceApi(ref gc,nb_for,ref ret) => MainLoopCommandSend::ForwardServiceApi(gc.get_sendable(),nb_for,ret.clone()),
       MainLoopCommand::RejectReadSpawn(s) => MainLoopCommandSend::RejectReadSpawn(s),
       MainLoopCommand::RejectPeer(ref k,ref os,ref os2) => MainLoopCommandSend::RejectPeer(k.clone(),os.clone(),os2.clone()),
@@ -320,9 +320,9 @@ impl<MC : MyDHTConf> SToRef<MainLoopCommand<MC>> for MainLoopCommandSend<MC>
       MainLoopCommandSend::Start => MainLoopCommand::Start,
       MainLoopCommandSend::TryConnect(a) => MainLoopCommand::TryConnect(a),
       MainLoopCommandSend::ForwardServiceLocal(a,nb) => MainLoopCommand::ForwardServiceLocal(a.to_ref(),nb),
-      MainLoopCommandSend::ForwardServiceGlobal(ovp,nb_for,c) => MainLoopCommand::ForwardServiceGlobal({
+      MainLoopCommandSend::ForwardServiceGlobal(ovp,okad,nb_for,c) => MainLoopCommand::ForwardServiceGlobal({
           ovp.map(|vp|vp.into_iter().map(|p|p.to_ref()).collect())
-        },nb_for,c.to_ref()),
+        },okad,nb_for,c.to_ref()),
       MainLoopCommandSend::ForwardServiceApi(a,nb_for,r) => MainLoopCommand::ForwardServiceApi(a.to_ref(),nb_for,r),
       MainLoopCommandSend::RejectReadSpawn(s) => MainLoopCommand::RejectReadSpawn(s),
       MainLoopCommandSend::RejectPeer(k,os,os2) => MainLoopCommand::RejectPeer(k,os,os2),
@@ -539,12 +539,20 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           self.call_inner_loop(MainLoopCommand::ProxyGlobal(sc), async_yield)?;
         }
       },
-      MainLoopCommand::ForwardServiceGlobal(ovp,nb_for,sg) => {
+      MainLoopCommand::ForwardServiceGlobal(ovp,okad,nb_for,sg) => {
         let ol = ovp.as_ref().map(|v|v.len()).unwrap_or(0);
-        let nb_exp_for = ol + nb_for;
+        let olka = okad.as_ref().map(|v|v.len()).unwrap_or(0);
+        let nb_exp_for = ol + nb_for + olka;
         // take ovp token : if ovp not connected no forward
-        let ovp : Option<Vec<usize>> = ovp.map(|vp|vp.iter().map(|p|self.peer_cache.get_val_c(&p.borrow().get_key()).map(|pc|pc.write)).filter_map(|oow|oow.unwrap_or(None)).collect());
 
+
+        let okad : Option<Vec<usize>> = okad.map(|kad|kad.iter().map(|ka|self.peer_cache.get_val_c(&ka.0).map(|pc|pc.write)).filter_map(|oow|oow.unwrap_or(None)).collect());
+        let ovlka = okad.as_ref().map(|v|v.len()).unwrap_or(0);
+        if ovlka != olka {
+          panic!("TODO need to implement connect to dest and push after connec for Asynch mode : currently all peer need to be connected, this is guaranted by the fact that we reply : for asynch it is not");
+        }
+
+        let ovp : Option<Vec<usize>> = ovp.map(|vp|vp.iter().map(|p|self.peer_cache.get_val_c(&p.borrow().get_key()).map(|pc|pc.write)).filter_map(|oow|oow.unwrap_or(None)).collect());
         let ovl = ovp.as_ref().map(|v|v.len()).unwrap_or(0);
         if ovl != ol {
           debug!("Forward of service, some peer where unconnected and skip : init {:?}, send {:?}",ol,ovl);
@@ -552,11 +560,21 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         let (sg,dests) = if nb_for > 0 {
           let (sg, mut dests) = self.route.route_global(nb_for,sg,&self.slab_cache, &self.peer_cache)?;
           ovp.map(|ref mut vp| dests.append(vp));
+          okad.map(|ref mut vp| dests.append(vp));
           (sg,dests)
         } else {
           match ovp {
-            Some(vp) => (sg,vp),
-            None => return Ok(()),
+            Some(mut vp) => {
+              okad.map(|ref mut k| vp.append(k));
+              (sg,vp)
+            },
+            None => {
+              match okad {
+                Some(k) => (sg,k),
+                None => 
+                  return Ok(()),
+              }
+            },
           }
         };
         if dests.len() < nb_exp_for {

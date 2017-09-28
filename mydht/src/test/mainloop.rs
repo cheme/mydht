@@ -264,7 +264,7 @@ mod test_tcp_all_block_thread {
         },
         GlobalCommand(Some(p),TestCommand::TouchQ(id,nb_for)) => {
           // no local storage
-          Ok(GlobalReply::Forward(Some(vec![p]),0,TestCommand::TouchQR(id)))
+          Ok(GlobalReply::Forward(Some(vec![p]),None,0,TestCommand::TouchQR(id)))
         },
         GlobalCommand(None,TestCommand::TouchQ(id,nb_for)) => {
           println!("TOUCHQ!!!{:?}",id);
@@ -273,7 +273,7 @@ mod test_tcp_all_block_thread {
     
           res.push(GlobalReply::Api(TestReply::TouchQ(id)));
           for _ in 0 .. nb_for {
-            res.push(GlobalReply::Forward(None,1,TestCommand::TouchQ(id,0)));
+            res.push(GlobalReply::Forward(None,None,1,TestCommand::TouchQ(id,0)));
           }
           Ok(GlobalReply::Mult(res))
   //Forward(Option<Vec<MC::PeerRef>>,usize,MC::GlobalServiceCommand),

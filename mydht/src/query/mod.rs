@@ -41,11 +41,11 @@ pub type LastSentConf = Option<(usize,bool)>; // if bool true then ls hop else l
 // TODO switch condvar to something with timeout
 #[derive(Clone)]
 /// Internal data type to manage query reply
-pub enum QReply<P : Peer,V> {
+pub enum QReply<P : Peer,V,RP : Ref<P>> {
   /// send reply to api of query id, wait for nb res in vec or nb error
   Local(ApiQueryId,usize,Vec<V>,usize,QueryPriority),
   /// reply should be forwarded given a query conf.
-  Dist(QueryModeMsg<P>,usize,Vec<V>,usize),
+  Dist(QueryModeMsg<P>,Option<RP>,usize,Vec<V>,usize),
 }
 
 pub type QRepLoc<V> = Arc<(Condvar, Mutex<V>)>;
@@ -72,7 +72,7 @@ pub struct QueryConf {
 //#[derive(Clone)]
 /// The query is seen as ok when all peer reply None or the first peer replies something (if number
 /// TODO remove QueryID (useless)
-pub struct Query<P : Peer, V> (pub QueryID, pub QReply<P,V>, pub Option<Instant>);
+pub struct Query<P : Peer, V, RP : Ref<P>> (pub QueryID, pub QReply<P,V,RP>, pub Option<Instant>);
 /*
 impl<P : Peer, V : KeyVal> QueryHandle<P, V> {
   #[inline]
@@ -187,7 +187,7 @@ pub fn wait_query_result (&self) -> Either<Option<Arc<P>>,Vec<Option<V>>> { // T
 }
 */
 /// Query methods
-impl<P : Peer,V> Query<P,V> {
+impl<P : Peer,V, RP : Ref<P>> Query<P,V,RP> {
    
   pub fn is_local(&self) -> bool {
     if let &Query(_,QReply::Local(..),_) = self {
@@ -393,7 +393,7 @@ pub fn set_expire(&mut self, expire : Instant) {
 /// rename to send_for_query,  rp to param, managed is bool, qid calculated here with update of
 /// QueryMsg,  + add peermgmt msg 
 /// TODO something more implicit to know if dist or local
-pub fn init_query<P : Peer, V : KeyVal> 
+pub fn init_query<P : Peer, V : KeyVal,RP : Ref<P>> 
  (nbquer : usize,
  nbresp   : usize,
  lifetime : Duration, 
@@ -401,7 +401,7 @@ pub fn init_query<P : Peer, V : KeyVal>
 // senthist : Option<LastSent<P>>, 
 // storepol : (bool,Option<CachePolicy>),
  peerquery : Option<(bool,Option<CachePolicy>)>) 
--> Query<P,V> {
+-> Query<P,V,RP> {
   panic!("todel");
 /*  let expire = CachePolicy(time::get_time() + lifetime);
   let q : Query<P,V> = match peerquery { 

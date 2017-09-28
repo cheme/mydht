@@ -807,8 +807,8 @@ pub fn find_val<RT : RunningTypes> (rp : &RunningProcesses<RT>, rc : &ArcRunning
 fn init_qmode<P : Peer> (me : &P, qm : &QueryMode) -> QueryModeMsg<P> {
   match qm {
     &QueryMode::Asynch => QueryModeMsg::Asynch(me.get_key(),me.get_address().clone(),NULL_QUERY_ID),
-    &QueryMode::AProxy => QueryModeMsg::AProxy(me.get_key(),me.get_address().clone(),NULL_QUERY_ID),
-    &QueryMode::AMix(i) => QueryModeMsg::AMix(i,me.get_key(),me.get_address().clone(),NULL_QUERY_ID),
+    &QueryMode::AProxy => QueryModeMsg::AProxy(NULL_QUERY_ID),
+    &QueryMode::AMix(i) => QueryModeMsg::AMix(i,NULL_QUERY_ID),
   }
 }
 

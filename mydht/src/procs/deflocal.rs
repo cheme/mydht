@@ -51,6 +51,8 @@ use super::{
 use super::server2::{
   ReadReply,
 };
+use keyval::KeyVal;
+use peer::Peer;
 use std::marker::PhantomData;
 
 pub struct GlobalCommand<MC : MyDHTConf>(pub Option<MC::PeerRef>, pub MC::GlobalServiceCommand);
@@ -78,7 +80,7 @@ impl<MC : MyDHTConf> SToRef<GlobalCommand<MC>> for GlobalCommandSend<MC>
 
 pub enum GlobalReply<MC : MyDHTConf> {
   /// forward command to list of peers or/and to nb peers from route
-  Forward(Option<Vec<MC::PeerRef>>,usize,MC::GlobalServiceCommand),
+  Forward(Option<Vec<MC::PeerRef>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,MC::GlobalServiceCommand),
   /// reply to api
   Api(MC::GlobalServiceReply),
   /// no rep
@@ -95,7 +97,7 @@ impl<MC : MyDHTConf> Clone for GlobalCommand<MC> where MC::GlobalServiceCommand 
 impl<MC : MyDHTConf> Clone for GlobalReply<MC> where MC::GlobalServiceReply : Clone {
   fn clone(&self) -> Self {
     match *self {
-      GlobalReply::Forward(ref odests, nb_for, ref gsc) => GlobalReply::Forward(odests.clone(),nb_for,gsc.clone()),
+      GlobalReply::Forward(ref odests,ref okadests, nb_for, ref gsc) => GlobalReply::Forward(odests.clone(),okadests.clone(),nb_for,gsc.clone()),
       GlobalReply::Api(ref gsr) => GlobalReply::Api(gsr.clone()),
       GlobalReply::NoRep => GlobalReply::NoRep,
       GlobalReply::Mult(ref grs) => GlobalReply::Mult(grs.clone()),
@@ -228,8 +230,8 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC>> for GlobalDest<MC> {
           }
         }
       },
-      GlobalReply::Forward(opr,nb_for,gsc) => {
-        self.mainloop.send(MainLoopCommand::ForwardServiceGlobal(opr,nb_for,gsc))?;
+      GlobalReply::Forward(opr,okad,nb_for,gsc) => {
+        self.mainloop.send(MainLoopCommand::ForwardServiceGlobal(opr,okad,nb_for,gsc))?;
       },
       GlobalReply::NoRep => (),
     }
