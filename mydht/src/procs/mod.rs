@@ -300,16 +300,16 @@ pub trait MyDHTConf : 'static + Send + Sized
 //  type ProtoMsgSend<'a> : Into<Self::LocalServiceCommand> + SettableAttachments + GettableAttachments;
   /// global service command : by default it should be protoMsg, depending on spawner use, should
   /// be Send or SRef... Local command require clone (sent to multiple peer)
-  type LocalServiceCommand : ApiQueriable + Into<Self::ProtoMsg> + Clone;
+  type LocalServiceCommand : ApiQueriable + OptInto<Self::ProtoMsg> + Clone;
   /// OptInto proto for forwarding query to other peers TODO looks useless as service command for
   /// it -> TODO consider removal after impl
-  type LocalServiceReply : ApiRepliable + OptInto<Self::ProtoMsg>;
+  type LocalServiceReply : ApiRepliable;
   /// global service command : by default it should be protoMsg see macro `nolocal`.
   /// For default proxy command, this use a globalCommand struct, the only command to define is
   /// LocalServiceCommand
   /// Need clone to be forward to multiple peers
-  type GlobalServiceCommand : ApiQueriable + Into<Self::ProtoMsg> + Clone;// = GlobalCommand<Self>;
-  type GlobalServiceReply : ApiRepliable + OptInto<Self::ProtoMsg>;// = GlobalCommand<Self>;
+  type GlobalServiceCommand : ApiQueriable + OptInto<Self::ProtoMsg> + Clone;// = GlobalCommand<Self>;
+  type GlobalServiceReply : ApiRepliable;// = GlobalCommand<Self>;
   // ref for protomsg : need to be compatible with spawners -> this has been disabled, ref will
   // need to be included in service command (which are
   // type LocalServiceCommandRef : Ref<Self::LocalServiceCommand>;

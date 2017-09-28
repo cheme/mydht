@@ -172,7 +172,7 @@ pub enum TestReply {
   Touch,
   TouchQ(Option<usize>),
 }
-impl OptInto<TestMessage> for TestReply {
+/*impl OptInto<TestMessage> for TestReply {
   fn can_into(&self) -> bool {
     match *self {
       TestReply::Touch => false,
@@ -183,7 +183,7 @@ impl OptInto<TestMessage> for TestReply {
     None
   }
 }
-
+*/
 impl Into<TestCommand> for TestMessage {
   fn into(self) -> TestCommand {
     match self {
@@ -193,12 +193,19 @@ impl Into<TestCommand> for TestMessage {
     }
   }
 }
-impl Into<TestMessage> for TestCommand {
-  fn into(self) -> TestMessage {
+impl OptInto<TestMessage> for TestCommand {
+  fn can_into(&self) -> bool {
+    match *self {
+      TestCommand::Touch => true,
+      TestCommand::TouchQ(..) => true,
+      TestCommand::TouchQR(..) => true,
+    }
+  }
+  fn opt_into(self) -> Option<TestMessage> {
     match self {
-      TestCommand::Touch => TestMessage::Touch,
-      TestCommand::TouchQ(qid,nbfor) => TestMessage::TouchQ(qid,nbfor),
-      TestCommand::TouchQR(qid) => TestMessage::TouchQR(qid),
+      TestCommand::Touch => Some(TestMessage::Touch),
+      TestCommand::TouchQ(qid,nbfor) => Some(TestMessage::TouchQ(qid,nbfor)),
+      TestCommand::TouchQR(qid) => Some(TestMessage::TouchQR(qid)),
     }
   }
 }

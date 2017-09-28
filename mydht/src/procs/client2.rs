@@ -1,4 +1,5 @@
 //! Client service
+use procs::OptInto;
 use std::borrow::Borrow;
 use peer::Peer;
 use peer::{
@@ -191,30 +192,32 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
 
 impl<MC : MyDHTConf> WriteService<MC> {
 
-  fn forward_proto<S : SpawnerYield, R : Into<MC::ProtoMsg>>(&mut self, command: R, async_yield : &mut S) -> Result<()> {
-    let mut stream = WriteYield(&mut self.stream, async_yield);
-    if self.shad_msg.is_none() {
-      let mut shad = match MC::AUTH_MODE {
-        ShadowAuthType::NoAuth => {
-          self.from.borrow().get_shadower_w_msg()
-        },
-        ShadowAuthType::Public | ShadowAuthType::Private => {
-          match self.with {
-            Some(ref w) => w.borrow().get_shadower_w_msg(),
-            None => {return Err(Error("route return slab may contain write ref of non initialized (connected), a route impl issue".to_string(), ErrorKind::Bug,None));},
-          }
-        },
-      };
-      // write head before storing
-      shad_write_header(&mut shad, &mut stream)?;
-      self.shad_msg = Some(shad);
-    }
+  fn forward_proto<S : SpawnerYield, R : OptInto<MC::ProtoMsg>>(&mut self, command: R, async_yield : &mut S) -> Result<()> {
+    if command.can_into() {
+      let mut stream = WriteYield(&mut self.stream, async_yield);
+      if self.shad_msg.is_none() {
+        let mut shad = match MC::AUTH_MODE {
+          ShadowAuthType::NoAuth => {
+            self.from.borrow().get_shadower_w_msg()
+          },
+          ShadowAuthType::Public | ShadowAuthType::Private => {
+            match self.with {
+              Some(ref w) => w.borrow().get_shadower_w_msg(),
+              None => {return Err(Error("route return slab may contain write ref of non initialized (connected), a route impl issue".to_string(), ErrorKind::Bug,None));},
+            }
+          },
+        };
+        // write head before storing
+        shad_write_header(&mut shad, &mut stream)?;
+        self.shad_msg = Some(shad);
+      }
 
-    let mut shad = self.shad_msg.as_mut().unwrap();
-    let pmess = command.into();
-    send_msg_msg(&pmess, &mut stream, &self.enc, &mut shad)?;
-    for att in pmess.get_attachments() {
-      send_att(att, &mut stream, &self.enc, &mut shad)?;
+      let mut shad = self.shad_msg.as_mut().unwrap();
+      let pmess = command.opt_into().unwrap();
+      send_msg_msg(&pmess, &mut stream, &self.enc, &mut shad)?;
+      for att in pmess.get_attachments() {
+        send_att(att, &mut stream, &self.enc, &mut shad)?;
+      }
     }
 
     Ok(())
