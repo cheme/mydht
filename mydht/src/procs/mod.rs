@@ -29,6 +29,7 @@ use self::deflocal::{
   GlobalCommand,
   GlobalReply,
   LocalDest,
+  GlobalDest,
 };
 use utils::{
   self,
@@ -348,11 +349,10 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// GlobalService is spawned from the main loop, and most of the time should use its own thread.
   type GlobalServiceSpawn : Spawner<
     Self::GlobalService,
-    Self::GlobalDest,
+    GlobalDest<Self>,
     <Self::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<Self>>>::Recv
   >;
   type GlobalServiceChannelIn : SpawnChannel<GlobalCommand<Self>>;
-  type GlobalDest : SpawnSend<GlobalReply<Self>>;
 
   type ApiReturn : Clone + Send + ApiReturn<Self>;
   type ApiService : Service<CommandIn = ApiCommand<Self>, CommandOut = ApiReply<Self>>;
@@ -417,8 +417,6 @@ pub trait MyDHTConf : 'static + Send + Sized
   fn init_global_channel_in(&mut self) -> Result<Self::GlobalServiceChannelIn>;
   fn init_global_spawner(&mut self) -> Result<Self::GlobalServiceSpawn>;
   fn init_global_service(&mut self) -> Result<Self::GlobalService>;
-  /// TODO remove as it should be static
-  fn init_global_dest(&mut self) -> Result<Self::GlobalDest>;
 
   fn init_local_service(Self::PeerRef, Option<Self::PeerRef>) -> Result<Self::LocalService>;
   fn init_local_spawner(&mut self) -> Result<Self::LocalServiceSpawn>;
@@ -928,12 +926,12 @@ fn sphandler_res<A, E : Debug + Display> (res : StdResult<A, E>) {
 }
 
 static NULL_QUERY_ID : usize = 0; // TODO replace by optional value to None!!
-pub type GlobalHandle<MC : MyDHTConf> = <MC::GlobalServiceSpawn as Spawner<MC::GlobalService,MC::GlobalDest,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>>::Handle;
+pub type GlobalHandle<MC : MyDHTConf> = <MC::GlobalServiceSpawn as Spawner<MC::GlobalService,GlobalDest<MC>,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>>::Handle;
 
 pub type GlobalHandleSend<MC : MyDHTConf> = HandleSend<<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Send,
   <<
-    MC::GlobalServiceSpawn as Spawner<MC::GlobalService,MC::GlobalDest,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>>::Handle as 
-    SpawnHandle<MC::GlobalService,MC::GlobalDest,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>
+    MC::GlobalServiceSpawn as Spawner<MC::GlobalService,GlobalDest<MC>,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>>::Handle as 
+    SpawnHandle<MC::GlobalService,GlobalDest<MC>,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>
     >::WeakHandle
     >;
 pub type ApiHandle<MC : MyDHTConf> = <MC::ApiServiceSpawn as Spawner<MC::ApiService,ApiDest<MC>,<MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Recv>>::Handle;

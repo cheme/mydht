@@ -141,7 +141,8 @@ use rules::simplerules::{
 #[serde(bound(deserialize = ""))]
 pub enum TestMessage {
   Touch,
-  TouchQ(Option<usize>),
+  TouchQ(Option<usize>,usize),
+  TouchQR(Option<usize>),
 }
 impl GettableAttachments for TestMessage {
   fn get_attachments(&self) -> Vec<&Attachment> {
@@ -161,7 +162,10 @@ impl SettableAttachments for TestMessage {
 #[derive(Clone)]
 pub enum TestCommand {
   Touch,
-  TouchQ(Option<usize>),
+  /// first is query ix, second nb forward for q
+  TouchQ(Option<usize>,usize),
+  /// param is query ix from which we receive q : this is a distant reply to a touchq
+  TouchQR(Option<usize>),
 }
 #[derive(Clone)]
 pub enum TestReply {
@@ -184,7 +188,8 @@ impl Into<TestCommand> for TestMessage {
   fn into(self) -> TestCommand {
     match self {
       TestMessage::Touch => TestCommand::Touch,
-      TestMessage::TouchQ(qid) => TestCommand::TouchQ(qid),
+      TestMessage::TouchQ(qid,nbfor) => TestCommand::TouchQ(qid,nbfor),
+      TestMessage::TouchQR(qid) => TestCommand::TouchQR(qid),
     }
   }
 }
@@ -192,7 +197,8 @@ impl Into<TestMessage> for TestCommand {
   fn into(self) -> TestMessage {
     match self {
       TestCommand::Touch => TestMessage::Touch,
-      TestCommand::TouchQ(qid) => TestMessage::TouchQ(qid),
+      TestCommand::TouchQ(qid,nbfor) => TestMessage::TouchQ(qid,nbfor),
+      TestCommand::TouchQR(qid) => TestMessage::TouchQR(qid),
     }
   }
 }
@@ -202,14 +208,16 @@ impl ApiQueriable for TestCommand {
   fn is_api_reply(&self) -> bool {
     match *self {
       TestCommand::Touch => false,
-      TestCommand::TouchQ(qid) => true,
+      TestCommand::TouchQ(qid,_) => true,
+      TestCommand::TouchQR(..) => false,
     }
   }
   #[inline]
   fn set_api_reply(&mut self, aid : ApiQueryId) {
     match *self {
       TestCommand::Touch => (),
-      TestCommand::TouchQ(ref mut qid) => *qid = Some(aid.0),
+      TestCommand::TouchQ(ref mut qid,_) => *qid = Some(aid.0),
+      TestCommand::TouchQR(..) => (),
     }
 
   }
@@ -247,11 +255,25 @@ mod test_tcp_all_block_thread {
           println!("TOUCH!!!");
           Ok(GlobalReply::NoRep)
         },
-        GlobalCommand(owith,TestCommand::TouchQ(id)) => {
-          println!("TOUCHQ!!!");
+        GlobalCommand(Some(p),TestCommand::TouchQ(id,nb_for)) => {
+          // no local storage
+          Ok(GlobalReply::Forward(Some(vec![p]),0,TestCommand::TouchQR(id)))
+        },
+        GlobalCommand(None,TestCommand::TouchQ(id,nb_for)) => {
+          println!("TOUCHQ!!!{:?}",id);
           //Ok(GlobalReply(TestReply::TouchQ(id)))
-          Ok(GlobalReply::Api(TestReply::TouchQ(id)))
+          let mut res = Vec::with_capacity(1 + nb_for);
+    
+          res.push(GlobalReply::Api(TestReply::TouchQ(id)));
+          for _ in 0 .. nb_for {
+            res.push(GlobalReply::Forward(None,1,TestCommand::TouchQ(id,0)));
+          }
+          Ok(GlobalReply::Mult(res))
   //Forward(Option<Vec<MC::PeerRef>>,usize,MC::GlobalServiceCommand),
+        },
+        GlobalCommand(owith,TestCommand::TouchQR(id)) => {
+          println!("TOUCHQR!!!{:?}",id);
+          Ok(GlobalReply::Api(TestReply::TouchQ(id)))
         },
       }
     }
@@ -274,6 +296,7 @@ mod test_tcp_all_block_thread {
             res
           });
         },
+        TestCommand::TouchQR(..) => (),
       }
       Ok((c,res))
     }
@@ -325,7 +348,6 @@ mod test_tcp_all_block_thread {
     type GlobalService = TestService<Self>;
     type GlobalServiceSpawn = ThreadPark;
     type GlobalServiceChannelIn = MpscChannel;
-    type GlobalDest = NoSend;
     type ApiReturn = OneResult<(Vec<ApiResult<Self>>,usize,usize)>;
     type ApiService = Api<Self,HashMap<ApiQueryId,(OneResult<(Vec<ApiResult<Self>>,usize,usize)>,Instant)>>;
 
@@ -418,9 +440,6 @@ mod test_tcp_all_block_thread {
       Ok(TestService(PhantomData))
     }
 
-    fn init_global_dest(&mut self) -> Result<Self::GlobalDest> {
-      Ok(NoSend)
-    }
     fn init_global_channel_in(&mut self) -> Result<Self::GlobalServiceChannelIn> {
       Ok(MpscChannel)
     }
@@ -469,13 +488,13 @@ mod test_tcp_all_block_thread {
     thread::sleep_ms(1000);
 //    let touch = ApiCommand::local_service(TestCommand::Touch);
     let touch = ApiCommand::call_service(TestCommand::Touch);
-    let o_res = new_oneresult((Vec::with_capacity(1),1,1));
-    let touchq = ApiCommand::call_service_reply(TestCommand::TouchQ(None),o_res.clone());
+   // let o_res = new_oneresult((Vec::with_capacity(1),1,1));
+    let o_res = new_oneresult((Vec::with_capacity(2),2,2));
+    let touchq = ApiCommand::call_service_reply(TestCommand::TouchQ(None,1),o_res.clone());
     sendcommand1.send(touch).unwrap();
     sendcommand1.send(touchq).unwrap();
     let o_res = clone_wait_one_result(&o_res,None).unwrap();
-    println!("res happened");
-    assert!(o_res.0.len() == 1);
+    assert!(o_res.0.len() == 2);
     for v in o_res.0.iter() {
       assert!(if let &ApiResult::GlobalServiceReply(TestReply::TouchQ(Some(1))) = v {true} else {false});
     }

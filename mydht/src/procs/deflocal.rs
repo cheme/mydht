@@ -83,6 +83,7 @@ pub enum GlobalReply<MC : MyDHTConf> {
   Api(MC::GlobalServiceReply),
   /// no rep
   NoRep,
+  Mult(Vec<GlobalReply<MC>>),
 }
 
 impl<MC : MyDHTConf> Clone for GlobalCommand<MC> where MC::GlobalServiceCommand : Clone {
@@ -97,6 +98,7 @@ impl<MC : MyDHTConf> Clone for GlobalReply<MC> where MC::GlobalServiceReply : Cl
       GlobalReply::Forward(ref odests, nb_for, ref gsc) => GlobalReply::Forward(odests.clone(),nb_for,gsc.clone()),
       GlobalReply::Api(ref gsr) => GlobalReply::Api(gsr.clone()),
       GlobalReply::NoRep => GlobalReply::NoRep,
+      GlobalReply::Mult(ref grs) => GlobalReply::Mult(grs.clone()),
     }
   }
 }
@@ -159,7 +161,7 @@ impl<MC : MyDHTConf> ApiRepliable for GlobalReply<MC> {
 impl<MC : MyDHTConf> Service for DefLocalService<MC> 
   where 
    MC::GlobalServiceChannelIn: SpawnChannel<GlobalCommand<MC>>,
-   MC::GlobalServiceSpawn: Spawner<MC::GlobalService, MC::GlobalDest, <MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>
+   MC::GlobalServiceSpawn: Spawner<MC::GlobalService, GlobalDest<MC>, <MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC>>>::Recv>
 {
   type CommandIn = MC::GlobalServiceCommand;
   type CommandOut = LocalReply<MC>;
@@ -200,23 +202,30 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC>> for GlobalDest<MC> {
   const CAN_SEND : bool = true;
   fn send(&mut self, r : GlobalReply<MC>) -> Result<()> {
     match r {
+      GlobalReply::Mult(cmds) => {
+        for cmd in cmds.into_iter() {
+          self.send(cmd)?;
+        }
+      },
       GlobalReply::Api(c) => {
-        let cml =  match self.api {
-          Some(ref mut api_weak) => {
-            if api_weak.1.is_finished() {
+        if c.get_api_reply().is_some() {
+          let cml =  match self.api {
+            Some(ref mut api_weak) => {
+              if api_weak.1.is_finished() {
+                Some(c)
+              } else {
+                api_weak.send(ApiCommand::GlobalServiceReply(c))?;
+                None
+              }
+            },
+            None => {
               Some(c)
-            } else {
-              api_weak.send(ApiCommand::GlobalServiceReply(c))?;
-              None
-            }
-          },
-          None => {
-            Some(c)
-          },
-        };
-        if let Some(c) = cml {
-          self.api = None;
-          self.mainloop.send(MainLoopCommand::ProxyApiGlobalReply(c))?;
+            },
+          };
+          if let Some(c) = cml {
+            self.api = None;
+            self.mainloop.send(MainLoopCommand::ProxyApiGlobalReply(c))?;
+          }
         }
       },
       GlobalReply::Forward(opr,nb_for,gsc) => {

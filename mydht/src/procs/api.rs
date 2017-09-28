@@ -116,9 +116,13 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
       },
       ApiCommand::GlobalServiceReply(gsr) => {
         if let Some(qid) = gsr.get_api_reply() {
-          if let Some(q) = self.0.remove_val_c(&qid) {
-//            <MC::ApiService as ApiReturn<MC>>::api_return(q.0,ApiResult::GlobalServiceReply(gsr))?;
-            q.0.api_return(ApiResult::GlobalServiceReply(gsr))?;
+          let rem = if let Some(q) = self.0.get_val_mut_c(&qid) {
+            q.0.api_return(ApiResult::GlobalServiceReply(gsr))?
+          } else {
+            false
+          };
+          if rem {
+            self.0.remove_val_c(&qid);
           }
         }
         ApiReply::Done
@@ -223,7 +227,8 @@ impl<MC : MyDHTConf> SpawnSend<ApiReply<MC>> for ApiDest<MC> {
 
 
 pub trait ApiReturn<MC : MyDHTConf> {
-  fn api_return(&self, ApiResult<MC>) -> Result<()>;
+  /// if return true, this could/should be drop
+  fn api_return(&self, ApiResult<MC>) -> Result<bool>;
 }
 
 /// contains a Vec of result, and nb_result and nb_error, notify as complete when nb_result receive
@@ -233,7 +238,7 @@ where
   MC::LocalServiceReply : Send,
   MC::GlobalServiceReply : Send,
 {
-  fn api_return(&self, rep : ApiResult<MC>) -> Result<()> {
+  fn api_return(&self, rep : ApiResult<MC>) -> Result<bool> {
     let no_res = if let ApiResult::NoResult = rep {true} else {false};
     if match self.0.lock() {
       Ok(mut res) => {
@@ -260,11 +265,10 @@ where
       },
     } {
       self.1.notify_all();
+      return Ok(true)
     }
 
-
-    // TODO refact oneresult
-    Ok(())
+    Ok(false)
   }
 }
 
@@ -287,12 +291,14 @@ impl<MC : MyDHTConf> SpawnSend<ApiCommand<MC>> for ApiSendIn<MC> {
 //  ForwardServiceLocal(MC::LocalServiceCommand,MC::PeerRef),
       ApiCommand::GlobalServiceCommand(cmd,ret) => self.main_loop.send(MainLoopCommand::GlobalApi(cmd,ret))?,
       ApiCommand::LocalServiceReply(rep) => {
-        let oqid = rep.get_api_reply();
-        panic!("TODO get from cache an unlock cond var")
+        unreachable!()
+//        let oqid = rep.get_api_reply();
+ //       panic!("TODO get from cache an unlock cond var")
       },
       ApiCommand::GlobalServiceReply(rep) => {
-        let oqid = rep.get_api_reply();
-        panic!("TODO get from cache an unlock cond var")
+        unreachable!()
+        //let oqid = rep.get_api_reply();
+        //panic!("TODO get from cache an unlock cond var")
       },
  
     };

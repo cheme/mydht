@@ -8,6 +8,7 @@ use super::deflocal::{
   GlobalCommand,
   GlobalCommandSend,
   GlobalReply,
+  GlobalDest,
 };
 
 use super::api::{
@@ -384,14 +385,6 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     let write_channel_in = conf.init_write_channel_in()?;
     let enc_proto = conf.init_enc_proto()?;
     let mut global_spawn = conf.init_global_spawner()?;
-    let global_service = conf.init_global_service()?;
-    // TODO use a true dest with mainloop, api weak as dest
-    let global_dest = conf.init_global_dest()?;
-    let mut global_channel_in = conf.init_global_channel_in()?;
-    let (global_send, global_recv) = global_channel_in.new()?;
-    let global_handle = global_spawn.spawn(global_service, global_dest, None, global_recv, MC::GLOBAL_NB_ITER)?;
-    let local_channel_in = conf.init_local_channel_in()?;
-    let local_spawn = conf.init_local_spawner()?;
     let api_dest = ApiDest {
       main_loop : mlsend.clone(),
     };
@@ -400,6 +393,20 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     let mut api_channel_in = conf.init_api_channel_in()?;
     let (api_send, api_recv) = api_channel_in.new()?;
     let api_handle = api_spawn.spawn(api_service, api_dest, None, api_recv, MC::API_NB_ITER)?;
+
+    let global_service = conf.init_global_service()?;
+    // TODO use a true dest with mainloop, api weak as dest
+    let api_gdest = api_handle.get_weak_handle().map(|wh|HandleSend(api_send.clone(),wh));
+
+    let global_dest = GlobalDest {
+      mainloop : mlsend.clone(),
+      api : api_gdest,
+    };
+    let mut global_channel_in = conf.init_global_channel_in()?;
+    let (global_send, global_recv) = global_channel_in.new()?;
+    let global_handle = global_spawn.spawn(global_service, global_dest, None, global_recv, MC::GLOBAL_NB_ITER)?;
+    let local_channel_in = conf.init_local_channel_in()?;
+    let local_spawn = conf.init_local_spawner()?;
     let s = MDHTState {
       me : me,
       transport : transport,
@@ -830,15 +837,13 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MC::MainLoopCha
     Ok(())
   }
   fn get_write_handle_send(&self, wtoken : usize) -> Option<WriteHandleSend<MC>> {
-       let ow = self.slab_cache.get(wtoken);
-        if let Some(ca) = ow {
-          if let SlabEntryState::WriteSpawned((ref write_handle,ref write_s_in)) = ca.state {
-            if let Some (wh) = write_handle.get_weak_handle() {
-              Some(HandleSend(write_s_in.clone(),wh))
-            } else {None}
-          } else {None}
-        } else {None}
-    }
+    let ow = self.slab_cache.get(wtoken);
+    if let Some(ca) = ow {
+      if let SlabEntryState::WriteSpawned((ref write_handle,ref write_s_in)) = ca.state {
+        write_handle.get_weak_handle().map(|wh|HandleSend(write_s_in.clone(),wh))
+      } else {None}
+    } else {None}
+  }
 
   /// The state of the slab entry must be checked before, return error on wrong state
   fn start_read_stream_listener(&mut self, read_token : usize,
