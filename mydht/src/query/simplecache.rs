@@ -58,7 +58,7 @@ pub type HashMapQuery<P,V,RP> = HashMap<QueryID, Query<P,V,RP>>;
 //pub type CacheQuery<P,V> = KVCache<QueryID, Query<P,V>>;
 /// A simple implementation (basic hashmap) to store/cache query
 //pub struct SimpleCacheQuery<P : Peer, V : KeyVal> {
-pub struct SimpleCacheQuery<P : Peer, V : KeyVal, RP : Ref<P>, C : KVCache<QueryID, Query<P,V,RP>>> {
+pub struct SimpleCacheQuery<P : Peer, V, RP : Ref<P>, C : KVCache<QueryID, Query<P,V,RP>>> {
   cache : C,
  // cache : HashMap<QueryID, Query<P,V>>,
   /// use randow id, if false sequential ids will be used
@@ -68,7 +68,7 @@ pub struct SimpleCacheQuery<P : Peer, V : KeyVal, RP : Ref<P>, C : KVCache<Query
 }
 
 
-impl<P : Peer, V : KeyVal, RP : Ref<P>> SimpleCacheQuery<P,V,RP,HashMapQuery<P,V,RP>> {
+impl<P : Peer, V, RP : Ref<P>> SimpleCacheQuery<P,V,RP,HashMapQuery<P,V,RP>> {
   pub fn new (randid : bool) -> Self{
     SimpleCacheQuery{cache : HashMap::new(),randomids : randid,lastid : 0, _phdat : PhantomData}
   }
@@ -79,7 +79,7 @@ impl<P : Peer, V : KeyVal, RP : Ref<P>> SimpleCacheQuery<P,V,RP,HashMapQuery<P,V
 // TODO a transient cache with transient keyval which could also be stored 
 // -> need fn to_storable but also from_storable : this is only for query
 // not sure usefull -> more likely implement both when possible
-impl<P : Peer, V : KeyVal, RP : Ref<P>, C : KVCache<QueryID, Query<P,V,RP>>> QueryCache<P,V,RP> for SimpleCacheQuery<P,V,RP,C>  where P::Key : Send {
+impl<P : Peer, V, RP : Ref<P>, C : KVCache<QueryID, Query<P,V,RP>>> QueryCache<P,V,RP> for SimpleCacheQuery<P,V,RP,C>  where P::Key : Send {
   #[inline]
   fn query_add(&mut self, qid : QueryID, query : Query<P,V,RP>) {
     self.cache.add_val_c(qid, query);

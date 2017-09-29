@@ -9,7 +9,9 @@ use kvstore::{
 };
 use procs::storeprop::{
   KVStoreCommand,
+  KVStoreReply,
   KVStoreService,
+  OptPeerGlobalDest,
 };
 use procs::api::{
   ApiQueriable,
@@ -149,6 +151,11 @@ pub trait OptInto<T>: Sized {
   fn can_into(&self) -> bool;
   fn opt_into(self) -> Option<T>;
 }
+pub trait OptFrom<T>: Sized {
+  fn can_from(&T) -> bool;
+  fn opt_from(T) -> Option<Self>;
+}
+
 
 pub struct MyDHTService<MC : MyDHTConf>(pub MC, pub MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>, pub <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Send,pub MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>);
 
@@ -240,6 +247,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// little more should be better, in a pool infinite (0) could be fine to.
   const send_nb_iter : usize;
   const GLOBAL_NB_ITER : usize = 0;
+  const PEERSTORE_NB_ITER : usize = 0;
   const API_NB_ITER : usize = 0;
   /// Spawner for main loop
   type MainloopSpawn : Spawner<
@@ -316,8 +324,13 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// LocalServiceCommand
   /// Need clone to be forward to multiple peers
   /// Opt into store of peer command to route those command if global command allows it
-  type GlobalServiceCommand : ApiQueriable + OptInto<Self::ProtoMsg> + OptInto<KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>> + Clone;// = GlobalCommand<Self>;
-  type GlobalServiceReply : ApiRepliable;// = GlobalCommand<Self>;
+  type GlobalServiceCommand : ApiQueriable + OptInto<Self::ProtoMsg>
+    + OptFrom<KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>>
+    + OptInto<KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>>
+    + Clone;// = GlobalCommand<Self>;
+  type GlobalServiceReply : ApiRepliable
+    + OptFrom<KVStoreReply<Self::PeerRef>> 
+    ;// = GlobalCommand<Self>;
   // ref for protomsg : need to be compatible with spawners -> this has been disabled, ref will
   // need to be included in service command (which are
   // type LocalServiceCommandRef : Ref<Self::LocalServiceCommand>;
@@ -371,6 +384,15 @@ pub trait MyDHTConf : 'static + Send + Sized
   >;
   type ApiServiceChannelIn : SpawnChannel<ApiCommand<Self>>;
  
+  type PeerStoreQueryCache : QueryCache<Self::Peer,Self::PeerRef,Self::PeerRef>;
+  type PeerKVStore : KVStore<Self::Peer>;
+  type PeerStoreServiceSpawn : Spawner<
+    KVStoreService<Self::Peer,Self::PeerRef,Self::Peer,Self::PeerRef,Self::PeerKVStore,Self::DHTRules,Self::PeerStoreQueryCache>,
+    OptPeerGlobalDest<Self>,
+    <Self::PeerStoreServiceChannelIn as SpawnChannel<GlobalCommand<Self::PeerRef,KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>>>>::Recv
+  >;
+  type PeerStoreServiceChannelIn : SpawnChannel<GlobalCommand<Self::PeerRef,KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>>>;
+
 
   /// Start the main loop TODO change sender to avoid mainloop proxies (an API sender like for
   /// others services)
@@ -403,6 +425,10 @@ pub trait MyDHTConf : 'static + Send + Sized
     },ro))
   }
 
+  fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>>;
+  fn init_peer_kvstore_query_cache(&mut self) -> Result<Self::PeerStoreQueryCache>;
+  fn init_peerstore_channel_in(&mut self) -> Result<Self::PeerStoreServiceChannelIn>;
+  fn init_peerstore_spawner(&mut self) -> Result<Self::PeerStoreServiceSpawn>;
   /// create or load peer for our transport (ourselve)
   fn init_ref_peer(&mut self) -> Result<Self::PeerRef>;
   /// for start_loop usage
@@ -951,5 +977,12 @@ pub type ApiHandleSend<MC : MyDHTConf> = HandleSend<<MC::ApiServiceChannelIn as 
     >;
 
 
+pub type PeerStoreHandle<MC : MyDHTConf> = <MC::PeerStoreServiceSpawn as 
+Spawner<
+    KVStoreService<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef,MC::PeerKVStore,MC::DHTRules,MC::PeerStoreQueryCache>,
+    OptPeerGlobalDest<MC>,
+    <MC::PeerStoreServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>>>>::Recv
+  >
+>::Handle;
 
 

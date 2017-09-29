@@ -3,17 +3,28 @@
 
 extern crate mydht_tcp_loop;
 extern crate mydht_slab;
+use kvstore::{
+  KVStore,
+};
+use query::simplecache::{
+  SimpleCacheQuery,
+  HashMapQuery,
+};
 use std::time::Instant;
 use std::time::Duration;
 use procs::storeprop::{
   KVStoreCommand,
+  KVStoreReply,
 };
 use utils::{
   OneResult,
   new_oneresult,
   clone_wait_one_result,
 };
-use procs::OptInto;
+use procs::{
+  OptInto,
+  OptFrom,
+};
 use procs::api::{
   Api,
   ApiReply,
@@ -192,6 +203,22 @@ impl<MC : MyDHTConf> OptInto<KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>> for 
     None
   }
 
+}
+impl<MC : MyDHTConf> OptFrom<KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>> for TestCommand<MC> {
+  fn can_from(_ : &KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>) -> bool {
+    unimplemented!()
+  }
+  fn opt_from(_ : KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>) -> Option<Self> {
+    None
+  }
+}
+impl<PR> OptFrom<KVStoreReply<PR>> for TestReply {
+  fn can_from(_ : &KVStoreReply<PR>) -> bool {
+    unimplemented!()
+  }
+  fn opt_from(_ : KVStoreReply<PR>) -> Option<Self> {
+    None
+  }
 }
 #[derive(Clone)]
 pub enum TestReply {
@@ -394,8 +421,30 @@ mod test_tcp_all_block_thread {
     type ApiServiceChannelIn = MpscChannel;
 
 
-
-
+//`, `PeerKVStore`, `PeerKVStoreInit`, ``, `, `init_peer_kvstore
+    type PeerStoreQueryCache = SimpleCacheQuery<Self::Peer,Self::PeerRef,Self::PeerRef,HashMapQuery<Self::Peer,Self::PeerRef,Self::PeerRef>>;
+    type PeerStoreServiceSpawn = ThreadPark; // TODO should behave with local return suspend
+    type PeerStoreServiceChannelIn = MpscChannel;
+    type PeerKVStore = SimpleCache<Self::Peer,HashMap<<Self::Peer as KeyVal>::Key,Self::Peer>>;
+    fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>> {
+      Ok(Box::new(
+        ||{
+          Ok(SimpleCache::new(None))
+        }
+      ))
+    }
+    fn init_peer_kvstore_query_cache(&mut self) -> Result<Self::PeerStoreQueryCache> {
+      // non random id
+      Ok(SimpleCacheQuery::new(false))
+    }
+    fn init_peerstore_channel_in(&mut self) -> Result<Self::PeerStoreServiceChannelIn> {
+      Ok(MpscChannel)
+    }
+    fn init_peerstore_spawner(&mut self) -> Result<Self::PeerStoreServiceSpawn> {
+      Ok(ThreadPark)
+    }
+//impl<P : Peer, V : KeyVal, RP : Ref<P>> SimpleCacheQuery<P,V,RP,HashMapQuery<P,V,RP>> {
+// QueryCache<Self::Peer,Self::PeerRef,Self::PeerRef>;
     fn init_ref_peer(&mut self) -> Result<Self::PeerRef> {
        let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), self.1 as u16);
        let val = Node {nodeid: self.0.clone(), address : SerSocketAddr(addr)};

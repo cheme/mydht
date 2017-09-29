@@ -4,6 +4,12 @@
 use std::clone::Clone;
 use log;
 use std::borrow::Borrow;
+use procs::storeprop::{
+  KVStoreCommand,
+  KVStoreReply,
+  KVStoreService,
+  OptPeerGlobalDest,
+};
 use super::deflocal::{
   GlobalCommand,
   GlobalCommandSend,
@@ -28,6 +34,7 @@ use super::{
   GlobalHandle,
   GlobalHandleSend,
   ApiHandle,
+  PeerStoreHandle,
   ApiHandleSend,
   Route,
 };
@@ -368,11 +375,14 @@ pub struct MDHTState<MC : MyDHTConf> {
   local_channel_in_proto : MC::LocalServiceChannelIn,
   api_send : <MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Send,
   api_handle : ApiHandle<MC>,
+  peerstore_send : <MC::PeerStoreServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>>>>::Send,
+  peerstore_handle : PeerStoreHandle<MC>,
 }
 
 impl<MC : MyDHTConf> MDHTState<MC> {
   pub fn init_state(conf : &mut MC,mlsend : &mut MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>) -> Result<MDHTState<MC>> {
     let poll = Poll::new()?;
+    let dhtrules_proto = conf.init_dhtrules_proto()?;
     let transport = conf.init_transport()?;
     let route = conf.init_route()?;
     assert!(true == transport.register(&poll, LISTENER, Ready::readable(),
@@ -396,16 +406,35 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     let global_service = conf.init_global_service()?;
     // TODO use a true dest with mainloop, api weak as dest
     let api_gdest = api_handle.get_weak_handle().map(|wh|HandleSend(api_send.clone(),wh));
-
     let global_dest = GlobalDest {
       mainloop : mlsend.clone(),
       api : api_gdest,
     };
+    let api_gdest_peer = api_handle.get_weak_handle().map(|wh|HandleSend(api_send.clone(),wh));
+    let global_dest_peer = GlobalDest {
+      mainloop : mlsend.clone(),
+      api : api_gdest_peer,
+    };
+
     let mut global_channel_in = conf.init_global_channel_in()?;
     let (global_send, global_recv) = global_channel_in.new()?;
     let global_handle = global_spawn.spawn(global_service, global_dest, None, global_recv, MC::GLOBAL_NB_ITER)?;
     let local_channel_in = conf.init_local_channel_in()?;
     let local_spawn = conf.init_local_spawner()?;
+    let mut peerstore_channel_in = conf.init_peerstore_channel_in()?;
+    let (peerstore_send, peerstore_recv) = peerstore_channel_in.new()?;
+    let mut peerstore_spawn = conf.init_peerstore_spawner()?;
+    let peerstore_service = KVStoreService {
+      me : me.clone(),
+      init_store : conf.init_peer_kvstore()?,
+      store : None,
+      dht_rules : dhtrules_proto.clone(),
+      query_cache : conf.init_peer_kvstore_query_cache()?,
+      _ph : PhantomData,
+    };
+    let peerstore_dest = OptPeerGlobalDest(global_dest_peer);
+    let peerstore_handle = peerstore_spawn.spawn(peerstore_service,peerstore_dest,None,peerstore_recv, MC::PEERSTORE_NB_ITER)?;
+
     let s = MDHTState {
       me : me,
       transport : transport,
@@ -422,7 +451,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       peermgmt_channel_in : conf.init_peermgmt_channel_in()?,
       enc_proto : enc_proto,
       peermgmt_proto : conf.init_peermgmt_proto()?,
-      dhtrules_proto : conf.init_dhtrules_proto()?,
+      dhtrules_proto : dhtrules_proto,
       mainloop_send : mlsend.clone(),
       global_channel_in : global_channel_in,
       global_spawn : global_spawn,
@@ -432,6 +461,8 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       local_spawn_proto : local_spawn,
       api_handle : api_handle,
       api_send : api_send,
+      peerstore_send : peerstore_send,
+      peerstore_handle : peerstore_handle,
     };
     Ok(s)
   }

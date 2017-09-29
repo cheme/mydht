@@ -1,7 +1,14 @@
 //! Store propagate service : to manage KeyVal.
 //! Use internally at least for peer store, still not mandatory (could be replace by a fake
 //! service) 
+//! TODO for this KVStore : currently no commit are done : run some : fix rules : on drop and every
+//! n insert
+use std::mem::replace;
 use kvstore::StoragePriority;
+use std::convert::From;
+use super::deflocal::{
+  GlobalDest,
+};
 use rules::DHTRules;
 use std::time;
 use std::time::Instant;
@@ -71,6 +78,7 @@ use super::{
   MyDHTConf,
   GetOrigin,
   GlobalHandleSend,
+  OptFrom,
 };
 use super::server2::{
   ReadReply,
@@ -86,16 +94,16 @@ use utils::{
 
 /// kvstore service inner implementation TODO add local cache like original mydhtimpl (already
 /// Ref<KeyVal> usage (looks odd without a cache)
-pub struct KVStoreService<P,RP,V,RV,S,I,DR,QC> {
+pub struct KVStoreService<P,RP,V,RV,S,DR,QC> {
 //pub struct KVStoreService<V : KeyVal, S : KVStore<V>> {
   /// Fn to init store, is expected to be called only once (so returning error at second call
   /// should be fine)
-  me : RP,
-  init_store : I,
-  store : Option<S>,
-  dht_rules : DR,
-  query_cache : QC,
-  _ph : PhantomData<(P,V,RV)>,
+  pub me : RP,
+  pub init_store : Box<Fn() -> Result<S> + Send>,
+  pub store : Option<S>,
+  pub dht_rules : DR,
+  pub query_cache : QC,
+  pub _ph : PhantomData<(P,V,RV)>,
 }
 
 /// Proto msg for kvstore : Not mandatory (only OptInto need implementation) but can be use when
@@ -190,10 +198,9 @@ impl<
   V : KeyVal, 
   VR : Ref<V>, 
   S : KVStore<V>, 
-  F : Fn() -> Result<S> + Send + 'static,
   DH : DHTRules,
   QC : QueryCache<P,VR,RP>,
-  > Service for KVStoreService<P,RP,V,VR,S,F,DH,QC> {
+  > Service for KVStoreService<P,RP,V,VR,S,DH,QC> {
   type CommandIn = GlobalCommand<RP,KVStoreCommand<P,V,VR>>;
   type CommandOut = GlobalReply<P,RP,KVStoreCommand<P,V,VR>,KVStoreReply<VR>>;
   //    KVStoreReply<P,V,RP>;
@@ -405,3 +412,47 @@ impl<
     Ok(GlobalReply::NoRep)
   }
 }
+
+
+/// adapter to forward peer message into global dest
+pub struct OptPeerGlobalDest<MC : MyDHTConf> (pub GlobalDest<MC>);
+
+impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>>> for OptPeerGlobalDest<MC> {
+  const CAN_SEND : bool = true;
+  fn send(&mut self, c : GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>>) -> Result<()> {
+    let ogr = <GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServiceCommand,MC::GlobalServiceReply>>::opt_from(c);
+    if let Some(gr) = ogr {
+      self.0.send(gr)?
+    };
+    Ok(())
+  }
+}
+/*  Forward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,usize,GSC),
+  /// reply to api
+  Api(GSR),
+  /// no rep
+  NoRep,
+  Mult(Vec<GlobalReply<P,PR,GSC,GSR>>),*/
+
+impl<P : Peer,PR : Ref<P>,GSC : OptFrom<KVStoreCommand<P,P,PR>>,GSR : OptFrom<KVStoreReply<PR>>> OptFrom<GlobalReply<P,PR,KVStoreCommand<P,P,PR>,KVStoreReply<PR>>> for GlobalReply<P,PR,GSC,GSR> {
+  fn can_from(t : &GlobalReply<P,PR,KVStoreCommand<P,P,PR>,KVStoreReply<PR>>) -> bool {
+    unimplemented!()
+  }
+  fn opt_from(t : GlobalReply<P,PR,KVStoreCommand<P,P,PR>,KVStoreReply<PR>>) -> Option<Self> {
+    match t {
+      GlobalReply::NoRep => Some(GlobalReply::NoRep), // could also rep none (not forward in global dest
+      GlobalReply::Api(ksr) => GSR::opt_from(ksr).map(|gsr|GlobalReply::Api(gsr)),
+      GlobalReply::Forward(ovpr,ovka,nbfor,ksc) => GSC::opt_from(ksc).map(|gsc|GlobalReply::Forward(ovpr,ovka,nbfor,gsc)),
+      GlobalReply::Mult(vkr) => {
+        let vgr : Vec<Self> = vkr.into_iter().map(|kr|Self::opt_from(kr)).filter_map(|ogr|ogr).collect();
+        if vgr.len() > 0 {
+          Some(GlobalReply::Mult(vgr))
+        } else {
+          None
+        }
+      }
+    }
+  }
+}
+
+
