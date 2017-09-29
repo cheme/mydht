@@ -79,7 +79,7 @@ impl<PR : SRef, GSC : SRef> SToRef<GlobalCommand<PR,GSC>> for GlobalCommandSend<
   }
 }
 
-
+/*
 pub enum GlobalReply<MC : MyDHTConf> {
   /// forward command to list of peers or/and to nb peers from route
   Forward(Option<Vec<MC::PeerRef>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,MC::GlobalServiceCommand),
@@ -88,8 +88,8 @@ pub enum GlobalReply<MC : MyDHTConf> {
   /// no rep
   NoRep,
   Mult(Vec<GlobalReply<MC>>),
-}
-/*pub enum GlobalReply<P : KeyVal,PR,GSC,GSR> {
+}*/
+pub enum GlobalReply<P : Peer,PR,GSC,GSR> {
   /// forward command to list of peers or/and to nb peers from route
   Forward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,usize,GSC),
   /// reply to api
@@ -97,7 +97,7 @@ pub enum GlobalReply<MC : MyDHTConf> {
   /// no rep
   NoRep,
   Mult(Vec<GlobalReply<P,PR,GSC,GSR>>),
-}*/
+}
 
 /*
 impl<A,B> Clone for GlobalCommand<MC> where MC::GlobalServiceCommand : Clone {
@@ -106,7 +106,8 @@ impl<A,B> Clone for GlobalCommand<MC> where MC::GlobalServiceCommand : Clone {
     GlobalCommand(oref.clone(),lsc.clone())
   }
 }*/
-impl<MC : MyDHTConf> Clone for GlobalReply<MC> where MC::GlobalServiceReply : Clone {
+/// TODO derivec clone should be fine here
+impl<P : Peer,PR : Clone,GSC : Clone,GSR : Clone> Clone for GlobalReply<P,PR,GSC,GSR> {
   fn clone(&self) -> Self {
     match *self {
       GlobalReply::Forward(ref odests,ref okadests, nb_for, ref gsc) => GlobalReply::Forward(odests.clone(),okadests.clone(),nb_for,gsc.clone()),
@@ -212,9 +213,9 @@ impl<MC : MyDHTConf> Clone for LocalDest<MC> {
   NoRep,
 }*/
 
-impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC>> for GlobalDest<MC> {
+impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServiceCommand,MC::GlobalServiceReply>> for GlobalDest<MC> {
   const CAN_SEND : bool = true;
-  fn send(&mut self, r : GlobalReply<MC>) -> Result<()> {
+  fn send(&mut self, r : GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServiceCommand,MC::GlobalServiceReply>) -> Result<()> {
     match r {
       GlobalReply::Mult(cmds) => {
         for cmd in cmds.into_iter() {

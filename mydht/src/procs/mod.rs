@@ -316,7 +316,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// LocalServiceCommand
   /// Need clone to be forward to multiple peers
   /// Opt into store of peer command to route those command if global command allows it
-  type GlobalServiceCommand : ApiQueriable + OptInto<Self::ProtoMsg> + OptInto<KVStoreCommand<Self::Peer,Self::Peer>> + Clone;// = GlobalCommand<Self>;
+  type GlobalServiceCommand : ApiQueriable + OptInto<Self::ProtoMsg> + OptInto<KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>> + Clone;// = GlobalCommand<Self>;
   type GlobalServiceReply : ApiRepliable;// = GlobalCommand<Self>;
   // ref for protomsg : need to be compatible with spawners -> this has been disabled, ref will
   // need to be included in service command (which are
@@ -353,7 +353,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// Main Service for the application, most of the time it is composed of several service (except
   /// peer management).
   /// Global service is initiated with from peer only, dest peer must be in service command.
-  type GlobalService : Service<CommandIn = GlobalCommand<Self::PeerRef,Self::GlobalServiceCommand>, CommandOut = GlobalReply<Self>>;
+  type GlobalService : Service<CommandIn = GlobalCommand<Self::PeerRef,Self::GlobalServiceCommand>, CommandOut = GlobalReply<Self::Peer,Self::PeerRef,Self::GlobalServiceCommand,Self::GlobalServiceReply>>;
   /// GlobalService is spawned from the main loop, and most of the time should use its own thread.
   type GlobalServiceSpawn : Spawner<
     Self::GlobalService,

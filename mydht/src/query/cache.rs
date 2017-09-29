@@ -21,7 +21,7 @@ use utils::Ref;
 //TODO rewrite with parameterization ok!! (generic simplecache) TODO move to mod.rs
 // TODO cache of a value : here only cache of peer query
 /// cache of query interface TODO make it kvcach + two methods??
-pub trait QueryCache<P : Peer,V : KeyVal,RP : Ref<P>> {
+pub trait QueryCache<P : Peer,V,RP : Ref<P>> {
   fn query_add(&mut self, QueryID, Query<P,V,RP>);
   fn query_get(&mut self, &QueryID) -> Option<&Query<P,V,RP>>;
   fn query_get_mut(&mut self, &QueryID) -> Option<&mut Query<P,V,RP>>;
