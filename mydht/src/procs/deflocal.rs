@@ -163,6 +163,11 @@ impl<A,B : ApiQueriable> ApiQueriable for GlobalCommand<A,B> {
   fn set_api_reply(&mut self, aid : ApiQueryId) {
     self.1.set_api_reply(aid)
   }
+
+  #[inline]
+  fn get_api_reply(&self) -> Option<ApiQueryId> {
+    self.1.get_api_reply()
+  }
 }
 /*
 impl<MC : MyDHTConf> ApiRepliable for GlobalReply<MC> {

@@ -6,7 +6,11 @@ use peer::{
   PeerMgmtMeths,
   PeerPriority,
 };
-use super::api::ApiQueryId;
+use super::api::{
+  ApiQueryId,
+  ApiQueriable,
+  ApiRepliable,
+};
 use keyval::{
   KeyVal,
   SettableAttachment,
@@ -233,6 +237,17 @@ pub enum WriteCommand<MC : MyDHTConf> {
   Service(MC::LocalServiceCommand),
   GlobalService(MC::GlobalServiceCommand),
 }
+
+impl<MC : MyDHTConf> WriteCommand<MC> {
+  pub fn get_api_reply(&self) -> Option<ApiQueryId> {
+    match *self {
+      WriteCommand::Service(ref lsc) => lsc.get_api_reply(),
+      WriteCommand::GlobalService(ref gsc) => gsc.get_api_reply(),
+      _ => None,
+    }
+  }
+}
+
 
 pub enum WriteCommandSend<MC : MyDHTConf> 
   where MC::LocalServiceCommand : SRef,

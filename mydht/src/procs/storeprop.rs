@@ -164,7 +164,7 @@ pub enum KVStoreCommand<P : Peer, V : KeyVal, VR : Ref<V>> {
   Store(QueryID,Vec<VR>),
 //  StoreMult(QueryID,Vec<VR>),
   NotFound(QueryID),
-  StoreLocally(V,QueryPriority,ApiQueryId),
+  StoreLocally(VR,QueryPriority,Option<ApiQueryId>),
 }
 
   
@@ -220,8 +220,8 @@ impl<
            match *query {
              Query(_, QReply::Local(_,ref nb_res,ref mut vres,_,ref qp), _) => {
                let (ds,cp) = self.dht_rules.do_store(true, qp.clone());
-               for v in vs.iter() {
-                 if ds {
+               if ds {
+                 for v in vs.iter() {
                    store.add_val(v.borrow().clone(),cp);
                  }
                }
@@ -233,10 +233,10 @@ impl<
                }
              },
              Query(_, QReply::Dist(ref old_mode_info,ref owith,nb_res,ref mut vres,_), _) => {
-               // query prio dist to 0 TODO remove StoragePriority
+               // query prio dist to 0
                let (ds,cp) = self.dht_rules.do_store(false, 0);
-               for v in vs.iter() {
-                 if ds {
+               if ds {
+                 for v in vs.iter() {
                    store.add_val(v.borrow().clone(),cp);
                  }
                }
@@ -276,12 +276,15 @@ impl<
        }
 
       },
-      KVStoreCommand::StoreLocally(v,qprio,api_queryid) => {
+      KVStoreCommand::StoreLocally(v,qprio,o_api_queryid) => {
         let (ds,cp) = self.dht_rules.do_store(true, qprio);
         if ds {
-          store.add_val(v,cp);
+          // TODO new method on Ref trait (here double clone on Clone on send type!!
+          store.add_val(v.borrow().clone(),cp);
         }
-        return Ok(GlobalReply::Api(KVStoreReply::Done(api_queryid)));
+        if let Some(api_queryid) = o_api_queryid {
+          return Ok(GlobalReply::Api(KVStoreReply::Done(api_queryid)));
+        }
       },
       KVStoreCommand::NotFound(qid) => {
         let remove = match self.query_cache.query_get_mut(&qid) {

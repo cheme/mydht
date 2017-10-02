@@ -4,6 +4,9 @@
 use std::clone::Clone;
 use log;
 use std::borrow::Borrow;
+use query::{
+  QueryPriority,
+};
 use procs::storeprop::{
   KVStoreCommand,
   KVStoreReply,
@@ -37,6 +40,8 @@ use super::{
   PeerStoreHandle,
   ApiHandleSend,
   Route,
+  send_with_handle,
+  ShadowAuthType,
 };
 use time::Duration as CrateDuration;
 use std::marker::PhantomData;
@@ -508,12 +513,15 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       }
     };
     self.peer_cache.add_val_c(pk, PeerCacheEntry {
-      peer : pr,
+      peer : pr.clone(),
       read : owread,
       write : owtok,
       prio : Rc::new(Cell::new(pp)),
     });
-    // TODO peer_service update ??? through peer cache ???
+    let update_peer = KVStoreCommand::StoreLocally(pr,0,None);
+    // peer_service update
+    send_with_handle_panic!(&mut self.peerstore_send,&mut self.peerstore_handle,GlobalCommand(None,update_peer),"Panic sending to peerstore TODO consider restart (init of peerstore is a fn)");
+//    self.peerstore_send.send()?;
     Ok(())
   }
 
@@ -528,43 +536,21 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         // do nothing it has start if the function was called
       },
       MainLoopCommand::ProxyApiLocalReply(sc) => {
-        if !self.api_handle.is_finished() {
-          self.api_send.send(ApiCommand::LocalServiceReply(sc))?;
-          self.api_handle.unyield()?;
-        } else {
           // TODO log try restart ???
-          panic!("TODO api service restart");
-        }
+        send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::LocalServiceReply(sc),"TODO api service restart?");
       },
       MainLoopCommand::ProxyApiGlobalReply(sc) => {
-        if !self.api_handle.is_finished() {
-          self.api_send.send(ApiCommand::GlobalServiceReply(sc))?;
-          self.api_handle.unyield()?;
-        } else {
-          // TODO log try restart ???
-          panic!("TODO api service restart");
-        }
+        // TODO log try restart ???
+        send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::GlobalServiceReply(sc),"TODO api service restart?");
       },
       MainLoopCommand::ProxyGlobal(sc) => {
         // send in global service TODO when send from api use a composed sender to send directly
-        if !self.global_handle.is_finished() {
-          self.global_send.send(sc)?;
-          self.global_handle.unyield()?;
-        } else {
-          // TODO log try restart ???
-          panic!("Global service finished TODO code to make it restartable cf write service and initialising from conf in init_state + on error right error mgmt");
-        }
+        send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,sc,"Global service finished TODO code to make it restartable cf write service and initialising from conf in init_state + on error right error mgmt");
       },
       MainLoopCommand::GlobalApi(sc,ret) => {
         if sc.is_api_reply() {
           // send in global service TODO when send from api use a composed sender to send directly
-          if !self.api_handle.is_finished() {
-            self.api_send.send(ApiCommand::GlobalServiceCommand(sc,ret))?;
-            self.api_handle.unyield()?;
-          } else {
-            // TODO log try restart ???
-            panic!("Api service finished TODO code to make it restartable cf write service and initialising from conf in init_state + on error right error mgmt");
-          }
+          send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::GlobalServiceCommand(sc,ret),"Api service finished TODO code to make it restartable cf write service and initialising from conf in init_state + on error right error mgmt");
         } else {
           self.call_inner_loop(MainLoopCommand::ProxyGlobal(sc), async_yield)?;
         }
@@ -575,12 +561,42 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         let nb_exp_for = ol + nb_for + olka;
         // take ovp token : if ovp not connected no forward
 
+        let okad : Option<Vec<usize>> = match okad {
+          Some(kad) => {
+            let mut res = Vec::with_capacity(kad.len());
+            for ka in kad.iter() {
+              let do_connect = match self.peer_cache.get_val_c(&ka.0) {
+                Some(p) if p.write.is_some() => {
+                  res.push(p.write.unwrap());
+                  false
+                },
+                _ => true,
+              };
+              if do_connect {
+                let (write_token,ort) = self.connect_with(&ka.1)?;
 
-        let okad : Option<Vec<usize>> = okad.map(|kad|kad.iter().map(|ka|self.peer_cache.get_val_c(&ka.0).map(|pc|pc.write)).filter_map(|oow|oow.unwrap_or(None)).collect());
-        let ovlka = okad.as_ref().map(|v|v.len()).unwrap_or(0);
-        if ovlka != olka {
-          panic!("TODO need to implement connect to dest and push after connec for Asynch mode : currently all peer need to be connected, this is guaranted by the fact that we reply : for asynch it is not");
-        }
+                if MC::AUTH_MODE == ShadowAuthType::NoAuth {
+                  // no auth to do
+                  panic!("TODO add a peer build from address to peer cache");
+                  res.push(write_token);
+                } else {
+                  let chal = self.peermgmt_proto.challenge(self.me.borrow());
+                  self.challenge_cache.add_val_c(chal.clone(),ChallengeEntry {
+                    write_tok : write_token,
+                    read_tok : ort,
+                    next_msg : Some(WriteCommand::GlobalService(sg.clone())),
+                    next_qid : sg.get_api_reply(),
+                  });
+                  // send a ping
+                  self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
+                }
+              }
+            }
+            Some(res)
+          },
+          None => None,
+        };
+
 
         let ovp : Option<Vec<usize>> = ovp.map(|vp|vp.iter().map(|p|self.peer_cache.get_val_c(&p.borrow().get_key()).map(|pc|pc.write)).filter_map(|oow|oow.unwrap_or(None)).collect());
         let ovl = ovp.as_ref().map(|v|v.len()).unwrap_or(0);
@@ -608,7 +624,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           }
         };
         if dests.len() < nb_exp_for {
-          // TODO send adjustment to query
+          if let Some(qid) = sg.get_api_reply() {
+            send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::Adjust(qid,nb_exp_for - dests.len()),"Api service unreachable");
+          }
         }
         if dests.len() == 0 {
           // TODO log
@@ -630,13 +648,8 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       MainLoopCommand::ForwardServiceApi(sc,nb_for,ret) => {
         if sc.is_api_reply() {
           // send in global service TODO when send from api use a composed sender to send directly
-          if !self.api_handle.is_finished() {
-            self.api_send.send(ApiCommand::LocalServiceCommand(sc,nb_for,ret))?;
-            self.api_handle.unyield()?;
-          } else {
-            // TODO log try restart ???
-            panic!("Api service finished TODO code to make it restartable cf write service and initialising from conf in init_state + on error right error mgmt");
-          }
+          // TODO log try restart ???
+          send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::LocalServiceCommand(sc,nb_for,ret),"Api service finished TODO code to make it restartable cf write service and initialising from conf in init_state + on error right error mgmt");
         } else {
           self.call_inner_loop(MainLoopCommand::ForwardServiceLocal(sc,nb_for), async_yield)?;
         }
@@ -645,12 +658,11 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       MainLoopCommand::ForwardServiceLocal(sc,nb_for) => {
         // query route then run write of sc as WriteCommand 
         let (sc, dests) = self.route.route(nb_for,sc,&self.slab_cache, &self.peer_cache)?;
-        // TODO return a api result with number of forward done?? -> TODO next when looking at
-        // return : TODO route telling if should return to api plus message trait with optionnal
-        // query id for api!!
-        // for all dests forward
         if dests.len() < nb_for {
-          // TODO adjust in kv expected res
+          // adjustment in kv expected res
+          if let Some(qid) = sc.get_api_reply() {
+            send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::Adjust(qid,nb_for - dests.len()),"Api service unreachable");
+          }
         }
         if dests.len() == 0 {
           // TODO log
@@ -673,13 +685,21 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       MainLoopCommand::TryConnect(dest_address) => {
         let (write_token,ort) = self.connect_with(&dest_address)?;
 
-        let chal = self.peermgmt_proto.challenge(self.me.borrow());
-        self.challenge_cache.add_val_c(chal.clone(),ChallengeEntry {
-          write_tok : write_token,
-          read_tok : ort,
-        });
-        // send a ping
-        self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
+
+        if MC::AUTH_MODE == ShadowAuthType::NoAuth {
+          // no auth to do
+          panic!("TODO add a peer build from address to peer cache");
+        } else {
+          let chal = self.peermgmt_proto.challenge(self.me.borrow());
+          self.challenge_cache.add_val_c(chal.clone(),ChallengeEntry {
+            write_tok : write_token,
+            read_tok : ort,
+            next_msg : None,
+            next_qid : None,
+          });
+          // send a ping
+          self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
+        }
 
       },
       MainLoopCommand::NewPeerChallenge(pr,pp,rtok,chal) => {
@@ -702,6 +722,8 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         self.challenge_cache.add_val_c(chal2.clone(),ChallengeEntry {
           write_tok : wtok,
           read_tok : Some(rtok),
+          next_msg : None,
+          next_qid : None,
         });
   
         // do not store new peer as it is not authentified with a fresh challenge (could be replay)
@@ -714,12 +736,15 @@ impl<MC : MyDHTConf> MDHTState<MC> {
  
       MainLoopCommand::NewPeerUncheckedChallenge(pr,pp,rtok,chal,nextchal) => {
         // check chal
-        match self.challenge_cache.get_val_c(&chal).map(|c|c.write_tok) {
-          Some(wtok) => {
-            self.update_peer(pr.clone(),pp,Some(wtok),Some(rtok))?;
+        match self.challenge_cache.remove_val_c(&chal) {
+          Some(chal_entry) => {
+            self.update_peer(pr.clone(),pp,Some(chal_entry.write_tok),Some(rtok))?;
             if let Some(nchal) = nextchal {
               let pongmess = WriteCommand::Pong(pr,nchal,rtok,None);
-              self.write_stream_send(wtok, pongmess, <MC>::init_write_spawner_out()?, None)?; // TODO remove peer on error
+              self.write_stream_send(chal_entry.write_tok, pongmess, <MC>::init_write_spawner_out()?, None)?;
+            }
+            if let Some(next_msg) = chal_entry.next_msg {
+              self.write_stream_send(chal_entry.write_tok, next_msg, <MC>::init_write_spawner_out()?, None)?;
             }
           },
           None => {
@@ -729,8 +754,8 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         };
 
       },
-      MainLoopCommand::RejectReadSpawn(..) => panic!("TODO"),
-      MainLoopCommand::RejectPeer(..) => panic!("TODO"),
+      MainLoopCommand::RejectPeer(..) => panic!("TODO in this case our accept method fail : for now same as reject ?? TODO rem from kvstore?? or update peer + Api from challenge cache!!!!!"),
+      MainLoopCommand::RejectReadSpawn(..) => panic!("TODO in this case challenge check fail + api from challenge cache (if next_qid) !!!"),
       MainLoopCommand::ProxyWrite(..) => panic!("TODO"),
       MainLoopCommand::NewPeer(..) => panic!("TODO"), // TODO send to peermgmt
 
@@ -739,7 +764,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     Ok(())
   }
 
-pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>, req: MainLoopCommand<MC>, async_yield : &mut S) -> Result<()> {
+  pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>, req: MainLoopCommand<MC>, async_yield : &mut S) -> Result<()> {
    let mut events = if self.events.is_some() {
      let oevents = replace(&mut self.events,None);
      oevents.unwrap_or(Events::with_capacity(MC::events_size))
@@ -751,6 +776,7 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MC::MainLoopCha
      e
    })
   }
+
   fn inner_main_loop<S : SpawnerYield>(&mut self, receiver : &mut MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>, req: MainLoopCommand<MC>, async_yield : &mut S, events : &mut Events) -> Result<()> {
 
     //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
@@ -989,14 +1015,8 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MC::MainLoopCha
             // TODO refactor to not check at every send
             //
             // TODO  panic!("TODO possible error droprestart"); do it at each is_finished state
-            if handle.is_finished() {
-              Some(command)
-            } else {
-              sender.send(command)?;
-              // unyield everytime
-              handle.unyield()?;
-              None
-            }
+            //
+            send_with_handle(sender,handle,command)?
           },
           _ => return Err(Error("Call of write listener on wrong state".to_string(), ErrorKind::Bug, None)),
         };
@@ -1012,9 +1032,10 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MC::MainLoopCha
             } else {
               // error TODO error management
               // TODO log
-              // TODO sen writeout error
               // TODO send directly to api!!!
-//              sen.send(WriteReply::Api(ApiCommand::Failure(finished.unwrap().get_qid())))?;
+              if let Some(qid) = finished.unwrap().get_api_reply() {
+                send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::Failure(qid),"Could not reach api");
+              }
               true
             }
           } else {
@@ -1028,7 +1049,6 @@ pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MC::MainLoopCha
       }
     };
     if rem {
-      // TODO remove write stream !!!
       self.remove_writestream(write_token)?;
     }
 

@@ -82,9 +82,32 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
       ApiCommand::Mainloop(mlc) => {
         ApiReply::ProxyMainloop(mlc)
       },
-      ApiCommand::Failure(..) => {
-        panic!("TODO implement : return error to oneresult");
+      ApiCommand::Failure(qid) => {
+        let rem = if let Some(q) = self.0.get_val_mut_c(&qid) {
+          q.0.api_return(ApiResult::NoResult)?
+        } else {
+          false
+        };
+        if rem {
+          self.0.remove_val_c(&qid);
+        }
+        ApiReply::Done
       },
+      ApiCommand::Adjust(qid,nb) => {
+        let rem = if let Some(q) = self.0.get_val_mut_c(&qid) {
+          let mut r = false;
+          for _ in 0..nb {
+            r = q.0.api_return(ApiResult::NoResult)?;
+          }
+          r
+        } else {
+          false
+        };
+        if rem {
+          self.0.remove_val_c(&qid);
+        }
+        ApiReply::Done
+      }
       ApiCommand::LocalServiceCommand(mut lsc,nb_for,ret) => {
         if lsc.is_api_reply() {
           self.2 += 1;
@@ -107,9 +130,13 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
       },
       ApiCommand::LocalServiceReply(lsr) => {
         if let Some(qid) = lsr.get_api_reply() {
-          if let Some(q) = self.0.remove_val_c(&qid) {
-            //<MC::ApiService as ApiReturn<MC>>::api_return(q.0,ApiResult::LocalServiceReply(lsr))?;
-            q.0.api_return(ApiResult::LocalServiceReply(lsr))?;
+          let rem = if let Some(q) = self.0.get_val_mut_c(&qid) {
+            q.0.api_return(ApiResult::LocalServiceReply(lsr))?
+          } else {
+            false
+          };
+          if rem {
+            self.0.remove_val_c(&qid);
           }
         }
         ApiReply::Done
@@ -138,11 +165,13 @@ pub struct ApiQueryId(pub usize);
 
 pub enum ApiCommand<MC : MyDHTConf> {
   Mainloop(MainLoopCommand<MC>),
-  Failure(Option<ApiQueryId>,Error),
+  Failure(ApiQueryId),
   LocalServiceCommand(MC::LocalServiceCommand,usize,MC::ApiReturn),
   GlobalServiceCommand(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>,MC::ApiReturn),
   LocalServiceReply(MC::LocalServiceReply),
   GlobalServiceReply(MC::GlobalServiceReply),
+  /// remove some expected result (consider as failure)
+  Adjust(ApiQueryId,usize),
 }
 
 
@@ -275,7 +304,9 @@ where
 pub trait ApiQueriable {
   fn is_api_reply(&self) -> bool;
   fn set_api_reply(&mut self, ApiQueryId);
+  fn get_api_reply(&self) -> Option<ApiQueryId>;
 }
+/// TODO check if trait is used and remove if not
 pub trait ApiRepliable {
   fn get_api_reply(&self) -> Option<ApiQueryId>;
 }
@@ -286,7 +317,8 @@ impl<MC : MyDHTConf> SpawnSend<ApiCommand<MC>> for ApiSendIn<MC> {
   fn send(&mut self, c : ApiCommand<MC>) -> Result<()> {
     match c {
       ApiCommand::Mainloop(ic) => self.main_loop.send(ic)?,
-      ApiCommand::Failure(_,_) => unreachable!(),
+      ApiCommand::Failure(..) => unreachable!(),
+      ApiCommand::Adjust(..) => unreachable!(),
       ApiCommand::LocalServiceCommand(cmd,nb_f,ret) => self.main_loop.send(MainLoopCommand::ForwardServiceApi(cmd,nb_f,ret))?,
 //  ForwardServiceLocal(MC::LocalServiceCommand,MC::PeerRef),
       ApiCommand::GlobalServiceCommand(cmd,ret) => self.main_loop.send(MainLoopCommand::GlobalApi(cmd,ret))?,

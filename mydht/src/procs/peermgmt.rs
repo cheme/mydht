@@ -1,4 +1,5 @@
 //! peer management service : store peer as backend (kvstore) and additional functionality (long accept for instance)
+//! TODO unimplemented : failure for asynch peer management implementation
 use super::{
   MyDHTConf,
   MainLoopCommand,

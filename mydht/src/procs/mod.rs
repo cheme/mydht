@@ -15,6 +15,7 @@ use procs::storeprop::{
 };
 use procs::api::{
   ApiQueriable,
+  ApiQueryId,
   ApiRepliable,
   ApiDest,
   ApiReturn,
@@ -119,6 +120,39 @@ use self::client2::{
 use utils::{
   Ref,
 };
+
+/// return the command if handle is finished
+#[inline]
+pub fn send_with_handle<X,Y,Z, S : SpawnSend<C>, H : SpawnHandle<X,Y,Z>, C> (s : &mut S, h : &mut H, command : C) -> Result<Option<C>> {
+//Service,Sen,Recv
+  Ok(if h.is_finished() {
+    Some(command)
+  } else {
+    s.send(command)?;
+    h.unyield()?;
+    None
+  })
+}
+
+
+macro_rules! send_with_handle_panic {
+  ($s:expr,$h:expr,$c:expr,$($arg:tt)+) => ({
+    if send_with_handle($s,$h,$c)?.is_some() {
+      panic!($($arg)+);
+    }
+  })
+}
+
+macro_rules! send_with_handle_log {
+  ($s:expr,$h:expr,$c:expr,$lvl:expr,$($arg:tt)+) => ({
+    if send_with_handle($s,$h,$c)?.is_some() {
+      log!($lvl, $($arg)+)
+    }
+  })
+}
+
+
+
 pub mod mesgs;
 
 mod mainloop;
@@ -281,7 +315,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// local cache for peer
   type PeerCache : KVCache<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
   /// local cache for auth challenges
-  type ChallengeCache : KVCache<Vec<u8>,ChallengeEntry>;
+  type ChallengeCache : KVCache<Vec<u8>,ChallengeEntry<Self>>;
   
   type PeerMgmtChannelIn : SpawnChannel<PeerMgmtCommand<Self>>;
   type ReadChannelIn : SpawnChannel<ReadCommand>;
@@ -479,10 +513,14 @@ pub trait GetOrigin<MC : MyDHTConf> {
 }
 
 /// entry cache for challenge
-pub struct ChallengeEntry {
+pub struct ChallengeEntry<MC : MyDHTConf> {
 //  pub challenge : Vec<u8>,
   pub write_tok : usize,
+  /// TODO check if use, might be useless
   pub read_tok : Option<usize>,
+  pub next_msg : Option<WriteCommand<MC>>,
+  /// use to send an error reply to api on auth fail
+  pub next_qid : Option<ApiQueryId>,
 }
 
 /// utility trait to avoid lot of parameters in each struct / fn

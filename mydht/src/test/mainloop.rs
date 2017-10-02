@@ -285,6 +285,15 @@ impl<MC : MyDHTConf> ApiQueriable for TestCommand<MC> {
     }
 
   }
+  #[inline]
+  fn get_api_reply(&self) -> Option<ApiQueryId> {
+    match *self {
+      TestCommand::TouchQ(ref qid,_) =>  qid.as_ref().map(|id|ApiQueryId(*id)),
+      _ => None,
+    }
+
+  }
+
 }
 
 impl ApiRepliable for TestReply {
@@ -389,7 +398,7 @@ mod test_tcp_all_block_thread {
     type DHTRules = Arc<SimpleRules>;
     type Slab = Slab<RWSlabEntry<Self>>;
     type PeerCache = HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
-    type ChallengeCache = HashMap<Vec<u8>,ChallengeEntry>;
+    type ChallengeCache = HashMap<Vec<u8>,ChallengeEntry<Self>>;
     type PeerMgmtChannelIn = MpscChannel;
     type ReadChannelIn = MpscChannel;
     type ReadSpawn = ThreadPark;
