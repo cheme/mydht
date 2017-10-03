@@ -15,6 +15,7 @@ use std::time::Duration;
 use procs::storeprop::{
   KVStoreCommand,
   KVStoreProtoMsg,
+  //KVStoreProtoMsgSend,
   KVStoreReply,
 };
 use utils::{
@@ -157,19 +158,28 @@ use rules::simplerules::{
 /// Messages between peers
 /// TODO ref variant for send !!!!
 #[serde(bound(deserialize = ""))]
-pub enum TestMessage<P : Peer,RP : Ref<P>> {
+pub enum TestMessage<MC : MyDHTConf> {
   Touch,
   TouchQ(Option<usize>,usize),
   TouchQR(Option<usize>),
-  PeerMgmt(KVStoreProtoMsg<P,P,RP>),
+  PeerMgmt(KVStoreProtoMsg<MC::Peer,MC::Peer,MC::PeerRef>),
 }
-impl<P : Peer,RP : Ref<P>> GettableAttachments for TestMessage<P,RP> {
+/*
+#[derive(Serialize,Debug)]
+pub enum TestMessageSend<'a,P : Peer> {
+  Touch,
+  TouchQ(Option<usize>,usize),
+  TouchQR(Option<usize>),
+  PeerMgmt(KVStoreProtoMsgSend<'a,P,P>),
+}
+*/
+impl<MC : MyDHTConf> GettableAttachments for TestMessage<MC> {
   fn get_attachments(&self) -> Vec<&Attachment> {
     Vec::new()
   }
 }
 
-impl<P : Peer,RP : Ref<P>> SettableAttachments for TestMessage<P,RP> {
+impl<MC : MyDHTConf> SettableAttachments for TestMessage<MC> {
   fn attachment_expected_sizes(&self) -> Vec<usize> {
     Vec::new()
   }
@@ -242,7 +252,7 @@ pub enum TestReply {
   }
 }
 */
-impl<MC : MyDHTConf> OptInto<TestMessage<MC::Peer,MC::PeerRef>> for TestCommand<MC> {
+impl<MC : MyDHTConf> OptInto<TestMessage<MC>> for TestCommand<MC> {
   fn can_into(&self) -> bool {
     match *self {
       TestCommand::Touch => true,
@@ -251,7 +261,7 @@ impl<MC : MyDHTConf> OptInto<TestMessage<MC::Peer,MC::PeerRef>> for TestCommand<
       TestCommand::Ph(..) => false,
     }
   }
-  fn opt_into(self) -> Option<TestMessage<MC::Peer,MC::PeerRef>> {
+  fn opt_into(self) -> Option<TestMessage<MC>> {
     match self {
       TestCommand::Touch => Some(TestMessage::Touch),
       TestCommand::TouchQ(qid,nbfor) => Some(TestMessage::TouchQ(qid,nbfor)),
@@ -363,26 +373,27 @@ mod test_tcp_all_block_thread {
       Ok((c,res))
     }
   }
-  impl Into<MCCommand<TestMdhtConf>> for TestMessage<<TestMdhtConf as MyDHTConf>::Peer,<TestMdhtConf as MyDHTConf>::PeerRef> {
+  impl Into<MCCommand<TestMdhtConf>> for TestMessage<TestMdhtConf> {
     fn into(self) -> MCCommand<TestMdhtConf> {
       match self {
         TestMessage::Touch => MCCommand::Local(TestCommand::Touch),
         TestMessage::TouchQ(qid,nbfor) => MCCommand::Local(TestCommand::TouchQ(qid,nbfor)),
         TestMessage::TouchQR(qid) => MCCommand::Local(TestCommand::TouchQR(qid)),
+        TestMessage::PeerMgmt(pmess) => MCCommand::PeerStore(pmess.into()),
       }
     }
   }
-  impl OptFrom<MCCommand<TestMdhtConf>> for TestMessage<<TestMdhtConf as MyDHTConf>::Peer,<TestMdhtConf as MyDHTConf>::PeerRef> {
+  impl OptFrom<MCCommand<TestMdhtConf>> for TestMessage<TestMdhtConf> {
     fn can_from(c : &MCCommand<TestMdhtConf>) -> bool {
       match *c {
         MCCommand::Local(ref lc) => {
-          <TestCommand<TestMdhtConf> as OptInto<TestMessage>>::can_into(lc)
+          <TestCommand<TestMdhtConf> as OptInto<TestMessage<TestMdhtConf>>>::can_into(lc)
         },
         MCCommand::Global(ref gc) => {
-          <TestCommand<TestMdhtConf> as OptInto<TestMessage>>::can_into(gc)
+          <TestCommand<TestMdhtConf> as OptInto<TestMessage<TestMdhtConf>>>::can_into(gc)
         },
         MCCommand::PeerStore(ref pc) => {
-          false
+          <KVStoreProtoMsg<_,_,_> as OptFrom<KVStoreCommand<_,_,_>>>::can_from(pc)
         },
       }
     }
@@ -395,7 +406,7 @@ mod test_tcp_all_block_thread {
           gc.opt_into()
         },
         MCCommand::PeerStore(pc) => {
-          None
+          pc.opt_into().map(|t|TestMessage::PeerMgmt(t))
         },
       }
     }
@@ -435,7 +446,7 @@ mod test_tcp_all_block_thread {
 
     // TODO default associated type must be set manually (TODO check if still needed with next
     // versions)
-    type ProtoMsg = TestMessage<Self::Peer,Self::PeerRef>;
+    type ProtoMsg = TestMessage<Self>;
     type LocalServiceCommand = TestCommand<Self>;
     type LocalServiceReply = TestReply;
   /*  type GlobalServiceCommand  = GlobalCommand<Self>; // def

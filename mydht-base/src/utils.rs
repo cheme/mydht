@@ -70,7 +70,7 @@ pub trait SToRef<T : SRef> : Send + Sized {
 /// 
 /// Principal use case is using Rc which is not sendable.
 /// TODO name should change to Immut
-pub trait Ref<T> : SRef + Clone + Borrow<T> {
+pub trait Ref<T> : SRef + Borrow<T> {
   fn new(t : T) -> Self;
 }
 #[derive(Debug)]
@@ -136,6 +136,23 @@ impl<T : Clone + Send + Sync> SToRef<ArcRef<T>> for ArcRef<T> {
     self
   }
 }
+
+impl<T : Serialize> Serialize for ArcRef<T> {
+  fn serialize<S : Serializer>(&self, serializer: S) -> StdResult<S::Ok, S::Error> {
+    let a : &T = self.borrow();
+    a.serialize(serializer)
+  }
+}
+
+impl<'de,T : Clone + Send + Sync + Deserialize<'de>> Deserialize<'de> for ArcRef<T> {
+  fn deserialize<D>(deserializer: D) -> StdResult<Self, D::Error>
+      where D: Deserializer<'de> {
+    let t : T = T::deserialize(deserializer)?;
+    Ok(<Self as Ref<T>>::new(t))
+  }
+}
+
+
 /* 
 impl<T : Clone + Send + Sync> ToRef<T,ArcRef<T>> for ArcRef<T> {
   #[inline]
@@ -199,6 +216,21 @@ impl<T : Send + Clone> Borrow<T> for ToRcRef<T> {
   }
 }
 
+impl<T : Serialize> Serialize for RcRef<T> {
+  fn serialize<S : Serializer>(&self, serializer: S) -> StdResult<S::Ok, S::Error> {
+    let a : &T = self.borrow();
+    a.serialize(serializer)
+  }
+}
+
+impl<'de,T : Clone + Send + Deserialize<'de>> Deserialize<'de> for RcRef<T> {
+  fn deserialize<D>(deserializer: D) -> StdResult<Self, D::Error>
+      where D: Deserializer<'de> {
+    let t : T = T::deserialize(deserializer)?;
+    Ok(<Self as Ref<T>>::new(t))
+  }
+}
+
 
 /// Content is always cloned when sending (copyied in various struct) but also when at multiple
 /// location : only for small contents
@@ -245,6 +277,22 @@ impl<T : Send + Clone> Borrow<T> for ToCloneRef<T> {
   #[inline]
   fn borrow(&self) -> &T {
     &self.0
+  }
+}
+
+
+impl<T : Serialize> Serialize for CloneRef<T> {
+  fn serialize<S : Serializer>(&self, serializer: S) -> StdResult<S::Ok, S::Error> {
+    let a : &T = self.borrow();
+    a.serialize(serializer)
+  }
+}
+
+impl<'de,T : Clone + Send + Deserialize<'de>> Deserialize<'de> for CloneRef<T> {
+  fn deserialize<D>(deserializer: D) -> StdResult<Self, D::Error>
+      where D: Deserializer<'de> {
+    let t : T = T::deserialize(deserializer)?;
+    Ok(<Self as Ref<T>>::new(t))
   }
 }
 

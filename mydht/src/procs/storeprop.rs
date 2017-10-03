@@ -117,20 +117,32 @@ pub struct KVStoreService<P,RP,V,RV,S,DR,QC> {
 /// building Service protomsg. TODO make it multivaluated
 #[derive(Serialize,Deserialize,Debug)]
 #[serde(bound(deserialize = ""))]
-pub enum KVStoreProtoMsg<P : Peer, V : KeyVal,R : Ref<V>> {
+pub enum KVStoreProtoMsg<P : Peer, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned> {
   FIND(QueryMsg<P>, V::Key),
   /// Depending upon stored query, should propagate
-  STORE(QueryID, Vec<SerRef<V,R>>),
+  STORE(QueryID, Vec<R>),
   NOT_FOUND(QueryID),
   /// first usize is remaining nb_hop, and second is nb query forward (same behavior as for Query
   /// Msg)
-  PROPAGATE(PropagateMsg<P>, SerRef<V,R>),
+  PROPAGATE(PropagateMsg<P>, R),
 }
+/*
+#[derive(Serialize,Debug)]
+pub enum KVStoreProtoMsgSend<'a, P : Peer, V : KeyVal> {
+  FIND(&'a QueryMsg<P>, &'a V::Key),
+  /// Depending upon stored query, should propagate
+  STORE(QueryID, &'a Vec<&'a V>),
+  NOT_FOUND(QueryID),
+  /// first usize is remaining nb_hop, and second is nb query forward (same behavior as for Query
+  /// Msg)
+  PROPAGATE(&'a PropagateMsg<P>, &'a V),
+}*/
+
 
   //type ProtoMsg : Into<MCCommand<Self>> + SettableAttachments + GettableAttachments + OptFrom<MCCommand<Self>>;
 
 //pub enum KVStoreCommand<P : Peer, V : KeyVal, VR> {
-impl<P : Peer, V : KeyVal, VR : Ref<V>> OptFrom<KVStoreCommand<P,V,VR>> for KVStoreProtoMsg<P,V,VR> {
+impl<P : Peer, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwned> OptFrom<KVStoreCommand<P,V,VR>> for KVStoreProtoMsg<P,V,VR> {
   fn can_from (c : &KVStoreCommand<P,V,VR>) -> bool {
     match *c {
       KVStoreCommand::Start => false,
@@ -149,29 +161,23 @@ impl<P : Peer, V : KeyVal, VR : Ref<V>> OptFrom<KVStoreCommand<P,V,VR>> for KVSt
       KVStoreCommand::Find(qmess, key,_) => Some(KVStoreProtoMsg::FIND(qmess,key)),
       KVStoreCommand::FindLocally(..) => None,
       KVStoreCommand::Store(qid,vrs) => {
-        // TODO usage of SerRef to allow serialize is very costy here
-        // TODO unsafe transmute?? and make SerRef::new unsafe
-        let v = vrs.into_iter().map(|rv|SerRef::new(rv)).collect();
-        Some(KVStoreProtoMsg::STORE(qid,v))
+        Some(KVStoreProtoMsg::STORE(qid,vrs))
       },
     //  StoreMult(QueryID,Vec<VR>),
       KVStoreCommand::NotFound(qid) => Some(KVStoreProtoMsg::NOT_FOUND(qid)),
       KVStoreCommand::StoreLocally(..) => None,
-
     }
   }
 }
-impl<P : Peer, V : KeyVal, VR : Ref<V>> Into<KVStoreCommand<P,V,VR>> for KVStoreProtoMsg<P,V,VR> {
+
+impl<P : Peer, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwned> Into<KVStoreCommand<P,V,VR>> for KVStoreProtoMsg<P,V,VR> {
   fn into(self) -> KVStoreCommand<P,V,VR> {
     match self {
       KVStoreProtoMsg::FIND(qmes,key) => {
         KVStoreCommand::Find(qmes,key,None)
       },
       KVStoreProtoMsg::STORE(qid,refval) => {
-        // TODO usage of SerRef to allow serialize is very costy here
-        // TODO unsafe transmute??
-        let v = refval.into_iter().map(|rv|rv.0).collect();
-        KVStoreCommand::Store(qid,v)
+        KVStoreCommand::Store(qid,refval)
       },
       KVStoreProtoMsg::NOT_FOUND(qid) => {
         KVStoreCommand::NotFound(qid)

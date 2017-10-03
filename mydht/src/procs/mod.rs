@@ -176,6 +176,11 @@ pub trait OptInto<T>: Sized {
   fn can_into(&self) -> bool;
   fn opt_into(self) -> Option<T>;
 }
+pub trait OptIntoRef<'a,T>: Sized {
+  fn can_into(&self) -> bool;
+  fn opt_into_ref(&'a self) -> Option<T>;
+}
+
 pub trait OptFrom<T>: Sized {
   fn can_from(&T) -> bool;
   fn opt_from(T) -> Option<Self>;
@@ -448,7 +453,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   type Peer : Peer<Address = <Self::Transport as Transport>::Address>;
   /// most of the time Arc, if not much threading or smal peer description, RcCloneOnSend can be use, or AllwaysCopy
   /// or Copy.
-  type PeerRef : Ref<Self::Peer>;
+  type PeerRef : Ref<Self::Peer> + Serialize + DeserializeOwned;
   /// Peer management methods 
   type PeerMgmtMeths : PeerMgmtMeths<Self::Peer> + Clone;
   /// Dynamic rules for the dht
@@ -487,9 +492,8 @@ pub trait MyDHTConf : 'static + Send + Sized
 
 
   /// application protomsg used immediatly by local service
-  type ProtoMsg : Into<MCCommand<Self>> + SettableAttachments;
-  /// Send variant of protomsg
-  type ProtoMsgSend : GettableAttachments + OptFrom<MCCommand<Self>>;
+  type ProtoMsg : Into<MCCommand<Self>> + SettableAttachments + GettableAttachments + OptFrom<MCCommand<Self>>;
+//  type ProtoMsgSend : GettableAttachments + OptFromRef<'a,MCCommand<Self>>;
   // ProtoMsgSend variant (content not requiring ownership)
 //  type ProtoMsgSend<'a> : Into<Self::LocalServiceCommand> + SettableAttachments + GettableAttachments;
   /// global service command : by default it should be protoMsg, depending on spawner use, should
