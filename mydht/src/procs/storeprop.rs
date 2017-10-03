@@ -9,6 +9,7 @@ use std::convert::From;
 use utils::{
   SRef,
   SToRef,
+  SerRef,
 };
 use super::deflocal::{
   GlobalDest,
@@ -83,6 +84,8 @@ use super::{
   GetOrigin,
   GlobalHandleSend,
   OptFrom,
+  ApiQueriable,
+  ApiRepliable,
 };
 use super::server2::{
   ReadReply,
@@ -112,13 +115,72 @@ pub struct KVStoreService<P,RP,V,RV,S,DR,QC> {
 
 /// Proto msg for kvstore : Not mandatory (only OptInto need implementation) but can be use when
 /// building Service protomsg. TODO make it multivaluated
+#[derive(Serialize,Deserialize,Debug)]
+#[serde(bound(deserialize = ""))]
 pub enum KVStoreProtoMsg<P : Peer, V : KeyVal,R : Ref<V>> {
   FIND(QueryMsg<P>, V::Key),
   /// Depending upon stored query, should propagate
-  STORE(Option<QueryID>, R),
+  STORE(QueryID, Vec<SerRef<V,R>>),
+  NOT_FOUND(QueryID),
   /// first usize is remaining nb_hop, and second is nb query forward (same behavior as for Query
   /// Msg)
-  PROPAGATE(PropagateMsg<P>, R),
+  PROPAGATE(PropagateMsg<P>, SerRef<V,R>),
+}
+
+  //type ProtoMsg : Into<MCCommand<Self>> + SettableAttachments + GettableAttachments + OptFrom<MCCommand<Self>>;
+
+//pub enum KVStoreCommand<P : Peer, V : KeyVal, VR> {
+impl<P : Peer, V : KeyVal, VR : Ref<V>> OptFrom<KVStoreCommand<P,V,VR>> for KVStoreProtoMsg<P,V,VR> {
+  fn can_from (c : &KVStoreCommand<P,V,VR>) -> bool {
+    match *c {
+      KVStoreCommand::Start => false,
+      KVStoreCommand::Find(..) => true,
+      KVStoreCommand::FindLocally(..) => false,
+      KVStoreCommand::Store(..) => true,
+    //  StoreMult(QueryID,Vec<VR>),
+      KVStoreCommand::NotFound(..) => true,
+      KVStoreCommand::StoreLocally(..) => false,
+    }
+
+  }
+  fn opt_from (c : KVStoreCommand<P,V,VR>) -> Option<Self> {
+    match c {
+      KVStoreCommand::Start => None,
+      KVStoreCommand::Find(qmess, key,_) => Some(KVStoreProtoMsg::FIND(qmess,key)),
+      KVStoreCommand::FindLocally(..) => None,
+      KVStoreCommand::Store(qid,vrs) => {
+        // TODO usage of SerRef to allow serialize is very costy here
+        // TODO unsafe transmute?? and make SerRef::new unsafe
+        let v = vrs.into_iter().map(|rv|SerRef::new(rv)).collect();
+        Some(KVStoreProtoMsg::STORE(qid,v))
+      },
+    //  StoreMult(QueryID,Vec<VR>),
+      KVStoreCommand::NotFound(qid) => Some(KVStoreProtoMsg::NOT_FOUND(qid)),
+      KVStoreCommand::StoreLocally(..) => None,
+
+    }
+  }
+}
+impl<P : Peer, V : KeyVal, VR : Ref<V>> Into<KVStoreCommand<P,V,VR>> for KVStoreProtoMsg<P,V,VR> {
+  fn into(self) -> KVStoreCommand<P,V,VR> {
+    match self {
+      KVStoreProtoMsg::FIND(qmes,key) => {
+        KVStoreCommand::Find(qmes,key,None)
+      },
+      KVStoreProtoMsg::STORE(qid,refval) => {
+        // TODO usage of SerRef to allow serialize is very costy here
+        // TODO unsafe transmute??
+        let v = refval.into_iter().map(|rv|rv.0).collect();
+        KVStoreCommand::Store(qid,v)
+      },
+      KVStoreProtoMsg::NOT_FOUND(qid) => {
+        KVStoreCommand::NotFound(qid)
+      },
+      KVStoreProtoMsg::PROPAGATE(..) => {
+        unimplemented!()
+      },
+    }
+  }
 }
 /*pub enum KVStoreProtoMsgSend<'a, P : Peer,V : KeyVal> {
   FIND(QueryMsg<P>, &'a V::Key),
@@ -160,7 +222,7 @@ pub enum LastSent<P : Peer> {
 */
 
 #[derive(Clone)]
-pub enum KVStoreCommand<P : Peer, V : KeyVal, VR : Ref<V>> {
+pub enum KVStoreCommand<P : Peer, V : KeyVal, VR> {
   /// Do nothing but lazy initialize of store as any command.
   Start,
   Find(QueryMsg<P>, V::Key,Option<ApiQueryId>),
@@ -170,7 +232,50 @@ pub enum KVStoreCommand<P : Peer, V : KeyVal, VR : Ref<V>> {
   NotFound(QueryID),
   StoreLocally(VR,QueryPriority,Option<ApiQueryId>),
 }
-pub enum KVStoreCommandSend<P : Peer, V : KeyVal, VR : Ref<V>> {
+
+impl<P : Peer, V : KeyVal, VR> ApiQueriable for KVStoreCommand<P,V,VR> {
+  fn is_api_reply(&self) -> bool {
+    match *self {
+      KVStoreCommand::Start => false,
+      KVStoreCommand::Find(ref qm,ref k,ref oaqid) => true,
+      KVStoreCommand::FindLocally(ref k,ref oaqid) => true,
+      KVStoreCommand::Store(ref qid,ref vrp) => false,
+      KVStoreCommand::NotFound(ref qid) => false,
+      KVStoreCommand::StoreLocally(ref rp,ref qp,ref oaqid) => true,
+    }
+  }
+  fn set_api_reply(&mut self, i : ApiQueryId) {
+    match *self {
+      KVStoreCommand::Start => (),
+      KVStoreCommand::StoreLocally(_,_,ref mut oaqid)
+        | KVStoreCommand::Find(_,_,ref mut oaqid) => {
+        *oaqid = Some(i);
+      },
+      KVStoreCommand::FindLocally(_,ref mut oaqid) => {
+        *oaqid = i;
+      },
+      KVStoreCommand::Store(..) => (),
+      KVStoreCommand::NotFound(..) => (),
+    }
+
+  }
+  fn get_api_reply(&self) -> Option<ApiQueryId> {
+    match *self {
+      KVStoreCommand::Start => None,
+      KVStoreCommand::StoreLocally(_,_,ref oaqid)
+        | KVStoreCommand::Find(_,_,ref oaqid) => {
+          oaqid.clone()
+      },
+      KVStoreCommand::FindLocally(_,ref oaqid) => {
+        Some(oaqid.clone())
+      },
+      KVStoreCommand::Store(..) => None,
+      KVStoreCommand::NotFound(..) => None,
+    }
+  }
+}
+
+pub enum KVStoreCommandSend<P : Peer, V : KeyVal, VR : SRef> {
   /// Do nothing but lazy initialize of store as any command.
   Start,
   Find(QueryMsg<P>, V::Key,Option<ApiQueryId>),
@@ -214,14 +319,51 @@ impl<P : Peer, V : KeyVal, VR : Ref<V>> SToRef<KVStoreCommand<P,V,VR>> for KVSto
 //type GlobalServiceCommand : ApiQueriable + OptInto<Self::ProtoMsg> + OptInto<KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>> + Clone;// = GlobalCommand<Self>;
 
 
+#[derive(Clone)]
 pub enum KVStoreReply<VR> {
-  //Found(VR,QueryID),
-  //Found(QueryModeMsg<P>, Option<PR>, V),
   FoundApi(Option<VR>,ApiQueryId),
   FoundApiMult(Vec<VR>,ApiQueryId),
   Done(ApiQueryId),
 }
 
+impl<VR> ApiRepliable for KVStoreReply<VR> {
+  fn get_api_reply(&self) -> Option<ApiQueryId> {
+    match *self {
+      KVStoreReply::FoundApi(_,ref a)
+      | KVStoreReply::FoundApiMult(_,ref a)
+      | KVStoreReply::Done(ref a)
+        => Some(a.clone()),
+    }
+  }
+}
+
+
+pub enum KVStoreReplySend<VR : SRef> {
+  FoundApi(Option<<VR as SRef>::Send>,ApiQueryId),
+  FoundApiMult(Vec<<VR as SRef>::Send>,ApiQueryId),
+  Done(ApiQueryId),
+}
+
+impl<VR : SRef> SRef for KVStoreReply<VR> {
+  type Send = KVStoreReplySend<VR>;
+  fn get_sendable(&self) -> Self::Send {
+    match *self {
+      KVStoreReply::FoundApi(ref ovr,ref aqid) => KVStoreReplySend::FoundApi(ovr.as_ref().map(|v|v.get_sendable()),aqid.clone()),
+      KVStoreReply::FoundApiMult(ref vrs,ref aqid) => KVStoreReplySend::FoundApiMult(vrs.iter().map(|v|v.get_sendable()).collect(),aqid.clone()),
+      KVStoreReply::Done(ref aqid) => KVStoreReplySend::Done(aqid.clone()),
+    }
+  }
+}
+impl<VR : SRef> SToRef<KVStoreReply<VR>> for KVStoreReplySend<VR> {
+  fn to_ref(self) -> KVStoreReply<VR> {
+    match self {
+      KVStoreReplySend::FoundApi(ovr,aqid) => KVStoreReply::FoundApi(ovr.map(|v|v.to_ref()),aqid),
+      KVStoreReplySend::FoundApiMult(vrs,aqid) => KVStoreReply::FoundApiMult(vrs.into_iter().map(|v|v.to_ref()).collect(),aqid),
+      KVStoreReplySend::Done(aqid) => KVStoreReply::Done(aqid),
+    }
+  }
+}
+ 
 /*pub enum GlobalReply<P : Peer,PR,GSC,GSR> {
   /// forward command to list of peers or/and to nb peers from route
   Forward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,usize,GSC),
@@ -464,11 +606,15 @@ pub struct OptPeerGlobalDest<MC : MyDHTConf> (pub GlobalDest<MC>);
 impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>>> for OptPeerGlobalDest<MC> {
   const CAN_SEND : bool = true;
   fn send(&mut self, c : GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>>) -> Result<()> {
-    let ogr = <GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServiceCommand,MC::GlobalServiceReply>>::opt_from(c);
+    //let gr = <GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServiceCommand,MC::GlobalServiceReply>>::from(c);
+    let gr = from_kv(c);
+    self.0.send(gr)
+    /*let ogr = <GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServiceCommand,MC::GlobalServiceReply>>::opt_from(c);
     if let Some(gr) = ogr {
       self.0.send(gr)?
     };
-    Ok(())
+    }*/
+//    Ok(())
   }
 }
 /*  Forward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,usize,GSC),
@@ -478,25 +624,21 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<M
   NoRep,
   Mult(Vec<GlobalReply<P,PR,GSC,GSR>>),*/
 
-impl<P : Peer,PR : Ref<P>,GSC : OptFrom<KVStoreCommand<P,P,PR>>,GSR : OptFrom<KVStoreReply<PR>>> OptFrom<GlobalReply<P,PR,KVStoreCommand<P,P,PR>,KVStoreReply<PR>>> for GlobalReply<P,PR,GSC,GSR> {
-  fn can_from(t : &GlobalReply<P,PR,KVStoreCommand<P,P,PR>,KVStoreReply<PR>>) -> bool {
-    unimplemented!()
-  }
-  fn opt_from(t : GlobalReply<P,PR,KVStoreCommand<P,P,PR>,KVStoreReply<PR>>) -> Option<Self> {
+//impl<P : Peer,PR : Ref<P>,GSC,GSR> From<GlobalReply<P,PR,KVStoreCommand<P,P,PR>,KVStoreReply<PR>>> for GlobalReply<P,PR,GSC,GSR> {
+ // fn from(t : GlobalReply<P,PR,KVStoreCommand<P,P,PR>,KVStoreReply<PR>>) -> Self {
+  fn from_kv<P : Peer,PR : Ref<P>,GSC,GSR>(t : GlobalReply<P,PR,KVStoreCommand<P,P,PR>,KVStoreReply<PR>>) -> GlobalReply<P,PR,GSC,GSR> {
     match t {
-      GlobalReply::NoRep => Some(GlobalReply::NoRep), // could also rep none (not forward in global dest
-      GlobalReply::Api(ksr) => GSR::opt_from(ksr).map(|gsr|GlobalReply::Api(gsr)),
-      GlobalReply::Forward(ovpr,ovka,nbfor,ksc) => GSC::opt_from(ksc).map(|gsc|GlobalReply::Forward(ovpr,ovka,nbfor,gsc)),
+      GlobalReply::Forward(opr,okad,nbfor,ksc) =>  GlobalReply::PeerForward(opr,okad,nbfor,ksc),
+      GlobalReply::PeerForward(opr,okad,nbfor,ksc) => GlobalReply::PeerForward(opr,okad,nbfor,ksc),
+      GlobalReply::Api(ksr) => GlobalReply::PeerApi(ksr),
+      GlobalReply::PeerApi(ksr) => GlobalReply::PeerApi(ksr),
+      GlobalReply::NoRep => GlobalReply::NoRep,
+
       GlobalReply::Mult(vkr) => {
-        let vgr : Vec<Self> = vkr.into_iter().map(|kr|Self::opt_from(kr)).filter_map(|ogr|ogr).collect();
-        if vgr.len() > 0 {
-          Some(GlobalReply::Mult(vgr))
-        } else {
-          None
-        }
+        let vgr = vkr.into_iter().map(|kr|from_kv(kr)).collect();
+        GlobalReply::Mult(vgr)
       }
     }
   }
-}
-
+//}
 

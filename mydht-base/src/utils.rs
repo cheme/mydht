@@ -1,5 +1,6 @@
 extern crate time;
 use serde::{Serializer,Serialize,Deserialize,Deserializer};
+use std::marker::PhantomData;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::net::SocketAddr;
@@ -72,15 +73,28 @@ pub trait SToRef<T : SRef> : Send + Sized {
 pub trait Ref<T> : SRef + Clone + Borrow<T> {
   fn new(t : T) -> Self;
 }
+#[derive(Debug)]
+/// Tech struct for impl
+pub struct SerRef<T,R>(pub R,PhantomData<T>);
+impl<T,R> SerRef<T,R> {
+  #[inline]
+  pub fn new(r : R) -> Self {
+    SerRef(r,PhantomData)
+  }
+}
+impl<T : Serialize, R : Ref<T>> Serialize for SerRef<T,R> {
+  fn serialize<S : Serializer>(&self, serializer: S) -> StdResult<S::Ok, S::Error> {
+    self.0.borrow().serialize(serializer)
+  }
+}
 
-/*impl<'de,R> Deserialize<'de> for R 
-where  
-T : Deserialize<'de>,
-R : Ref<T> {
-    fn deserialize<D>(deserializer: D) -> StdResult<Self, D::Error>
-        where D: Deserializer<'de> {
-    }
-}*/
+impl<'de,T : Deserialize<'de>, R : Ref<T>> Deserialize<'de> for SerRef<T,R> {
+  fn deserialize<D>(deserializer: D) -> StdResult<Self, D::Error>
+      where D: Deserializer<'de> {
+    let t = T::deserialize(deserializer)?;
+    Ok(SerRef::new(<R as Ref<T>>::new(t)))
+  }
+}
 
 //pub trait ToRef<T, RT : Ref<T>> : Send + Sized + Borrow<T> {
 /*pub trait ToRef<T, RT : Ref<T>> : Send + Sized + Borrow<T> {

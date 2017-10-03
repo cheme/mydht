@@ -39,6 +39,7 @@ use super::{
   MyDHTConf,
   PeerRefSend,
   ShadowAuthType,
+  MCCommand,
 };
 use msgenc::{
   MsgEnc,
@@ -184,9 +185,9 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
       WriteCommand::Service(command) => {
         self.forward_proto(command,async_yield)?;
       },
-      WriteCommand::GlobalService(command) => {
-        self.forward_proto(command,async_yield)?;
-      },
+/*      WriteCommand::GlobalService(command) => {
+        self.forward_proto(MCCommand::Global(command),async_yield)?;
+      },*/
     }
     // default to no rep
     Ok(WriteReply::NoRep)
@@ -234,15 +235,14 @@ pub enum WriteCommand<MC : MyDHTConf> {
   /// pong a peer with challenge and read token last is second challenge if needed (needed when
   /// replying to a ping not a pong)
   Pong(MC::PeerRef, Vec<u8>, usize, Option<Vec<u8>>),
-  Service(MC::LocalServiceCommand),
-  GlobalService(MC::GlobalServiceCommand),
+  Service(MCCommand<MC>),
+  //GlobalService(MC::GlobalServiceCommand),
 }
 
 impl<MC : MyDHTConf> WriteCommand<MC> {
   pub fn get_api_reply(&self) -> Option<ApiQueryId> {
     match *self {
       WriteCommand::Service(ref lsc) => lsc.get_api_reply(),
-      WriteCommand::GlobalService(ref gsc) => gsc.get_api_reply(),
       _ => None,
     }
   }
@@ -258,8 +258,8 @@ pub enum WriteCommandSend<MC : MyDHTConf>
   Ping(Vec<u8>),
   /// pong a peer with challenge and read token
   Pong(<MC::PeerRef as SRef>::Send, Vec<u8>, usize, Option<Vec<u8>>),
-  Service(<MC::LocalServiceCommand as SRef>::Send),
-  GlobalService(<MC::GlobalServiceCommand as SRef>::Send),
+  Service(<MCCommand<MC> as SRef>::Send),
+  //GlobalService(<MC::GlobalServiceCommand as SRef>::Send),
 }
 
 impl<MC : MyDHTConf> Clone for WriteCommand<MC> {
@@ -269,7 +269,7 @@ impl<MC : MyDHTConf> Clone for WriteCommand<MC> {
       WriteCommand::Ping(ref chal) => WriteCommand::Ping(chal.clone()),
       WriteCommand::Pong(ref pr,ref v,s,ref v2) => WriteCommand::Pong(pr.clone(),v.clone(),s,v2.clone()),
       WriteCommand::Service(ref p) => WriteCommand::Service(p.clone()),
-      WriteCommand::GlobalService(ref p) => WriteCommand::GlobalService(p.clone()),
+      //WriteCommand::GlobalService(ref p) => WriteCommand::GlobalService(p.clone()),
     }
   }
 }
@@ -284,7 +284,7 @@ impl<MC : MyDHTConf> SRef for WriteCommand<MC>
       WriteCommand::Ping(ref chal) => WriteCommandSend::Ping(chal.clone()),
       WriteCommand::Pong(ref pr,ref v,s,ref v2) => WriteCommandSend::Pong(pr.get_sendable(),v.clone(),s,v2.clone()),
       WriteCommand::Service(ref p) => WriteCommandSend::Service(p.get_sendable()),
-      WriteCommand::GlobalService(ref p) => WriteCommandSend::GlobalService(p.get_sendable()),
+//      WriteCommand::GlobalService(ref p) => WriteCommandSend::GlobalService(p.get_sendable()),
     }
   }
 }
@@ -298,7 +298,7 @@ impl<MC : MyDHTConf> SToRef<WriteCommand<MC>> for WriteCommandSend<MC>
       WriteCommandSend::Ping(chal) => WriteCommand::Ping(chal),
       WriteCommandSend::Pong(pr,v,s,v2) => WriteCommand::Pong(pr.to_ref(),v,s,v2),
       WriteCommandSend::Service(p) => WriteCommand::Service(p.to_ref()),
-      WriteCommandSend::GlobalService(p) => WriteCommand::GlobalService(p.to_ref()),
+      //WriteCommandSend::GlobalService(p) => WriteCommand::GlobalService(p.to_ref()),
     }
   }
 }

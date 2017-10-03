@@ -44,6 +44,7 @@ use self::deflocal::{
 use utils::{
   self,
   SRef,
+  SToRef,
 };
 use msgenc::{
   MsgEnc,
@@ -179,7 +180,16 @@ pub trait OptFrom<T>: Sized {
   fn can_from(&T) -> bool;
   fn opt_from(T) -> Option<Self>;
 }
-
+/// OptFrom implies OptInto
+impl<T, U> OptInto<U> for T where U: OptFrom<T>
+{
+  fn can_into(&self) -> bool {
+    U::can_from(self)
+  }
+  fn opt_into(self) -> Option<U> {
+    U::opt_from(self)
+  }
+}
 
 pub struct MyDHTService<MC : MyDHTConf>(pub MC, pub MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>, pub <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Send,pub MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>);
 
@@ -251,8 +261,7 @@ pub trait Route<MC : MyDHTConf> {
   /// return an array of write token as dest TODO refactor to return iterator?? (avoid vec aloc,
   /// allow nice implementation for route)
   /// second param usize is targetted nb forward
-  fn route(&mut self, usize, MC::LocalServiceCommand,&MC::Slab, &MC::PeerCache) -> Result<(MC::LocalServiceCommand,Vec<usize>)>;
-  fn route_global(&mut self, usize, MC::GlobalServiceCommand,&MC::Slab, &MC::PeerCache) -> Result<(MC::GlobalServiceCommand,Vec<usize>)>;
+  fn route(&mut self, usize, MCCommand<MC>,&MC::Slab, &MC::PeerCache) -> Result<(MCCommand<MC>,Vec<usize>)>;
 }
 
 pub enum MCCommand<MC : MyDHTConf> {
@@ -260,6 +269,145 @@ pub enum MCCommand<MC : MyDHTConf> {
   Global(MC::GlobalServiceCommand),
   PeerStore(KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>),
 }
+
+impl<MC : MyDHTConf> MCCommand<MC> {
+  pub fn get_api_reply(&self) -> Option<ApiQueryId> {
+    match *self {
+      MCCommand::Local(ref a) => a.get_api_reply(),
+      MCCommand::Global(ref a) => a.get_api_reply(),
+      MCCommand::PeerStore(ref a) => a.get_api_reply(),
+    }
+  }
+}
+impl<MC : MyDHTConf> ApiQueriable for MCCommand<MC> {
+  fn is_api_reply(&self) -> bool {
+    match *self {
+      MCCommand::Local(ref c) => c.is_api_reply(),
+      MCCommand::Global(ref c) => c.is_api_reply(),
+      MCCommand::PeerStore(ref c) => c.is_api_reply(),
+    }
+  }
+  fn set_api_reply(&mut self, i : ApiQueryId) {
+    match *self {
+      MCCommand::Local(ref mut c) => c.set_api_reply(i),
+      MCCommand::Global(ref mut c) => c.set_api_reply(i),
+      MCCommand::PeerStore(ref mut c) => c.set_api_reply(i),
+    }
+  }
+  fn get_api_reply(&self) -> Option<ApiQueryId> {
+    match *self {
+      MCCommand::Local(ref c) => c.get_api_reply(),
+      MCCommand::Global(ref c) => c.get_api_reply(),
+      MCCommand::PeerStore(ref c) => c.get_api_reply(),
+    }
+  }
+}
+
+
+pub enum MCCommandSend<MC : MyDHTConf> 
+  where MC::LocalServiceCommand : SRef,
+        MC::GlobalServiceCommand : SRef {
+  Local(<MC::LocalServiceCommand as SRef>::Send),
+  Global(<MC::GlobalServiceCommand as SRef>::Send),
+  PeerStore(<KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef> as SRef>::Send),
+}
+
+
+impl<MC : MyDHTConf> Clone for MCCommand<MC> {
+  fn clone(&self) -> Self {
+    match *self {
+      MCCommand::Local(ref a) => MCCommand::Local(a.clone()),
+      MCCommand::Global(ref a) => MCCommand::Global(a.clone()),
+      MCCommand::PeerStore(ref a) => MCCommand::PeerStore(a.clone()),
+    }
+  }
+}
+impl<MC : MyDHTConf> SRef for MCCommand<MC>
+  where MC::LocalServiceCommand : SRef,
+        MC::GlobalServiceCommand : SRef {
+  type Send = MCCommandSend<MC>;
+  fn get_sendable(&self) -> Self::Send {
+    match *self {
+      MCCommand::Local(ref a) => MCCommandSend::Local(a.get_sendable()),
+      MCCommand::Global(ref a) => MCCommandSend::Global(a.get_sendable()),
+      MCCommand::PeerStore(ref a) => MCCommandSend::PeerStore(a.get_sendable()),
+    }
+  }
+}
+impl<MC : MyDHTConf> SToRef<MCCommand<MC>> for MCCommandSend<MC>
+  where MC::LocalServiceCommand : SRef,
+        MC::GlobalServiceCommand : SRef {
+  fn to_ref(self) -> MCCommand<MC> {
+    match self {
+      MCCommandSend::Local(a) => MCCommand::Local(a.to_ref()),
+      MCCommandSend::Global(a) => MCCommand::Global(a.to_ref()),
+      MCCommandSend::PeerStore(a) => MCCommand::PeerStore(a.to_ref()),
+    }
+  }
+}
+
+
+pub enum MCReply<MC : MyDHTConf> {
+  Local(MC::LocalServiceReply),
+  Global(MC::GlobalServiceReply),
+  PeerStore(KVStoreReply<MC::PeerRef>),
+}
+impl<MC : MyDHTConf> ApiRepliable for MCReply<MC> {
+  fn get_api_reply(&self) -> Option<ApiQueryId> {
+    match *self {
+      MCReply::Local(ref a) => a.get_api_reply(),
+      MCReply::Global(ref a) => a.get_api_reply(),
+      MCReply::PeerStore(ref a) => a.get_api_reply(),
+    }
+  }
+}
+
+
+pub enum MCReplySend<MC : MyDHTConf> 
+  where MC::LocalServiceReply : SRef,
+        MC::GlobalServiceReply : SRef {
+  Local(<MC::LocalServiceReply as SRef>::Send),
+  Global(<MC::GlobalServiceReply as SRef>::Send),
+  PeerStore(<KVStoreReply<MC::PeerRef> as SRef>::Send),
+}
+
+impl<MC : MyDHTConf> Clone for MCReply<MC>
+  where MC::LocalServiceReply : Clone,
+        MC::GlobalServiceReply : Clone {
+  fn clone(&self) -> Self {
+    match *self {
+      MCReply::Local(ref a) => MCReply::Local(a.clone()),
+      MCReply::Global(ref a) => MCReply::Global(a.clone()),
+      MCReply::PeerStore(ref a) => MCReply::PeerStore(a.clone()),
+    }
+  }
+}
+
+impl<MC : MyDHTConf> SRef for MCReply<MC>
+  where MC::LocalServiceReply : SRef,
+        MC::GlobalServiceReply : SRef {
+  type Send = MCReplySend<MC>;
+  fn get_sendable(&self) -> Self::Send {
+    match *self {
+      MCReply::Local(ref a) => MCReplySend::Local(a.get_sendable()),
+      MCReply::Global(ref a) => MCReplySend::Global(a.get_sendable()),
+      MCReply::PeerStore(ref a) => MCReplySend::PeerStore(a.get_sendable()),
+    }
+  }
+}
+impl<MC : MyDHTConf> SToRef<MCReply<MC>> for MCReplySend<MC>
+  where MC::LocalServiceReply : SRef,
+        MC::GlobalServiceReply : SRef {
+  fn to_ref(self) -> MCReply<MC> {
+    match self {
+      MCReplySend::Local(a) => MCReply::Local(a.to_ref()),
+      MCReplySend::Global(a) => MCReply::Global(a.to_ref()),
+      MCReplySend::PeerStore(a) => MCReply::PeerStore(a.to_ref()),
+    }
+  }
+}
+
+
 pub type PeerRefSend<MC:MyDHTConf> = <MC::PeerRef as SRef>::Send;
 //pub type BorRef<
 pub trait MyDHTConf : 'static + Send + Sized 
@@ -339,12 +487,14 @@ pub trait MyDHTConf : 'static + Send + Sized
 
 
   /// application protomsg used immediatly by local service
-  type ProtoMsg : Into<MCCommand<Self>> + SettableAttachments + GettableAttachments;
+  type ProtoMsg : Into<MCCommand<Self>> + SettableAttachments;
+  /// Send variant of protomsg
+  type ProtoMsgSend : GettableAttachments + OptFrom<MCCommand<Self>>;
   // ProtoMsgSend variant (content not requiring ownership)
 //  type ProtoMsgSend<'a> : Into<Self::LocalServiceCommand> + SettableAttachments + GettableAttachments;
   /// global service command : by default it should be protoMsg, depending on spawner use, should
   /// be Send or SRef... Local command require clone (sent to multiple peer)
-  type LocalServiceCommand : ApiQueriable + OptInto<Self::ProtoMsg> + Clone;
+  type LocalServiceCommand : ApiQueriable + Clone;
   /// OptInto proto for forwarding query to other peers TODO looks useless as service command for
   /// it -> TODO consider removal after impl
   type LocalServiceReply : ApiRepliable;
@@ -353,11 +503,11 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// LocalServiceCommand
   /// Need clone to be forward to multiple peers
   /// Opt into store of peer command to route those command if global command allows it
-  type GlobalServiceCommand : ApiQueriable + OptInto<Self::ProtoMsg>
-    + OptFrom<KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>>
+  type GlobalServiceCommand : ApiQueriable
+  //  + OptFrom<KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>>
     + Clone;// = GlobalCommand<Self>;
   type GlobalServiceReply : ApiRepliable
-    + OptFrom<KVStoreReply<Self::PeerRef>> 
+  //  + OptFrom<KVStoreReply<Self::PeerRef>> 
     ;// = GlobalCommand<Self>;
 
   // ref for protomsg : need to be compatible with spawners -> this has been disabled, ref will

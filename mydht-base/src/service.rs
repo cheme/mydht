@@ -341,11 +341,13 @@ impl<C,S : SpawnSend<C>, H : SpawnUnyield> SpawnSend<C> for HandleSend<S,H> {
     Ok(())
   }
 }
+
 /// tech trait only for implementing send with handle as member of a struct (avoid unconstrained
 /// parameter for HandleSend but currently use only for this struct)
 pub trait SpawnSendWithHandle<C> {
   fn send_with_handle(&mut self, C) -> Result<Option<C>>;
 }
+
 impl<C,S : SpawnSend<C>, H : SpawnUnyield> SpawnSendWithHandle<C> for HandleSend<S,H> {
   #[inline]
   fn send_with_handle(&mut self, command : C) -> Result<Option<C>> {

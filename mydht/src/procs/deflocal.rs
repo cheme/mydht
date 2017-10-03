@@ -50,6 +50,12 @@ use super::{
   GlobalHandleSend,
   ApiHandleSend,
   OptInto,
+  MCCommand,
+  MCReply,
+};
+use super::storeprop::{
+  KVStoreCommand,
+  KVStoreReply,
 };
 use super::server2::{
   ReadReply,
@@ -96,8 +102,10 @@ pub enum GlobalReply<MC : MyDHTConf> {
 pub enum GlobalReply<P : Peer,PR,GSC,GSR> {
   /// forward command to list of peers or/and to nb peers from route
   Forward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,usize,GSC),
+  PeerForward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,usize,KVStoreCommand<P,P,PR>),
   /// reply to api
   Api(GSR),
+  PeerApi(KVStoreReply<PR>),
   /// no rep
   NoRep,
   Mult(Vec<GlobalReply<P,PR,GSC,GSR>>),
@@ -115,7 +123,9 @@ impl<P : Peer,PR : Clone,GSC : Clone,GSR : Clone> Clone for GlobalReply<P,PR,GSC
   fn clone(&self) -> Self {
     match *self {
       GlobalReply::Forward(ref odests,ref okadests, nb_for, ref gsc) => GlobalReply::Forward(odests.clone(),okadests.clone(),nb_for,gsc.clone()),
+      GlobalReply::PeerForward(ref odests,ref okadests, nb_for, ref gsc) => GlobalReply::PeerForward(odests.clone(),okadests.clone(),nb_for,gsc.clone()),
       GlobalReply::Api(ref gsr) => GlobalReply::Api(gsr.clone()),
+      GlobalReply::PeerApi(ref gsr) => GlobalReply::PeerApi(gsr.clone()),
       GlobalReply::NoRep => GlobalReply::NoRep,
       GlobalReply::Mult(ref grs) => GlobalReply::Mult(grs.clone()),
     }
@@ -227,12 +237,12 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServic
           self.send(cmd)?;
         }
       },
-      GlobalReply::Api(c) => {
+      GlobalReply::PeerApi(c) => {
         if c.get_api_reply().is_some() {
           let cml =  match self.api {
             Some(ref mut api_weak) => {
-              api_weak.send_with_handle(ApiCommand::GlobalServiceReply(c))?.map(|c|
-                  if let ApiCommand::GlobalServiceReply(c) = c {c} else {unreachable!()})
+              api_weak.send_with_handle(ApiCommand::ServiceReply(MCReply::PeerStore(c)))?.map(|c|
+                  if let ApiCommand::ServiceReply(MCReply::PeerStore(c)) = c {c} else {unreachable!()})
             },
             None => {
               Some(c)
@@ -240,12 +250,32 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServic
           };
           if let Some(c) = cml {
             self.api = None;
-            self.mainloop.send(MainLoopCommand::ProxyApiGlobalReply(c))?;
+            self.mainloop.send(MainLoopCommand::ProxyApiReply(MCReply::PeerStore(c)))?;
           }
         }
       },
+      GlobalReply::Api(c) => {
+        if c.get_api_reply().is_some() {
+          let cml =  match self.api {
+            Some(ref mut api_weak) => {
+              api_weak.send_with_handle(ApiCommand::ServiceReply(MCReply::Global(c)))?.map(|c|
+                  if let ApiCommand::ServiceReply(MCReply::Global(c)) = c {c} else {unreachable!()})
+            },
+            None => {
+              Some(c)
+            },
+          };
+          if let Some(c) = cml {
+            self.api = None;
+            self.mainloop.send(MainLoopCommand::ProxyApiReply(MCReply::Global(c)))?;
+          }
+        }
+      },
+      GlobalReply::PeerForward(opr,okad,nb_for,gsc) => {
+        self.mainloop.send(MainLoopCommand::ForwardService(opr,okad,nb_for,MCCommand::PeerStore(gsc)))?;
+      },
       GlobalReply::Forward(opr,okad,nb_for,gsc) => {
-        self.mainloop.send(MainLoopCommand::ForwardServiceGlobal(opr,okad,nb_for,gsc))?;
+        self.mainloop.send(MainLoopCommand::ForwardService(opr,okad,nb_for,MCCommand::Global(gsc)))?;
       },
       GlobalReply::NoRep => (),
     }
@@ -263,8 +293,8 @@ impl<MC : MyDHTConf> SpawnSend<LocalReply<MC>> for LocalDest<MC> {
       LocalReply::Api(c) => {
         let cml =  match self.api {
           Some(ref mut api_weak) => {
-           api_weak.send_with_handle(ApiCommand::LocalServiceReply(c))?.map(|c|
-               if let ApiCommand::LocalServiceReply(c) = c {c} else {unreachable!()})
+           api_weak.send_with_handle(ApiCommand::ServiceReply(MCReply::Local(c)))?.map(|c|
+               if let ApiCommand::ServiceReply(MCReply::Local(c)) = c {c} else {unreachable!()})
           },
           None => {
             Some(c)
@@ -272,7 +302,7 @@ impl<MC : MyDHTConf> SpawnSend<LocalReply<MC>> for LocalDest<MC> {
         };
         if let Some(c) = cml {
           self.api = None;
-          self.read.send(ReadReply::MainLoop(MainLoopCommand::ProxyApiLocalReply(c)))?;
+          self.read.send(ReadReply::MainLoop(MainLoopCommand::ProxyApiReply(MCReply::Local(c))))?;
         }
       },
     }

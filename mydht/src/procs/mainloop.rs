@@ -32,6 +32,8 @@ use super::api::{
 };
 use super::{
   MyDHTConf,
+  MCCommand,
+  MCReply,
   MainLoopSendIn,
   RWSlabEntry,
   ChallengeEntry,
@@ -220,9 +222,10 @@ pub struct MyDHT<MC : MyDHTConf>(MainLoopSendIn<MC>);
 pub enum MainLoopCommand<MC : MyDHTConf> {
   Start,
   TryConnect(<MC::Transport as Transport>::Address),
-  ForwardServiceLocal(MC::LocalServiceCommand,usize),
-  ForwardServiceGlobal(Option<Vec<MC::PeerRef>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,MC::GlobalServiceCommand),
-  ForwardServiceApi(MC::LocalServiceCommand,usize,MC::ApiReturn),
+//  ForwardServiceLocal(MC::LocalServiceCommand,usize),
+  ForwardService(Option<Vec<MC::PeerRef>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,MCCommand<MC>),
+  /// usize is only for mccommand type local to set the number of local to target
+  ForwardApi(MCCommand<MC>,usize,MC::ApiReturn),
   /// received peer store command from peer
   PeerStore(KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>),
   /// reject stream for this token and Address
@@ -238,9 +241,8 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
   /// first field is read token ix, write is obtain from os or a connection
   ProxyWrite(usize,WriteCommand<MC>),
   ProxyGlobal(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>),
-  GlobalApi(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>,MC::ApiReturn),
-  ProxyApiLocalReply(MC::LocalServiceReply),
-  ProxyApiGlobalReply(MC::GlobalServiceReply),
+//  GlobalApi(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>,MC::ApiReturn),
+  ProxyApiReply(MCReply<MC>),
 }
 
 /// Send variant (to use when inner ref are not Sendable)
@@ -251,9 +253,9 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
        MC::LocalServiceReply : SRef {
   Start,
   TryConnect(<MC::Transport as Transport>::Address),
-  ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
-  ForwardServiceGlobal(Option<Vec<<MC::PeerRef as SRef>::Send>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,<MC::GlobalServiceCommand as SRef>::Send),
-  ForwardServiceApi(<MC::LocalServiceCommand as SRef>::Send,usize,MC::ApiReturn),
+//  ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
+  ForwardService(Option<Vec<<MC::PeerRef as SRef>::Send>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,<MCCommand<MC> as SRef>::Send),
+  ForwardApi(<MCCommand<MC> as SRef>::Send,usize,MC::ApiReturn),
   PeerStore(KVStoreCommandSend<MC::Peer,MC::Peer,MC::PeerRef>),
   /// reject stream for this token and Address
   RejectReadSpawn(usize),
@@ -265,9 +267,9 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
   NewPeerUncheckedChallenge(<MC::PeerRef as SRef>::Send,PeerPriority,usize,Vec<u8>,Option<Vec<u8>>),
   ProxyWrite(usize,WriteCommandSend<MC>),
   ProxyGlobal(GlobalCommandSend<<MC::PeerRef as SRef>::Send,<MC::GlobalServiceCommand as SRef>::Send>),
-  GlobalApi(GlobalCommandSend<<MC::PeerRef as SRef>::Send,<MC::GlobalServiceCommand as SRef>::Send>,MC::ApiReturn),
-  ProxyApiLocalReply(<MC::LocalServiceReply as SRef>::Send),
-  ProxyApiGlobalReply(<MC::GlobalServiceReply as SRef>::Send),
+//  GlobalApi(GlobalCommandSend<<MC::PeerRef as SRef>::Send,<MC::GlobalServiceCommand as SRef>::Send>,MC::ApiReturn),
+  ProxyApiReply(<MCReply<MC> as SRef>::Send),
+//  ProxyApiGlobalReply(<MC::GlobalServiceReply as SRef>::Send),
 }
 
 impl<MC : MyDHTConf> Clone for MainLoopCommand<MC> 
@@ -279,9 +281,9 @@ impl<MC : MyDHTConf> Clone for MainLoopCommand<MC>
     match *self {
       MainLoopCommand::Start => MainLoopCommand::Start,
       MainLoopCommand::TryConnect(ref a) => MainLoopCommand::TryConnect(a.clone()),
-      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommand::ForwardServiceLocal(gc.clone(),nb),
-      MainLoopCommand::ForwardServiceGlobal(ref ovp,ref okad,nb_for,ref c) => MainLoopCommand::ForwardServiceGlobal(ovp.clone(),okad.clone(),nb_for,c.clone()),
-      MainLoopCommand::ForwardServiceApi(ref gc,nb_for,ref ret) => MainLoopCommand::ForwardServiceApi(gc.clone(),nb_for,ret.clone()),
+//      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommand::ForwardServiceLocal(gc.clone(),nb),
+      MainLoopCommand::ForwardService(ref ovp,ref okad,nb_for,ref c) => MainLoopCommand::ForwardService(ovp.clone(),okad.clone(),nb_for,c.clone()),
+      MainLoopCommand::ForwardApi(ref gc,nb_for,ref ret) => MainLoopCommand::ForwardApi(gc.clone(),nb_for,ret.clone()),
       MainLoopCommand::PeerStore(ref cmd) => MainLoopCommand::PeerStore(cmd.clone()),
       MainLoopCommand::RejectReadSpawn(s) => MainLoopCommand::RejectReadSpawn(s),
       MainLoopCommand::RejectPeer(ref k,ref os,ref os2) => MainLoopCommand::RejectPeer(k.clone(),os.clone(),os2.clone()),
@@ -290,9 +292,9 @@ impl<MC : MyDHTConf> Clone for MainLoopCommand<MC>
       MainLoopCommand::NewPeerUncheckedChallenge(ref rp,ref pp,rtok,ref chal,ref nextchal) => MainLoopCommand::NewPeerUncheckedChallenge(rp.clone(),pp.clone(),rtok,chal.clone(),nextchal.clone()),
       MainLoopCommand::ProxyWrite(rt, ref rcs) => MainLoopCommand::ProxyWrite(rt, rcs.clone()),
       MainLoopCommand::ProxyGlobal(ref rcs) => MainLoopCommand::ProxyGlobal(rcs.clone()),
-      MainLoopCommand::GlobalApi(ref rcs,ref ret) => MainLoopCommand::GlobalApi(rcs.clone(),ret.clone()),
-      MainLoopCommand::ProxyApiLocalReply(ref rcs) => MainLoopCommand::ProxyApiLocalReply(rcs.clone()),
-      MainLoopCommand::ProxyApiGlobalReply(ref rcs) => MainLoopCommand::ProxyApiGlobalReply(rcs.clone()),
+//      MainLoopCommand::GlobalApi(ref rcs,ref ret) => MainLoopCommand::GlobalApi(rcs.clone(),ret.clone()),
+      MainLoopCommand::ProxyApiReply(ref rcs) => MainLoopCommand::ProxyApiReply(rcs.clone()),
+//      MainLoopCommand::ProxyApiGlobalReply(ref rcs) => MainLoopCommand::ProxyApiGlobalReply(rcs.clone()),
     }
   }
 }
@@ -307,11 +309,11 @@ impl<MC : MyDHTConf> SRef for MainLoopCommand<MC>
     match *self {
       MainLoopCommand::Start => MainLoopCommandSend::Start,
       MainLoopCommand::TryConnect(ref a) => MainLoopCommandSend::TryConnect(a.clone()),
-      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommandSend::ForwardServiceLocal(gc.get_sendable(),nb),
-      MainLoopCommand::ForwardServiceGlobal(ref ovp,ref okad,nb_for,ref c) => MainLoopCommandSend::ForwardServiceGlobal({
+//      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommandSend::ForwardServiceLocal(gc.get_sendable(),nb),
+      MainLoopCommand::ForwardService(ref ovp,ref okad,nb_for,ref c) => MainLoopCommandSend::ForwardService({
           ovp.as_ref().map(|vp|vp.iter().map(|p|p.get_sendable()).collect())
         },okad.clone(),nb_for,c.get_sendable()),
-      MainLoopCommand::ForwardServiceApi(ref gc,nb_for,ref ret) => MainLoopCommandSend::ForwardServiceApi(gc.get_sendable(),nb_for,ret.clone()),
+      MainLoopCommand::ForwardApi(ref gc,nb_for,ref ret) => MainLoopCommandSend::ForwardApi(gc.get_sendable(),nb_for,ret.clone()),
       MainLoopCommand::PeerStore(ref cmd) => MainLoopCommandSend::PeerStore(cmd.get_sendable()),
       MainLoopCommand::RejectReadSpawn(s) => MainLoopCommandSend::RejectReadSpawn(s),
       MainLoopCommand::RejectPeer(ref k,ref os,ref os2) => MainLoopCommandSend::RejectPeer(k.clone(),os.clone(),os2.clone()),
@@ -320,9 +322,9 @@ impl<MC : MyDHTConf> SRef for MainLoopCommand<MC>
       MainLoopCommand::NewPeerUncheckedChallenge(ref rp,ref pp,rtok,ref chal,ref nextchal) => MainLoopCommandSend::NewPeerUncheckedChallenge(rp.get_sendable(),pp.clone(),rtok,chal.clone(),nextchal.clone()),
       MainLoopCommand::ProxyWrite(rt, ref rcs) => MainLoopCommandSend::ProxyWrite(rt, rcs.get_sendable()),
       MainLoopCommand::ProxyGlobal(ref rcs) => MainLoopCommandSend::ProxyGlobal(rcs.get_sendable()),
-      MainLoopCommand::GlobalApi(ref rcs,ref ret) => MainLoopCommandSend::GlobalApi(rcs.get_sendable(),ret.clone()),
-      MainLoopCommand::ProxyApiGlobalReply(ref rcs) => MainLoopCommandSend::ProxyApiGlobalReply(rcs.get_sendable()),
-      MainLoopCommand::ProxyApiLocalReply(ref rcs) => MainLoopCommandSend::ProxyApiLocalReply(rcs.get_sendable()),
+//      MainLoopCommand::GlobalApi(ref rcs,ref ret) => MainLoopCommandSend::GlobalApi(rcs.get_sendable(),ret.clone()),
+      MainLoopCommand::ProxyApiReply(ref rcs) => MainLoopCommandSend::ProxyApiReply(rcs.get_sendable()),
+//      MainLoopCommand::ProxyApiLocalReply(ref rcs) => MainLoopCommandSend::ProxyApiLocalReply(rcs.get_sendable()),
     }
   }
 }
@@ -336,11 +338,11 @@ impl<MC : MyDHTConf> SToRef<MainLoopCommand<MC>> for MainLoopCommandSend<MC>
     match self {
       MainLoopCommandSend::Start => MainLoopCommand::Start,
       MainLoopCommandSend::TryConnect(a) => MainLoopCommand::TryConnect(a),
-      MainLoopCommandSend::ForwardServiceLocal(a,nb) => MainLoopCommand::ForwardServiceLocal(a.to_ref(),nb),
-      MainLoopCommandSend::ForwardServiceGlobal(ovp,okad,nb_for,c) => MainLoopCommand::ForwardServiceGlobal({
+//      MainLoopCommandSend::ForwardServiceLocal(a,nb) => MainLoopCommand::ForwardServiceLocal(a.to_ref(),nb),
+      MainLoopCommandSend::ForwardService(ovp,okad,nb_for,c) => MainLoopCommand::ForwardService({
           ovp.map(|vp|vp.into_iter().map(|p|p.to_ref()).collect())
         },okad,nb_for,c.to_ref()),
-      MainLoopCommandSend::ForwardServiceApi(a,nb_for,r) => MainLoopCommand::ForwardServiceApi(a.to_ref(),nb_for,r),
+      MainLoopCommandSend::ForwardApi(a,nb_for,r) => MainLoopCommand::ForwardApi(a.to_ref(),nb_for,r),
       MainLoopCommandSend::PeerStore(cmd) => MainLoopCommand::PeerStore(cmd.to_ref()),
       MainLoopCommandSend::RejectReadSpawn(s) => MainLoopCommand::RejectReadSpawn(s),
       MainLoopCommandSend::RejectPeer(k,os,os2) => MainLoopCommand::RejectPeer(k,os,os2),
@@ -349,9 +351,9 @@ impl<MC : MyDHTConf> SToRef<MainLoopCommand<MC>> for MainLoopCommandSend<MC>
       MainLoopCommandSend::NewPeerUncheckedChallenge(rp,pp,rtok,chal,nchal) => MainLoopCommand::NewPeerUncheckedChallenge(rp.to_ref(),pp,rtok,chal,nchal),
       MainLoopCommandSend::ProxyWrite(rt,rcs) => MainLoopCommand::ProxyWrite(rt,rcs.to_ref()),
       MainLoopCommandSend::ProxyGlobal(rcs) => MainLoopCommand::ProxyGlobal(rcs.to_ref()),
-      MainLoopCommandSend::GlobalApi(rcs,r) => MainLoopCommand::GlobalApi(rcs.to_ref(),r),
-      MainLoopCommandSend::ProxyApiGlobalReply(rcs) => MainLoopCommand::ProxyApiGlobalReply(rcs.to_ref()),
-      MainLoopCommandSend::ProxyApiLocalReply(rcs) => MainLoopCommand::ProxyApiLocalReply(rcs.to_ref()),
+//      MainLoopCommandSend::GlobalApi(rcs,r) => MainLoopCommand::GlobalApi(rcs.to_ref(),r),
+      MainLoopCommandSend::ProxyApiReply(rcs) => MainLoopCommand::ProxyApiReply(rcs.to_ref()),
+//      MainLoopCommandSend::ProxyApiLocalReply(rcs) => MainLoopCommand::ProxyApiLocalReply(rcs.to_ref()),
     }
   }
 }
@@ -545,27 +547,19 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       MainLoopCommand::PeerStore(kvcmd) => {
         panic!("TODO implement");
       },
-      MainLoopCommand::ProxyApiLocalReply(sc) => {
+      MainLoopCommand::ProxyApiReply(sc) => {
           // TODO log try restart ???
-        send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::LocalServiceReply(sc),"TODO api service restart?");
+        send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::ServiceReply(sc),"TODO api service restart?");
       },
-      MainLoopCommand::ProxyApiGlobalReply(sc) => {
+/*      MainLoopCommand::ProxyApiGlobalReply(sc) => {
         // TODO log try restart ???
         send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::GlobalServiceReply(sc),"TODO api service restart?");
-      },
+      },*/
       MainLoopCommand::ProxyGlobal(sc) => {
         // send in global service TODO when send from api use a composed sender to send directly
         send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,sc,"Global service finished TODO code to make it restartable cf write service and initialising from conf in init_state + on error right error mgmt");
       },
-      MainLoopCommand::GlobalApi(sc,ret) => {
-        if sc.is_api_reply() {
-          // send in global service TODO when send from api use a composed sender to send directly
-          send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::GlobalServiceCommand(sc,ret),"Api service finished TODO code to make it restartable cf write service and initialising from conf in init_state + on error right error mgmt");
-        } else {
-          self.call_inner_loop(MainLoopCommand::ProxyGlobal(sc), async_yield)?;
-        }
-      },
-      MainLoopCommand::ForwardServiceGlobal(ovp,okad,nb_for,sg) => {
+      MainLoopCommand::ForwardService(ovp,okad,nb_for,sg) => {
         let ol = ovp.as_ref().map(|v|v.len()).unwrap_or(0);
         let olka = okad.as_ref().map(|v|v.len()).unwrap_or(0);
         let nb_exp_for = ol + nb_for + olka;
@@ -594,7 +588,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                   self.challenge_cache.add_val_c(chal.clone(),ChallengeEntry {
                     write_tok : write_token,
                     read_tok : ort,
-                    next_msg : Some(WriteCommand::GlobalService(sg.clone())),
+                    next_msg : Some(WriteCommand::Service(sg.clone())),
                     next_qid : sg.get_api_reply(),
                   });
                   // send a ping
@@ -614,7 +608,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           debug!("Forward of service, some peer where unconnected and skip : init {:?}, send {:?}",ol,ovl);
         }
         let (sg,dests) = if nb_for > 0 {
-          let (sg, mut dests) = self.route.route_global(nb_for,sg,&self.slab_cache, &self.peer_cache)?;
+          let (sg, mut dests) = self.route.route(nb_for,sg,&self.slab_cache, &self.peer_cache)?;
           ovp.map(|ref mut vp| dests.append(vp));
           okad.map(|ref mut vp| dests.append(vp));
           (sg,dests)
@@ -647,49 +641,31 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         let mut ldest = None;
         for dest in dests {
           if let Some(d) = ldest {
-            self.write_stream_send(d,WriteCommand::GlobalService(sg.clone()), <MC>::init_write_spawner_out()?, None)?;
+            self.write_stream_send(d,WriteCommand::Service(sg.clone()), <MC>::init_write_spawner_out()?, None)?;
           }
           ldest = Some(dest);
         }
         if let Some(d) = ldest {
-          self.write_stream_send(d,WriteCommand::GlobalService(sg), <MC>::init_write_spawner_out()?, None)?;
+          self.write_stream_send(d,WriteCommand::Service(sg), <MC>::init_write_spawner_out()?, None)?;
         }
       },
-      MainLoopCommand::ForwardServiceApi(sc,nb_for,ret) => {
+      MainLoopCommand::ForwardApi(sc,nb_for,ret) => {
         if sc.is_api_reply() {
           // send in global service TODO when send from api use a composed sender to send directly
           // TODO log try restart ???
-          send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::LocalServiceCommand(sc,nb_for,ret),"Api service finished TODO code to make it restartable cf write service and initialising from conf in init_state + on error right error mgmt");
+          send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::ServiceCommand(sc,nb_for,ret),"Api service finished TODO code to make it restartable cf write service and initialising from conf in init_state + on error right error mgmt");
         } else {
-          self.call_inner_loop(MainLoopCommand::ForwardServiceLocal(sc,nb_for), async_yield)?;
-        }
-
-      },
-      MainLoopCommand::ForwardServiceLocal(sc,nb_for) => {
-        // query route then run write of sc as WriteCommand 
-        let (sc, dests) = self.route.route(nb_for,sc,&self.slab_cache, &self.peer_cache)?;
-        if dests.len() < nb_for {
-          // adjustment in kv expected res
-          if let Some(qid) = sc.get_api_reply() {
-            send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::Adjust(qid,nb_for - dests.len()),"Api service unreachable");
+          match sc {
+            sc @ MCCommand::Local(..) => {
+              self.call_inner_loop(MainLoopCommand::ForwardService(None,None,nb_for,sc), async_yield)?;
+            },
+            MCCommand::Global(sc) => {
+              self.call_inner_loop(MainLoopCommand::ProxyGlobal(GlobalCommand(None,sc)), async_yield)?;
+            },
+            MCCommand::PeerStore(sc) => {
+              self.call_inner_loop(MainLoopCommand::PeerStore(sc), async_yield)?;
+            },
           }
-        }
-        if dests.len() == 0 {
-          // TODO log
-          debug!("Local command not forwarded, no dest found by route");
-          println!("no dest for command");
-          return Ok(());
-        }
-
-        let mut ldest = None;
-        for dest in dests {
-          if let Some(d) = ldest {
-            self.write_stream_send(d,WriteCommand::Service(sc.clone()), <MC>::init_write_spawner_out()?, None)?;
-          }
-          ldest = Some(dest);
-        }
-        if let Some(d) = ldest {
-          self.write_stream_send(d,WriteCommand::Service(sc), <MC>::init_write_spawner_out()?, None)?;
         }
       },
       MainLoopCommand::TryConnect(dest_address) => {

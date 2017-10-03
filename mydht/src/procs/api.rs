@@ -21,6 +21,8 @@ use super::mainloop::MainLoopCommand;
 use super::client2::WriteCommand;
 use super::{
   MyDHTConf,
+  MCCommand,
+  MCReply,
 };
 use transport::{
   Transport,
@@ -108,7 +110,7 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
         }
         ApiReply::Done
       }
-      ApiCommand::LocalServiceCommand(mut lsc,nb_for,ret) => {
+      ApiCommand::ServiceCommand(mut lsc,nb_for,ret) => {
         if lsc.is_api_reply() {
           self.2 += 1;
           let qid = ApiQueryId(self.2);
@@ -116,22 +118,25 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
           let end = Instant::now() + self.1;
           self.0.add_val_c(qid.clone(),(ret,end));
         }
-        ApiReply::ProxyMainloop(MainLoopCommand::ForwardServiceLocal(lsc,nb_for))
-      },
-      ApiCommand::GlobalServiceCommand(mut gsc,ret) => {
-        if gsc.is_api_reply() {
-          self.2 += 1;
-          let qid = ApiQueryId(self.2);
-          gsc.set_api_reply(qid.clone());
-          let end = Instant::now() + self.1;
-          self.0.add_val_c(qid.clone(),(ret,end));
+        match lsc {
+          lsc @ MCCommand::Local(..) => {
+            ApiReply::ProxyMainloop(MainLoopCommand::ForwardService(None,None,nb_for,lsc))
+           // self.call_inner_loop(MainLoopCommand::ForwardService(None,None,nb_for,sc), async_yield)?;
+          },
+          MCCommand::Global(gsc) => {
+//            self.call_inner_loop(MainLoopCommand::ProxyGlobal(GlobalCommand(None,sc), async_yield)?;
+            ApiReply::ProxyMainloop(MainLoopCommand::ProxyGlobal(GlobalCommand(None,gsc)))
+          },
+          MCCommand::PeerStore(gsc) => {
+            ApiReply::ProxyMainloop(MainLoopCommand::PeerStore(gsc))
+//            self.call_inner_loop(MainLoopCommand::PeerStore(sc), async_yield)?;
+          },
         }
-        ApiReply::ProxyMainloop(MainLoopCommand::ProxyGlobal(gsc))
       },
-      ApiCommand::LocalServiceReply(lsr) => {
+      ApiCommand::ServiceReply(lsr) => {
         if let Some(qid) = lsr.get_api_reply() {
           let rem = if let Some(q) = self.0.get_val_mut_c(&qid) {
-            q.0.api_return(ApiResult::LocalServiceReply(lsr))?
+            q.0.api_return(ApiResult::ServiceReply(lsr))?
           } else {
             false
           };
@@ -141,20 +146,6 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
         }
         ApiReply::Done
       },
-      ApiCommand::GlobalServiceReply(gsr) => {
-        if let Some(qid) = gsr.get_api_reply() {
-          let rem = if let Some(q) = self.0.get_val_mut_c(&qid) {
-            q.0.api_return(ApiResult::GlobalServiceReply(gsr))?
-          } else {
-            false
-          };
-          if rem {
-            self.0.remove_val_c(&qid);
-          }
-        }
-        ApiReply::Done
-      },
-
     })
   }
 
@@ -166,10 +157,10 @@ pub struct ApiQueryId(pub usize);
 pub enum ApiCommand<MC : MyDHTConf> {
   Mainloop(MainLoopCommand<MC>),
   Failure(ApiQueryId),
-  LocalServiceCommand(MC::LocalServiceCommand,usize,MC::ApiReturn),
-  GlobalServiceCommand(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>,MC::ApiReturn),
-  LocalServiceReply(MC::LocalServiceReply),
-  GlobalServiceReply(MC::GlobalServiceReply),
+  ServiceCommand(MCCommand<MC>,usize,MC::ApiReturn),
+  //GlobalServiceCommand(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>,MC::ApiReturn),
+  ServiceReply(MCReply<MC>),
+//  GlobalServiceReply(MC::GlobalServiceReply),
   /// remove some expected result (consider as failure)
   Adjust(ApiQueryId,usize),
 }
@@ -183,7 +174,7 @@ impl<MC : MyDHTConf> ApiCommand<MC> {
     ApiCommand::Mainloop(MainLoopCommand::TryConnect(ad))
   }
   pub fn call_service_reply(mut c : MC::GlobalServiceCommand, ret : MC::ApiReturn) -> ApiCommand<MC> {
-    ApiCommand::GlobalServiceCommand(GlobalCommand(None,c),ret)
+    ApiCommand::ServiceCommand(MCCommand::Global(c),0,ret)
   }
  
   pub fn call_service(mut c : MC::GlobalServiceCommand) -> ApiCommand<MC> {
@@ -192,11 +183,11 @@ impl<MC : MyDHTConf> ApiCommand<MC> {
   }
  
   pub fn call_service_local(mut c : MC::LocalServiceCommand, nb_for : usize) -> ApiCommand<MC> {
-    let cmd = MainLoopCommand::ForwardServiceLocal(c,nb_for);
+    let cmd = MainLoopCommand::ForwardService(None,None,nb_for,MCCommand::Local(c));
     ApiCommand::Mainloop(cmd)
   }
   pub fn call_service_local_reply(mut c : MC::LocalServiceCommand, nb_for : usize, ret : MC::ApiReturn) -> ApiCommand<MC> {
-    ApiCommand::LocalServiceCommand(c,nb_for,ret)
+    ApiCommand::ServiceCommand(MCCommand::Local(c),nb_for,ret)
   }
 
 }
@@ -211,8 +202,9 @@ pub enum ApiReply<MC : MyDHTConf> {
 }
 
 pub enum ApiResult<MC : MyDHTConf> {
-  LocalServiceReply(MC::LocalServiceReply),
-  GlobalServiceReply(MC::GlobalServiceReply),
+  ServiceReply(MCReply<MC>),
+//  LocalServiceReply(MC::LocalServiceReply),
+//  GlobalServiceReply(MC::GlobalServiceReply),
   NoResult,
 }
 
@@ -222,8 +214,8 @@ where MC::LocalServiceReply : Clone,
 {
   fn clone(&self) -> Self {
     match *self {
-      ApiResult::LocalServiceReply(ref lsr) => ApiResult::LocalServiceReply(lsr.clone()),
-      ApiResult::GlobalServiceReply(ref lsr) => ApiResult::GlobalServiceReply(lsr.clone()),
+//      ApiResult::LocalServiceReply(ref lsr) => ApiResult::LocalServiceReply(lsr.clone()),
+      ApiResult::ServiceReply(ref lsr) => ApiResult::ServiceReply(lsr.clone()),
       ApiResult::NoResult => ApiResult::NoResult,
     }
   }
@@ -319,19 +311,19 @@ impl<MC : MyDHTConf> SpawnSend<ApiCommand<MC>> for ApiSendIn<MC> {
       ApiCommand::Mainloop(ic) => self.main_loop.send(ic)?,
       ApiCommand::Failure(..) => unreachable!(),
       ApiCommand::Adjust(..) => unreachable!(),
-      ApiCommand::LocalServiceCommand(cmd,nb_f,ret) => self.main_loop.send(MainLoopCommand::ForwardServiceApi(cmd,nb_f,ret))?,
+      ApiCommand::ServiceCommand(cmd,nb_f,ret) => self.main_loop.send(MainLoopCommand::ForwardApi(cmd,nb_f,ret))?,
 //  ForwardServiceLocal(MC::LocalServiceCommand,MC::PeerRef),
-      ApiCommand::GlobalServiceCommand(cmd,ret) => self.main_loop.send(MainLoopCommand::GlobalApi(cmd,ret))?,
-      ApiCommand::LocalServiceReply(rep) => {
+//      ApiCommand::ServiceCommand(MCCommand::Global(cmd),ret) => self.main_loop.send(MainLoopCommand::GlobalApi(cmd,ret))?,
+      ApiCommand::ServiceReply(rep) => {
         unreachable!()
 //        let oqid = rep.get_api_reply();
  //       panic!("TODO get from cache an unlock cond var")
       },
-      ApiCommand::GlobalServiceReply(rep) => {
+/*      ApiCommand::GlobalServiceReply(rep) => {
         unreachable!()
         //let oqid = rep.get_api_reply();
         //panic!("TODO get from cache an unlock cond var")
-      },
+      },*/
  
     };
     Ok(())

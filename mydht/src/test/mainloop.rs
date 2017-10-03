@@ -14,6 +14,7 @@ use std::time::Instant;
 use std::time::Duration;
 use procs::storeprop::{
   KVStoreCommand,
+  KVStoreProtoMsg,
   KVStoreReply,
 };
 use utils::{
@@ -25,6 +26,7 @@ use procs::{
   OptInto,
   OptFrom,
   MCCommand,
+  MCReply,
 };
 use procs::api::{
   Api,
@@ -142,6 +144,7 @@ use utils::{
   RcRef,
   CloneRef,
 };
+use peer::Peer;
 use simplecache::SimpleCache;
 use std::marker::PhantomData;
 use rules::simplerules::{
@@ -154,18 +157,19 @@ use rules::simplerules::{
 /// Messages between peers
 /// TODO ref variant for send !!!!
 #[serde(bound(deserialize = ""))]
-pub enum TestMessage {
+pub enum TestMessage<P : Peer,RP : Ref<P>> {
   Touch,
   TouchQ(Option<usize>,usize),
   TouchQR(Option<usize>),
+  PeerMgmt(KVStoreProtoMsg<P,P,RP>),
 }
-impl GettableAttachments for TestMessage {
+impl<P : Peer,RP : Ref<P>> GettableAttachments for TestMessage<P,RP> {
   fn get_attachments(&self) -> Vec<&Attachment> {
     Vec::new()
   }
 }
 
-impl SettableAttachments for TestMessage {
+impl<P : Peer,RP : Ref<P>> SettableAttachments for TestMessage<P,RP> {
   fn attachment_expected_sizes(&self) -> Vec<usize> {
     Vec::new()
   }
@@ -193,7 +197,7 @@ impl<MC : MyDHTConf> Clone for TestCommand<MC> {
   }
 }
 // communicate peers ??
-impl<MC : MyDHTConf> OptInto<KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>> for TestCommand<MC> {
+/*impl<MC : MyDHTConf> OptInto<KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>> for TestCommand<MC> {
   #[inline]
   fn can_into(&self) -> bool {
     false
@@ -220,7 +224,7 @@ impl<PR> OptFrom<KVStoreReply<PR>> for TestReply {
   fn opt_from(_ : KVStoreReply<PR>) -> Option<Self> {
     None
   }
-}
+}*/
 #[derive(Clone)]
 pub enum TestReply {
   Touch,
@@ -238,7 +242,7 @@ pub enum TestReply {
   }
 }
 */
-impl<MC : MyDHTConf> OptInto<TestMessage> for TestCommand<MC> {
+impl<MC : MyDHTConf> OptInto<TestMessage<MC::Peer,MC::PeerRef>> for TestCommand<MC> {
   fn can_into(&self) -> bool {
     match *self {
       TestCommand::Touch => true,
@@ -247,7 +251,7 @@ impl<MC : MyDHTConf> OptInto<TestMessage> for TestCommand<MC> {
       TestCommand::Ph(..) => false,
     }
   }
-  fn opt_into(self) -> Option<TestMessage> {
+  fn opt_into(self) -> Option<TestMessage<MC::Peer,MC::PeerRef>> {
     match self {
       TestCommand::Touch => Some(TestMessage::Touch),
       TestCommand::TouchQ(qid,nbfor) => Some(TestMessage::TouchQ(qid,nbfor)),
@@ -346,29 +350,20 @@ mod test_tcp_all_block_thread {
   }
   impl Route<TestMdhtConf> for TestRoute<TestMdhtConf> {
 
-    fn route_global(&mut self, targetted_nb : usize, c : TestCommand<TestMdhtConf>,sl : &<TestMdhtConf as MyDHTConf>::Slab, cache : &<TestMdhtConf as MyDHTConf>::PeerCache) -> Result<(TestCommand<TestMdhtConf>,Vec<usize>)> {
-      self.route(targetted_nb,c,sl,cache)
-    }
-    fn route(&mut self, targetted_nb : usize, c : TestCommand<TestMdhtConf>,_ : &<TestMdhtConf as MyDHTConf>::Slab, cache : &<TestMdhtConf as MyDHTConf>::PeerCache) -> Result<(TestCommand<TestMdhtConf>,Vec<usize>)> {
+    fn route(&mut self, targetted_nb : usize, c : MCCommand<TestMdhtConf>,_ : &<TestMdhtConf as MyDHTConf>::Slab, cache : &<TestMdhtConf as MyDHTConf>::PeerCache) -> Result<(MCCommand<TestMdhtConf>,Vec<usize>)> {
       let mut res = Vec::with_capacity(targetted_nb);
-      match c {
-        TestCommand::Ph(..) => unreachable!(),
-        TestCommand::Touch | TestCommand::TouchQ(..) => {
-          cache.strict_fold_c(&mut res,|res, kv|{
-            if let Some(t) = kv.1.get_write_token() {
-              if res.len() < targetted_nb {
-                res.push(t);
-              }
-            }
-            res
-          });
-        },
-        TestCommand::TouchQR(..) => (),
-      }
+      cache.strict_fold_c(&mut res,|res, kv|{
+        if let Some(t) = kv.1.get_write_token() {
+          if res.len() < targetted_nb {
+            res.push(t);
+          }
+        }
+        res
+      });
       Ok((c,res))
     }
   }
-  impl Into<MCCommand<TestMdhtConf>> for TestMessage {
+  impl Into<MCCommand<TestMdhtConf>> for TestMessage<<TestMdhtConf as MyDHTConf>::Peer,<TestMdhtConf as MyDHTConf>::PeerRef> {
     fn into(self) -> MCCommand<TestMdhtConf> {
       match self {
         TestMessage::Touch => MCCommand::Local(TestCommand::Touch),
@@ -377,7 +372,34 @@ mod test_tcp_all_block_thread {
       }
     }
   }
-
+  impl OptFrom<MCCommand<TestMdhtConf>> for TestMessage<<TestMdhtConf as MyDHTConf>::Peer,<TestMdhtConf as MyDHTConf>::PeerRef> {
+    fn can_from(c : &MCCommand<TestMdhtConf>) -> bool {
+      match *c {
+        MCCommand::Local(ref lc) => {
+          <TestCommand<TestMdhtConf> as OptInto<TestMessage>>::can_into(lc)
+        },
+        MCCommand::Global(ref gc) => {
+          <TestCommand<TestMdhtConf> as OptInto<TestMessage>>::can_into(gc)
+        },
+        MCCommand::PeerStore(ref pc) => {
+          false
+        },
+      }
+    }
+    fn opt_from(c : MCCommand<TestMdhtConf>) -> Option<Self> {
+      match c {
+        MCCommand::Local(lc) => {
+          lc.opt_into()
+        },
+        MCCommand::Global(gc) => {
+          gc.opt_into()
+        },
+        MCCommand::PeerStore(pc) => {
+          None
+        },
+      }
+    }
+  }
 
   impl MyDHTConf for TestMdhtConf {
 
@@ -413,7 +435,7 @@ mod test_tcp_all_block_thread {
 
     // TODO default associated type must be set manually (TODO check if still needed with next
     // versions)
-    type ProtoMsg = TestMessage;
+    type ProtoMsg = TestMessage<Self::Peer,Self::PeerRef>;
     type LocalServiceCommand = TestCommand<Self>;
     type LocalServiceReply = TestReply;
   /*  type GlobalServiceCommand  = GlobalCommand<Self>; // def
@@ -595,7 +617,7 @@ mod test_tcp_all_block_thread {
     let o_res = clone_wait_one_result(&o_res,None).unwrap();
     assert!(o_res.0.len() == 2);
     for v in o_res.0.iter() {
-      assert!(if let &ApiResult::GlobalServiceReply(TestReply::TouchQ(Some(1))) = v {true} else {false});
+      assert!(if let &ApiResult::ServiceReply(MCReply::Global(TestReply::TouchQ(Some(1)))) = v {true} else {false});
     }
 //    sendcommand1.send(command2).unwrap();
 
