@@ -9,6 +9,7 @@ use query::{
 };
 use procs::storeprop::{
   KVStoreCommand,
+  KVStoreCommandSend,
   KVStoreReply,
   KVStoreService,
   OptPeerGlobalDest,
@@ -222,6 +223,8 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
   ForwardServiceLocal(MC::LocalServiceCommand,usize),
   ForwardServiceGlobal(Option<Vec<MC::PeerRef>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,MC::GlobalServiceCommand),
   ForwardServiceApi(MC::LocalServiceCommand,usize,MC::ApiReturn),
+  /// received peer store command from peer
+  PeerStore(KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>),
   /// reject stream for this token and Address
   RejectReadSpawn(usize),
   /// reject a peer (accept fail), usize are write stream token and read stream token
@@ -251,6 +254,7 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
   ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
   ForwardServiceGlobal(Option<Vec<<MC::PeerRef as SRef>::Send>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,<MC::GlobalServiceCommand as SRef>::Send),
   ForwardServiceApi(<MC::LocalServiceCommand as SRef>::Send,usize,MC::ApiReturn),
+  PeerStore(KVStoreCommandSend<MC::Peer,MC::Peer,MC::PeerRef>),
   /// reject stream for this token and Address
   RejectReadSpawn(usize),
   /// reject a peer (accept fail), usize are write stream token and read stream token
@@ -278,6 +282,7 @@ impl<MC : MyDHTConf> Clone for MainLoopCommand<MC>
       MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommand::ForwardServiceLocal(gc.clone(),nb),
       MainLoopCommand::ForwardServiceGlobal(ref ovp,ref okad,nb_for,ref c) => MainLoopCommand::ForwardServiceGlobal(ovp.clone(),okad.clone(),nb_for,c.clone()),
       MainLoopCommand::ForwardServiceApi(ref gc,nb_for,ref ret) => MainLoopCommand::ForwardServiceApi(gc.clone(),nb_for,ret.clone()),
+      MainLoopCommand::PeerStore(ref cmd) => MainLoopCommand::PeerStore(cmd.clone()),
       MainLoopCommand::RejectReadSpawn(s) => MainLoopCommand::RejectReadSpawn(s),
       MainLoopCommand::RejectPeer(ref k,ref os,ref os2) => MainLoopCommand::RejectPeer(k.clone(),os.clone(),os2.clone()),
       MainLoopCommand::NewPeer(ref rp,ref pp,ref os) => MainLoopCommand::NewPeer(rp.clone(),pp.clone(),os.clone()),
@@ -307,6 +312,7 @@ impl<MC : MyDHTConf> SRef for MainLoopCommand<MC>
           ovp.as_ref().map(|vp|vp.iter().map(|p|p.get_sendable()).collect())
         },okad.clone(),nb_for,c.get_sendable()),
       MainLoopCommand::ForwardServiceApi(ref gc,nb_for,ref ret) => MainLoopCommandSend::ForwardServiceApi(gc.get_sendable(),nb_for,ret.clone()),
+      MainLoopCommand::PeerStore(ref cmd) => MainLoopCommandSend::PeerStore(cmd.get_sendable()),
       MainLoopCommand::RejectReadSpawn(s) => MainLoopCommandSend::RejectReadSpawn(s),
       MainLoopCommand::RejectPeer(ref k,ref os,ref os2) => MainLoopCommandSend::RejectPeer(k.clone(),os.clone(),os2.clone()),
       MainLoopCommand::NewPeer(ref rp,ref pp,ref os) => MainLoopCommandSend::NewPeer(rp.get_sendable(),pp.clone(),os.clone()),
@@ -335,6 +341,7 @@ impl<MC : MyDHTConf> SToRef<MainLoopCommand<MC>> for MainLoopCommandSend<MC>
           ovp.map(|vp|vp.into_iter().map(|p|p.to_ref()).collect())
         },okad,nb_for,c.to_ref()),
       MainLoopCommandSend::ForwardServiceApi(a,nb_for,r) => MainLoopCommand::ForwardServiceApi(a.to_ref(),nb_for,r),
+      MainLoopCommandSend::PeerStore(cmd) => MainLoopCommand::PeerStore(cmd.to_ref()),
       MainLoopCommandSend::RejectReadSpawn(s) => MainLoopCommand::RejectReadSpawn(s),
       MainLoopCommandSend::RejectPeer(k,os,os2) => MainLoopCommand::RejectPeer(k,os,os2),
       MainLoopCommandSend::NewPeer(rp,pp,os) => MainLoopCommand::NewPeer(rp.to_ref(),pp,os),
@@ -534,6 +541,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     match req {
       MainLoopCommand::Start => {
         // do nothing it has start if the function was called
+      },
+      MainLoopCommand::PeerStore(kvcmd) => {
+        panic!("TODO implement");
       },
       MainLoopCommand::ProxyApiLocalReply(sc) => {
           // TODO log try restart ???
@@ -891,9 +901,15 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
     //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
     //(self.mainloop_send).send((MainLoopCommand::Start))?;
+             let gl = match self.global_handle.get_weak_handle() {
+                Some(h) => Some(HandleSend(self.global_send.clone(),h)),
+                None => None,
+              };
+
               let mut rd = ReadDest {
                 mainloop : self.mainloop_send.clone(),
                 peermgmt : smgmt.clone(),
+                global : gl,
                 write : owrite_send,
                 read_token : tok.0 - START_STREAM_IX,
               };
@@ -933,10 +949,6 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           _ => unreachable!(),
         };
         let (read_s_in,read_r_in) = self.read_channel_in.new()?;
-        let wh = match self.global_handle.get_weak_handle() {
-          Some(h) => Some(HandleSend(self.global_send.clone(),h)),
-          None => None,
-        };
         let ah = match self.api_handle.get_weak_handle() {
           Some(h) => Some(HandleSend(self.api_send.clone(),h)),
           None => None,
@@ -954,7 +966,6 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             self.local_spawn_proto.clone(),
             self.local_channel_in_proto.clone(),
             read_out.clone(),
-            wh,
             ah,
             ), read_out, Some(ReadCommand::Run), read_r_in, 0)?;
         let state = SlabEntryState::ReadSpawned((read_handle,read_s_in));

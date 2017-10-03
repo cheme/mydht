@@ -316,6 +316,20 @@ impl<C,S : SpawnSend<C>> SpawnSend<C> for MioSend<S> {
   }
 }
 
+/// return the command if handle is finished
+#[inline]
+pub fn send_with_handle<S : SpawnSend<C>, H : SpawnUnyield, C> (s : &mut S, h : &mut H, command : C) -> Result<Option<C>> {
+//Service,Sen,Recv
+  Ok(if h.is_finished() || !<S as SpawnSend<C>>::CAN_SEND {
+    Some(command)
+  } else {
+    s.send(command)?;
+    h.unyield()?;
+    None
+  })
+}
+
+
 #[derive(Clone)]
 pub struct HandleSend<S,H : SpawnUnyield>(pub S, pub H);
 
@@ -325,6 +339,17 @@ impl<C,S : SpawnSend<C>, H : SpawnUnyield> SpawnSend<C> for HandleSend<S,H> {
     self.0.send(t)?;
     self.1.unyield()?;
     Ok(())
+  }
+}
+/// tech trait only for implementing send with handle as member of a struct (avoid unconstrained
+/// parameter for HandleSend but currently use only for this struct)
+pub trait SpawnSendWithHandle<C> {
+  fn send_with_handle(&mut self, C) -> Result<Option<C>>;
+}
+impl<C,S : SpawnSend<C>, H : SpawnUnyield> SpawnSendWithHandle<C> for HandleSend<S,H> {
+  #[inline]
+  fn send_with_handle(&mut self, command : C) -> Result<Option<C>> {
+    send_with_handle(&mut self.0,&mut self.1,command)
   }
 }
 
@@ -485,6 +510,7 @@ pub trait SpawnUnyield {
   /// For parrallel spawner (threading), unyield should position a skip atomic to true in case
   /// where it does not actually unyield.
   fn unyield(&mut self) -> Result<()>;
+
 }
 
 /// manages asynch call by possibly yielding process (yield a coroutine if same thread, park or

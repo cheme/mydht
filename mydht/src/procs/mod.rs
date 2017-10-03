@@ -87,6 +87,7 @@ use service::{
   SpawnSend,
   SpawnRecv,
   SpawnHandle,
+  SpawnUnyield,
   SpawnChannel,
   MioChannel,
   MioSend,
@@ -100,7 +101,9 @@ use service::{
   DefaultRecvChannel,
   NoRecv,
   NoSend,
+  send_with_handle,
 };
+
 pub use self::mainloop::{
   MainLoopCommand,
   //PeerCacheEntry,
@@ -120,19 +123,6 @@ use self::client2::{
 use utils::{
   Ref,
 };
-
-/// return the command if handle is finished
-#[inline]
-pub fn send_with_handle<X,Y,Z, S : SpawnSend<C>, H : SpawnHandle<X,Y,Z>, C> (s : &mut S, h : &mut H, command : C) -> Result<Option<C>> {
-//Service,Sen,Recv
-  Ok(if h.is_finished() {
-    Some(command)
-  } else {
-    s.send(command)?;
-    h.unyield()?;
-    None
-  })
-}
 
 
 macro_rules! send_with_handle_panic {
@@ -265,6 +255,11 @@ pub trait Route<MC : MyDHTConf> {
   fn route_global(&mut self, usize, MC::GlobalServiceCommand,&MC::Slab, &MC::PeerCache) -> Result<(MC::GlobalServiceCommand,Vec<usize>)>;
 }
 
+pub enum MCCommand<MC : MyDHTConf> {
+  Local(MC::LocalServiceCommand),
+  Global(MC::GlobalServiceCommand),
+  PeerStore(KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>),
+}
 pub type PeerRefSend<MC:MyDHTConf> = <MC::PeerRef as SRef>::Send;
 //pub type BorRef<
 pub trait MyDHTConf : 'static + Send + Sized 
@@ -344,7 +339,7 @@ pub trait MyDHTConf : 'static + Send + Sized
 
 
   /// application protomsg used immediatly by local service
-  type ProtoMsg : Into<Self::LocalServiceCommand> + SettableAttachments + GettableAttachments;
+  type ProtoMsg : Into<MCCommand<Self>> + SettableAttachments + GettableAttachments;
   // ProtoMsgSend variant (content not requiring ownership)
 //  type ProtoMsgSend<'a> : Into<Self::LocalServiceCommand> + SettableAttachments + GettableAttachments;
   /// global service command : by default it should be protoMsg, depending on spawner use, should
@@ -360,11 +355,11 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// Opt into store of peer command to route those command if global command allows it
   type GlobalServiceCommand : ApiQueriable + OptInto<Self::ProtoMsg>
     + OptFrom<KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>>
-    + OptInto<KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>>
     + Clone;// = GlobalCommand<Self>;
   type GlobalServiceReply : ApiRepliable
     + OptFrom<KVStoreReply<Self::PeerRef>> 
     ;// = GlobalCommand<Self>;
+
   // ref for protomsg : need to be compatible with spawners -> this has been disabled, ref will
   // need to be included in service command (which are
   // type LocalServiceCommandRef : Ref<Self::LocalServiceCommand>;

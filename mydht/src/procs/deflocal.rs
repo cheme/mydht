@@ -1,4 +1,7 @@
 //! Default proxy local service implementation
+use super::{
+  send_with_handle,
+};
 use utils::{
   Ref,
   SRef,
@@ -21,6 +24,7 @@ use service::{
   Spawner,
   SpawnUnyield,
   SpawnSend,
+  SpawnSendWithHandle,
   SpawnRecv,
   SpawnHandle,
   SpawnChannel,
@@ -139,8 +143,6 @@ impl<MC : MyDHTConf> OptInto<MC::ProtoMsg> for GlobalReply<MC> {
 //pub struct LocalCommand<MC : MyDHTConf>(pub MC::ProtoMsg);
 
 pub enum LocalReply<MC : MyDHTConf> {
-  /// transfer to global service
-  Global(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>),
   /// same capability as read dest, awkward as it targets internal call
   Read(ReadReply<MC>),
   /// reply to api
@@ -187,12 +189,11 @@ impl<MC : MyDHTConf> Service for DefLocalService<MC>
   type CommandOut = LocalReply<MC>;
   #[inline]
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _ : &mut S) -> Result<Self::CommandOut> {
-    Ok(LocalReply::Global(GlobalCommand(self.with.clone(),req)))
+    Ok(LocalReply::Read(ReadReply::Global(GlobalCommand(self.with.clone(),req))))
   }
 }
 
 pub struct LocalDest<MC : MyDHTConf> {
-  pub global : Option<GlobalHandleSend<MC>>,
   pub api : Option<ApiHandleSend<MC>>,
   pub read : ReadDest<MC>,
 }
@@ -206,7 +207,6 @@ impl<MC : MyDHTConf> Clone for LocalDest<MC> {
       LocalDest{
         read : self.read.clone(),
         api : self.api.clone(),
-        global : self.global.clone(),
       }
     }
 }
@@ -231,12 +231,8 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServic
         if c.get_api_reply().is_some() {
           let cml =  match self.api {
             Some(ref mut api_weak) => {
-              if api_weak.1.is_finished() {
-                Some(c)
-              } else {
-                api_weak.send(ApiCommand::GlobalServiceReply(c))?;
-                None
-              }
+              api_weak.send_with_handle(ApiCommand::GlobalServiceReply(c))?.map(|c|
+                  if let ApiCommand::GlobalServiceReply(c) = c {c} else {unreachable!()})
             },
             None => {
               Some(c)
@@ -264,34 +260,11 @@ impl<MC : MyDHTConf> SpawnSend<LocalReply<MC>> for LocalDest<MC> {
       LocalReply::Read(mlc) => {
         self.read.send(mlc)?;
       },
-      LocalReply::Global(mlc) => {
-        let cml = match self.global {
-          Some(ref mut w) => {
-            if w.1.is_finished() {
-              Some(mlc)
-            } else {
-              w.send(mlc)?;
-              None
-            }
-          },
-          None => {
-            Some(mlc)
-          },
-        };
-        if let Some(c) = cml {
-          self.global = None;
-          self.read.send(ReadReply::MainLoop(MainLoopCommand::ProxyGlobal(c)))?;
-        }
-      },
       LocalReply::Api(c) => {
         let cml =  match self.api {
           Some(ref mut api_weak) => {
-            if api_weak.1.is_finished() {
-              Some(c)
-            } else {
-              api_weak.send(ApiCommand::LocalServiceReply(c))?;
-              None
-            }
+           api_weak.send_with_handle(ApiCommand::LocalServiceReply(c))?.map(|c|
+               if let ApiCommand::LocalServiceReply(c) = c {c} else {unreachable!()})
           },
           None => {
             Some(c)

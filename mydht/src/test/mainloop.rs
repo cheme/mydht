@@ -24,6 +24,7 @@ use utils::{
 use procs::{
   OptInto,
   OptFrom,
+  MCCommand,
 };
 use procs::api::{
   Api,
@@ -237,15 +238,6 @@ pub enum TestReply {
   }
 }
 */
-impl<MC : MyDHTConf> Into<TestCommand<MC>> for TestMessage {
-  fn into(self) -> TestCommand<MC> {
-    match self {
-      TestMessage::Touch => TestCommand::Touch,
-      TestMessage::TouchQ(qid,nbfor) => TestCommand::TouchQ(qid,nbfor),
-      TestMessage::TouchQR(qid) => TestCommand::TouchQR(qid),
-    }
-  }
-}
 impl<MC : MyDHTConf> OptInto<TestMessage> for TestCommand<MC> {
   fn can_into(&self) -> bool {
     match *self {
@@ -376,6 +368,16 @@ mod test_tcp_all_block_thread {
       Ok((c,res))
     }
   }
+  impl Into<MCCommand<TestMdhtConf>> for TestMessage {
+    fn into(self) -> MCCommand<TestMdhtConf> {
+      match self {
+        TestMessage::Touch => MCCommand::Local(TestCommand::Touch),
+        TestMessage::TouchQ(qid,nbfor) => MCCommand::Local(TestCommand::TouchQ(qid,nbfor)),
+        TestMessage::TouchQR(qid) => MCCommand::Local(TestCommand::TouchQR(qid)),
+      }
+    }
+  }
+
 
   impl MyDHTConf for TestMdhtConf {
 

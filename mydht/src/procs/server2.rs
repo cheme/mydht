@@ -1,7 +1,11 @@
 //! Server service aka receiving process
 use std::mem::replace;
+use super::storeprop::{
+  KVStoreCommand,
+};
 use super::deflocal::{
   LocalDest,
+  GlobalCommand,
 };
 use super::peermgmt::{
   PeerMgmtCommand,
@@ -42,10 +46,12 @@ use msgenc::{
 };
 use super::{
   MyDHTConf,
+  MCCommand,
   PeerRefSend,
   ShadowAuthType,
   GlobalHandleSend,
   ApiHandleSend,
+  OptInto,
 };
 use peer::Peer;
 use keyval::{
@@ -54,10 +60,12 @@ use keyval::{
   SettableAttachments,
 };
 use service::{
+  send_with_handle,
   HandleSend,
   Service,
   Spawner,
   SpawnSend,
+  SpawnSendWithHandle,
   SpawnRecv,
   SpawnHandle,
   SpawnChannel,
@@ -111,7 +119,6 @@ pub struct ReadService<MC : MyDHTConf> {
   local_spawner : MC::LocalServiceSpawn,
   local_channel_in : MC::LocalServiceChannelIn,
   read_dest_proto : ReadDest<MC>,
-  global_dest_proto : Option<GlobalHandleSend<MC>>,
   api_dest_proto : Option<ApiHandleSend<MC>>,
 //      dhtrules_proto : conf.init_dhtrules_proto()?,
 }
@@ -126,7 +133,6 @@ impl<MC : MyDHTConf> ReadService<MC> {
     local_spawn : MC::LocalServiceSpawn, 
     local_channel_in : MC::LocalServiceChannelIn,
     read_dest_proto : ReadDest<MC>,
-    global_dest_proto : Option<GlobalHandleSend<MC>>,
     api_dest_proto : Option<ApiHandleSend<MC>>,
     ) -> Self {
   //pub fn new(token :usize, rs : <MC::Transport as Transport>::ReadStream, me : PeerRefSend<MC>, with : Option<PeerRefSend<MC>>, enc : MC::MsgEnc, peermgmt : MC::PeerMgmtMeths) -> Self {
@@ -150,7 +156,6 @@ impl<MC : MyDHTConf> ReadService<MC> {
       local_spawner : local_spawn,
       local_channel_in : local_channel_in,
       read_dest_proto : read_dest_proto,
-      global_dest_proto : global_dest_proto,
       api_dest_proto : api_dest_proto,
     }
   }
@@ -296,43 +301,47 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
             pmess.set_attachments(&atts[..]);
           }
 
-          let s_replace = if let Some((ref mut send, ref mut local_handle)) = self.local_sp {
-            // try send in 
-            if !local_handle.is_finished() {
-              send.send(pmess.into())?;
-              local_handle.unyield()?;
-              None
-            } else {
-              Some(pmess) 
-            }
-          } else {
-            let service = MC::init_local_service(self.from.clone(),self.with.clone())?;
-            let (send,recv) = self.local_channel_in.new()?;
-            let sender = LocalDest{
-              read : self.read_dest_proto.clone(),
-              api : self.api_dest_proto.clone(),
-              global : self.global_dest_proto.clone(),
-            };
-            let local_handle = self.local_spawner.spawn(service, sender, Some(pmess.into()), recv, MC::LOCAL_SERVICE_NB_ITER)?;
-            self.local_sp = Some((send,local_handle));
-            None
-          };
-          if let Some(pmess) = s_replace {
-            let lh = replace(&mut self.local_sp, None);
-            if let Some((send, local_handle)) = lh {
-              let (service, sender, receiver, res) = local_handle.unwrap_state()?;
-              let nlocal_handle = if res.is_err() {
-                // TODO log try restart ???
-                // reinit service, reuse receiver as may not be empty (do not change our send)
-                let service = MC::init_local_service(self.from.clone(),self.with.clone())?;
-                // TODO reinit channel and sender plus empty receiver in sender seems way better!!!
-                self.local_spawner.spawn(service, sender, Some(pmess.into()), receiver, MC::LOCAL_SERVICE_NB_ITER)?
+          match pmess.into() {
+            MCCommand::PeerStore(mess) => {
+              return Ok(ReadReply::MainLoop(MainLoopCommand::PeerStore(mess)));
+            },
+            MCCommand::Global(mess) => {
+              return Ok(ReadReply::Global(GlobalCommand(self.with.clone(),mess)))
+            },
+            MCCommand::Local(mess) => {
+
+              let s_replace = if let Some((ref mut send, ref mut local_handle)) = self.local_sp {
+                // try send in
+                send_with_handle(send, local_handle, mess)?
               } else {
-                // restart
-                self.local_spawner.spawn(service, sender, Some(pmess.into()), receiver, MC::LOCAL_SERVICE_NB_ITER)?
+                let service = MC::init_local_service(self.from.clone(),self.with.clone())?;
+                let (send,recv) = self.local_channel_in.new()?;
+                let sender = LocalDest{
+                  read : self.read_dest_proto.clone(),
+                  api : self.api_dest_proto.clone(),
+                };
+                let local_handle = self.local_spawner.spawn(service, sender, Some(mess), recv, MC::LOCAL_SERVICE_NB_ITER)?;
+                self.local_sp = Some((send,local_handle));
+                None
               };
-              replace(&mut self.local_sp, Some((send,nlocal_handle)));
-            }
+              if let Some(mess) = s_replace {
+                let lh = replace(&mut self.local_sp, None);
+                if let Some((send, local_handle)) = lh {
+                  let (service, sender, receiver, res) = local_handle.unwrap_state()?;
+                  let nlocal_handle = if res.is_err() {
+                    // TODO log try restart ???
+                    // reinit service, reuse receiver as may not be empty (do not change our send)
+                    let service = MC::init_local_service(self.from.clone(),self.with.clone())?;
+                    // TODO reinit channel and sender plus empty receiver in sender seems way better!!!
+                    self.local_spawner.spawn(service, sender, Some(mess), receiver, MC::LOCAL_SERVICE_NB_ITER)?
+                  } else {
+                    // restart
+                    self.local_spawner.spawn(service, sender, Some(mess), receiver, MC::LOCAL_SERVICE_NB_ITER)?
+                  };
+                  replace(&mut self.local_sp, Some((send,nlocal_handle)));
+                }
+              }
+            },
           }
 
         };
@@ -357,6 +366,7 @@ pub enum ReadCommand {
 
 
 pub enum ReadReply<MC : MyDHTConf> {
+  Global(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>),
   MainLoop(MainLoopCommand<MC>),
   PeerMgmt(PeerMgmtCommand<MC>),
   Write(WriteCommand<MC>),
@@ -371,6 +381,7 @@ pub struct ReadDest<MC : MyDHTConf> {
   pub mainloop : MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>,
   // TODO switch to optionnal handle send similar to write
   pub peermgmt : <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send,
+  pub global : Option<GlobalHandleSend<MC>>,
   pub write : Option<WriteHandleSend<MC>>,
   pub read_token : usize,
 }
@@ -380,6 +391,7 @@ impl<MC : MyDHTConf> Clone for ReadDest<MC> {
       ReadDest{
         mainloop : self.mainloop.clone(),
         peermgmt : self.peermgmt.clone(),
+        global : self.global.clone(),
         write : self.write.clone(),
         read_token : self.read_token,
       }
@@ -392,16 +404,25 @@ impl<MC : MyDHTConf> SpawnSend<ReadReply<MC>> for ReadDest<MC> {
       ReadReply::MainLoop(mlc) => {
         self.mainloop.send(mlc)?
       },
+      ReadReply::Global(mlc) => {
+        let cml = match self.global {
+          Some(ref mut w) => {
+            w.send_with_handle(mlc)?
+          },
+          None => {
+            Some(mlc)
+          },
+        };
+        if let Some(c) = cml {
+          self.global = None;
+          self.mainloop.send(MainLoopCommand::ProxyGlobal(c))?;
+        }
+      },
       ReadReply::PeerMgmt(pmc) => self.peermgmt.send(pmc)?,
       ReadReply::Write(wc) => {
         let cwrite = match self.write {
           Some(ref mut w) => {
-            if w.1.is_finished() {
-              Some(wc)
-            } else {
-              w.send(wc)?;
-              None
-            }
+            w.send_with_handle(wc)?
           },
           None => {
             self.mainloop.send(MainLoopCommand::ProxyWrite(self.read_token,wc))?;

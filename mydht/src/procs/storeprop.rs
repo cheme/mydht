@@ -6,6 +6,10 @@
 use std::mem::replace;
 use kvstore::StoragePriority;
 use std::convert::From;
+use utils::{
+  SRef,
+  SToRef,
+};
 use super::deflocal::{
   GlobalDest,
 };
@@ -155,7 +159,7 @@ pub enum LastSent<P : Peer> {
 }
 */
 
-
+#[derive(Clone)]
 pub enum KVStoreCommand<P : Peer, V : KeyVal, VR : Ref<V>> {
   /// Do nothing but lazy initialize of store as any command.
   Start,
@@ -166,7 +170,44 @@ pub enum KVStoreCommand<P : Peer, V : KeyVal, VR : Ref<V>> {
   NotFound(QueryID),
   StoreLocally(VR,QueryPriority,Option<ApiQueryId>),
 }
+pub enum KVStoreCommandSend<P : Peer, V : KeyVal, VR : Ref<V>> {
+  /// Do nothing but lazy initialize of store as any command.
+  Start,
+  Find(QueryMsg<P>, V::Key,Option<ApiQueryId>),
+  FindLocally(V::Key,ApiQueryId),
+  Store(QueryID,Vec<<VR as SRef>::Send>),
+//  StoreMult(QueryID,Vec<VR>),
+  NotFound(QueryID),
+  StoreLocally(<VR as SRef>::Send,QueryPriority,Option<ApiQueryId>),
+}
 
+impl<P : Peer, V : KeyVal, VR : Ref<V>> SRef for KVStoreCommand<P,V,VR> {
+  type Send = KVStoreCommandSend<P,V,VR>;
+  fn get_sendable(&self) -> Self::Send {
+    match *self {
+      KVStoreCommand::Start => KVStoreCommandSend::Start,
+      KVStoreCommand::Find(ref qm,ref k,ref oaqid) => KVStoreCommandSend::Find(qm.clone(),k.clone(),oaqid.clone()),
+      KVStoreCommand::FindLocally(ref k,ref oaqid) => KVStoreCommandSend::FindLocally(k.clone(),oaqid.clone()),
+      KVStoreCommand::Store(ref qid,ref vrp) => KVStoreCommandSend::Store(qid.clone(),vrp.iter().map(|rp|rp.get_sendable()).collect()),
+      KVStoreCommand::NotFound(ref qid) => KVStoreCommandSend::NotFound(qid.clone()),
+      KVStoreCommand::StoreLocally(ref rp,ref qp,ref oaqid) => KVStoreCommandSend::StoreLocally(rp.get_sendable(),qp.clone(),oaqid.clone()),
+    }
+  }
+}
+ 
+impl<P : Peer, V : KeyVal, VR : Ref<V>> SToRef<KVStoreCommand<P,V,VR>> for KVStoreCommandSend<P,V,VR> {
+  fn to_ref(self) -> KVStoreCommand<P,V,VR> {
+    match self {
+      KVStoreCommandSend::Start => KVStoreCommand::Start,
+      KVStoreCommandSend::Find(qm, k,oaqid) => KVStoreCommand::Find(qm,k,oaqid),
+      KVStoreCommandSend::FindLocally(k,oaqid) => KVStoreCommand::FindLocally(k,oaqid),
+      KVStoreCommandSend::Store(qid,vrp) => KVStoreCommand::Store(qid,vrp.into_iter().map(|rp|rp.to_ref()).collect()),
+      KVStoreCommandSend::NotFound(qid) => KVStoreCommand::NotFound(qid),
+      KVStoreCommandSend::StoreLocally(rp,qp,oaqid) => KVStoreCommand::StoreLocally(rp.to_ref(),qp,oaqid),
+    }
+  }
+}
+ 
   
 
 
