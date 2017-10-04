@@ -32,6 +32,9 @@ use peer::PeerMgmtMeths;
 use msgenc::MsgEnc;
 use num::traits::ToPrimitive;
 use procs::ClientMode;
+use procs::{
+  MyDHTConf,
+};
 #[cfg(feature="with-extra-test")]
 mod diag_tcp;
 #[cfg(feature="with-extra-test")]
@@ -586,7 +589,60 @@ where <RT as RunningTypes>::M : Clone,
    result.into_iter().map(|n|(n.0,n.1)).collect()
    */
   Vec::new()
+
 }
+/*
+fn initpeers2<MC : MyDHTConf> (nodes : Vec<MC::Peer>, transports : Vec<MC::Transport>, map : &[&[usize]], conf : MC, sim : Option<u32>) -> Vec<(MC::Peer, DHT<RT>)> 
+  {
+  let mut i = 0;// TODO redesign with zip of map and nodes iter
+/*  let result :  Vec<(RT::P, DHT<RT>, Vec<Arc<RT::P>>)> = transports.into_iter().map(|t|{
+    let n = nodes.get(i).unwrap();
+    info!("node : {:?}", n);
+    println!("{:?}",map[i]);
+    let bpeers : Vec<Arc<RT::P>> = map[i].iter().map(|j| nodes.get(*j-1).unwrap().clone()).map(|p|Arc::new(p)).collect();
+    i += 1;
+    let nsp = Arc::new(n.clone());
+    (n.clone(), 
+    DHT::boot_server(Arc:: new(
+       RunningContext::new( 
+         nsp,
+         meths.clone(),
+         SimpleRules::new(dhtrules.clone()),
+         enc.clone(),
+         t,
+        )), 
+        move || Some(new_inmap()), 
+        move || Some(SimpleCacheQuery::new(false)), 
+        move || Some(SimpleCache::new(None)), 
+        bpeers.clone(), Vec::new(),
+     ).unwrap(),
+     bpeers
+     )
+   }).collect();
+   if sim.is_some() {
+     // all has started
+     for n in result.iter(){
+       thread::sleep_ms(100); // local get easily stuck
+       n.1.refresh_closest_peers(1000); // Warn hard coded value.
+     };
+     // ping established
+     thread::sleep_ms(sim.unwrap());
+   } else {
+     //establish connection by peerping of bpeers and wait result : no need to sleep
+     for n in result.iter(){
+       for p in n.2.iter(){
+         assert!(n.1.ping_peer((*p).clone()));
+       }
+     };
+   
+   };
+
+   
+   result.into_iter().map(|n|(n.0,n.1)).collect()
+   */
+  Vec::new()
+}
+*/
 
 // local transport usage is faster than actual transports
 // Yet default to one second

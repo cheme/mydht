@@ -196,7 +196,7 @@ impl<T, U> OptInto<U> for T where U: OptFrom<T>
   }
 }
 
-pub struct MyDHTService<MC : MyDHTConf>(pub MC, pub MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>, pub <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Send,pub MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>);
+pub struct MyDHTService<MC : MyDHTConf>(pub MC, pub MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>, pub <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply<MC>>>::Send,pub MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>);
 
 #[derive(Clone,Eq,PartialEq)]
 pub enum ShadowAuthType {
@@ -211,7 +211,7 @@ pub enum ShadowAuthType {
 
 impl<MC : MyDHTConf> Service for MyDHTService<MC> {
   type CommandIn = MainLoopCommand<MC>;
-  type CommandOut = MainLoopReply;
+  type CommandOut = MainLoopReply<MC>;
 
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
     let mut state = MDHTState::init_state(&mut self.0, &mut self.3)?;
@@ -220,7 +220,7 @@ impl<MC : MyDHTConf> Service for MyDHTService<MC> {
     //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
     //(state.mainloop_send).send((MainLoopCommand::Start))?;
 
-    let r = state.main_loop(&mut self.1, req, &mut yield_spawn);
+    let r = state.main_loop(&mut self.1,&mut self.2, req, &mut yield_spawn);
     if r.is_err() {
       panic!("mainloop err : {:?}",&r);
     }
@@ -254,7 +254,8 @@ type SpawnerRefsRead2<S : Service,D, CI : SpawnChannel<ReadCommand>, RS : Spawne
 type MainLoopRecvIn<MC : MyDHTConf> = MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>;
 type MainLoopSendIn<MC : MyDHTConf> = MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>;
 
-pub enum MainLoopReply {
+pub enum MainLoopReply<MC : MyDHTConf> {
+  ServiceReply(MCReply<MC>),
   /// TODO
   Ended,
 }
@@ -421,6 +422,12 @@ pub trait MyDHTConf : 'static + Send + Sized
 
   /// defaults to Public, as the most common use case TODO remove default value??  
   const AUTH_MODE : ShadowAuthType = ShadowAuthType::Public;
+  /// Toggle routing of message, if disabled api message are send directly and apireply are send to
+  /// mainloop channel out : allowing management of service out of mainloop (listening on receiver
+  /// and managing of apiqueryid out of mainloop).
+  /// Note that service is started either way so a dummy service, spawner and channels must be use
+  /// in mydhtconf even if this const is set to false.
+  const USE_API_SERVICE : bool = true;
   /// Name of the main thread
   const loop_name : &'static str = "MyDHT Main Loop";
   /// number of events to poll (size of mio `Events`)
@@ -444,7 +451,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// channel for input
   type MainLoopChannelIn : SpawnChannel<MainLoopCommand<Self>>;
   /// TODO out mydht command
-  type MainLoopChannelOut : SpawnChannel<MainLoopReply>;
+  type MainLoopChannelOut : SpawnChannel<MainLoopReply<Self>>;
   /// low level transport
   type Transport : Transport;
   /// Message encoding
@@ -583,7 +590,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   fn start_loop(mut self : Self) -> Result<(
     ApiSendIn<Self>,
 //    MioSend<<Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Send>, 
-    <Self::MainLoopChannelOut as SpawnChannel<MainLoopReply>>::Recv
+    <Self::MainLoopChannelOut as SpawnChannel<MainLoopReply<Self>>>::Recv
     )> {
     let (s,r) = MioChannel(self.init_main_loop_channel_in()?).new()?;
     let (so,ro) = self.init_main_loop_channel_out()?.new()?;

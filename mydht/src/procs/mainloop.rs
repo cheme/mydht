@@ -34,6 +34,7 @@ use super::{
   MyDHTConf,
   MCCommand,
   MCReply,
+  MainLoopReply,
   MainLoopSendIn,
   RWSlabEntry,
   ChallengeEntry,
@@ -540,7 +541,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
   /// return one CommandOut to spawner : finished or fail).
   /// Async yield being into self.
   #[inline]
-  fn call_inner_loop<S : SpawnerYield>(&mut self, req: MainLoopCommand<MC>, async_yield : &mut S) -> Result<()> {
+  fn call_inner_loop<S : SpawnerYield>(&mut self, req: MainLoopCommand<MC>,mlsend : &mut <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply<MC>>>::Send, async_yield : &mut S) -> Result<()> {
     match req {
       MainLoopCommand::Start => {
         // do nothing it has start if the function was called
@@ -563,8 +564,12 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         send_with_handle_panic!(&mut self.peerstore_send,&mut self.peerstore_handle,kvcmd,"TODO peerstore service restart?");
       },
       MainLoopCommand::ProxyApiReply(sc) => {
-        // TODO log try restart ???
-        send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::ServiceReply(sc),"TODO api service restart?");
+        if MC::USE_API_SERVICE {
+          // TODO log try restart ???
+          send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::ServiceReply(sc),"TODO api service restart?");
+        } else {
+          mlsend.send(MainLoopReply::ServiceReply(sc))?;
+        }
       },
 /*      MainLoopCommand::ProxyApiGlobalReply(sc) => {
         // TODO log try restart ???
@@ -665,21 +670,21 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         }
       },
       MainLoopCommand::ForwardApi(sc,nb_for,ret) => {
-        if sc.is_api_reply() {
+        if MC::USE_API_SERVICE && sc.is_api_reply() {
           // shortcut peerstore
           match sc {
             MCCommand::PeerStore(KVStoreCommand::Find(ref qm,ref key,Some(ref aqid))) => {
               if qm.nb_res == 1 {
                 let op = self.peer_cache.get_val_c(key).map(|v|v.peer.clone());
                 if op.is_some() {
-                  return self.call_inner_loop(MainLoopCommand::ProxyApiReply(MCReply::PeerStore(KVStoreReply::FoundApi(op,aqid.clone()))),async_yield);
+                  return self.call_inner_loop(MainLoopCommand::ProxyApiReply(MCReply::PeerStore(KVStoreReply::FoundApi(op,aqid.clone()))),mlsend,async_yield);
                 }
               }
             },
             MCCommand::PeerStore(KVStoreCommand::FindLocally(ref key,ref aqid)) => {
               let op = self.peer_cache.get_val_c(key).map(|v|v.peer.clone());
               if op.is_some() {
-                return self.call_inner_loop(MainLoopCommand::ProxyApiReply(MCReply::PeerStore(KVStoreReply::FoundApi(op,aqid.clone()))),async_yield);
+                return self.call_inner_loop(MainLoopCommand::ProxyApiReply(MCReply::PeerStore(KVStoreReply::FoundApi(op,aqid.clone()))),mlsend,async_yield);
               }
             },
             _ => (),
@@ -691,13 +696,13 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         } else {
           match sc {
             sc @ MCCommand::Local(..) => {
-              self.call_inner_loop(MainLoopCommand::ForwardService(None,None,nb_for,sc), async_yield)?;
+              self.call_inner_loop(MainLoopCommand::ForwardService(None,None,nb_for,sc),mlsend,async_yield)?;
             },
             MCCommand::Global(sc) => {
-              self.call_inner_loop(MainLoopCommand::ProxyGlobal(GlobalCommand(None,sc)), async_yield)?;
+              self.call_inner_loop(MainLoopCommand::ProxyGlobal(GlobalCommand(None,sc)),mlsend,async_yield)?;
             },
             MCCommand::PeerStore(sc) => {
-              self.call_inner_loop(MainLoopCommand::PeerStore(GlobalCommand(None,sc)), async_yield)?;
+              self.call_inner_loop(MainLoopCommand::PeerStore(GlobalCommand(None,sc)),mlsend,async_yield)?;
             },
           }
         }
@@ -784,20 +789,20 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     Ok(())
   }
 
-  pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>, req: MainLoopCommand<MC>, async_yield : &mut S) -> Result<()> {
+  pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>, mlsend : &mut <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply<MC>>>::Send, req: MainLoopCommand<MC>, async_yield : &mut S) -> Result<()> {
    let mut events = if self.events.is_some() {
      let oevents = replace(&mut self.events,None);
      oevents.unwrap_or(Events::with_capacity(MC::events_size))
    } else {
      Events::with_capacity(MC::events_size)
    };
-   self.inner_main_loop(rec, req, async_yield, &mut events).map_err(|e|{
+   self.inner_main_loop(rec, mlsend, req, async_yield, &mut events).map_err(|e|{
      self.events = Some(events);
      e
    })
   }
 
-  fn inner_main_loop<S : SpawnerYield>(&mut self, receiver : &mut MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>, req: MainLoopCommand<MC>, async_yield : &mut S, events : &mut Events) -> Result<()> {
+  fn inner_main_loop<S : SpawnerYield>(&mut self, receiver : &mut MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>, mlsend : &mut <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply<MC>>>::Send, req: MainLoopCommand<MC>, async_yield : &mut S, events : &mut Events) -> Result<()> {
 
     //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
     //(self.mainloop_send).send((MainLoopCommand::Start))?;
@@ -807,7 +812,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     assert!(true == receiver.register(&self.poll, LOOP_COMMAND, Ready::readable(),
                       PollOpt::edge())?);
 
-    self.call_inner_loop(req,async_yield)?;
+    self.call_inner_loop(req,mlsend,async_yield)?;
     loop {
       self.poll.poll(events, None)?;
       for event in events.iter() {
@@ -816,7 +821,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             loop {
               let ocin = receiver.recv()?;
               if let Some(cin) = ocin {
-                self.call_inner_loop(cin,async_yield)?;
+                self.call_inner_loop(cin,mlsend,async_yield)?;
               } else {
                 break;
               }
