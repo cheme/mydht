@@ -302,6 +302,12 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
           }
 
           match pmess.into() {
+            MCCommand::TryConnect(_,_) => {
+              panic!(r#"Tryconnect command between peer required peer key (optional) and cache of under connection address,
+              plus a method to block/allow it, none of it is done at this time
+              //return Ok(ReadReply::MainLoop(MainLoopCommand::TryConnect(ad,None)));
+              "#);
+            },
             MCCommand::PeerStore(mess) => {
               return Ok(ReadReply::MainLoop(MainLoopCommand::PeerStore(GlobalCommand(self.with.clone(),mess))));
             },

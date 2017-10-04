@@ -1,8 +1,25 @@
 //! Tests, unitary tests are more likely to be found in their related package, here is global
 //! testing.
 extern crate mydht_inefficientmap;
+use procs::{
+  MCReply,
+};
+use procs::api::{
+  ApiResult,
+};
+ 
 use std::sync::{
   Arc,
+};
+use utils::{
+  new_oneresult,
+  clone_wait_one_result,
+};
+use procs::{
+  ApiCommand,
+};
+use peer::{
+  Peer,
 };
 use procs::api::{
   ApiSendIn,
@@ -600,7 +617,7 @@ struct TestConf<P,T> {
   pub others : Vec<P>,
   pub transport : T,
 }
-/*
+
 fn initpeers2<MC : MyDHTConf> (nodes : Vec<MC::Peer>, transports : Vec<MC::Transport>, map : &[&[usize]], conf : MC, sim : Option<u32>) -> Vec<(MC::Peer, ApiSendIn<MC>)> 
   {
   let mut i = 0;// TODO redesign with zip of map and nodes iter
@@ -623,7 +640,8 @@ fn initpeers2<MC : MyDHTConf> (nodes : Vec<MC::Peer>, transports : Vec<MC::Trans
      // all has started
      for n in result.iter(){
        thread::sleep_ms(100); // local get easily stuck
-       n.1.refresh_closest_peers(1000); // Warn hard coded value.
+       let refresh_command = ApiCommand::refresh_peer(10000); // Warn hard coded value.
+       n.0.send(refresh_command).unwrap();
      };
      // ping established
      thread::sleep_ms(sim.unwrap());
@@ -631,14 +649,22 @@ fn initpeers2<MC : MyDHTConf> (nodes : Vec<MC::Peer>, transports : Vec<MC::Trans
      //establish connection by peerping of bpeers and wait result : no need to sleep
      for n in result.iter(){
        for p in n.2.iter(){
-         assert!(n.1.ping_peer((*p).clone()));
+         let o_res = new_oneresult((Vec::with_capacity(1),1,1));
+         // TODO wait for reply
+         let connect_command = ApiCommand::try_connect_reply(p.get_address().clone(),o_res);
+         n.0.send(connect_command).unwrap();
+         let o_res = clone_wait_one_result(&o_res,None).unwrap();
+         assert!(o_res.0.len() == 1);
+         for v in o_res.0.iter() {
+           assert!(if let &ApiResult::ServiceReply(MCReply::Done(_)) = v {true} else {false});
+         }
        }
      };
    
    };
    result.into_iter().map(|n|(n.0,n.1)).collect()
 }
-*/
+
 // local transport usage is faster than actual transports
 // Yet default to one second
 static DEF_SIM : Option<u32> = Some(1000);

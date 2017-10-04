@@ -141,6 +141,11 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
             ApiReply::ProxyMainloop(MainLoopCommand::PeerStore(GlobalCommand(None,gsc)))
 //            self.call_inner_loop(MainLoopCommand::PeerStore(sc), async_yield)?;
           },
+          MCCommand::TryConnect(ad,oaid) => {
+            ApiReply::ProxyMainloop(MainLoopCommand::TryConnect(ad,oaid))
+//            self.call_inner_loop(MainLoopCommand::PeerStore(sc), async_yield)?;
+          },
+
         }
       },
       ApiCommand::ServiceReply(lsr) => {
@@ -185,8 +190,12 @@ fn peer_ping<P : Peer,PR>(v : P) -> GlobalReply<P,PR,KVStoreCommand<P,PR,P,PR>,K
 /// This also filters non public method for dest services
 impl<MC : MyDHTConf> ApiCommand<MC> {
   pub fn try_connect(ad : <MC::Transport as Transport>::Address) -> ApiCommand<MC> {
-    ApiCommand::MainLoop(MainLoopCommand::TryConnect(ad))
+    ApiCommand::MainLoop(MainLoopCommand::TryConnect(ad,None))
   }
+  pub fn try_connect_reply(ad : <MC::Transport as Transport>::Address, ret : MC::ApiReturn) -> ApiCommand<MC> {
+    ApiCommand::ServiceCommand(MCCommand::TryConnect(ad,None),0,ret)
+  }
+
 
   pub fn refresh_peer(nb : usize) -> ApiCommand<MC> {
     let kvscom = GlobalCommand(None,KVStoreCommand::Subset(nb, peer_ping));

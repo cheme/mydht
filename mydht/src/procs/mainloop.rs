@@ -230,7 +230,7 @@ pub enum MainLoopSubCommand<P : Peer> {
 pub enum MainLoopCommand<MC : MyDHTConf> {
   Start,
   SubCommand(MainLoopSubCommand<MC::Peer>),
-  TryConnect(<MC::Transport as Transport>::Address),
+  TryConnect(<MC::Transport as Transport>::Address,Option<ApiQueryId>),
 //  ForwardServiceLocal(MC::LocalServiceCommand,usize),
   ForwardService(Option<Vec<MC::PeerRef>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,MCCommand<MC>),
   /// usize is only for mccommand type local to set the number of local to target
@@ -263,7 +263,7 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
        MC::LocalServiceReply : SRef {
   Start,
   SubCommand(MainLoopSubCommand<MC::Peer>),
-  TryConnect(<MC::Transport as Transport>::Address),
+  TryConnect(<MC::Transport as Transport>::Address,Option<ApiQueryId>),
 //  ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
   ForwardService(Option<Vec<<MC::PeerRef as SRef>::Send>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,<MCCommand<MC> as SRef>::Send),
   ForwardApi(<MCCommand<MC> as SRef>::Send,usize,MC::ApiReturn),
@@ -292,7 +292,7 @@ impl<MC : MyDHTConf> Clone for MainLoopCommand<MC>
     match *self {
       MainLoopCommand::Start => MainLoopCommand::Start,
       MainLoopCommand::SubCommand(ref sc) => MainLoopCommand::SubCommand(sc.clone()),
-      MainLoopCommand::TryConnect(ref a) => MainLoopCommand::TryConnect(a.clone()),
+      MainLoopCommand::TryConnect(ref a,ref aid) => MainLoopCommand::TryConnect(a.clone(),aid.clone()),
 //      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommand::ForwardServiceLocal(gc.clone(),nb),
       MainLoopCommand::ForwardService(ref ovp,ref okad,nb_for,ref c) => MainLoopCommand::ForwardService(ovp.clone(),okad.clone(),nb_for,c.clone()),
       MainLoopCommand::ForwardApi(ref gc,nb_for,ref ret) => MainLoopCommand::ForwardApi(gc.clone(),nb_for,ret.clone()),
@@ -321,7 +321,7 @@ impl<MC : MyDHTConf> SRef for MainLoopCommand<MC>
     match *self {
       MainLoopCommand::Start => MainLoopCommandSend::Start,
       MainLoopCommand::SubCommand(ref sc) => MainLoopCommandSend::SubCommand(sc.clone()),
-      MainLoopCommand::TryConnect(ref a) => MainLoopCommandSend::TryConnect(a.clone()),
+      MainLoopCommand::TryConnect(ref a,ref aid) => MainLoopCommandSend::TryConnect(a.clone(),aid.clone()),
 //      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommandSend::ForwardServiceLocal(gc.get_sendable(),nb),
       MainLoopCommand::ForwardService(ref ovp,ref okad,nb_for,ref c) => MainLoopCommandSend::ForwardService({
           ovp.as_ref().map(|vp|vp.iter().map(|p|p.get_sendable()).collect())
@@ -351,7 +351,7 @@ impl<MC : MyDHTConf> SToRef<MainLoopCommand<MC>> for MainLoopCommandSend<MC>
     match self {
       MainLoopCommandSend::Start => MainLoopCommand::Start,
       MainLoopCommandSend::SubCommand(sc) => MainLoopCommand::SubCommand(sc),
-      MainLoopCommandSend::TryConnect(a) => MainLoopCommand::TryConnect(a),
+      MainLoopCommandSend::TryConnect(a,aid) => MainLoopCommand::TryConnect(a,aid),
 //      MainLoopCommandSend::ForwardServiceLocal(a,nb) => MainLoopCommand::ForwardServiceLocal(a.to_ref(),nb),
       MainLoopCommandSend::ForwardService(ovp,okad,nb_for,c) => MainLoopCommand::ForwardService({
           ovp.map(|vp|vp.into_iter().map(|p|p.to_ref()).collect())
@@ -564,7 +564,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             // peer cache got connected peer TODO a pending connect cache (on address) to avoid multiple connect
             // attempt to same peer !!
             if !self.peer_cache.has_val_c(&key) {
-              self.call_inner_loop(MainLoopCommand::TryConnect(add),mlsend,async_yield)?;
+              self.call_inner_loop(MainLoopCommand::TryConnect(add,None),mlsend,async_yield)?;
             }
           },
         }
@@ -634,6 +634,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                     read_tok : ort,
                     next_msg : Some(WriteCommand::Service(sg.clone())),
                     next_qid : sg.get_api_reply(),
+                    api_qid : None,
                   });
                   // send a ping
                   self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
@@ -728,10 +729,13 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             MCCommand::PeerStore(sc) => {
               self.call_inner_loop(MainLoopCommand::PeerStore(GlobalCommand(None,sc)),mlsend,async_yield)?;
             },
+            MCCommand::TryConnect(ad,aid) => {
+              self.call_inner_loop(MainLoopCommand::TryConnect(ad,aid),mlsend,async_yield)?;
+            }
           }
         }
       },
-      MainLoopCommand::TryConnect(dest_address) => {
+      MainLoopCommand::TryConnect(dest_address,oapi) => {
         let (write_token,ort) = self.connect_with(&dest_address)?;
 
 
@@ -745,6 +749,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             read_tok : ort,
             next_msg : None,
             next_qid : None,
+            api_qid : oapi,
           });
           // send a ping
           self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
@@ -773,6 +778,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           read_tok : Some(rtok),
           next_msg : None,
           next_qid : None,
+          api_qid : None,
         });
   
         // do not store new peer as it is not authentified with a fresh challenge (could be replay)
@@ -794,6 +800,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             }
             if let Some(next_msg) = chal_entry.next_msg {
               self.write_stream_send(chal_entry.write_tok, next_msg, <MC>::init_write_spawner_out()?, None)?;
+            }
+            if let Some(qid) = chal_entry.api_qid {
+              send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::ServiceReply(MCReply::Done(qid)),"Could not reach api");
             }
           },
           None => {

@@ -406,6 +406,10 @@ mod test_tcp_all_block_thread {
         MCCommand::PeerStore(ref pc) => {
           <KVStoreProtoMsg<_,_,_> as OptFrom<KVStoreCommand<_,_,_,_>>>::can_from(pc)
         },
+        MCCommand::TryConnect(..) => {
+          false
+        },
+
       }
     }
     fn opt_from(c : MCCommand<TestMdhtConf>) -> Option<Self> {
@@ -418,6 +422,9 @@ mod test_tcp_all_block_thread {
         },
         MCCommand::PeerStore(pc) => {
           pc.opt_into().map(|t|TestMessage::PeerMgmt(t))
+        },
+        MCCommand::TryConnect(..) => {
+          None
         },
       }
     }

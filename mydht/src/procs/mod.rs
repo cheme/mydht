@@ -274,6 +274,8 @@ pub enum MCCommand<MC : MyDHTConf> {
   Local(MC::LocalServiceCommand),
   Global(MC::GlobalServiceCommand),
   PeerStore(KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>),
+  /// TODO must add peer key
+  TryConnect(<MC::Peer as Peer>::Address,Option<ApiQueryId>),
 }
 
 impl<MC : MyDHTConf> MCCommand<MC> {
@@ -282,6 +284,7 @@ impl<MC : MyDHTConf> MCCommand<MC> {
       MCCommand::Local(ref a) => a.get_api_reply(),
       MCCommand::Global(ref a) => a.get_api_reply(),
       MCCommand::PeerStore(ref a) => a.get_api_reply(),
+      MCCommand::TryConnect(_,ref a) => a.clone(),
     }
   }
 }
@@ -291,6 +294,7 @@ impl<MC : MyDHTConf> ApiQueriable for MCCommand<MC> {
       MCCommand::Local(ref c) => c.is_api_reply(),
       MCCommand::Global(ref c) => c.is_api_reply(),
       MCCommand::PeerStore(ref c) => c.is_api_reply(),
+      MCCommand::TryConnect(_,_) => true,
     }
   }
   fn set_api_reply(&mut self, i : ApiQueryId) {
@@ -298,6 +302,9 @@ impl<MC : MyDHTConf> ApiQueriable for MCCommand<MC> {
       MCCommand::Local(ref mut c) => c.set_api_reply(i),
       MCCommand::Global(ref mut c) => c.set_api_reply(i),
       MCCommand::PeerStore(ref mut c) => c.set_api_reply(i),
+      MCCommand::TryConnect(_,ref mut oaid) => {
+        *oaid = Some(i)
+      },
     }
   }
   fn get_api_reply(&self) -> Option<ApiQueryId> {
@@ -305,6 +312,7 @@ impl<MC : MyDHTConf> ApiQueriable for MCCommand<MC> {
       MCCommand::Local(ref c) => c.get_api_reply(),
       MCCommand::Global(ref c) => c.get_api_reply(),
       MCCommand::PeerStore(ref c) => c.get_api_reply(),
+      MCCommand::TryConnect(_,ref a) => a.clone(),
     }
   }
 }
@@ -316,6 +324,7 @@ pub enum MCCommandSend<MC : MyDHTConf>
   Local(<MC::LocalServiceCommand as SRef>::Send),
   Global(<MC::GlobalServiceCommand as SRef>::Send),
   PeerStore(<KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef> as SRef>::Send),
+  TryConnect(<MC::Peer as Peer>::Address,Option<ApiQueryId>),
 }
 
 
@@ -325,6 +334,7 @@ impl<MC : MyDHTConf> Clone for MCCommand<MC> {
       MCCommand::Local(ref a) => MCCommand::Local(a.clone()),
       MCCommand::Global(ref a) => MCCommand::Global(a.clone()),
       MCCommand::PeerStore(ref a) => MCCommand::PeerStore(a.clone()),
+      MCCommand::TryConnect(ref a,ref i) => MCCommand::TryConnect(a.clone(),i.clone()),
     }
   }
 }
@@ -337,6 +347,7 @@ impl<MC : MyDHTConf> SRef for MCCommand<MC>
       MCCommand::Local(ref a) => MCCommandSend::Local(a.get_sendable()),
       MCCommand::Global(ref a) => MCCommandSend::Global(a.get_sendable()),
       MCCommand::PeerStore(ref a) => MCCommandSend::PeerStore(a.get_sendable()),
+      MCCommand::TryConnect(ref a,ref i) => MCCommandSend::TryConnect(a.clone(),i.clone()),
     }
   }
 }
@@ -348,6 +359,7 @@ impl<MC : MyDHTConf> SToRef<MCCommand<MC>> for MCCommandSend<MC>
       MCCommandSend::Local(a) => MCCommand::Local(a.to_ref()),
       MCCommandSend::Global(a) => MCCommand::Global(a.to_ref()),
       MCCommandSend::PeerStore(a) => MCCommand::PeerStore(a.to_ref()),
+      MCCommandSend::TryConnect(a,i) => MCCommand::TryConnect(a,i),
     }
   }
 }
@@ -357,6 +369,7 @@ pub enum MCReply<MC : MyDHTConf> {
   Local(MC::LocalServiceReply),
   Global(MC::GlobalServiceReply),
   PeerStore(KVStoreReply<MC::PeerRef>),
+  Done(ApiQueryId),
 }
 impl<MC : MyDHTConf> ApiRepliable for MCReply<MC> {
   fn get_api_reply(&self) -> Option<ApiQueryId> {
@@ -364,6 +377,7 @@ impl<MC : MyDHTConf> ApiRepliable for MCReply<MC> {
       MCReply::Local(ref a) => a.get_api_reply(),
       MCReply::Global(ref a) => a.get_api_reply(),
       MCReply::PeerStore(ref a) => a.get_api_reply(),
+      MCReply::Done(ref aid) => Some(aid.clone()),
     }
   }
 }
@@ -375,6 +389,7 @@ pub enum MCReplySend<MC : MyDHTConf>
   Local(<MC::LocalServiceReply as SRef>::Send),
   Global(<MC::GlobalServiceReply as SRef>::Send),
   PeerStore(<KVStoreReply<MC::PeerRef> as SRef>::Send),
+  Done(ApiQueryId),
 }
 
 impl<MC : MyDHTConf> Clone for MCReply<MC>
@@ -385,6 +400,7 @@ impl<MC : MyDHTConf> Clone for MCReply<MC>
       MCReply::Local(ref a) => MCReply::Local(a.clone()),
       MCReply::Global(ref a) => MCReply::Global(a.clone()),
       MCReply::PeerStore(ref a) => MCReply::PeerStore(a.clone()),
+      MCReply::Done(ref a) => MCReply::Done(a.clone()),
     }
   }
 }
@@ -398,6 +414,7 @@ impl<MC : MyDHTConf> SRef for MCReply<MC>
       MCReply::Local(ref a) => MCReplySend::Local(a.get_sendable()),
       MCReply::Global(ref a) => MCReplySend::Global(a.get_sendable()),
       MCReply::PeerStore(ref a) => MCReplySend::PeerStore(a.get_sendable()),
+      MCReply::Done(ref a) => MCReplySend::Done(a.clone()),
     }
   }
 }
@@ -409,6 +426,7 @@ impl<MC : MyDHTConf> SToRef<MCReply<MC>> for MCReplySend<MC>
       MCReplySend::Local(a) => MCReply::Local(a.to_ref()),
       MCReplySend::Global(a) => MCReply::Global(a.to_ref()),
       MCReplySend::PeerStore(a) => MCReply::PeerStore(a.to_ref()),
+      MCReplySend::Done(a) => MCReply::Done(a),
     }
   }
 }
@@ -677,6 +695,7 @@ pub struct ChallengeEntry<MC : MyDHTConf> {
   pub next_msg : Option<WriteCommand<MC>>,
   /// use to send an error reply to api on auth fail
   pub next_qid : Option<ApiQueryId>,
+  pub api_qid : Option<ApiQueryId>,
 }
 
 /// utility trait to avoid lot of parameters in each struct / fn
