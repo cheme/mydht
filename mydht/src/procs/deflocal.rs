@@ -12,6 +12,7 @@ use mydhtresult::{
 };
 use super::mainloop::{
   MainLoopCommand,
+  MainLoopSubCommand,
 };
 use super::api::{
   ApiCommand,
@@ -102,10 +103,11 @@ pub enum GlobalReply<MC : MyDHTConf> {
 pub enum GlobalReply<P : Peer,PR,GSC,GSR> {
   /// forward command to list of peers or/and to nb peers from route
   Forward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,usize,GSC),
-  PeerForward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,usize,KVStoreCommand<P,P,PR>),
+  PeerForward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,usize,KVStoreCommand<P,PR,P,PR>),
   /// reply to api
   Api(GSR),
   PeerApi(KVStoreReply<PR>),
+  MainLoop(MainLoopSubCommand<P>),
   /// no rep
   NoRep,
   Mult(Vec<GlobalReply<P,PR,GSC,GSR>>),
@@ -126,6 +128,7 @@ impl<P : Peer,PR : Clone,GSC : Clone,GSR : Clone> Clone for GlobalReply<P,PR,GSC
       GlobalReply::PeerForward(ref odests,ref okadests, nb_for, ref gsc) => GlobalReply::PeerForward(odests.clone(),okadests.clone(),nb_for,gsc.clone()),
       GlobalReply::Api(ref gsr) => GlobalReply::Api(gsr.clone()),
       GlobalReply::PeerApi(ref gsr) => GlobalReply::PeerApi(gsr.clone()),
+      GlobalReply::MainLoop(ref mlsc) => GlobalReply::MainLoop(mlsc.clone()),
       GlobalReply::NoRep => GlobalReply::NoRep,
       GlobalReply::Mult(ref grs) => GlobalReply::Mult(grs.clone()),
     }
@@ -236,6 +239,9 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServic
         for cmd in cmds.into_iter() {
           self.send(cmd)?;
         }
+      },
+      GlobalReply::MainLoop(mlc) => {
+        self.mainloop.send(MainLoopCommand::SubCommand(mlc))?;
       },
       GlobalReply::PeerApi(c) => {
         if c.get_api_reply().is_some() {

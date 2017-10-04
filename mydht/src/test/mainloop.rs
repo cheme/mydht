@@ -404,7 +404,7 @@ mod test_tcp_all_block_thread {
           <TestCommand<TestMdhtConf> as OptInto<TestMessage<TestMdhtConf>>>::can_into(gc)
         },
         MCCommand::PeerStore(ref pc) => {
-          <KVStoreProtoMsg<_,_,_> as OptFrom<KVStoreCommand<_,_,_>>>::can_from(pc)
+          <KVStoreProtoMsg<_,_,_> as OptFrom<KVStoreCommand<_,_,_,_>>>::can_from(pc)
         },
       }
     }

@@ -273,7 +273,7 @@ pub trait Route<MC : MyDHTConf> {
 pub enum MCCommand<MC : MyDHTConf> {
   Local(MC::LocalServiceCommand),
   Global(MC::GlobalServiceCommand),
-  PeerStore(KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>),
+  PeerStore(KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>),
 }
 
 impl<MC : MyDHTConf> MCCommand<MC> {
@@ -315,7 +315,7 @@ pub enum MCCommandSend<MC : MyDHTConf>
         MC::GlobalServiceCommand : SRef {
   Local(<MC::LocalServiceCommand as SRef>::Send),
   Global(<MC::GlobalServiceCommand as SRef>::Send),
-  PeerStore(<KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef> as SRef>::Send),
+  PeerStore(<KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef> as SRef>::Send),
 }
 
 
@@ -579,9 +579,9 @@ pub trait MyDHTConf : 'static + Send + Sized
   type PeerStoreServiceSpawn : Spawner<
     KVStoreService<Self::Peer,Self::PeerRef,Self::Peer,Self::PeerRef,Self::PeerKVStore,Self::DHTRules,Self::PeerStoreQueryCache>,
     OptPeerGlobalDest<Self>,
-    <Self::PeerStoreServiceChannelIn as SpawnChannel<GlobalCommand<Self::PeerRef,KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>>>>::Recv
+    <Self::PeerStoreServiceChannelIn as SpawnChannel<GlobalCommand<Self::PeerRef,KVStoreCommand<Self::Peer,Self::PeerRef,Self::Peer,Self::PeerRef>>>>::Recv
   >;
-  type PeerStoreServiceChannelIn : SpawnChannel<GlobalCommand<Self::PeerRef,KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>>>;
+  type PeerStoreServiceChannelIn : SpawnChannel<GlobalCommand<Self::PeerRef,KVStoreCommand<Self::Peer,Self::PeerRef,Self::Peer,Self::PeerRef>>>;
 
 
   /// Start the main loop TODO change sender to avoid mainloop proxies (an API sender like for
@@ -1175,7 +1175,7 @@ pub type PeerStoreHandle<MC : MyDHTConf> = <MC::PeerStoreServiceSpawn as
 Spawner<
     KVStoreService<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef,MC::PeerKVStore,MC::DHTRules,MC::PeerStoreQueryCache>,
     OptPeerGlobalDest<MC>,
-    <MC::PeerStoreServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>>>>::Recv
+    <MC::PeerStoreServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>>>::Recv
   >
 >::Handle;
 

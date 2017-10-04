@@ -99,6 +99,13 @@ impl<T : KeyVal, C : KVCache<<T as KeyVal>::Key, T>> KVStore<T> for SimpleCache<
     self.cache.get_val_c(k).cloned()
   }
   #[inline]
+  fn get_next_vals(&mut self, nb : usize) -> Option<Vec<T>> {
+
+    let t_none : Option <&(fn(&T) -> bool)> = None;
+    Some(self.cache.next_random_values(nb,t_none).into_iter().map(|v|v.clone()).collect())
+  }
+
+  #[inline]
   fn has_val(& self, k : &T::Key) -> bool {
     self.cache.has_val_c(k)
   }

@@ -4,6 +4,9 @@ extern crate mydht_inefficientmap;
 use std::sync::{
   Arc,
 };
+use procs::api::{
+  ApiSendIn,
+};
 use std::thread;
 use DHT;
 use std::hash::Hash;
@@ -591,33 +594,30 @@ where <RT as RunningTypes>::M : Clone,
   Vec::new()
 
 }
+
+struct TestConf<P,T> {
+  pub me : P,
+  pub others : Vec<P>,
+  pub transport : T,
+}
 /*
-fn initpeers2<MC : MyDHTConf> (nodes : Vec<MC::Peer>, transports : Vec<MC::Transport>, map : &[&[usize]], conf : MC, sim : Option<u32>) -> Vec<(MC::Peer, DHT<RT>)> 
+fn initpeers2<MC : MyDHTConf> (nodes : Vec<MC::Peer>, transports : Vec<MC::Transport>, map : &[&[usize]], conf : MC, sim : Option<u32>) -> Vec<(MC::Peer, ApiSendIn<MC>)> 
   {
   let mut i = 0;// TODO redesign with zip of map and nodes iter
-/*  let result :  Vec<(RT::P, DHT<RT>, Vec<Arc<RT::P>>)> = transports.into_iter().map(|t|{
+  let result : Vec<(MC::Peer, ApiSendIn<MC>, Vec<MC::Peer>)> = transports.into_iter().map(|t|{
     let n = nodes.get(i).unwrap();
     info!("node : {:?}", n);
     println!("{:?}",map[i]);
-    let bpeers : Vec<Arc<RT::P>> = map[i].iter().map(|j| nodes.get(*j-1).unwrap().clone()).map(|p|Arc::new(p)).collect();
+    let bpeers : Vec<MC::Peer> = map[i].iter().map(|j| nodes.get(*j-1).unwrap().clone()).collect();
     i += 1;
-    let nsp = Arc::new(n.clone());
-    (n.clone(), 
-    DHT::boot_server(Arc:: new(
-       RunningContext::new( 
-         nsp,
-         meths.clone(),
-         SimpleRules::new(dhtrules.clone()),
-         enc.clone(),
-         t,
-        )), 
-        move || Some(new_inmap()), 
-        move || Some(SimpleCacheQuery::new(false)), 
-        move || Some(SimpleCache::new(None)), 
-        bpeers.clone(), Vec::new(),
-     ).unwrap(),
-     bpeers
-     )
+    let test_conf = TestConf {
+      me : n.clone(),
+      others : bpeers.clone(),
+      transport : t, 
+    };
+
+    let (sendcommand,_) = test_conf.start_loop().unwrap();
+    (n.clone(),sendcommand,bpeers)
    }).collect();
    if sim.is_some() {
      // all has started
@@ -636,14 +636,9 @@ fn initpeers2<MC : MyDHTConf> (nodes : Vec<MC::Peer>, transports : Vec<MC::Trans
      };
    
    };
-
-   
    result.into_iter().map(|n|(n.0,n.1)).collect()
-   */
-  Vec::new()
 }
 */
-
 // local transport usage is faster than actual transports
 // Yet default to one second
 static DEF_SIM : Option<u32> = Some(1000);

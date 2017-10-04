@@ -13,9 +13,12 @@ use mydhtresult::{
   Result,
   Error,
 };
+use peer::Peer;
+use keyval::KeyVal;
 
 use procs::storeprop::{
   KVStoreCommand,
+  KVStoreReply,
 };
 use mydht_base::kvcache::{
   KVCache
@@ -34,6 +37,10 @@ use super::deflocal::{
   GlobalCommand,
   GlobalCommandSend,
   GlobalReply,
+};
+
+use super::mainloop::{
+  MainLoopSubCommand,
 };
 
 
@@ -84,7 +91,7 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
 
   fn call<S : SpawnerYield>(&mut self, req : Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
     Ok(match req {
-      ApiCommand::Mainloop(mlc) => {
+      ApiCommand::MainLoop(mlc) => {
         ApiReply::ProxyMainloop(mlc)
       },
       ApiCommand::Failure(qid) => {
@@ -158,7 +165,7 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
 pub struct ApiQueryId(pub usize);
 
 pub enum ApiCommand<MC : MyDHTConf> {
-  Mainloop(MainLoopCommand<MC>),
+  MainLoop(MainLoopCommand<MC>),
   Failure(ApiQueryId),
   ServiceCommand(MCCommand<MC>,usize,MC::ApiReturn),
   //GlobalServiceCommand(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>,MC::ApiReturn),
@@ -169,15 +176,24 @@ pub enum ApiCommand<MC : MyDHTConf> {
 }
 
 
+fn peer_ping<P : Peer,PR>(v : P) -> GlobalReply<P,PR,KVStoreCommand<P,PR,P,PR>,KVStoreReply<PR>> {
+  GlobalReply::MainLoop(MainLoopSubCommand::TryConnect(v.get_key(),v.get_address().clone()))
+}
+
 /// inner types of api command are not public,
 /// so command need to be instantiate through methods
 /// This also filters non public method for dest services
 impl<MC : MyDHTConf> ApiCommand<MC> {
   pub fn try_connect(ad : <MC::Transport as Transport>::Address) -> ApiCommand<MC> {
-    ApiCommand::Mainloop(MainLoopCommand::TryConnect(ad))
+    ApiCommand::MainLoop(MainLoopCommand::TryConnect(ad))
   }
 
-  pub fn call_peer_reply(mut c : KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>, ret : MC::ApiReturn) -> ApiCommand<MC> {
+  pub fn refresh_peer(nb : usize) -> ApiCommand<MC> {
+    let kvscom = GlobalCommand(None,KVStoreCommand::Subset(nb, peer_ping));
+    ApiCommand::MainLoop(MainLoopCommand::PeerStore(kvscom))
+  }
+ 
+  pub fn call_peer_reply(mut c : KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>, ret : MC::ApiReturn) -> ApiCommand<MC> {
     ApiCommand::ServiceCommand(MCCommand::PeerStore(c),0,ret)
   }
  
@@ -187,12 +203,12 @@ impl<MC : MyDHTConf> ApiCommand<MC> {
  
   pub fn call_service(mut c : MC::GlobalServiceCommand) -> ApiCommand<MC> {
     let cmd = MainLoopCommand::ProxyGlobal(GlobalCommand(None,c));
-    ApiCommand::Mainloop(cmd)
+    ApiCommand::MainLoop(cmd)
   }
  
   pub fn call_service_local(mut c : MC::LocalServiceCommand, nb_for : usize) -> ApiCommand<MC> {
     let cmd = MainLoopCommand::ForwardService(None,None,nb_for,MCCommand::Local(c));
-    ApiCommand::Mainloop(cmd)
+    ApiCommand::MainLoop(cmd)
   }
   pub fn call_service_local_reply(mut c : MC::LocalServiceCommand, nb_for : usize, ret : MC::ApiReturn) -> ApiCommand<MC> {
     ApiCommand::ServiceCommand(MCCommand::Local(c),nb_for,ret)
@@ -316,7 +332,7 @@ impl<MC : MyDHTConf> SpawnSend<ApiCommand<MC>> for ApiSendIn<MC> {
   const CAN_SEND : bool = <MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send::CAN_SEND;
   fn send(&mut self, c : ApiCommand<MC>) -> Result<()> {
     match c {
-      ApiCommand::Mainloop(ic) => self.main_loop.send(ic)?,
+      ApiCommand::MainLoop(ic) => self.main_loop.send(ic)?,
       ApiCommand::Failure(..) => unreachable!(),
       ApiCommand::Adjust(..) => unreachable!(),
       ApiCommand::ServiceCommand(cmd,nb_f,ret) => self.main_loop.send(MainLoopCommand::ForwardApi(cmd,nb_f,ret))?,

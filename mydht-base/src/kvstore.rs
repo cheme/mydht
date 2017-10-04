@@ -38,6 +38,11 @@ pub trait KVStore<V : KeyVal> {
   }*/
   /// Get value
   fn get_val(& self, &V::Key) -> Option<V>;
+  /// get vals (subset) from store, it is better if they are random, note that not all store allows it thus returning Optional result.
+  /// it should not return same vals every time and could be close to an iterator over the store
+  /// (random access to values is fine, every time the n first value is not).
+  /// Self is mutable as it may change inner iterator or buffer content
+  fn get_next_vals(&mut self, usize) -> Option<Vec<V>>;
  
   fn has_val(& self, &V::Key) -> bool;
   /*  #[inline]

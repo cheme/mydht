@@ -142,10 +142,12 @@ pub enum KVStoreProtoMsgSend<'a, P : Peer, V : KeyVal> {
   //type ProtoMsg : Into<MCCommand<Self>> + SettableAttachments + GettableAttachments + OptFrom<MCCommand<Self>>;
 
 //pub enum KVStoreCommand<P : Peer, V : KeyVal, VR> {
-impl<P : Peer, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwned> OptFrom<KVStoreCommand<P,V,VR>> for KVStoreProtoMsg<P,V,VR> {
-  fn can_from (c : &KVStoreCommand<P,V,VR>) -> bool {
+impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwned> OptFrom<KVStoreCommand<P,PR,V,VR>> for KVStoreProtoMsg<P,V,VR> {
+  fn can_from (c : &KVStoreCommand<P,PR,V,VR>) -> bool {
     match *c {
       KVStoreCommand::Start => false,
+      KVStoreCommand::CommitStore => false,
+      KVStoreCommand::Subset(..) => false,
       KVStoreCommand::Find(..) => true,
       KVStoreCommand::FindLocally(..) => false,
       KVStoreCommand::Store(..) => true,
@@ -155,9 +157,11 @@ impl<P : Peer, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwned> OptFrom<K
     }
 
   }
-  fn opt_from (c : KVStoreCommand<P,V,VR>) -> Option<Self> {
+  fn opt_from (c : KVStoreCommand<P,PR,V,VR>) -> Option<Self> {
     match c {
       KVStoreCommand::Start => None,
+      KVStoreCommand::CommitStore => None,
+      KVStoreCommand::Subset(..) => None,
       KVStoreCommand::Find(qmess, key,_) => Some(KVStoreProtoMsg::FIND(qmess,key)),
       KVStoreCommand::FindLocally(..) => None,
       KVStoreCommand::Store(qid,vrs) => {
@@ -170,8 +174,8 @@ impl<P : Peer, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwned> OptFrom<K
   }
 }
 
-impl<P : Peer, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwned> Into<KVStoreCommand<P,V,VR>> for KVStoreProtoMsg<P,V,VR> {
-  fn into(self) -> KVStoreCommand<P,V,VR> {
+impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwned> Into<KVStoreCommand<P,PR,V,VR>> for KVStoreProtoMsg<P,V,VR> {
+  fn into(self) -> KVStoreCommand<P,PR,V,VR> {
     match self {
       KVStoreProtoMsg::FIND(qmes,key) => {
         KVStoreCommand::Find(qmes,key,None)
@@ -228,9 +232,13 @@ pub enum LastSent<P : Peer> {
 */
 
 #[derive(Clone)]
-pub enum KVStoreCommand<P : Peer, V : KeyVal, VR> {
+pub enum KVStoreCommand<P : Peer, PR, V : KeyVal, VR> {
   /// Do nothing but lazy initialize of store as any command.
   Start,
+  /// force a commit for store
+  CommitStore,
+  /// exec a fn on a subset of the store
+  Subset(usize, fn(V) -> GlobalReply<P,PR,KVStoreCommand<P,PR,V,VR>,KVStoreReply<VR>>),
   Find(QueryMsg<P>, V::Key,Option<ApiQueryId>),
   FindLocally(V::Key,ApiQueryId),
   Store(QueryID,Vec<VR>),
@@ -239,10 +247,12 @@ pub enum KVStoreCommand<P : Peer, V : KeyVal, VR> {
   StoreLocally(VR,QueryPriority,Option<ApiQueryId>),
 }
 
-impl<P : Peer, V : KeyVal, VR> ApiQueriable for KVStoreCommand<P,V,VR> {
+impl<P : Peer, PR, V : KeyVal, VR> ApiQueriable for KVStoreCommand<P,PR,V,VR> {
   fn is_api_reply(&self) -> bool {
     match *self {
       KVStoreCommand::Start => false,
+      KVStoreCommand::CommitStore => false,
+      KVStoreCommand::Subset(..) => false,
       KVStoreCommand::Find(ref qm,ref k,ref oaqid) => true,
       KVStoreCommand::FindLocally(ref k,ref oaqid) => true,
       KVStoreCommand::Store(ref qid,ref vrp) => false,
@@ -253,6 +263,8 @@ impl<P : Peer, V : KeyVal, VR> ApiQueriable for KVStoreCommand<P,V,VR> {
   fn set_api_reply(&mut self, i : ApiQueryId) {
     match *self {
       KVStoreCommand::Start => (),
+      KVStoreCommand::Subset(..) => (),
+      KVStoreCommand::CommitStore => (),
       KVStoreCommand::StoreLocally(_,_,ref mut oaqid)
         | KVStoreCommand::Find(_,_,ref mut oaqid) => {
         *oaqid = Some(i);
@@ -268,6 +280,8 @@ impl<P : Peer, V : KeyVal, VR> ApiQueriable for KVStoreCommand<P,V,VR> {
   fn get_api_reply(&self) -> Option<ApiQueryId> {
     match *self {
       KVStoreCommand::Start => None,
+      KVStoreCommand::Subset(..) => None,
+      KVStoreCommand::CommitStore => None,
       KVStoreCommand::StoreLocally(_,_,ref oaqid)
         | KVStoreCommand::Find(_,_,ref oaqid) => {
           oaqid.clone()
@@ -281,9 +295,11 @@ impl<P : Peer, V : KeyVal, VR> ApiQueriable for KVStoreCommand<P,V,VR> {
   }
 }
 
-pub enum KVStoreCommandSend<P : Peer, V : KeyVal, VR : SRef> {
+pub enum KVStoreCommandSend<P : Peer, PR, V : KeyVal, VR : SRef> {
   /// Do nothing but lazy initialize of store as any command.
   Start,
+  CommitStore,
+  Subset(usize, fn(V) -> GlobalReply<P,PR,KVStoreCommand<P,PR,V,VR>,KVStoreReply<VR>>),
   Find(QueryMsg<P>, V::Key,Option<ApiQueryId>),
   FindLocally(V::Key,ApiQueryId),
   Store(QueryID,Vec<<VR as SRef>::Send>),
@@ -292,11 +308,13 @@ pub enum KVStoreCommandSend<P : Peer, V : KeyVal, VR : SRef> {
   StoreLocally(<VR as SRef>::Send,QueryPriority,Option<ApiQueryId>),
 }
 
-impl<P : Peer, V : KeyVal, VR : Ref<V>> SRef for KVStoreCommand<P,V,VR> {
-  type Send = KVStoreCommandSend<P,V,VR>;
+impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V>> SRef for KVStoreCommand<P,PR,V,VR> {
+  type Send = KVStoreCommandSend<P,PR,V,VR>;
   fn get_sendable(&self) -> Self::Send {
     match *self {
       KVStoreCommand::Start => KVStoreCommandSend::Start,
+      KVStoreCommand::CommitStore => KVStoreCommandSend::CommitStore,
+      KVStoreCommand::Subset(nb,f) => KVStoreCommandSend::Subset(nb,f),
       KVStoreCommand::Find(ref qm,ref k,ref oaqid) => KVStoreCommandSend::Find(qm.clone(),k.clone(),oaqid.clone()),
       KVStoreCommand::FindLocally(ref k,ref oaqid) => KVStoreCommandSend::FindLocally(k.clone(),oaqid.clone()),
       KVStoreCommand::Store(ref qid,ref vrp) => KVStoreCommandSend::Store(qid.clone(),vrp.iter().map(|rp|rp.get_sendable()).collect()),
@@ -306,10 +324,12 @@ impl<P : Peer, V : KeyVal, VR : Ref<V>> SRef for KVStoreCommand<P,V,VR> {
   }
 }
  
-impl<P : Peer, V : KeyVal, VR : Ref<V>> SToRef<KVStoreCommand<P,V,VR>> for KVStoreCommandSend<P,V,VR> {
-  fn to_ref(self) -> KVStoreCommand<P,V,VR> {
+impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V>> SToRef<KVStoreCommand<P,PR,V,VR>> for KVStoreCommandSend<P,PR,V,VR> {
+  fn to_ref(self) -> KVStoreCommand<P,PR,V,VR> {
     match self {
       KVStoreCommandSend::Start => KVStoreCommand::Start,
+      KVStoreCommandSend::CommitStore => KVStoreCommand::CommitStore,
+      KVStoreCommandSend::Subset(nb,f) => KVStoreCommand::Subset(nb,f),
       KVStoreCommandSend::Find(qm, k,oaqid) => KVStoreCommand::Find(qm,k,oaqid),
       KVStoreCommandSend::FindLocally(k,oaqid) => KVStoreCommand::FindLocally(k,oaqid),
       KVStoreCommandSend::Store(qid,vrp) => KVStoreCommand::Store(qid,vrp.into_iter().map(|rp|rp.to_ref()).collect()),
@@ -342,7 +362,6 @@ impl<VR> ApiRepliable for KVStoreReply<VR> {
     }
   }
 }
-
 
 pub enum KVStoreReplySend<VR : SRef> {
   FoundApi(Option<<VR as SRef>::Send>,ApiQueryId),
@@ -390,8 +409,8 @@ impl<
   DH : DHTRules,
   QC : QueryCache<P,VR,RP>,
   > Service for KVStoreService<P,RP,V,VR,S,DH,QC> {
-  type CommandIn = GlobalCommand<RP,KVStoreCommand<P,V,VR>>;
-  type CommandOut = GlobalReply<P,RP,KVStoreCommand<P,V,VR>,KVStoreReply<VR>>;
+  type CommandIn = GlobalCommand<RP,KVStoreCommand<P,RP,V,VR>>;
+  type CommandOut = GlobalReply<P,RP,KVStoreCommand<P,RP,V,VR>,KVStoreReply<VR>>;
   //    KVStoreReply<P,V,RP>;
 
   fn call<Y : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut Y) -> Result<Self::CommandOut> {
@@ -402,6 +421,22 @@ impl<
     let GlobalCommand(owith,req) = req;
     match req {
       KVStoreCommand::Start => (),
+      KVStoreCommand::Subset(nb,f) => {
+        match store.get_next_vals(nb) {
+          Some(vals) => {
+            let cmds = vals.into_iter().map(|v|f(v)).collect();
+            return Ok(GlobalReply::Mult(cmds));
+          },
+          None => {
+            panic!("KVStore use as backend does not allow subset");
+          },
+        }
+      },
+      KVStoreCommand::CommitStore => {
+        if !store.commit_store() {
+          panic!("Store commit failure, ending");
+        }
+      },
       KVStoreCommand::Store(qid,mut vs) => {
 
         let removereply = match self.query_cache.query_get_mut(&qid) {
@@ -609,9 +644,9 @@ impl<
 /// adapter to forward peer message into global dest
 pub struct OptPeerGlobalDest<MC : MyDHTConf> (pub GlobalDest<MC>);
 
-impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>>> for OptPeerGlobalDest<MC> {
+impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>>> for OptPeerGlobalDest<MC> {
   const CAN_SEND : bool = true;
-  fn send(&mut self, c : GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>>) -> Result<()> {
+  fn send(&mut self, c : GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>>) -> Result<()> {
     //let gr = <GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServiceCommand,MC::GlobalServiceReply>>::from(c);
     let gr = from_kv(c);
     self.0.send(gr)
@@ -632,13 +667,14 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<M
 
 //impl<P : Peer,PR : Ref<P>,GSC,GSR> From<GlobalReply<P,PR,KVStoreCommand<P,P,PR>,KVStoreReply<PR>>> for GlobalReply<P,PR,GSC,GSR> {
  // fn from(t : GlobalReply<P,PR,KVStoreCommand<P,P,PR>,KVStoreReply<PR>>) -> Self {
-  fn from_kv<P : Peer,PR : Ref<P>,GSC,GSR>(t : GlobalReply<P,PR,KVStoreCommand<P,P,PR>,KVStoreReply<PR>>) -> GlobalReply<P,PR,GSC,GSR> {
+  fn from_kv<P : Peer,PR : Ref<P>,GSC,GSR>(t : GlobalReply<P,PR,KVStoreCommand<P,PR,P,PR>,KVStoreReply<PR>>) -> GlobalReply<P,PR,GSC,GSR> {
     match t {
       GlobalReply::Forward(opr,okad,nbfor,ksc) =>  GlobalReply::PeerForward(opr,okad,nbfor,ksc),
       GlobalReply::PeerForward(opr,okad,nbfor,ksc) => GlobalReply::PeerForward(opr,okad,nbfor,ksc),
       GlobalReply::Api(ksr) => GlobalReply::PeerApi(ksr),
       GlobalReply::PeerApi(ksr) => GlobalReply::PeerApi(ksr),
       GlobalReply::NoRep => GlobalReply::NoRep,
+      GlobalReply::MainLoop(mlc) => GlobalReply::MainLoop(mlc),
 
       GlobalReply::Mult(vkr) => {
         let vgr = vkr.into_iter().map(|kr|from_kv(kr)).collect();

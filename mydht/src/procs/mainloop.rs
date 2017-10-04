@@ -219,9 +219,17 @@ pub fn boot_server
 /// Allow call from Rust method or Foreign library
 pub struct MyDHT<MC : MyDHTConf>(MainLoopSendIn<MC>);
 
+#[derive(Clone)]
+/// subset of mainloop command TODO get api command in here and make MainLoopCommand technical
+/// TODO unclear if only for callback
+pub enum MainLoopSubCommand<P : Peer> {
+//pub enum MainLoopSubCommand<P : Peer,PR,GSC,GSR> {
+  TryConnect(<P as KeyVal>::Key,<P as Peer>::Address),
+}
 /// command supported by MyDHT loop
 pub enum MainLoopCommand<MC : MyDHTConf> {
   Start,
+  SubCommand(MainLoopSubCommand<MC::Peer>),
   TryConnect(<MC::Transport as Transport>::Address),
 //  ForwardServiceLocal(MC::LocalServiceCommand,usize),
   ForwardService(Option<Vec<MC::PeerRef>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,MCCommand<MC>),
@@ -229,7 +237,7 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
   ForwardApi(MCCommand<MC>,usize,MC::ApiReturn),
   /// received peer store command from peer : almost named ProxyPeerStore but it does a local peer
   /// cache check first so it is not named Proxy
-  PeerStore(GlobalCommand<MC::PeerRef,KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>>),
+  PeerStore(GlobalCommand<MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>),
   /// reject stream for this token and Address
   RejectReadSpawn(usize),
   /// reject a peer (accept fail), usize are write stream token and read stream token
@@ -254,11 +262,12 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
        MC::GlobalServiceReply : SRef,
        MC::LocalServiceReply : SRef {
   Start,
+  SubCommand(MainLoopSubCommand<MC::Peer>),
   TryConnect(<MC::Transport as Transport>::Address),
 //  ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
   ForwardService(Option<Vec<<MC::PeerRef as SRef>::Send>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,<MCCommand<MC> as SRef>::Send),
   ForwardApi(<MCCommand<MC> as SRef>::Send,usize,MC::ApiReturn),
-  PeerStore(GlobalCommandSend<<MC::PeerRef as SRef>::Send,KVStoreCommandSend<MC::Peer,MC::Peer,MC::PeerRef>>),
+  PeerStore(GlobalCommandSend<<MC::PeerRef as SRef>::Send,KVStoreCommandSend<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>),
   /// reject stream for this token and Address
   RejectReadSpawn(usize),
   /// reject a peer (accept fail), usize are write stream token and read stream token
@@ -282,6 +291,7 @@ impl<MC : MyDHTConf> Clone for MainLoopCommand<MC>
   fn clone(&self) -> Self {
     match *self {
       MainLoopCommand::Start => MainLoopCommand::Start,
+      MainLoopCommand::SubCommand(ref sc) => MainLoopCommand::SubCommand(sc.clone()),
       MainLoopCommand::TryConnect(ref a) => MainLoopCommand::TryConnect(a.clone()),
 //      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommand::ForwardServiceLocal(gc.clone(),nb),
       MainLoopCommand::ForwardService(ref ovp,ref okad,nb_for,ref c) => MainLoopCommand::ForwardService(ovp.clone(),okad.clone(),nb_for,c.clone()),
@@ -310,6 +320,7 @@ impl<MC : MyDHTConf> SRef for MainLoopCommand<MC>
   fn get_sendable(&self) -> Self::Send {
     match *self {
       MainLoopCommand::Start => MainLoopCommandSend::Start,
+      MainLoopCommand::SubCommand(ref sc) => MainLoopCommandSend::SubCommand(sc.clone()),
       MainLoopCommand::TryConnect(ref a) => MainLoopCommandSend::TryConnect(a.clone()),
 //      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommandSend::ForwardServiceLocal(gc.get_sendable(),nb),
       MainLoopCommand::ForwardService(ref ovp,ref okad,nb_for,ref c) => MainLoopCommandSend::ForwardService({
@@ -339,6 +350,7 @@ impl<MC : MyDHTConf> SToRef<MainLoopCommand<MC>> for MainLoopCommandSend<MC>
   fn to_ref(self) -> MainLoopCommand<MC> {
     match self {
       MainLoopCommandSend::Start => MainLoopCommand::Start,
+      MainLoopCommandSend::SubCommand(sc) => MainLoopCommand::SubCommand(sc),
       MainLoopCommandSend::TryConnect(a) => MainLoopCommand::TryConnect(a),
 //      MainLoopCommandSend::ForwardServiceLocal(a,nb) => MainLoopCommand::ForwardServiceLocal(a.to_ref(),nb),
       MainLoopCommandSend::ForwardService(ovp,okad,nb_for,c) => MainLoopCommand::ForwardService({
@@ -391,7 +403,7 @@ pub struct MDHTState<MC : MyDHTConf> {
   local_channel_in_proto : MC::LocalServiceChannelIn,
   api_send : <MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Send,
   api_handle : ApiHandle<MC>,
-  peerstore_send : <MC::PeerStoreServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>>>>::Send,
+  peerstore_send : <MC::PeerStoreServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>>>::Send,
   peerstore_handle : PeerStoreHandle<MC>,
 }
 
@@ -546,6 +558,18 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       MainLoopCommand::Start => {
         // do nothing it has start if the function was called
       },
+      MainLoopCommand::SubCommand(sc) => {
+        match sc {
+          MainLoopSubCommand::TryConnect(key,add) => {
+            // peer cache got connected peer TODO a pending connect cache (on address) to avoid multiple connect
+            // attempt to same peer !!
+            if !self.peer_cache.has_val_c(&key) {
+              self.call_inner_loop(MainLoopCommand::TryConnect(add),mlsend,async_yield)?;
+            }
+          },
+        }
+      },
+
       MainLoopCommand::PeerStore(kvcmd) => {
         /*
         match kvcmd {
