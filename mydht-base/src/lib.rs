@@ -55,7 +55,7 @@ macro_rules! tryfor(($ty:ident, $expr:expr) => (
 #[macro_export]
 /// same as try for mydht result which panic for panic level and break loop for ignore level
 macro_rules! try_breakloop { ($x:expr, $arg:tt, $inner:expr) => ({
-  let mut iter = 0;
+//  let mut iter = 0;
   loop {
     let a = match $x {
       Ok(r) => r,

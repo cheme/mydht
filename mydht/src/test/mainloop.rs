@@ -3,6 +3,17 @@
 
 extern crate mydht_tcp_loop;
 extern crate mydht_slab;
+use kvstore::StoragePriority;
+use query::{
+  Query,
+  QReply,
+  QueryID,
+  QueryModeMsg,
+  QueryMsg,
+  PropagateMsg,
+  QueryPriority,
+};
+
 use kvstore::{
   KVStore,
 };
@@ -630,14 +641,33 @@ mod test_tcp_all_block_thread {
     for v in o_res.0.iter() {
       assert!(if let &ApiResult::ServiceReply(MCReply::Global(TestReply::TouchQ(Some(1)))) = v {true} else {false});
     }
+    let o_res = new_oneresult((Vec::with_capacity(2),2,2));
+    let peer_local = ApiCommand::call_peer_reply(KVStoreCommand::Find(query_message_1(),"peer2".to_string(),None),o_res.clone());
+    let peer_self = ApiCommand::call_peer_reply(KVStoreCommand::Find(query_message_1(),"peer1".to_string(),None),o_res.clone());
+    sendcommand1.send(peer_local).unwrap();
+    sendcommand1.send(peer_self).unwrap();
+    let o_res = clone_wait_one_result(&o_res,None).unwrap();
+    assert!(o_res.0.len() == 2);
+  //Find(QueryMsg<P>, V::Key,Option<ApiQueryId>),
 //    sendcommand1.send(command2).unwrap();
 
     // no service to check connection, currently only for testing and debugging : sleep
-    thread::sleep_ms(10000);
+    thread::sleep_ms(3000);
 
   }
 }
-
+pub fn query_message_1<P : Peer>() -> QueryMsg<P> {
+  QueryMsg {
+    mode_info : QueryModeMsg::AProxy(0),
+    hop_hist : None,
+    // TODO delete storage prio
+    storage : StoragePriority::Local,
+    rem_hop : 1,
+    nb_forw : 1,
+    prio : 0,
+    nb_res : 1,
+  }
+}
 /*mod test_dummy_all_block_thread {
   use super::*;
   use std::time::Duration;

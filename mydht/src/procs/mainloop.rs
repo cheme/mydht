@@ -226,8 +226,9 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
   ForwardService(Option<Vec<MC::PeerRef>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,MCCommand<MC>),
   /// usize is only for mccommand type local to set the number of local to target
   ForwardApi(MCCommand<MC>,usize,MC::ApiReturn),
-  /// received peer store command from peer
-  PeerStore(KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>),
+  /// received peer store command from peer : almost named ProxyPeerStore but it does a local peer
+  /// cache check first so it is not named Proxy
+  PeerStore(GlobalCommand<MC::PeerRef,KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>>),
   /// reject stream for this token and Address
   RejectReadSpawn(usize),
   /// reject a peer (accept fail), usize are write stream token and read stream token
@@ -256,7 +257,7 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
 //  ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
   ForwardService(Option<Vec<<MC::PeerRef as SRef>::Send>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,<MCCommand<MC> as SRef>::Send),
   ForwardApi(<MCCommand<MC> as SRef>::Send,usize,MC::ApiReturn),
-  PeerStore(KVStoreCommandSend<MC::Peer,MC::Peer,MC::PeerRef>),
+  PeerStore(GlobalCommandSend<<MC::PeerRef as SRef>::Send,KVStoreCommandSend<MC::Peer,MC::Peer,MC::PeerRef>>),
   /// reject stream for this token and Address
   RejectReadSpawn(usize),
   /// reject a peer (accept fail), usize are write stream token and read stream token
@@ -545,10 +546,24 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         // do nothing it has start if the function was called
       },
       MainLoopCommand::PeerStore(kvcmd) => {
-        panic!("TODO implement");
+        /*
+        match kvcmd {
+          GlobalCommand(Some(with),KVStoreCommand::Find(ref qm,ref key,None)) => {
+            if qm.nb_res == 1 && oaqid.is_some() {
+              let op = self.peer_cache.get_val_c(key).map(|v|v.peer.clone());
+              if op.is_some() {
+              TODO here we can reuse kvstore code to proxy to peer : depending on qm and with...
+              }
+            }
+          },
+          _ => (),
+        }
+        */
+        // local query on cache for kvfind before kvstore proxy
+        send_with_handle_panic!(&mut self.peerstore_send,&mut self.peerstore_handle,kvcmd,"TODO peerstore service restart?");
       },
       MainLoopCommand::ProxyApiReply(sc) => {
-          // TODO log try restart ???
+        // TODO log try restart ???
         send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::ServiceReply(sc),"TODO api service restart?");
       },
 /*      MainLoopCommand::ProxyApiGlobalReply(sc) => {
@@ -651,6 +666,25 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       },
       MainLoopCommand::ForwardApi(sc,nb_for,ret) => {
         if sc.is_api_reply() {
+          // shortcut peerstore
+          match sc {
+            MCCommand::PeerStore(KVStoreCommand::Find(ref qm,ref key,Some(ref aqid))) => {
+              if qm.nb_res == 1 {
+                let op = self.peer_cache.get_val_c(key).map(|v|v.peer.clone());
+                if op.is_some() {
+                  return self.call_inner_loop(MainLoopCommand::ProxyApiReply(MCReply::PeerStore(KVStoreReply::FoundApi(op,aqid.clone()))),async_yield);
+                }
+              }
+            },
+            MCCommand::PeerStore(KVStoreCommand::FindLocally(ref key,ref aqid)) => {
+              let op = self.peer_cache.get_val_c(key).map(|v|v.peer.clone());
+              if op.is_some() {
+                return self.call_inner_loop(MainLoopCommand::ProxyApiReply(MCReply::PeerStore(KVStoreReply::FoundApi(op,aqid.clone()))),async_yield);
+              }
+            },
+            _ => (),
+          }
+
           // send in global service TODO when send from api use a composed sender to send directly
           // TODO log try restart ???
           send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::ServiceCommand(sc,nb_for,ret),"Api service finished TODO code to make it restartable cf write service and initialising from conf in init_state + on error right error mgmt");
@@ -663,7 +697,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               self.call_inner_loop(MainLoopCommand::ProxyGlobal(GlobalCommand(None,sc)), async_yield)?;
             },
             MCCommand::PeerStore(sc) => {
-              self.call_inner_loop(MainLoopCommand::PeerStore(sc), async_yield)?;
+              self.call_inner_loop(MainLoopCommand::PeerStore(GlobalCommand(None,sc)), async_yield)?;
             },
           }
         }

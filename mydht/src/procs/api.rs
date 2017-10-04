@@ -14,6 +14,9 @@ use mydhtresult::{
   Error,
 };
 
+use procs::storeprop::{
+  KVStoreCommand,
+};
 use mydht_base::kvcache::{
   KVCache
 };
@@ -128,7 +131,7 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
             ApiReply::ProxyMainloop(MainLoopCommand::ProxyGlobal(GlobalCommand(None,gsc)))
           },
           MCCommand::PeerStore(gsc) => {
-            ApiReply::ProxyMainloop(MainLoopCommand::PeerStore(gsc))
+            ApiReply::ProxyMainloop(MainLoopCommand::PeerStore(GlobalCommand(None,gsc)))
 //            self.call_inner_loop(MainLoopCommand::PeerStore(sc), async_yield)?;
           },
         }
@@ -173,6 +176,11 @@ impl<MC : MyDHTConf> ApiCommand<MC> {
   pub fn try_connect(ad : <MC::Transport as Transport>::Address) -> ApiCommand<MC> {
     ApiCommand::Mainloop(MainLoopCommand::TryConnect(ad))
   }
+
+  pub fn call_peer_reply(mut c : KVStoreCommand<MC::Peer,MC::Peer,MC::PeerRef>, ret : MC::ApiReturn) -> ApiCommand<MC> {
+    ApiCommand::ServiceCommand(MCCommand::PeerStore(c),0,ret)
+  }
+ 
   pub fn call_service_reply(mut c : MC::GlobalServiceCommand, ret : MC::ApiReturn) -> ApiCommand<MC> {
     ApiCommand::ServiceCommand(MCCommand::Global(c),0,ret)
   }

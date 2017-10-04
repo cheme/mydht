@@ -159,7 +159,7 @@ impl<T> PollSender<T> {
 /// TODO spawner from transport
 /// cache should be fast usize access (vec, slab) TODO slab implementation (use slab crate) of
 /// KVCache<usize,v> or/and Cache<usize,v>
-pub fn spawn_loop<T : Transport, P, TC : TransportCache<T,P>>(transport : T, mut cache : TC) -> Result<PollSender<LoopMessage<T>>> {
+fn spawn_loop<T : Transport, P, TC : TransportCache<T,P>>(transport : T, mut cache : TC) -> Result<PollSender<LoopMessage<T>>> {
   let (send_reg, send_setready) = Registration::new2();
   let (sc, receiver) = channel();
   let sender = PollSender(sc, send_setready);
@@ -195,7 +195,7 @@ pub fn spawn_loop<T : Transport, P, TC : TransportCache<T,P>>(transport : T, mut
 }
 
 /// last bool true if asynch and registered
-pub trait TransportCache<T : Transport, P> : 'static + Send + KVCache<usize, (StreamType<T>, Option<usize>, Option<Arc<P>>, bool)> {
+trait TransportCache<T : Transport, P> : 'static + Send + KVCache<usize, (StreamType<T>, Option<usize>, Option<Arc<P>>, bool)> {
   fn insert(&mut self, val: (StreamType<T>, Option<usize>, Option<Arc<P>>,bool)) -> usize;
 }
 //impl<T : Transport, P, K : 'static + Send + KVCache<usize, (StreamType<T>, Option<usize>, Option<Arc<P>>)>> TransportCache<T,P> for K {}

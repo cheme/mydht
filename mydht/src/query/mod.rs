@@ -280,7 +280,7 @@ pub fn lessen_query
   }
 
     panic!("TODO del ? ");
-  debug!("Query lessen {:?}", i);
+  //debug!("Query lessen {:?}", i);
 /*  match self {
     &mut Query::PeerQuery(QReply::Local(ref cv),_) => {
           let mut c = &mut cv.1.lock().unwrap().1;
