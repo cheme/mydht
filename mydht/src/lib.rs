@@ -31,7 +31,7 @@ extern crate mio;
 
 /// Local service will simply proxy to Global service
 #[macro_export]
-macro_rules! nolocal(() => (
+macro_rules! localproxyglobal(() => (
 
     type GlobalServiceCommand = Self::LocalServiceCommand; // def
     type GlobalServiceReply  = Self::LocalServiceReply; // def
@@ -57,7 +57,31 @@ macro_rules! nolocal(() => (
     }
 ));
 
+#[macro_export]
+macro_rules! nolocal(() => (
 
+
+  const LOCAL_SERVICE_NB_ITER : usize = 1;// = 1;
+  type LocalServiceCommand = NoCommandReply;
+  type LocalServiceReply = NoCommandReply;
+  type LocalService = NoService<Self::LocalServiceCommand,LocalReply<Self>>;
+  type LocalServiceSpawn = NoSpawn;
+  type LocalServiceChannelIn = NoChannel;
+
+  #[inline]
+  fn init_local_spawner(&mut self) -> Result<Self::LocalServiceSpawn> {
+    Ok(NoSpawn)
+  }
+  #[inline]
+  fn init_local_channel_in(&mut self) -> Result<Self::LocalServiceChannelIn> {
+    Ok(NoChannel)
+  }
+  #[inline]
+  fn init_local_service(_ : Self::PeerRef, _ : Option<Self::PeerRef>) -> Result<Self::LocalService> {
+    Ok(NoService::new())
+  }
+
+));
 
 
 mod kvcache{

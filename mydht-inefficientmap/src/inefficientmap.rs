@@ -17,13 +17,22 @@ use mydht_base::keyval::KeyVal;
 use std::hash::Hash;
 use mydht_base::transport::{Transport,Address};
 use mydht_base::route::PeerInfoBase;
-use mydht_base::kvcache::KVCache;
+use mydht_base::kvcache::{
+  KVCache,
+  Cache,
+};
 use std::marker::PhantomData;
 use mydht_base::route::{pi_upprio_base};
 use mydht_base::mydhtresult::Result as MydhtResult;
 
-
+use std::borrow::Borrow;
 use mydht_base::route::RouteFromBase;
+use mydht_base::route2::{
+  GetPeerRef,
+  RouteBaseMessage,
+  RouteBase as RouteBase2,
+  RouteMsgType,
+};
 
 
 /// Routing structure based on map plus count of query for proxy mode
@@ -34,6 +43,108 @@ pub struct InefficientmapBase<P : Peer, V : KeyVal, T : Transport, C : KVCache<P
     peers : C, //TODO maybe get node priority out of this container or do in place update
     _phdat : PhantomData<(V,T,CI,SI)>,
 }
+
+/// simply iterate on cache
+pub struct InefficientmapBase2<P : Peer,RP : Borrow<P>, GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Key,GP>> {
+   peers_nbquery : Vec<(P::Key,Option<usize>)>,
+   next : usize,
+   peers : C, //TODO maybe get node priority out of this container or do in place update
+   _phdat : PhantomData<(RP,GP)>,
+}
+impl<P : Peer,RP : Borrow<P>, GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Key,GP>> 
+ InefficientmapBase2<P,RP,GP,C>
+{
+  pub fn new(c : C) -> Self {
+    InefficientmapBase2 {
+      peers_nbquery : Vec::new(),
+      next : 0,
+      peers : c,
+      _phdat : PhantomData,
+    }
+  }
+}
+impl<P : Peer,RP : Borrow<P>, GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Key,GP>>
+InefficientmapBase2<P,RP,GP,C> {
+
+  fn get_closest(&mut self, nbnode : usize, filter : Option<&VecDeque<P::Key>>) -> Vec<usize> {
+    let mut r = Vec::new();
+    if self.peers_nbquery.len() == 0 {
+      return r
+    }
+    let st_ix = self.next;
+    let mut i = 0;
+    // with the nb of query , priority not use
+    loop {
+      let nid = self.peers_nbquery.get(self.next).unwrap();
+      debug!("!!!in closest node {:?}", nid);
+      let mut filtered = false;
+      if let Some(ref filter) = filter {
+        if filter.iter().find(|r|**r == nid.0) != None {
+          filtered = true
+        }
+      }
+      if !filtered {
+        if let Some(ws) = nid.1 {
+          r.push(ws);
+          i += 1;
+        }
+      }
+      if self.next == 0 {
+        self.next = self.peers_nbquery.len() - 1;
+      } else {
+        self.next -= 1;
+      }
+      if self.next == st_ix {
+        break
+      }
+      if i == nbnode {
+        break
+      }
+    };
+    debug!("Closest found {:?}", r);
+    r
+  }
+
+}
+
+
+impl<P : Peer,RP : Borrow<P>,GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Key,GP>>
+  RouteBase2<P,RP,GP> for InefficientmapBase2<P,RP,GP,C> {
+  fn route_base<MSG : RouteBaseMessage<P>>(&mut self, nb : usize, m : MSG, _ : RouteMsgType) -> MydhtResult<(MSG,Vec<usize>)> {
+    let closest = {
+      let filter = m.get_filter();
+      self.get_closest(nb,filter)
+    };
+    Ok((m,closest))
+  }
+}
+ 
+impl<P : Peer,RP : Borrow<P>,GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Key,GP>>
+  Cache<<P as KeyVal>::Key,GP> for InefficientmapBase2<P,RP,GP,C> {
+  fn add_val_c(& mut self, k : <P as KeyVal>::Key, v : GP) {
+    self.peers_nbquery.push({
+      let (p,ows) = v.get_peer_ref();
+      (p.get_key(),ows)
+    });
+    self.peers.add_val_c(k,v)
+  }
+  fn get_val_c<'a>(&'a self, k : &<P as KeyVal>::Key) -> Option<&'a GP> {
+    self.peers.get_val_c(k)
+  }
+  fn get_val_mut_c<'a>(&'a mut self, k : &<P as KeyVal>::Key) -> Option<&'a mut GP> {
+    self.peers.get_val_mut_c(k)
+  }
+  fn has_val_c<'a>(&'a self, k : &<P as KeyVal>::Key) -> bool {
+    self.peers.has_val_c(k)
+  }
+  fn remove_val_c(& mut self, k : &<P as KeyVal>::Key) -> Option<GP> {
+    if let Some(ix) = self.peers_nbquery.iter().position(|nid|nid.0 == *k) {
+      self.peers_nbquery.remove(ix);
+    }
+    self.peers.remove_val_c(k)
+  }
+}
+
 
 
 impl<A : Address, P : Peer<Address = A>, V : KeyVal, T : Transport<Address = A>, C : KVCache<P::Key, PeerInfoBase<P,SI,CI>>,CI,SI> RouteBase<A,P,V,T,CI,SI> for InefficientmapBase<P,V,T,C,CI,SI> where P::Key : Ord + Hash {
@@ -210,6 +321,7 @@ mod test {
   use self::mydht_basetest::local_transport::TransportTest;
   use self::mydht_basetest::transport::LocalAdd;
   use self::mydht_basetest::peer::PeerTest;
+  use self::mydht_basetest::shadow::ShadowModeTest;
 
 // TODO a clean nodeK, with better serialize (use as_vec) , but here good for testing as key is not
 // same type as id
@@ -231,7 +343,10 @@ fn random_id(hash_size : usize) -> NodeID {
 fn initpeer() -> Arc<PeerTest> {
   let id = random_id(HASH_SIZE);
 //    let sid = to_str_radix(id,10);
-  Arc::new(PeerTest{nodeid:id, address: LocalAdd(0), keyshift: 1})
+  Arc::new(PeerTest{nodeid:id, address: LocalAdd(0), keyshift: 1,
+   modeshauth : ShadowModeTest::NoShadow,
+   modeshmsg : ShadowModeTest::SimpleShift,
+  })
 }
 
 

@@ -85,6 +85,16 @@ impl<P : Peer> QueryMsg<P> {
 
 
   }
+
+  pub fn get_filter(&self) -> Option<&VecDeque<<P as KeyVal>::Key>> {
+    match self.hop_hist {
+      Some(LastSent::LastSentPeer(_,ref lpeers))
+      | Some(LastSent::LastSentHop(_,ref lpeers)) => {
+        Some(&lpeers)
+      },
+      _ => None,
+    }
+  }
   /// after getting a route, update query
   pub fn update_lastsent_conf<RP : Ref<P>>(&mut self,  peers : &Vec<RP>, nbquery : u8) {
     match self.hop_hist {

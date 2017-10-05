@@ -46,11 +46,10 @@ impl KeyVal for PeerTest {
   fn get_key(& self) -> Self::Key {
     self.nodeid.clone()
   }
-/* 
   #[inline]
-  fn get_key_ref<'a>(&'a self) -> &'a NodeID {
+  fn get_key_ref(&self) -> &Self::Key {
     &self.nodeid
-  }*/
+  }
   noattachment!();
 }
 

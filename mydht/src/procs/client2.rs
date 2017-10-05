@@ -303,7 +303,7 @@ impl<MC : MyDHTConf> SToRef<WriteCommand<MC>> for WriteCommandSend<MC>
   }
 }
 
-
+/// TODO Api is not use : remove it and default to NoSend 
 pub enum WriteReply<MC : MyDHTConf> {
   NoRep,
   Api(ApiReply<MC>),

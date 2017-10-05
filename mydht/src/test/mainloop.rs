@@ -371,7 +371,7 @@ mod test_tcp_all_block_thread {
   }
   impl Route<TestMdhtConf> for TestRoute<TestMdhtConf> {
 
-    fn route(&mut self, targetted_nb : usize, c : MCCommand<TestMdhtConf>,_ : &<TestMdhtConf as MyDHTConf>::Slab, cache : &<TestMdhtConf as MyDHTConf>::PeerCache) -> Result<(MCCommand<TestMdhtConf>,Vec<usize>)> {
+    fn route(&mut self, targetted_nb : usize, c : MCCommand<TestMdhtConf>,_ : &mut <TestMdhtConf as MyDHTConf>::Slab, cache : &mut <TestMdhtConf as MyDHTConf>::PeerCache) -> Result<(MCCommand<TestMdhtConf>,Vec<usize>)> {
       let mut res = Vec::with_capacity(targetted_nb);
       cache.strict_fold_c(&mut res,|res, kv|{
         if let Some(t) = kv.1.get_write_token() {
@@ -432,9 +432,9 @@ mod test_tcp_all_block_thread {
 
   impl MyDHTConf for TestMdhtConf {
 
-    const loop_name : &'static str = "Conf test spawner";
-    const events_size : usize = 1024;
-    const send_nb_iter : usize = 1;
+    const LOOP_NAME : &'static str = "Conf test spawner";
+    const EVENTS_SIZE : usize = 1024;
+    const SEND_NB_ITER : usize = 1;
     type Route = TestRoute<Self>;
     type MainloopSpawn = ThreadPark;// -> failure to send into spawner cf command in of spawner need send so the mpsc channel recv could be send in impl -» need to change command in to commandin as ref :: toref
     //type MainloopSpawn = ThreadParkRef;// -> failure to send into spawner cf command in of spawner need send so the mpsc channel recv could be send in impl -» need to change command in to commandin as ref :: toref
@@ -472,7 +472,7 @@ mod test_tcp_all_block_thread {
     const LOCAL_SERVICE_NB_ITER : usize = 1; // def
     type LocalServiceSpawn = Blocker; // def
     type LocalServiceChannelIn = NoChannel; // def*/
-    nolocal!();
+    localproxyglobal!();
     type GlobalService = TestService<Self>;
     type GlobalServiceSpawn = ThreadPark;
     type GlobalServiceChannelIn = MpscChannel;
@@ -681,9 +681,9 @@ pub fn query_message_1<P : Peer>() -> QueryMsg<P> {
   pub struct TestMdhtConf1(pub TestMdhtConf,pub Option<AsynchTransportTest>);
   impl MyDHTConf for TestMdhtConf1 {
 
-    const loop_name : &'static str = "Conf test spawner";
-    const events_size : usize = 1024;
-    const send_nb_iter : usize = 1;
+    const LOOP_NAME : &'static str = "Conf test spawner";
+    const EVENTS_SIZE : usize = 1024;
+    const SEND_NB_ITER : usize = 1;
     type MainloopSpawn = ThreadPark;
     type MainLoopChannelIn = MpscChannel;
     type MainLoopChannelOut = MpscChannel;

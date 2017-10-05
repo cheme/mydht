@@ -37,10 +37,10 @@ impl KeyVal for NodeK2 {
    fn get_key(&self) -> NodeID {
         self.1.clone()
     }
-/* 
-    fn get_key_ref<'a>(&'a self) -> &'a NodeID {
+
+    fn get_key_ref(&self) -> &NodeID {
         &self.1
-    }*/
+    }
     noattachment!();
   }
   impl SettableAttachment for NodeK2 { }

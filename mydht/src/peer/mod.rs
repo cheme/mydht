@@ -20,8 +20,8 @@ pub use mydht_base::peer::*;
 
 
 /// Rules for peers. Usefull for web of trust for instance, or just to block some peers.
-/// TODO simplify
-pub trait PeerMgmtMeths<P : Peer> : Send + Sync + 'static {
+/// TODO simplify + remove sync
+pub trait PeerMgmtMeths<P : Peer> : Send + Sync + 'static + Clone {
   /// get challenge for a node, most of the time a random value to avoid replay attack
   fn challenge (&self, &P) -> Vec<u8>; 
   /// sign a message. Node and challenge. Node in parameter is ourselve.

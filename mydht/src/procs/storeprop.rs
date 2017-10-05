@@ -3,9 +3,17 @@
 //! service) 
 //! TODO for this KVStore : currently no commit are done : run some : fix rules : on drop and every
 //! n insert
+use std::collections::VecDeque;
 use std::mem::replace;
 use kvstore::StoragePriority;
+use mydht_base::route2::RouteBaseMessage;
 use std::convert::From;
+use keyval::{
+  KeyVal,
+  GettableAttachments,
+  SettableAttachments,
+  Attachment,
+};
 use utils::{
   SRef,
   SToRef,
@@ -48,9 +56,6 @@ use mydhtresult::{
 use super::mainloop::{
   MainLoopCommand,
 };
-use keyval::{
-  KeyVal,
-};
 use kvstore::{
   KVStore,
   CachePolicy,
@@ -86,6 +91,7 @@ use super::{
   OptFrom,
   ApiQueriable,
   ApiRepliable,
+  MCCommand,
 };
 use super::server2::{
   ReadReply,
@@ -126,6 +132,120 @@ pub enum KVStoreProtoMsg<P : Peer, V : KeyVal,R : Ref<V> + Serialize + Deseriali
   /// Msg)
   PROPAGATE(PropagateMsg<P>, R),
 }
+
+/// Protomessage to use in simple Dht with no localservice command and a KV store as main service
+#[derive(Serialize,Deserialize,Debug)]
+#[serde(bound(deserialize = ""))]
+pub enum KVStoreProtoMsgWithPeer<P : Peer, RP : Ref<P> + Serialize + DeserializeOwned, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned> {
+  Main(KVStoreProtoMsg<P,V,R>),
+  PeerMgmt(KVStoreProtoMsg<P,P,RP>),
+}
+impl<P : Peer, RP : Ref<P> + Serialize + DeserializeOwned, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned>
+    GettableAttachments for KVStoreProtoMsgWithPeer<P,RP,V,R> {
+  fn get_attachments(&self) -> Vec<&Attachment> {
+    Vec::new()
+  }
+}
+
+impl<P : Peer, RP : Ref<P> + Serialize + DeserializeOwned, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned>
+    SettableAttachments for KVStoreProtoMsgWithPeer<P,RP,V,R> {
+  fn attachment_expected_sizes(&self) -> Vec<usize> {
+    Vec::new()
+  }
+  fn set_attachments(& mut self, at : &[Attachment]) -> bool {
+    at.len() == 0
+  }
+}
+
+impl<MC : MyDHTConf<GlobalServiceCommand = KVStoreCommand<<MC as MyDHTConf>::Peer,<MC as MyDHTConf>::PeerRef,V,R>>, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned> 
+  Into<MCCommand<MC>> 
+  for KVStoreProtoMsgWithPeer<MC::Peer, MC::PeerRef, V,R>  where 
+   <MC as MyDHTConf>::GlobalServiceChannelIn : SpawnChannel<GlobalCommand<<MC as MyDHTConf>::PeerRef, KVStoreCommand<<MC as MyDHTConf>::Peer, <MC as MyDHTConf>::PeerRef, V, R>>>,
+   <MC as MyDHTConf>::GlobalServiceSpawn: Spawner<<MC as MyDHTConf>::GlobalService, GlobalDest<MC>, <<MC as MyDHTConf>::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<<MC as MyDHTConf>::PeerRef, KVStoreCommand<<MC as MyDHTConf>::Peer, <MC as MyDHTConf>::PeerRef, V, R>>>>::Recv>
+{
+  fn into(self) -> MCCommand<MC> {
+    match self {
+      KVStoreProtoMsgWithPeer::Main(pmess) => MCCommand::Global(pmess.into()),
+      KVStoreProtoMsgWithPeer::PeerMgmt(pmess) => MCCommand::PeerStore(pmess.into()),
+    }
+  }
+}
+impl<MC : MyDHTConf<GlobalServiceCommand = KVStoreCommand<<MC as MyDHTConf>::Peer,<MC as MyDHTConf>::PeerRef,V,R>>, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned> 
+  OptFrom<MCCommand<MC>>
+  for KVStoreProtoMsgWithPeer<MC::Peer, MC::PeerRef, V,R>  where 
+   <MC as MyDHTConf>::GlobalServiceChannelIn : SpawnChannel<GlobalCommand<<MC as MyDHTConf>::PeerRef, KVStoreCommand<<MC as MyDHTConf>::Peer, <MC as MyDHTConf>::PeerRef, V, R>>>,
+   <MC as MyDHTConf>::GlobalServiceSpawn: Spawner<<MC as MyDHTConf>::GlobalService, GlobalDest<MC>, <<MC as MyDHTConf>::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<<MC as MyDHTConf>::PeerRef, KVStoreCommand<<MC as MyDHTConf>::Peer, <MC as MyDHTConf>::PeerRef, V, R>>>>::Recv>
+  {
+  fn can_from(c : &MCCommand<MC>) -> bool {
+    match *c {
+      MCCommand::Local(ref lc) => {
+        false
+      },
+      MCCommand::Global(ref gc) => {
+        <KVStoreProtoMsg<_,_,_> as OptFrom<KVStoreCommand<_,_,_,_>>>::can_from(gc)
+      },
+      MCCommand::PeerStore(ref pc) => {
+        <KVStoreProtoMsg<_,_,_> as OptFrom<KVStoreCommand<_,_,_,_>>>::can_from(pc)
+      },
+      MCCommand::TryConnect(..) => {
+        false
+      },
+    }
+  }
+  fn opt_from(c : MCCommand<MC>) -> Option<Self> {
+    match c {
+      MCCommand::Global(pmess) => {
+        <KVStoreProtoMsg<_,_,_> as OptFrom<KVStoreCommand<_,_,_,_>>>::opt_from(pmess)
+          .map(|t|KVStoreProtoMsgWithPeer::Main(t))
+      },
+      MCCommand::PeerStore(pmess) => {
+        <KVStoreProtoMsg<_,_,_> as OptFrom<KVStoreCommand<_,_,_,_>>>::opt_from(pmess)
+          .map(|t|KVStoreProtoMsgWithPeer::PeerMgmt(t))
+      },
+      _ => None,
+    }
+  }
+}
+
+/*
+impl OptFrom<MCCommand<TestMdhtConf>> for TestMessage<TestMdhtConf> {
+  fn can_from(c : &MCCommand<TestMdhtConf>) -> bool {
+    match *c {
+      MCCommand::Local(ref lc) => {
+        <TestCommand<TestMdhtConf> as OptInto<TestMessage<TestMdhtConf>>>::can_into(lc)
+      },
+      MCCommand::Global(ref gc) => {
+        <TestCommand<TestMdhtConf> as OptInto<TestMessage<TestMdhtConf>>>::can_into(gc)
+      },
+      MCCommand::PeerStore(ref pc) => {
+        <KVStoreProtoMsg<_,_,_> as OptFrom<KVStoreCommand<_,_,_,_>>>::can_from(pc)
+      },
+      MCCommand::TryConnect(..) => {
+        false
+      },
+
+    }
+  }
+  fn opt_from(c : MCCommand<TestMdhtConf>) -> Option<Self> {
+    match c {
+      MCCommand::Local(lc) => {
+        lc.opt_into()
+      },
+      MCCommand::Global(gc) => {
+        gc.opt_into()
+      },
+      MCCommand::PeerStore(pc) => {
+        pc.opt_into().map(|t|TestMessage::PeerMgmt(t))
+      },
+      MCCommand::TryConnect(..) => {
+        None
+      },
+    }
+  }
+}*/
+
+
+
 /*
 #[derive(Serialize,Debug)]
 pub enum KVStoreProtoMsgSend<'a, P : Peer, V : KeyVal> {
@@ -246,6 +366,16 @@ pub enum KVStoreCommand<P : Peer, PR, V : KeyVal, VR> {
   NotFound(QueryID),
   StoreLocally(VR,QueryPriority,Option<ApiQueryId>),
 }
+
+impl<P : Peer, PR, V : KeyVal, VR> RouteBaseMessage<P> for KVStoreCommand<P,PR,V,VR> {
+  fn get_filter(&self) -> Option<&VecDeque<<P as KeyVal>::Key>> {
+    match *self {
+      KVStoreCommand::Find(ref qm,_,_) => qm.get_filter(),
+      _ => None,
+    }
+  }
+}
+
 
 impl<P : Peer, PR, V : KeyVal, VR> ApiQueriable for KVStoreCommand<P,PR,V,VR> {
   fn is_api_reply(&self) -> bool {

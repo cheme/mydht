@@ -3,6 +3,11 @@ use std::borrow::Borrow;
 use peer::{PeerMgmtMeths};
 use query::{self,QueryConf,QueryPriority,QueryMode,QueryModeMsg,LastSent,QueryMsg};
 use rules::DHTRules;
+use mydht_base::route2::{
+  RouteBase,
+  RouteBaseMessage,
+  RouteMsgType,
+};
 use kvstore::{
   StoragePriority, 
   KVStore,
@@ -67,6 +72,7 @@ use transport::{
 use kvcache::{
   SlabCache,
   KVCache,
+  Cache,
 };
 use self::peermgmt::{
   PeerMgmtCommand,
@@ -143,7 +149,6 @@ macro_rules! send_with_handle_log {
 }
 
 
-
 pub mod mesgs;
 
 mod mainloop;
@@ -151,6 +156,7 @@ pub mod api;
 pub mod deflocal;
 pub mod storeprop;
 mod server2;
+pub mod noservice;
 mod client2;
 mod peermgmt;
 //mod server;
@@ -195,7 +201,6 @@ impl<T, U> OptInto<U> for T where U: OptFrom<T>
     U::opt_from(self)
   }
 }
-
 pub struct MyDHTService<MC : MyDHTConf>(pub MC, pub MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>, pub <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply<MC>>>::Send,pub MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>);
 
 #[derive(Clone,Eq,PartialEq)]
@@ -259,15 +264,48 @@ pub enum MainLoopReply<MC : MyDHTConf> {
   /// TODO
   Ended,
 }
-
+/// TODO RouteBase trait
 pub trait Route<MC : MyDHTConf> {
   /// if set to true, all function return an expected error and result is receive as a mainloop
   /// command containing the message and tokens
+  /// TODO seems useless : route service like peermgmt service not implemented yet + should be in
+  /// MDHT trait -> remove for now
   const USE_SERVICE : bool = false;
   /// return an array of write token as dest TODO refactor to return iterator?? (avoid vec aloc,
   /// allow nice implementation for route)
   /// second param usize is targetted nb forward
-  fn route(&mut self, usize, MCCommand<MC>,&MC::Slab, &MC::PeerCache) -> Result<(MCCommand<MC>,Vec<usize>)>;
+  /// Mut on peer cache is to allow usage of special peer cache implementing routing (see for
+  /// instance trait RouteCacheBase), same for slab
+  fn route(&mut self, usize, MCCommand<MC>,&mut MC::Slab, &mut MC::PeerCache) -> Result<(MCCommand<MC>,Vec<usize>)>;
+}
+
+/// Route to use if Peer Cache implements RouteBase trait
+pub struct PeerCacheRouteBase;
+impl<MC : MyDHTConf> Route<MC> for PeerCacheRouteBase
+  where 
+    MC::LocalServiceCommand : RouteBaseMessage<MC::Peer>,
+    MC::GlobalServiceCommand : RouteBaseMessage<MC::Peer>,
+    MC::PeerCache : RouteBase<MC::Peer,MC::PeerRef,PeerCacheEntry<MC::PeerRef>>,
+{
+  const USE_SERVICE : bool = false;
+//pub trait RouteBase<P : Peer,GP : GetPeerRef<P>, C : KVCache<<P as KeyVal>::Key,GP>,LOC : RouteBaseMessage<P>> {
+  fn route(&mut self, nb : usize, mcc : MCCommand<MC>, slab : &mut MC::Slab, cache : &mut MC::PeerCache) -> Result<(MCCommand<MC>,Vec<usize>)> {
+    Ok(match mcc {
+      MCCommand::Local(c) => {
+        let (c,r) = cache.route_base(nb,c,RouteMsgType::Local)?;
+        (MCCommand::Local(c),r)
+      },
+      MCCommand::Global(c) => {
+        let (c,r) = cache.route_base(nb,c,RouteMsgType::Global)?;
+        (MCCommand::Global(c),r)
+      },
+      MCCommand::PeerStore(c) => {
+        let (c,r) = cache.route_base(nb,c,RouteMsgType::PeerStore)?;
+        (MCCommand::PeerStore(c),r)
+      },
+      c @ MCCommand::TryConnect(..) => (c,Vec::new()),
+    })
+  }
 }
 
 pub enum MCCommand<MC : MyDHTConf> {
@@ -277,6 +315,11 @@ pub enum MCCommand<MC : MyDHTConf> {
   /// TODO must add peer key
   TryConnect(<MC::Peer as Peer>::Address,Option<ApiQueryId>),
 }
+
+
+
+
+
 
 impl<MC : MyDHTConf> MCCommand<MC> {
   pub fn get_api_reply(&self) -> Option<ApiQueryId> {
@@ -447,12 +490,12 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// in mydhtconf even if this const is set to false.
   const USE_API_SERVICE : bool = true;
   /// Name of the main thread
-  const loop_name : &'static str = "MyDHT Main Loop";
+  const LOOP_NAME : &'static str = "MyDHT Main Loop";
   /// number of events to poll (size of mio `Events`)
-  const events_size : usize = 1024;
+  const EVENTS_SIZE : usize = 1024;
   /// number of iteration before send loop return, 1 is suggested, but if thread are involve a
   /// little more should be better, in a pool infinite (0) could be fine to.
-  const send_nb_iter : usize;
+  const SEND_NB_ITER : usize;
   const GLOBAL_NB_ITER : usize = 0;
   const PEERSTORE_NB_ITER : usize = 0;
   const API_NB_ITER : usize = 0;
@@ -480,16 +523,17 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// or Copy.
   type PeerRef : Ref<Self::Peer> + Serialize + DeserializeOwned;
   /// Peer management methods 
-  type PeerMgmtMeths : PeerMgmtMeths<Self::Peer> + Clone;
+  type PeerMgmtMeths : PeerMgmtMeths<Self::Peer>;
   /// Dynamic rules for the dht
   type DHTRules : DHTRules + Clone;
   /// loop slab implementation
   type Slab : SlabCache<RWSlabEntry<Self>>;
   /// local cache for peer
-  type PeerCache : KVCache<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
+  type PeerCache : Cache<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
   /// local cache for auth challenges
-  type ChallengeCache : KVCache<Vec<u8>,ChallengeEntry<Self>>;
+  type ChallengeCache : Cache<Vec<u8>,ChallengeEntry<Self>>;
   
+  /// Warning peermgmt service is not implemented, this is simply a placeholder
   type PeerMgmtChannelIn : SpawnChannel<PeerMgmtCommand<Self>>;
   type ReadChannelIn : SpawnChannel<ReadCommand>;
   //type ReadChannelIn : SpawnChannel<<Self::ReadService as Service>::CommandIn>;
@@ -502,6 +546,9 @@ pub trait MyDHTConf : 'static + Send + Sized
     DefaultRecv<ReadCommand,
       <Self::ReadChannelIn as SpawnChannel<ReadCommand>>::Recv>>;
 
+  /// TODO This is currently a dummy dest, a static WriteDest similar to ReadDest must be use instead
+  /// Currently mainloop seems to be the only dest for technical message (Nothing clear yet)
+  /// TODO replace by NoSend instead (looks like the use case)??
   type WriteDest : SpawnSend<WriteReply<Self>> + Clone;
   type WriteChannelIn : SpawnChannel<WriteCommand<Self>>;
 //  type WriteFrom : SpawnRecv<<Self::WriteService as Service>::CommandIn>;
@@ -516,7 +563,7 @@ pub trait MyDHTConf : 'static + Send + Sized
 
 
 
-  /// application protomsg used immediatly by local service
+  /// application protomsg used immediatly by local service TODO trait alias
   type ProtoMsg : Into<MCCommand<Self>> + SettableAttachments + GettableAttachments + OptFrom<MCCommand<Self>>;
 //  type ProtoMsgSend : GettableAttachments + OptFromRef<'a,MCCommand<Self>>;
   // ProtoMsgSend variant (content not requiring ownership)
@@ -619,7 +666,7 @@ pub trait MyDHTConf : 'static + Send + Sized
     // the  spawn loop is not use, the poll loop is : here we run a single loop without receive
     sp.spawn(service, NoSend, Some(MainLoopCommand::Start), NoRecv, 1)?; 
     // TODO replace this shit by a spawner then remove constraint on MDht trait where
-  /*  ThreadBuilder::new().name(Self::loop_name.to_string()).spawn(move || {
+  /*  ThreadBuilder::new().name(Self::LOOP_NAME.to_string()).spawn(move || {
       let mut state = self.init_state(r)?;
       let mut yield_spawn = NoYield(YieldReturn::Loop);
       let r = state.main_loop(&mut yield_spawn);

@@ -33,11 +33,10 @@ impl KeyVal for Node {
   fn get_key(& self) -> NodeID {
     self.nodeid.clone()
   }
-/* 
   #[inline]
-  fn get_key_ref<'a>(&'a self) -> &'a NodeID {
+  fn get_key_ref(&self) -> &NodeID {
     &self.nodeid
-  }*/
+  }
   noattachment!();
 }
 

@@ -31,8 +31,8 @@ pub trait Peer : KeyVal + 'static {
   type Address : Address;
   type ShadowWAuth : ExtWrite;
   type ShadowRAuth : ExtRead;
-  type ShadowWMsg : ExtWrite;
-  type ShadowRMsg : ExtRead;
+  type ShadowWMsg : ExtWrite + Send;
+  type ShadowRMsg : ExtRead + Send;
   fn get_address (&self) -> &Self::Address;
  // TODO rename to get_address or get_address_clone, here name is realy bad
   // + see if a ref returned would not be best (same limitation as get_key for composing types in

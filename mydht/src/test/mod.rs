@@ -1,19 +1,66 @@
 //! Tests, unitary tests are more likely to be found in their related package, here is global
 //! testing.
 extern crate mydht_inefficientmap;
+extern crate mydht_slab;
+
+
+use mydhtresult::Result;
+use std::result::Result as StdResult;
+use rules::DHTRules;
+use transport::Transport;
 use procs::{
-  MCReply,
+  PeerCacheEntry,
+  ChallengeEntry,
 };
-use procs::api::{
-  ApiResult,
+use procs::deflocal::{
+  LocalReply,
 };
- 
-use std::sync::{
-  Arc,
-};
+use utils;
 use utils::{
+  OneResult,
   new_oneresult,
   clone_wait_one_result,
+  Ref,
+  ArcRef,
+  RcRef,
+  CloneRef,
+
+};
+use std::time::Instant;
+use std::time::Duration;
+use std::mem::replace;
+use std::marker::PhantomData;
+use std::collections::HashMap;
+use procs::storeprop::{
+  KVStoreService,
+  KVStoreCommand,
+  KVStoreReply,
+  KVStoreProtoMsgWithPeer,
+};
+use query::simplecache::{
+  SimpleCacheQuery,
+  HashMapQuery,
+};
+
+use procs::{
+  MCCommand,
+  MCReply,
+  PeerCacheRouteBase,
+  RWSlabEntry,
+  OptInto,
+  OptFrom,
+};
+use procs::api::{
+  Api,
+  ApiReply,
+  ApiResult,
+  ApiQueriable,
+  ApiQueryId,
+  ApiRepliable,
+};
+
+use std::sync::{
+  Arc,
 };
 use procs::{
   ApiCommand,
@@ -24,12 +71,16 @@ use peer::{
 use procs::api::{
   ApiSendIn,
 };
+use self::mydht_slab::slab::{
+  Slab,
+};
+
 use std::thread;
 use DHT;
 use std::hash::Hash;
 use simplecache::SimpleCache;
-use query::simplecache::SimpleCacheQuery;
 use self::mydht_inefficientmap::inefficientmap::Inefficientmap;
+use self::mydht_inefficientmap::inefficientmap::InefficientmapBase2;
 use self::mydht_inefficientmap::inefficientmap::new as new_inmap;
 use rules::simplerules::{SimpleRules,DhtRules};
 use procs::{
@@ -42,9 +93,56 @@ use peer::test::{
   PeerTest,
   ShadowModeTest,
 };
-use keyval::KeyVal;
+use keyval::{
+  KeyVal,
+  GettableAttachments,
+  SettableAttachments,
+};
 use rand::{thread_rng,Rng};
-use query::{QueryConf,QueryMode,QueryPriority};
+use query::{QueryConf,QueryMode};
+use query::{
+  Query,
+  QReply,
+  QueryID,
+  QueryModeMsg,
+  QueryMsg,
+  PropagateMsg,
+  QueryPriority,
+};
+use procs::noservice::{
+  NoCommandReply,
+};
+use service::{
+  NoService,
+  NoSpawn,
+  Service,
+  MioChannel,
+  SpawnChannel,
+  MpscChannel,
+  MpscChannelRef,
+  NoChannel,
+  NoRecv,
+  LocalRcChannel,
+  SpawnerYield,
+  SpawnSend,
+  LocalRc,
+ // MpscSender,
+  NoSend,
+
+  Spawner,
+  Blocker,
+  RestartOrError,
+  Coroutine,
+  RestartSameThread,
+  ThreadBlock,
+  ThreadPark,
+  ThreadParkRef,
+
+  CpuPool,
+  CpuPoolFuture,
+};
+
+
 use kvstore::StoragePriority;
 use msgenc::json::Json;
 use utils::ArcKV;
@@ -384,7 +482,7 @@ fn testpeer2hopgetheavylocal () {
     rules.nbhopfact = 3;
     rules.heavyaccept = true;
     let peers = initpeers_test(n, map, TestingRules::new_small_delay_heavy_accept(Some(100)), rules, None);
-    finddistantpeer(peers,n,(*m).clone(),1,map,true); 
+    finddistantpeer(peers,n,(*m).clone(),1,map,true);
   }
 }
 #[test]
@@ -397,7 +495,7 @@ fn testpeer2hopgetheavylocalspawn () {
     rules.nbhopfact = 3;
     rules.heavyaccept = true;
     let peers = initpeers_test(n, map, TestingRules::new_small_delay_heavy_accept(Some(100)), rules, None);
-    finddistantpeer(peers,n,(*m).clone(),1,map,true); 
+    finddistantpeer(peers,n,(*m).clone(),1,map,true);
   }
 }
 
@@ -411,7 +509,7 @@ fn testpeer2hopgetmultpool () {
     rules.nbhopfact = 3;
     rules.nbqueryfact = 5.0;
     let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, None);
-    finddistantpeer(peers,n,(*m).clone(),1,map,true); 
+    finddistantpeer(peers,n,(*m).clone(),1,map,true);
   }
 }
 #[test]
@@ -424,7 +522,7 @@ fn testpeer2hopgetmultmax () {
     rules.nbhopfact = 3;
     rules.nbqueryfact = 5.0;
     let peers = initpeers_test(n, map, TestingRules::new_no_delay(), rules, None);
-    finddistantpeer(peers,n,(*m).clone(),1,map,true); 
+    finddistantpeer(peers,n,(*m).clone(),1,map,true);
   }
 }
 
@@ -612,25 +710,243 @@ where <RT as RunningTypes>::M : Clone,
 
 }
 
-struct TestConf<P,T> {
+struct TestConf<P,T,ENC,PM,DR> {
   pub me : P,
   pub others : Vec<P>,
-  pub transport : T,
+  // transport in conf is bad, but flexible (otherwhise we could not be generic as we would need
+  // transport initialisation parameter in struct : not only address for transport test).
+  // Furthermore it makes the conf usable only once.
+  pub transport : Option<T>,
+  pub msg_enc : ENC,
+  pub peer_mgmt : PM,
+  pub rules : DR,
 }
 
-fn initpeers2<MC : MyDHTConf> (nodes : Vec<MC::Peer>, transports : Vec<MC::Transport>, map : &[&[usize]], conf : MC, sim : Option<u32>) -> Vec<(MC::Peer, ApiSendIn<MC>)> 
+//type RunningTypes1 = RunningTypesImpl<LocalAdd, PeerTest, PeerTest, TestingRules, SimpleRules, Json, TransportTest>;
+impl<
+  P : Peer,
+  T : Transport<Address = <P as Peer>::Address>,
+  ENC : MsgEnc<P, KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>>,
+  PM : PeerMgmtMeths<P>,
+  DR : DHTRules + Clone,
+  > MyDHTConf for TestConf<P,T,ENC,PM,DR> 
+where <P as KeyVal>::Key : Hash
+{
+  const SEND_NB_ITER : usize = 10;
+
+  type MainloopSpawn = ThreadPark;
+  type MainLoopChannelIn = MpscChannel;
+  type MainLoopChannelOut = MpscChannel;
+
+  type Transport = T;
+  type MsgEnc = ENC;
+  type Peer = P;
+  type PeerRef = ArcRef<P>;
+  type PeerMgmtMeths = PM;
+  type DHTRules = DR;
+  type Slab = Slab<RWSlabEntry<Self>>;
+
+  type PeerCache = InefficientmapBase2<Self::Peer, Self::PeerRef, PeerCacheEntry<Self::PeerRef>,
+    HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>>;
+  type ChallengeCache = HashMap<Vec<u8>,ChallengeEntry<Self>>;
+  type PeerMgmtChannelIn = MpscChannel;
+  type ReadChannelIn = MpscChannel;
+  type ReadSpawn = ThreadPark;
+  // Placeholder
+  type WriteDest = NoSend;
+  type WriteChannelIn = MpscChannel;
+  type WriteSpawn = ThreadPark;
+  type Route = PeerCacheRouteBase;
+
+  // keep val of global service to peer
+  type ProtoMsg = KVStoreProtoMsgWithPeer<Self::Peer,Self::PeerRef,Self::Peer,Self::PeerRef>;
+  //PMES : Into<MCCommand<TestConf<P,T,ENC,PM,DR>>> + SettableAttachments + GettableAttachments + OptFrom<MCCommand<TestConf<P,T,ENC,PM,DR>>>,
+
+
+  nolocal!();
+
+  type GlobalServiceCommand = KVStoreCommand<Self::Peer,Self::PeerRef,Self::Peer,Self::PeerRef>;
+  type GlobalServiceReply = KVStoreReply<Self::PeerRef>;
+  /// Same as internal peerstore
+  type GlobalService = KVStoreService<Self::Peer,Self::PeerRef,Self::Peer,Self::PeerRef,Self::PeerKVStore,Self::DHTRules,Self::PeerStoreQueryCache>;
+  type GlobalServiceSpawn = ThreadPark;
+  type GlobalServiceChannelIn = MpscChannel;
+
+  type ApiReturn = OneResult<(Vec<ApiResult<Self>>,usize,usize)>;
+  type ApiService = Api<Self,HashMap<ApiQueryId,(OneResult<(Vec<ApiResult<Self>>,usize,usize)>,Instant)>>;
+  type ApiServiceSpawn = ThreadPark;
+  type ApiServiceChannelIn = MpscChannel;
+
+  type PeerStoreQueryCache = SimpleCacheQuery<Self::Peer,Self::PeerRef,Self::PeerRef,HashMapQuery<Self::Peer,Self::PeerRef,Self::PeerRef>>;
+  type PeerKVStore = SimpleCache<Self::Peer,HashMap<<Self::Peer as KeyVal>::Key,Self::Peer>>;
+  type PeerStoreServiceSpawn = ThreadPark;
+  type PeerStoreServiceChannelIn = MpscChannel;
+ 
+  fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>> {
+    Ok(Box::new(
+      ||{
+        Ok(SimpleCache::new(None))
+      }
+    ))
+  }
+  fn init_peer_kvstore_query_cache(&mut self) -> Result<Self::PeerStoreQueryCache> {
+    // non random id
+    Ok(SimpleCacheQuery::new(false))
+  }
+  fn init_peerstore_channel_in(&mut self) -> Result<Self::PeerStoreServiceChannelIn> {
+    Ok(MpscChannel)
+  }
+  fn init_peerstore_spawner(&mut self) -> Result<Self::PeerStoreServiceSpawn> {
+    Ok(ThreadPark)
+  }
+//impl<P : Peer, V : KeyVal, RP : Ref<P>> SimpleCacheQuery<P,V,RP,HashMapQuery<P,V,RP>> {
+// QueryCache<Self::Peer,Self::PeerRef,Self::PeerRef>;
+  fn init_ref_peer(&mut self) -> Result<Self::PeerRef> {
+    Ok(ArcRef::new(self.me.clone()))
+  }
+  fn get_main_spawner(&mut self) -> Result<Self::MainloopSpawn> {
+    //Ok(Blocker)
+    Ok(ThreadPark)
+//      Ok(ThreadParkRef)
+  }
+
+  fn init_main_loop_slab_cache(&mut self) -> Result<Self::Slab> {
+    Ok(Slab::new())
+  }
+  fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache> {
+    Ok(InefficientmapBase2::new(HashMap::new()))
+  }
+  fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache> {
+    Ok(HashMap::new())
+  }
+
+
+  fn init_main_loop_channel_in(&mut self) -> Result<Self::MainLoopChannelIn> {
+    Ok(MpscChannel)
+    //Ok(MpscChannelRef)
+  }
+  fn init_main_loop_channel_out(&mut self) -> Result<Self::MainLoopChannelOut> {
+    Ok(MpscChannel)
+  }
+
+
+  fn init_read_spawner(&mut self) -> Result<Self::ReadSpawn> {
+    Ok(ThreadPark)
+    //Ok(Blocker)
+  }
+
+  fn init_write_spawner(&mut self) -> Result<Self::WriteSpawn> {
+    Ok(ThreadPark)
+    //Ok(Blocker)
+  }
+
+  fn init_global_spawner(&mut self) -> Result<Self::GlobalServiceSpawn> {
+    Ok(ThreadPark)
+    //Ok(Blocker)
+  }
+
+
+  fn init_write_spawner_out() -> Result<Self::WriteDest> {
+    Ok(NoSend)
+  }
+  fn init_read_channel_in(&mut self) -> Result<Self::ReadChannelIn> {
+    Ok(MpscChannel)
+  }
+  fn init_write_channel_in(&mut self) -> Result<Self::WriteChannelIn> {
+//      Ok(LocalRcChannel)
+    Ok(MpscChannel)
+  }
+  fn init_peermgmt_channel_in(&mut self) -> Result<Self::PeerMgmtChannelIn> {
+    Ok(MpscChannel)
+  }
+
+
+  fn init_enc_proto(&mut self) -> Result<Self::MsgEnc> {
+    Ok(self.msg_enc.clone())
+  }
+
+  fn init_transport(&mut self) -> Result<Self::Transport> {
+    Ok(replace(&mut self.transport,None).unwrap())
+  }
+  fn init_peermgmt_proto(&mut self) -> Result<Self::PeerMgmtMeths> {
+    Ok(self.peer_mgmt.clone())
+  }
+  fn init_dhtrules_proto(&mut self) -> Result<Self::DHTRules> {
+    Ok(self.rules.clone())
+  }
+
+  fn init_global_service(&mut self) -> Result<Self::GlobalService> {
+    Ok(KVStoreService {
+      // second ref create here due to P genericity (P is in conf : RefPeer should be in conf : but
+      // for testing purpose we do it this way)
+      me : self.init_ref_peer()?,
+      init_store : self.init_peer_kvstore()?,
+      store : None,
+      dht_rules : self.init_dhtrules_proto()?,
+      query_cache : self.init_peer_kvstore_query_cache()?,
+      _ph : PhantomData,
+    })
+  }
+
+  fn init_global_channel_in(&mut self) -> Result<Self::GlobalServiceChannelIn> {
+    Ok(MpscChannel)
+  }
+
+  fn init_route(&mut self) -> Result<Self::Route> {
+    Ok(PeerCacheRouteBase)
+  }
+
+  fn init_api_service(&mut self) -> Result<Self::ApiService> {
+    Ok(Api(HashMap::new(),Duration::from_millis(3000),0,PhantomData))
+  }
+
+  fn init_api_channel_in(&mut self) -> Result<Self::ApiServiceChannelIn> {
+    Ok(MpscChannel)
+  }
+  fn init_api_spawner(&mut self) -> Result<Self::ApiServiceSpawn> {
+    Ok(ThreadPark)
+    //Ok(Blocker)
+  }
+
+}
+/*     
+ *     Arc::new(peer),
+       TestingRules::new_no_delay(),
+       SimpleRules::new(dhtrules.clone()),
+       Json,
+       transports.pop().unwrap(),
+*/
+// SimpleRules missing only for RunningType1
+fn confinitpeers1(me : PeerTest, others : Vec<PeerTest>, transport : TransportTest, meths : TestingRules, dhtrules : DhtRules) -> TestConf<PeerTest, TransportTest, Json, TestingRules,SimpleRules> {
+  TestConf {
+    me : me,
+    others : others,
+    transport : Some(transport),
+    msg_enc : Json,
+    peer_mgmt : meths,
+    rules : SimpleRules::new(dhtrules),
+
+  }
+}
+//struct TestConf<P,T,ENC,PM,DR> {
+fn initpeers2<P : Peer, T : Transport<Address = <P as Peer>::Address>> (nodes : Vec<P>, transports : Vec<T>, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u32>) 
+  -> Vec<(P, ApiSendIn< TestConf<P,T,Json,TestingRules,SimpleRules>  >)> 
+  where  <P as KeyVal>::Key : Hash 
   {
   let mut i = 0;// TODO redesign with zip of map and nodes iter
-  let result : Vec<(MC::Peer, ApiSendIn<MC>, Vec<MC::Peer>)> = transports.into_iter().map(|t|{
+  let mut result : Vec<(P, ApiSendIn<TestConf<P,T,Json,TestingRules,SimpleRules>>, Vec<P>)> = transports.into_iter().map(|t|{
     let n = nodes.get(i).unwrap();
     info!("node : {:?}", n);
     println!("{:?}",map[i]);
-    let bpeers : Vec<MC::Peer> = map[i].iter().map(|j| nodes.get(*j-1).unwrap().clone()).collect();
+    let bpeers : Vec<P> = map[i].iter().map(|j| nodes.get(*j-1).unwrap().clone()).collect();
     i += 1;
     let test_conf = TestConf {
       me : n.clone(),
       others : bpeers.clone(),
-      transport : t, 
+      transport : Some(t), 
+      msg_enc : Json,
+      peer_mgmt : meths.clone(),
+      rules : SimpleRules::new(rules.clone()),
     };
 
     let (sendcommand,_) = test_conf.start_loop().unwrap();
@@ -638,21 +954,21 @@ fn initpeers2<MC : MyDHTConf> (nodes : Vec<MC::Peer>, transports : Vec<MC::Trans
    }).collect();
    if sim.is_some() {
      // all has started
-     for n in result.iter(){
+     for n in result.iter_mut(){
        thread::sleep_ms(100); // local get easily stuck
        let refresh_command = ApiCommand::refresh_peer(10000); // Warn hard coded value.
-       n.0.send(refresh_command).unwrap();
+       n.1.send(refresh_command).unwrap();
      };
      // ping established
      thread::sleep_ms(sim.unwrap());
    } else {
      //establish connection by peerping of bpeers and wait result : no need to sleep
-     for n in result.iter(){
+     for n in result.iter_mut(){
        for p in n.2.iter(){
          let o_res = new_oneresult((Vec::with_capacity(1),1,1));
          // TODO wait for reply
-         let connect_command = ApiCommand::try_connect_reply(p.get_address().clone(),o_res);
-         n.0.send(connect_command).unwrap();
+         let connect_command = ApiCommand::try_connect_reply(p.get_address().clone(),o_res.clone());
+         n.1.send(connect_command).unwrap();
          let o_res = clone_wait_one_result(&o_res,None).unwrap();
          assert!(o_res.0.len() == 1);
          for v in o_res.0.iter() {
@@ -775,7 +1091,7 @@ fn testpeer2hopstoreval () {
     let queryconf = QueryConf {
       mode : conf.clone(), 
 //      chunk : QueryChunk::None, 
-      hop_hist : Some((4,true))
+      hop_hist : Some((4,true)),
     };
     assert!(dest.store_val(val.clone(), &queryconf, prio, StoragePriority::Local));
     // prio 3 so 3 * 1 = 0

@@ -697,11 +697,11 @@ impl<KV : KeyVal> KeyVal for ArcKV<KV> {
   #[inline]
   fn get_key(&self) -> <KV as KeyVal>::Key {
     self.0.get_key()
-  }/*
+  }
   #[inline]
-  fn get_key_ref<'a>(&'a self) -> &'a <KV as KeyVal>::Key {
+  fn get_key_ref(&self) -> &<KV as KeyVal>::Key {
     self.0.get_key_ref()
-  }*/
+  }
   #[inline]
   fn get_attachment(&self) -> Option<&Attachment> {
     self.0.get_attachment() 

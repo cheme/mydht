@@ -38,6 +38,7 @@ pub trait SlabCache<E> {
 }
 
 /// cache base trait to use in storage (transient or persistant) relative implementations
+/// TODO simplify after refact (delete??)
 pub trait KVCache<K, V> : Sized + Cache<K,V> {
   /// update value, possibly inplace (depending upon impl (some might just get value modify it and
   /// set it again)), return true if update effective

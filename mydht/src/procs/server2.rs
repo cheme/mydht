@@ -365,6 +365,10 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
   }
 }
 /// command for readservice
+/// TODO a command to close read service cleanly (on peer refused for instance)
+/// TODO a command to send weakchannel of write : probably some issue with threading here as a once
+/// op : use of Box seems fine -> might be studier to end and restart with same state
+/// Currently the channel in is not even use (Run send as first command)
 #[derive(Clone)]
 pub enum ReadCommand {
   Run,

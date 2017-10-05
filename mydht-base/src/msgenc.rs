@@ -27,7 +27,8 @@ use self::send_variant::ProtoMessage as ProtoMessageSend;
 /// Trait for message encoding between peers.
 /// It use bytes which will be used by transport.
 /// TODO split in read/write and make mut??
-pub trait MsgEnc<P : Peer,M> : Send + Sync + 'static {
+/// TODO why sync
+pub trait MsgEnc<P : Peer,M> : Send + Sync + 'static + Clone {
   //fn encode<P : Peer, V : KeyVal>(&self, &ProtoMessage<P,V>) -> Option<Vec<u8>>;
   
   /// encode

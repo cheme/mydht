@@ -76,6 +76,7 @@ pub trait KeyVal : Serialize + DeserializeOwned + fmt::Debug + Clone + Send + Sy
   fn attachment_expected_size(&self) -> usize {
     0
   }
+  fn get_key_ref(&self) -> &Self::Key;
   /// getter for key value
   fn get_key(&self) -> Self::Key;
   /* Get key ref usage is of for type like enum over multiple keyval or other key with calculated

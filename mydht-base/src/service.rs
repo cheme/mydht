@@ -206,6 +206,21 @@ pub trait Service {
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut>;
 }
 
+pub struct NoService<I,O>(PhantomData<(I,O)>);
+impl<CIN,COUT> NoService<CIN,COUT> {
+  pub fn new() -> Self { NoService(PhantomData) }
+}
+impl<CIN,COUT> Clone for NoService<CIN,COUT> {
+  fn clone(&self) -> Self { NoService(PhantomData) }
+}
+impl<CIN,COUT> Service for NoService<CIN,COUT> {
+  type CommandIn = CIN;
+  type CommandOut = COUT;
+
+  fn call<S : SpawnerYield>(&mut self, _: Self::CommandIn, _ : &mut S) -> Result<Self::CommandOut> {
+    panic!("No service called : please use a dummy spawner with no service")
+  }
+}
 
 /// 
 /// SpawnHandle allow management of service from outside.
@@ -560,14 +575,60 @@ impl<C : Clone, CH : SpawnChannel<C>> SpawnChannel<C> for DefaultRecvChannel<C,C
     Ok((s,DefaultRecv(r,self.1.clone())))
   }
 }
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub struct NoChannel;
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub struct NoRecv;
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub struct NoSend;
+#[derive(Clone,Debug)]
+pub struct NoSpawn;
+#[derive(Clone,Debug)]
+pub struct NoHandle;
 
 sref_send_clone!(NoSend);
+
+
+
+impl<S : Service,
+  D : SpawnSend<<S as Service>::CommandOut>,
+  R : SpawnRecv<<S as Service>::CommandIn>>
+  Spawner<S,D,R> for NoSpawn {
+  type Handle = NoHandle;
+  type Yield = NoYield;
+  fn spawn (
+    &mut self,
+    _ : S,
+    _ : D,
+    _ : Option<<S as Service>::CommandIn>,
+    _ : R,
+    _ : usize // infinite if 0
+  ) -> Result<Self::Handle> {
+    Ok(NoHandle)
+  }
+}
+
+impl SpawnUnyield for NoHandle {
+  fn is_finished(&mut self) -> bool {
+    false
+  }
+  fn unyield(&mut self) -> Result<()> {
+    Ok(())
+  }
+}
+
+impl<S : Service,
+  D : SpawnSend<<S as Service>::CommandOut>,
+  R : SpawnRecv<<S as Service>::CommandIn>>
+  SpawnHandle<S,D,R> for NoHandle {
+  type WeakHandle = NoHandle;
+  fn unwrap_state(self) -> Result<(S,D,R,Result<()>)> {
+    unreachable!("check is_finished before : No spawn is never finished");
+  }
+  fn get_weak_handle(&self) -> Option<Self::WeakHandle> {
+    Some(NoHandle)
+  }
+}
 
 impl<C> SpawnChannel<C> for NoChannel {
   type Send = NoSend;

@@ -3,6 +3,7 @@
 //! Usage of mydht library requires to create a struct implementing the MyDHTConf trait, by linking with suitable inner trait implementation and their requires component.
 use std::clone::Clone;
 use log;
+use mydht_base::route2::GetPeerRef;
 use std::borrow::Borrow;
 use query::{
   QueryPriority,
@@ -653,7 +654,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           debug!("Forward of service, some peer where unconnected and skip : init {:?}, send {:?}",ol,ovl);
         }
         let (sg,dests) = if nb_for > 0 {
-          let (sg, mut dests) = self.route.route(nb_for,sg,&self.slab_cache, &self.peer_cache)?;
+          let (sg, mut dests) = self.route.route(nb_for,sg,&mut self.slab_cache, &mut self.peer_cache)?;
           ovp.map(|ref mut vp| dests.append(vp));
           okad.map(|ref mut vp| dests.append(vp));
           (sg,dests)
@@ -825,9 +826,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
   pub fn main_loop<S : SpawnerYield>(&mut self,rec : &mut MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>, mlsend : &mut <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply<MC>>>::Send, req: MainLoopCommand<MC>, async_yield : &mut S) -> Result<()> {
    let mut events = if self.events.is_some() {
      let oevents = replace(&mut self.events,None);
-     oevents.unwrap_or(Events::with_capacity(MC::events_size))
+     oevents.unwrap_or(Events::with_capacity(MC::EVENTS_SIZE))
    } else {
-     Events::with_capacity(MC::events_size)
+     Events::with_capacity(MC::EVENTS_SIZE)
    };
    self.inner_main_loop(rec, mlsend, req, async_yield, &mut events).map_err(|e|{
      self.events = Some(events);
@@ -1059,7 +1060,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               // dest is unknown TODO check if still relevant with other use case (read side we allow
               // dest peer as rs could result from a connection with an identified peer)
               let write_service = WriteService::new(write_token,ws,self.me.clone(),with, self.enc_proto.clone(),self.peermgmt_proto.clone());
-              let write_handle = self.write_spawn.spawn(write_service, write_out.clone(), ocin, write_r_in, MC::send_nb_iter)?;
+              let write_handle = self.write_spawn.spawn(write_service, write_out.clone(), ocin, write_r_in, MC::SEND_NB_ITER)?;
               let state = SlabEntryState::WriteSpawned((write_handle,write_s_in));
               replace(e,state);
               None
@@ -1085,7 +1086,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             let (serv,mut sen,recv,result) = handle.unwrap_state()?;
             if result.is_ok() {
               // restart
-              let write_handle = self.write_spawn.spawn(serv, sen, finished, recv, MC::send_nb_iter)?;
+              let write_handle = self.write_spawn.spawn(serv, sen, finished, recv, MC::SEND_NB_ITER)?;
               replace(&mut entry.state, SlabEntryState::WriteSpawned((write_handle,sender)));
               false
             } else {
@@ -1129,7 +1130,11 @@ pub struct PeerCacheEntry<RP> {
   /// peer priority
   prio : Rc<Cell<PeerPriority>>,
 }
-
+impl<P,RP : Ref<P>> GetPeerRef<P,RP> for PeerCacheEntry<RP> {
+  fn get_peer_ref(&self) -> (&P,Option<usize>) {
+    (self.peer.borrow(),self.write.clone())
+  }
+}
 impl<P> PeerCacheEntry<P> {
   pub fn get_read_token(&self) -> Option<usize> {
     self.read.clone()

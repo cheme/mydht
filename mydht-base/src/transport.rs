@@ -175,6 +175,8 @@ pub trait Registerable {
 /// only contain enough information to instantiate needed component (even not sync) in the start
 /// method (plus connect with required info). Some sync may still be needed for connect (sync with
 /// instanciated component in start).
+/// TODO try remove Sync !!! is certainly here to be send between traits (not in use case until
+/// tunnel)
 pub trait Transport : Send + Sync + 'static + Registerable {
   type ReadStream : ReadTransportStream;
   type WriteStream : WriteTransportStream;

@@ -10,11 +10,17 @@ use num::traits::ToPrimitive;
 use std::time::Instant;
 use procs::ClientMode;
 
-pub struct SimpleRules (Mutex<usize>, DhtRules);
+
+
+#[derive(Clone)]
+/// TODO might not require sync anymore
+/// TODO if rules read only make it simply sync??
+/// TODO fuse with DhtRules
+pub struct SimpleRules ((), DhtRules);
 
 impl SimpleRules {
   pub fn new(dr : DhtRules) -> SimpleRules {
-    SimpleRules(Mutex::new(0), dr)
+    SimpleRules((), dr)
   }
 }
 // TODO redesign nbhop nbquery depending on prio put higher prio on big num

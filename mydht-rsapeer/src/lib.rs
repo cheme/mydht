@@ -196,11 +196,10 @@ impl<RT : OpenSSLConf, I : KVCont> KeyVal for RSAPeer<RT,I> {
   fn get_key(&self) -> Vec<u8> {
     self.key.clone()
   }
-/*
   #[inline]
-  fn get_key_ref<'a>(&'a self) -> &'a Vec<u8> {
+  fn get_key_ref(&self) -> &Vec<u8> {
     &self.key
-  }*/
+  }
 
   #[inline]
   fn encode_kv<S:Serializer> (&self, s: S, is_local : bool, _ : bool) -> Result<S::Ok, S::Error> {
