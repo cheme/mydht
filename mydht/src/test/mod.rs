@@ -12,6 +12,9 @@ use procs::{
   PeerCacheEntry,
   ChallengeEntry,
 };
+use kvcache::{
+  KVCache,
+};
 use procs::deflocal::{
   LocalReply,
 };
@@ -143,7 +146,10 @@ use service::{
 };
 
 
-use kvstore::StoragePriority;
+use kvstore::{
+  StoragePriority,
+  KVStore,
+};
 use msgenc::json::Json;
 use utils::ArcKV;
 use peer::PeerMgmtMeths;
@@ -197,7 +203,7 @@ fn simu_aproxy_peer_discovery () {
 //    chunk : QueryChunk::None,
     hop_hist : Some((4,false)),
   };
-  peerconnect_scenario(&qconf, 2, rcs)
+  peerconnect_scenario2 (&qconf, 2, rcs)
 }
 
 #[cfg(feature="with-extra-test")]
@@ -206,7 +212,7 @@ fn simu_amix_proxy_peer_discovery () {
   let nbpeer = 5;
   let mut rules = DHTRULES_DEFAULT.clone();
   rules.nbhopfact = nbpeer - 1;
-  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
+  let rcs = runningcontext1_old(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::AMix(9),
 //    chunk : QueryChunk::None,
@@ -221,7 +227,7 @@ fn simu_asynch_peer_discovery () {
   let nbpeer = 5;
   let mut rules = DHTRULES_DEFAULT.clone();
   rules.nbhopfact = nbpeer - 1;
-  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
+  let rcs = runningcontext1_old(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::Asynch,
 //    chunk : QueryChunk::None,
@@ -236,7 +242,7 @@ fn aproxy_peer_discovery () {
   let nbpeer = 5;
   let mut rules = DHTRULES_DEFAULT.clone();
   rules.nbhopfact = nbpeer - 1;
-  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
+  let rcs = runningcontext1_old(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::AProxy,
 //    chunk : QueryChunk::None,
@@ -250,7 +256,7 @@ fn amix_proxy_peer_discovery () {
   let nbpeer = 6;
   let mut rules = DHTRULES_DEFAULT.clone();
   rules.nbhopfact = nbpeer - 1;
-  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
+  let rcs = runningcontext1_old(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::AMix(9),
 //    chunk : QueryChunk::None,
@@ -264,7 +270,7 @@ fn asynch_peer_discovery () {
   let nbpeer = 9;
   let mut rules = DHTRULES_DEFAULT.clone();
   rules.nbhopfact = nbpeer - 1;
-  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
+  let rcs = runningcontext1_old(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::Asynch,
 //    chunk : QueryChunk::None,
@@ -284,7 +290,39 @@ fn asynch_peer_discovery () {
 */ 
 type RunningTypes1 = RunningTypesImpl<LocalAdd, PeerTest, PeerTest, TestingRules, SimpleRules, Json, TransportTest>;
 
-fn runningcontext1 (nbpeer : usize, dhtrules : DhtRules) -> Vec<RunningContext<RunningTypes1>> {
+/// init with all peers as others : filtering is done in scenario (random removal and remove self)
+fn runningcontext1 (nbpeer : usize, dhtrules : DhtRules) -> Vec<TestConf<PeerTest, TransportTest, Json, TestingRules,SimpleRules>> {
+  // non duplex
+  let mut transports = TransportTest::create_transport(nbpeer,true,true);
+  transports.reverse();
+  let mut rcs = Vec::with_capacity(nbpeer);
+  let mut nodes = Vec::with_capacity(nbpeer);
+  for i in 0 .. nbpeer {
+    let peer = PeerTest {
+         nodeid: "dummyID".to_string() + (&i.to_string()[..]), 
+         address : LocalAdd(i),
+         keyshift : i as u8 + 1,
+         modeshauth : ShadowModeTest::NoShadow,
+         modeshmsg : ShadowModeTest::SimpleShift,
+    };
+
+    nodes.push(peer.clone());
+    let context = confinitpeers1(
+       peer,
+       Vec::with_capacity(nbpeer),
+       transports.pop().unwrap(),
+       TestingRules::new_no_delay(),
+       dhtrules.clone(),
+    );
+    rcs.push(context);
+  };
+  for r in rcs.iter_mut() {
+    r.others = Some(nodes.clone());
+  }
+  rcs
+}
+
+fn runningcontext1_old (nbpeer : usize, dhtrules : DhtRules) -> Vec<RunningContext<RunningTypes1>> {
   // non duplex
   let mut transports = TransportTest::create_transport(nbpeer,true,true);
   transports.reverse();
@@ -309,7 +347,55 @@ fn runningcontext1 (nbpeer : usize, dhtrules : DhtRules) -> Vec<RunningContext<R
   };
   rcs
 }
+ 
+/// ration is 1 for all 2 for half and so on.
+fn peerconnect_scenario2 (queryconf : &QueryConf, knownratio : usize, contexts : Vec<TestConf<PeerTest, TransportTest, Json, TestingRules,SimpleRules>>) {
+  let nodes : Vec<(PeerTest,SimpleRules)> = contexts.iter().map(|c|(c.me.clone(),c.rules.clone())).collect();
+  let mut rng = thread_rng();
+  let mut procs : Vec<ApiSendIn<TestConf<PeerTest,TransportTest,Json,TestingRules,SimpleRules>>> = contexts.into_iter().map(|mut context|{
+    info!("node : {:?}", context.me);
 
+//        rng.shuffle(noderng);
+    let others = replace(&mut context.others, None).unwrap();
+    let bpeers = others.into_iter().filter(|i| (*i != context.me && rng.gen_range(0,knownratio) == 0) ).collect();
+    context.others = Some(bpeers);
+
+//        let mut noderng : &mut [PeerTest] = bpeers.as_slice();
+    let (sendcommand,_) = context.start_loop().unwrap();
+    sendcommand
+  }).collect();
+  // find all node from the first node first node
+  let ref mut fprocs = procs[0];
+
+  let mut itern = nodes.iter();
+  itern.next();
+  for &(ref n,ref rule) in itern {
+    // local find 
+    let nb_res = 1;
+    let o_res = new_oneresult((Vec::with_capacity(nb_res),nb_res,nb_res));
+    // prio is same as nbhop with simple rules
+    let prio = 1;
+    let nb_hop = rule.nbhop(prio);
+    let nb_for = rule.nbquery(prio);
+    let qm = queryconf.query_message(n, nb_res, nb_hop, nb_for, prio);
+    let peer_q = ApiCommand::call_peer_reply(KVStoreCommand::Find(qm,n.get_key(),None),o_res.clone());
+    fprocs.send(peer_q).unwrap();
+    let o_res = clone_wait_one_result(&o_res,None).unwrap();
+    assert!(o_res.0.len() == 1, "Peer not found {:?}", n);
+ 
+  }
+
+  /* TODO uncomment when call_shutdown reply is implemented
+  for p in procs.iter_mut(){
+    let o_res = new_oneresult((Vec::with_capacity(1),1,1));
+    let shutc = ApiCommand::call_shutdown_reply(o_res);
+    let o_res = clone_wait_one_result(&o_res,None).unwrap();
+    assert!(o_res.0.len() == 1, "Fail shutdown");
+  }
+  */
+
+
+}
 /// ration is 1 for all 2 for half and so on.
 fn peerconnect_scenario<RT : RunningTypes> (queryconf : &QueryConf, knownratio : usize, contexts : Vec<RunningContext<RT>>) 
 where <RT:: P as KeyVal>::Key : Ord + Hash,
@@ -712,7 +798,7 @@ where <RT as RunningTypes>::M : Clone,
 
 struct TestConf<P,T,ENC,PM,DR> {
   pub me : P,
-  pub others : Vec<P>,
+  pub others : Option<Vec<P>>,
   // transport in conf is bad, but flexible (otherwhise we could not be generic as we would need
   // transport initialisation parameter in struct : not only address for transport test).
   // Furthermore it makes the conf usable only once.
@@ -720,6 +806,7 @@ struct TestConf<P,T,ENC,PM,DR> {
   pub msg_enc : ENC,
   pub peer_mgmt : PM,
   pub rules : DR,
+  pub do_peer_query_forward_with_discover : bool,
 }
 
 //type RunningTypes1 = RunningTypesImpl<LocalAdd, PeerTest, PeerTest, TestingRules, SimpleRules, Json, TransportTest>;
@@ -783,12 +870,24 @@ where <P as KeyVal>::Key : Hash
   type PeerStoreServiceChannelIn = MpscChannel;
  
   fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>> {
+    let others = self.others.clone().unwrap();
     Ok(Box::new(
-      ||{
-        Ok(SimpleCache::new(None))
+      move ||{
+        let others = others.clone();
+        let mut sc = SimpleCache::new(None);
+        println!("init kvstore with nb val {}",others.len());
+        for o in others.into_iter() {
+          sc.add_val(o,None);
+        }
+
+        Ok(sc)
       }
     ))
   }
+  fn do_peer_query_forward_with_discover(&self) -> bool {
+    self.do_peer_query_forward_with_discover
+  }
+  
   fn init_peer_kvstore_query_cache(&mut self) -> Result<Self::PeerStoreQueryCache> {
     // non random id
     Ok(SimpleCacheQuery::new(false))
@@ -884,6 +983,7 @@ where <P as KeyVal>::Key : Hash
       store : None,
       dht_rules : self.init_dhtrules_proto()?,
       query_cache : self.init_peer_kvstore_query_cache()?,
+      discover : self.do_peer_query_forward_with_discover(),
       _ph : PhantomData,
     })
   }
@@ -920,12 +1020,12 @@ where <P as KeyVal>::Key : Hash
 fn confinitpeers1(me : PeerTest, others : Vec<PeerTest>, transport : TransportTest, meths : TestingRules, dhtrules : DhtRules) -> TestConf<PeerTest, TransportTest, Json, TestingRules,SimpleRules> {
   TestConf {
     me : me,
-    others : others,
+    others : Some(others),
     transport : Some(transport),
     msg_enc : Json,
     peer_mgmt : meths,
     rules : SimpleRules::new(dhtrules),
-
+    do_peer_query_forward_with_discover : true,
   }
 }
 //struct TestConf<P,T,ENC,PM,DR> {
@@ -942,11 +1042,12 @@ fn initpeers2<P : Peer, T : Transport<Address = <P as Peer>::Address>> (nodes : 
     i += 1;
     let test_conf = TestConf {
       me : n.clone(),
-      others : bpeers.clone(),
+      others : Some(bpeers.clone()),
       transport : Some(t), 
       msg_enc : Json,
       peer_mgmt : meths.clone(),
       rules : SimpleRules::new(rules.clone()),
+      do_peer_query_forward_with_discover : false,
     };
 
     let (sendcommand,_) = test_conf.start_loop().unwrap();

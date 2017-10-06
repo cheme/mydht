@@ -52,6 +52,7 @@ use procs::{
   ApiCommand,
   ApiSendIn,
   MyDHTService,
+  FWConf,
 };
 use procs::{
   MainLoopReply,
@@ -347,8 +348,9 @@ mod test_tcp_all_block_thread {
           Ok(GlobalReply::NoRep)
         },
         GlobalCommand(Some(p),TestCommand::TouchQ(id,nb_for)) => {
+          println!("TOUCHQ dist !!!{:?}",id);
           // no local storage
-          Ok(GlobalReply::Forward(Some(vec![p]),None,0,TestCommand::TouchQR(id)))
+          Ok(GlobalReply::Forward(Some(vec![p]),None,FWConf{nb_for : 0, discover:false},TestCommand::TouchQR(id)))
         },
         GlobalCommand(None,TestCommand::TouchQ(id,nb_for)) => {
           println!("TOUCHQ!!!{:?}",id);
@@ -357,7 +359,7 @@ mod test_tcp_all_block_thread {
     
           res.push(GlobalReply::Api(TestReply::TouchQ(id)));
           for _ in 0 .. nb_for {
-            res.push(GlobalReply::Forward(None,None,1,TestCommand::TouchQ(id,0)));
+            res.push(GlobalReply::Forward(None,None,FWConf{nb_for : 1, discover:false},TestCommand::TouchQ(id,0)));
           }
           Ok(GlobalReply::Mult(res))
   //Forward(Option<Vec<MC::PeerRef>>,usize,MC::GlobalServiceCommand),
@@ -495,6 +497,9 @@ mod test_tcp_all_block_thread {
         }
       ))
     }
+    fn do_peer_query_forward_with_discover(&self) -> bool {
+      false
+    }
     fn init_peer_kvstore_query_cache(&mut self) -> Result<Self::PeerStoreQueryCache> {
       // non random id
       Ok(SimpleCacheQuery::new(false))
@@ -518,7 +523,6 @@ mod test_tcp_all_block_thread {
       Ok(ThreadPark)
 //      Ok(ThreadParkRef)
     }
-
     fn init_main_loop_slab_cache(&mut self) -> Result<Self::Slab> {
       Ok(Slab::new())
     }
@@ -528,8 +532,6 @@ mod test_tcp_all_block_thread {
     fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache> {
       Ok(HashMap::new())
     }
-
-
     fn init_main_loop_channel_in(&mut self) -> Result<Self::MainLoopChannelIn> {
       Ok(MpscChannel)
       //Ok(MpscChannelRef)
@@ -537,24 +539,18 @@ mod test_tcp_all_block_thread {
     fn init_main_loop_channel_out(&mut self) -> Result<Self::MainLoopChannelOut> {
       Ok(MpscChannel)
     }
-
-
     fn init_read_spawner(&mut self) -> Result<Self::ReadSpawn> {
       Ok(ThreadPark)
       //Ok(Blocker)
     }
-
     fn init_write_spawner(&mut self) -> Result<Self::WriteSpawn> {
       Ok(ThreadPark)
       //Ok(Blocker)
     }
-
     fn init_global_spawner(&mut self) -> Result<Self::GlobalServiceSpawn> {
       Ok(ThreadPark)
       //Ok(Blocker)
     }
-
-
     fn init_write_spawner_out() -> Result<Self::WriteDest> {
       Ok(NoSend)
     }

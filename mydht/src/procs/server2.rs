@@ -225,6 +225,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
 
             },
             ProtoMessage::PONG(mut withpeer,initial_chal, sig, next_chal) => {
+              println!("a pong received");
 
               let atsize = withpeer.attachment_expected_size();
               if atsize > 0 {

@@ -9,6 +9,15 @@
 //! Direct sender skip mainloop usage, non direct sender on the other side allow to keep non Send
 //! sender for instance if service spawn is local to mainloop and use a non Sync Rc using a direct
 //! sender would need to switch to Arc usage.
+//! !!! TODO shutdown
+//! !!! TODO adjustment and error counter must be refactor :
+//!   - nb error change to nb fail forward or have rules to convert fail forward to nb_error
+//!   - adjust on connect fail if a query id (a forward)
+//!   - local query no reply : send api with an nb err (curently just none and get_api_qid ->
+//!   get_nb_ok and get_nb_ko).
+//!    - plus see comment in store prop : double cache query confusion  -> forward
+//!    failure should be send to storekv back : it is not (need a generic mechanism which is not
+//!    inplace : probably a callback fn in fwd message).
 use mydhtresult::{
   Result,
   Error,
@@ -19,16 +28,20 @@ use keyval::KeyVal;
 use procs::storeprop::{
   KVStoreCommand,
   KVStoreReply,
+  peer_ping,
 };
 use mydht_base::kvcache::{
   KVCache
 };
-use super::mainloop::MainLoopCommand;
+use super::mainloop::{
+  MainLoopCommand,
+};
 use super::client2::WriteCommand;
 use super::{
   MyDHTConf,
   MCCommand,
   MCReply,
+  FWConf,
 };
 use transport::{
   Transport,
@@ -106,6 +119,7 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
         ApiReply::Done
       },
       ApiCommand::Adjust(qid,nb) => {
+        println!("nb : !!{}",nb);
         let rem = if let Some(q) = self.0.get_val_mut_c(&qid) {
           let mut r = false;
           for _ in 0..nb {
@@ -130,7 +144,7 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
         }
         match lsc {
           lsc @ MCCommand::Local(..) => {
-            ApiReply::ProxyMainloop(MainLoopCommand::ForwardService(None,None,nb_for,lsc))
+            ApiReply::ProxyMainloop(MainLoopCommand::ForwardService(None,None,FWConf{ nb_for : nb_for, discover : false },lsc))
            // self.call_inner_loop(MainLoopCommand::ForwardService(None,None,nb_for,sc), async_yield)?;
           },
           MCCommand::Global(gsc) => {
@@ -166,12 +180,14 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
 
 }
 
-#[derive(Clone,PartialEq,Eq,Hash)]
+#[derive(Clone,PartialEq,Eq,Hash,Debug)]
 pub struct ApiQueryId(pub usize);
 
 pub enum ApiCommand<MC : MyDHTConf> {
   MainLoop(MainLoopCommand<MC>),
   Failure(ApiQueryId),
+  /// usize is nb local service call if local service TODO consider removing local service from
+  /// api??
   ServiceCommand(MCCommand<MC>,usize,MC::ApiReturn),
   //GlobalServiceCommand(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>,MC::ApiReturn),
   ServiceReply(MCReply<MC>),
@@ -180,10 +196,6 @@ pub enum ApiCommand<MC : MyDHTConf> {
   Adjust(ApiQueryId,usize),
 }
 
-
-fn peer_ping<P : Peer,PR>(v : P) -> GlobalReply<P,PR,KVStoreCommand<P,PR,P,PR>,KVStoreReply<PR>> {
-  GlobalReply::MainLoop(MainLoopSubCommand::TryConnect(v.get_key(),v.get_address().clone()))
-}
 
 /// inner types of api command are not public,
 /// so command need to be instantiate through methods
@@ -195,7 +207,12 @@ impl<MC : MyDHTConf> ApiCommand<MC> {
   pub fn try_connect_reply(ad : <MC::Transport as Transport>::Address, ret : MC::ApiReturn) -> ApiCommand<MC> {
     ApiCommand::ServiceCommand(MCCommand::TryConnect(ad,None),0,ret)
   }
-
+  pub fn call_shutdown_reply(ret : MC::ApiReturn) -> ApiCommand<MC> {
+    unimplemented!()
+    // TODO change TryConnect MCCommand to generic MDHT enum command
+    //ApiCommand::ServiceCommand(MCCommand::Shutdown,0,ret) -> could be MainLoopSubCommand !!!!
+  }
+ 
 
   pub fn refresh_peer(nb : usize) -> ApiCommand<MC> {
     let kvscom = GlobalCommand(None,KVStoreCommand::Subset(nb, peer_ping));
@@ -203,9 +220,10 @@ impl<MC : MyDHTConf> ApiCommand<MC> {
   }
  
   pub fn call_peer_reply(mut c : KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>, ret : MC::ApiReturn) -> ApiCommand<MC> {
+    // fw conf to def val, is replaced by kvstore service anyway.
     ApiCommand::ServiceCommand(MCCommand::PeerStore(c),0,ret)
   }
- 
+
   pub fn call_service_reply(mut c : MC::GlobalServiceCommand, ret : MC::ApiReturn) -> ApiCommand<MC> {
     ApiCommand::ServiceCommand(MCCommand::Global(c),0,ret)
   }
@@ -215,8 +233,8 @@ impl<MC : MyDHTConf> ApiCommand<MC> {
     ApiCommand::MainLoop(cmd)
   }
  
-  pub fn call_service_local(mut c : MC::LocalServiceCommand, nb_for : usize) -> ApiCommand<MC> {
-    let cmd = MainLoopCommand::ForwardService(None,None,nb_for,MCCommand::Local(c));
+  pub fn call_service_local(mut c : MC::LocalServiceCommand, nb_for : usize ) -> ApiCommand<MC> {
+    let cmd = MainLoopCommand::ForwardService(None,None,FWConf{ nb_for : nb_for, discover : false },MCCommand::Local(c));
     ApiCommand::MainLoop(cmd)
   }
   pub fn call_service_local_reply(mut c : MC::LocalServiceCommand, nb_for : usize, ret : MC::ApiReturn) -> ApiCommand<MC> {

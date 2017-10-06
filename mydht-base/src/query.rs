@@ -15,6 +15,7 @@ use std::cmp::min;
 pub type QueryPriority = u8; // TODO rules for getting number of hop from priority -> convert this to a trait with methods.
 /// Query ID.
 pub type QueryID = usize;
+pub const QUERY_ID_DEFAULT : QueryID = 0;
 
 #[derive(Deserialize,Serialize,Debug,Clone)]
 #[serde(bound(deserialize = ""))]

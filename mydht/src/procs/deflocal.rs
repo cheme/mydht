@@ -1,6 +1,7 @@
 //! Default proxy local service implementation
 use super::{
   send_with_handle,
+  FWConf,
 };
 use utils::{
   Ref,
@@ -102,8 +103,8 @@ pub enum GlobalReply<MC : MyDHTConf> {
 }*/
 pub enum GlobalReply<P : Peer,PR,GSC,GSR> {
   /// forward command to list of peers or/and to nb peers from route
-  Forward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,usize,GSC),
-  PeerForward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,usize,KVStoreCommand<P,PR,P,PR>),
+  Forward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,FWConf,GSC),
+  PeerForward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,FWConf,KVStoreCommand<P,PR,P,PR>),
   /// reply to api
   Api(GSR),
   PeerApi(KVStoreReply<PR>),
@@ -124,8 +125,8 @@ impl<A,B> Clone for GlobalCommand<MC> where MC::GlobalServiceCommand : Clone {
 impl<P : Peer,PR : Clone,GSC : Clone,GSR : Clone> Clone for GlobalReply<P,PR,GSC,GSR> {
   fn clone(&self) -> Self {
     match *self {
-      GlobalReply::Forward(ref odests,ref okadests, nb_for, ref gsc) => GlobalReply::Forward(odests.clone(),okadests.clone(),nb_for,gsc.clone()),
-      GlobalReply::PeerForward(ref odests,ref okadests, nb_for, ref gsc) => GlobalReply::PeerForward(odests.clone(),okadests.clone(),nb_for,gsc.clone()),
+      GlobalReply::Forward(ref odests,ref okadests, ref nb_for, ref gsc) => GlobalReply::Forward(odests.clone(),okadests.clone(),nb_for.clone(),gsc.clone()),
+      GlobalReply::PeerForward(ref odests,ref okadests,ref nb_for, ref gsc) => GlobalReply::PeerForward(odests.clone(),okadests.clone(),nb_for.clone(),gsc.clone()),
       GlobalReply::Api(ref gsr) => GlobalReply::Api(gsr.clone()),
       GlobalReply::PeerApi(ref gsr) => GlobalReply::PeerApi(gsr.clone()),
       GlobalReply::MainLoop(ref mlsc) => GlobalReply::MainLoop(mlsc.clone()),

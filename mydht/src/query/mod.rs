@@ -66,6 +66,33 @@ pub struct QueryConf {
 //  pub chunk : QueryChunk,
   pub hop_hist : LastSentConf,
 }
+impl QueryConf {
+  /// TODO should be use internally, not to build request + need param in queryConf
+  pub fn query_message<P : Peer>(&self,me : &P, nb_res : usize, nb_hop : u8,nb_forw : u8, prio : QueryPriority) -> QueryMsg<P> {
+    let mode_info = match self.mode {
+      QueryMode::AProxy => QueryModeMsg::AProxy(QUERY_ID_DEFAULT),
+      QueryMode::Asynch => QueryModeMsg::Asynch(me.get_key(),me.get_address().clone(),QUERY_ID_DEFAULT),
+      QueryMode::AMix(ref nb) => QueryModeMsg::AMix(nb.clone(),QUERY_ID_DEFAULT),
+    };
+    let hop_hist = self.hop_hist.map(|(nb,mode)| {
+      if mode {
+        LastSent::LastSentHop(nb,VecDeque::new())
+      } else {
+        LastSent::LastSentPeer(nb,VecDeque::new())
+      }
+    });
+    QueryMsg {
+      mode_info : mode_info,
+      hop_hist : hop_hist,
+      // TODO delete storage prio
+      storage : StoragePriority::Local,
+      rem_hop : nb_hop,
+      nb_forw : nb_forw,
+      prio : prio,
+      nb_res : nb_res,
+    }
+  }
+}
 
 
 

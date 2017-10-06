@@ -3,6 +3,7 @@
 //! Usage of mydht library requires to create a struct implementing the MyDHTConf trait, by linking with suitable inner trait implementation and their requires component.
 use std::clone::Clone;
 use log;
+use std::collections::VecDeque;
 use mydht_base::route2::GetPeerRef;
 use std::borrow::Borrow;
 use query::{
@@ -14,6 +15,7 @@ use procs::storeprop::{
   KVStoreReply,
   KVStoreService,
   OptPeerGlobalDest,
+  peer_discover,
 };
 use super::deflocal::{
   GlobalCommand,
@@ -32,6 +34,7 @@ use super::api::{
   ApiReturn,
 };
 use super::{
+  FWConf,
   MyDHTConf,
   MCCommand,
   MCReply,
@@ -157,8 +160,12 @@ macro_rules! register_state_r {($self:ident,$rs:ident,$os:expr,$entrystate:path,
       peer : None,
     });
     if let $entrystate(ref mut rs,_) = $self.slab_cache.get_mut(token).unwrap().state {
-      assert!(true == rs.register(&$self.poll, Token(token + START_STREAM_IX), Ready::readable(),
-        PollOpt::edge())?);
+      if rs.register(&$self.poll, Token(token + START_STREAM_IX), Ready::readable(),
+        PollOpt::edge())? {
+        debug!("Asynch r transport successfully registered");
+      } else {
+        debug!("RTransport not registered, service configuration for read must run in separate thread and probably without pooling");
+      }
     } else {
       unreachable!();
     }
@@ -172,9 +179,16 @@ macro_rules! register_state_w {($self:ident,$pollopt:expr,$rs:ident,$wb:expr,$os
       os : $os,
       peer : None,
     });
-    if let $entrystate(ref mut rs,_) = $self.slab_cache.get_mut(token).unwrap().state {
-      assert!(true == rs.register(&$self.poll, Token(token + START_STREAM_IX), Ready::writable(),
-      $pollopt )?);
+    if let $entrystate(ref mut rs,ref mut infos) = $self.slab_cache.get_mut(token).unwrap().state {
+      if rs.register(&$self.poll, Token(token + START_STREAM_IX), Ready::writable(),
+        $pollopt )? {
+        debug!("Asynch w transport successfully registered");
+      } else {
+        debug!("WTransport not registered, service configuration for read must run in separate thread and probably without pooling");
+        // not asynch transport : it is therefore connected
+        infos.2 = true;
+      }
+
     } else {
       unreachable!();
     }
@@ -226,6 +240,7 @@ pub struct MyDHT<MC : MyDHTConf>(MainLoopSendIn<MC>);
 pub enum MainLoopSubCommand<P : Peer> {
 //pub enum MainLoopSubCommand<P : Peer,PR,GSC,GSR> {
   TryConnect(<P as KeyVal>::Key,<P as Peer>::Address),
+  Discover(Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>),
 }
 /// command supported by MyDHT loop
 pub enum MainLoopCommand<MC : MyDHTConf> {
@@ -233,7 +248,7 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
   SubCommand(MainLoopSubCommand<MC::Peer>),
   TryConnect(<MC::Transport as Transport>::Address,Option<ApiQueryId>),
 //  ForwardServiceLocal(MC::LocalServiceCommand,usize),
-  ForwardService(Option<Vec<MC::PeerRef>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,MCCommand<MC>),
+  ForwardService(Option<Vec<MC::PeerRef>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,FWConf,MCCommand<MC>),
   /// usize is only for mccommand type local to set the number of local to target
   ForwardApi(MCCommand<MC>,usize,MC::ApiReturn),
   /// received peer store command from peer : almost named ProxyPeerStore but it does a local peer
@@ -255,7 +270,6 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
 //  GlobalApi(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>,MC::ApiReturn),
   ProxyApiReply(MCReply<MC>),
 }
-
 /// Send variant (to use when inner ref are not Sendable)
 pub enum MainLoopCommandSend<MC : MyDHTConf>
  where MC::GlobalServiceCommand : SRef,
@@ -266,7 +280,7 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
   SubCommand(MainLoopSubCommand<MC::Peer>),
   TryConnect(<MC::Transport as Transport>::Address,Option<ApiQueryId>),
 //  ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
-  ForwardService(Option<Vec<<MC::PeerRef as SRef>::Send>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,usize,<MCCommand<MC> as SRef>::Send),
+  ForwardService(Option<Vec<<MC::PeerRef as SRef>::Send>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,FWConf,<MCCommand<MC> as SRef>::Send),
   ForwardApi(<MCCommand<MC> as SRef>::Send,usize,MC::ApiReturn),
   PeerStore(GlobalCommandSend<<MC::PeerRef as SRef>::Send,KVStoreCommandSend<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>),
   /// reject stream for this token and Address
@@ -295,7 +309,7 @@ impl<MC : MyDHTConf> Clone for MainLoopCommand<MC>
       MainLoopCommand::SubCommand(ref sc) => MainLoopCommand::SubCommand(sc.clone()),
       MainLoopCommand::TryConnect(ref a,ref aid) => MainLoopCommand::TryConnect(a.clone(),aid.clone()),
 //      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommand::ForwardServiceLocal(gc.clone(),nb),
-      MainLoopCommand::ForwardService(ref ovp,ref okad,nb_for,ref c) => MainLoopCommand::ForwardService(ovp.clone(),okad.clone(),nb_for,c.clone()),
+      MainLoopCommand::ForwardService(ref ovp,ref okad,ref nb_for,ref c) => MainLoopCommand::ForwardService(ovp.clone(),okad.clone(),nb_for.clone(),c.clone()),
       MainLoopCommand::ForwardApi(ref gc,nb_for,ref ret) => MainLoopCommand::ForwardApi(gc.clone(),nb_for,ret.clone()),
       MainLoopCommand::PeerStore(ref cmd) => MainLoopCommand::PeerStore(cmd.clone()),
       MainLoopCommand::RejectReadSpawn(s) => MainLoopCommand::RejectReadSpawn(s),
@@ -324,9 +338,9 @@ impl<MC : MyDHTConf> SRef for MainLoopCommand<MC>
       MainLoopCommand::SubCommand(ref sc) => MainLoopCommandSend::SubCommand(sc.clone()),
       MainLoopCommand::TryConnect(ref a,ref aid) => MainLoopCommandSend::TryConnect(a.clone(),aid.clone()),
 //      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommandSend::ForwardServiceLocal(gc.get_sendable(),nb),
-      MainLoopCommand::ForwardService(ref ovp,ref okad,nb_for,ref c) => MainLoopCommandSend::ForwardService({
+      MainLoopCommand::ForwardService(ref ovp,ref okad,ref nb_for,ref c) => MainLoopCommandSend::ForwardService({
           ovp.as_ref().map(|vp|vp.iter().map(|p|p.get_sendable()).collect())
-        },okad.clone(),nb_for,c.get_sendable()),
+        },okad.clone(),nb_for.clone(),c.get_sendable()),
       MainLoopCommand::ForwardApi(ref gc,nb_for,ref ret) => MainLoopCommandSend::ForwardApi(gc.get_sendable(),nb_for,ret.clone()),
       MainLoopCommand::PeerStore(ref cmd) => MainLoopCommandSend::PeerStore(cmd.get_sendable()),
       MainLoopCommand::RejectReadSpawn(s) => MainLoopCommandSend::RejectReadSpawn(s),
@@ -406,6 +420,8 @@ pub struct MDHTState<MC : MyDHTConf> {
   api_handle : ApiHandle<MC>,
   peerstore_send : <MC::PeerStoreServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>>>::Send,
   peerstore_handle : PeerStoreHandle<MC>,
+
+  discover_wait_route : VecDeque<(MCCommand<MC>,usize,usize)>,
 }
 
 impl<MC : MyDHTConf> MDHTState<MC> {
@@ -414,8 +430,13 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     let dhtrules_proto = conf.init_dhtrules_proto()?;
     let transport = conf.init_transport()?;
     let route = conf.init_route()?;
-    assert!(true == transport.register(&poll, LISTENER, Ready::readable(),
-                    PollOpt::edge())?);
+    if transport.register(&poll, LISTENER, Ready::readable(),
+                    PollOpt::edge())? {
+      debug!("Asynch transport successfully registered");
+    } else {
+      debug!("Transport not registered, service configuration for read must run in separate thread and probably without pooling");
+      panic!("TODO spawn a thread listening on transport accept with send Mainloop ReadStream, option Writestream and address (same as accept) -> new main loop message required");
+    }
     let me = conf.init_ref_peer()?;
     let read_spawn = conf.init_read_spawner()?;
     let write_spawn = conf.init_write_spawner()?;
@@ -459,6 +480,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       store : None,
       dht_rules : dhtrules_proto.clone(),
       query_cache : conf.init_peer_kvstore_query_cache()?,
+      discover : conf.do_peer_query_forward_with_discover(),
       _ph : PhantomData,
     };
     let peerstore_dest = OptPeerGlobalDest(global_dest_peer);
@@ -492,6 +514,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       api_send : api_send,
       peerstore_send : peerstore_send,
       peerstore_handle : peerstore_handle,
+      discover_wait_route : VecDeque::new(),
     };
     Ok(s)
   }
@@ -510,6 +533,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       // register readstream for multiplex transport
       let ort = ors.map(|rs| -> Result<Option<usize>> {
         let read_token = register_state_r!(self,rs,Some(write_token),SlabEntryState::ReadStream,None);
+        panic!("TODO if register false : start read service anyway");
         // update read reference
         self.slab_cache.get_mut(write_token).map(|r|r.os = Some(read_token));
         Ok(Some(read_token))
@@ -568,6 +592,50 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               self.call_inner_loop(MainLoopCommand::TryConnect(add,None),mlsend,async_yield)?;
             }
           },
+
+          MainLoopSubCommand::Discover(lkad) => {
+            println!("Discover fwd to : {:?}", lkad.len());
+            if let Some((command, nb_for, rem_call)) = self.discover_wait_route.pop_back() {
+
+              let mut nb_send = 0;
+
+              assert!(nb_for >= lkad.len());
+              for ka in lkad {
+                // do not use connected peer (some may be accepted in between but it is view as
+                // harmless)
+                if !self.peer_cache.has_val_c(&ka.0) {
+            println!("Bef connect");
+                  let (write_token,ort) = self.connect_with(&ka.1)?;
+            println!("Aft connect");
+
+                  if MC::AUTH_MODE == ShadowAuthType::NoAuth {
+                    // no auth to do
+                    panic!("TODO add a peer build from address to peer cache");
+                    self.write_stream_send(write_token,WriteCommand::Service(command.clone()), <MC>::init_write_spawner_out()?, None)?;
+                    nb_send += 1;
+                  } else {
+                    let chal = self.peermgmt_proto.challenge(self.me.borrow());
+                    self.challenge_cache.add_val_c(chal.clone(),ChallengeEntry {
+                      write_tok : write_token,
+                      read_tok : ort,
+                      next_msg : Some(WriteCommand::Service(command.clone())),
+                      next_qid : command.get_api_reply(),
+                      api_qid : None,
+                    });
+                    self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
+            println!("Aft ping send to write service");
+                    nb_send += 1;
+                  }
+                }
+              }
+              if nb_send < nb_for && rem_call > 0 {
+                let nb_disco = nb_for - nb_send;
+                self.discover_wait_route.push_front((command.clone(),nb_disco,rem_call - 1));
+                let kvscom = GlobalCommand(None,KVStoreCommand::Subset(nb_disco, peer_discover));
+                send_with_handle_panic!(&mut self.peerstore_send,&mut self.peerstore_handle,kvscom,"Panic sending to peerstore");
+              }
+            }
+          },
         }
       },
 
@@ -604,22 +672,33 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         // send in global service TODO when send from api use a composed sender to send directly
         send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,sc,"Global service finished TODO code to make it restartable cf write service and initialising from conf in init_state + on error right error mgmt");
       },
-      MainLoopCommand::ForwardService(ovp,okad,nb_for,sg) => {
+      MainLoopCommand::ForwardService(ovp,okad,fwconf,sg) => {
+
         let ol = ovp.as_ref().map(|v|v.len()).unwrap_or(0);
         let olka = okad.as_ref().map(|v|v.len()).unwrap_or(0);
-        let nb_exp_for = ol + nb_for + olka;
+        let nb_exp_for = ol + fwconf.nb_for + olka;
+        let mut nb_disco = 0;
+        let mut ws_res : Vec<usize> = Vec::with_capacity(nb_exp_for);
         // take ovp token : if ovp not connected no forward
+        if let Some(vp) = ovp {
+          for p in vp.iter() {
+            let k = p.borrow().get_key_ref();
+            self.peer_cache.get_val_c(k).map(|pc|pc.write.map(|ws|ws_res.push(ws)));
+          }
+        }
+        if ws_res.len() != ol {
+          debug!("Forward of service, some peer where unconnected and skip : init {:?}, send {:?}",ol,ws_res.len());
+        }
 
-        let okad : Option<Vec<usize>> = match okad {
+        match okad {
           Some(kad) => {
-            let mut res = Vec::with_capacity(kad.len());
             for ka in kad.iter() {
               let do_connect = match self.peer_cache.get_val_c(&ka.0) {
                 Some(p) if p.write.is_some() => {
-                  res.push(p.write.unwrap());
+                  ws_res.push(p.write.unwrap());
                   false
                 },
-                _ => true,
+                _ => fwconf.discover,
               };
               if do_connect {
                 let (write_token,ort) = self.connect_with(&ka.1)?;
@@ -627,7 +706,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                 if MC::AUTH_MODE == ShadowAuthType::NoAuth {
                   // no auth to do
                   panic!("TODO add a peer build from address to peer cache");
-                  res.push(write_token);
+                  ws_res.push(write_token);
                 } else {
                   let chal = self.peermgmt_proto.challenge(self.me.borrow());
                   self.challenge_cache.add_val_c(chal.clone(),ChallengeEntry {
@@ -639,53 +718,45 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                   });
                   // send a ping
                   self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
+                  nb_disco += 1;
                 }
               }
             }
-            Some(res)
           },
-          None => None,
+          None => (),
         };
 
 
-        let ovp : Option<Vec<usize>> = ovp.map(|vp|vp.iter().map(|p|self.peer_cache.get_val_c(&p.borrow().get_key()).map(|pc|pc.write)).filter_map(|oow|oow.unwrap_or(None)).collect());
-        let ovl = ovp.as_ref().map(|v|v.len()).unwrap_or(0);
-        if ovl != ol {
-          debug!("Forward of service, some peer where unconnected and skip : init {:?}, send {:?}",ol,ovl);
-        }
-        let (sg,dests) = if nb_for > 0 {
-          let (sg, mut dests) = self.route.route(nb_for,sg,&mut self.slab_cache, &mut self.peer_cache)?;
-          ovp.map(|ref mut vp| dests.append(vp));
-          okad.map(|ref mut vp| dests.append(vp));
-          (sg,dests)
+        let sg = if fwconf.nb_for > 0 {
+          let (sg, mut dests) = self.route.route(fwconf.nb_for,sg,&mut self.slab_cache, &mut self.peer_cache)?;
+          ws_res.append(&mut dests);
+          sg
         } else {
-          match ovp {
-            Some(mut vp) => {
-              okad.map(|ref mut k| vp.append(k));
-              (sg,vp)
-            },
-            None => {
-              match okad {
-                Some(k) => (sg,k),
-                None => 
-                  return Ok(()),
-              }
-            },
-          }
+          sg
         };
-        if dests.len() < nb_exp_for {
-          if let Some(qid) = sg.get_api_reply() {
-            send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::Adjust(qid,nb_exp_for - dests.len()),"Api service unreachable");
+        let nb_ok = ws_res.len() + nb_disco;
+        if nb_ok < nb_exp_for {
+          if fwconf.discover {
+            let nb_disco = nb_exp_for - nb_ok;
+            // TODO a max size for the buffer and adjust if max
+            self.discover_wait_route.push_front((sg.clone(),nb_disco,MC::MAX_NB_DISCOVER_CALL));
+            let kvscom = GlobalCommand(None,KVStoreCommand::Subset(nb_disco, peer_discover));
+            send_with_handle_panic!(&mut self.peerstore_send,&mut self.peerstore_handle,kvscom,"Panic sending to peerstore");
+          } else {
+            if let Some(qid) = sg.get_api_reply() {
+              send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::Adjust(qid,nb_exp_for - nb_ok),"Api service unreachable");
+            }
+            // TODO if forward from global service use fw service callback (cf comment at start of
+            // api)
+            if nb_ok == 0 {
+              debug!("Global command not forwarded, no dest found by route");
+              println!("no dest for command");
+            }
+
           }
-        }
-        if dests.len() == 0 {
-          // TODO log
-          debug!("Global command not forwarded, no dest found by route");
-          println!("no dest for command");
-          return Ok(());
         }
         let mut ldest = None;
-        for dest in dests {
+        for dest in ws_res {
           if let Some(d) = ldest {
             self.write_stream_send(d,WriteCommand::Service(sg.clone()), <MC>::init_write_spawner_out()?, None)?;
           }
@@ -696,10 +767,12 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         }
       },
       MainLoopCommand::ForwardApi(sc,nb_for,ret) => {
+
         if MC::USE_API_SERVICE && sc.is_api_reply() {
           // shortcut peerstore
           match sc {
             MCCommand::PeerStore(KVStoreCommand::Find(ref qm,ref key,Some(ref aqid))) => {
+
               if qm.nb_res == 1 {
                 let op = self.peer_cache.get_val_c(key).map(|v|v.peer.clone());
                 if op.is_some() {
@@ -722,7 +795,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         } else {
           match sc {
             sc @ MCCommand::Local(..) => {
-              self.call_inner_loop(MainLoopCommand::ForwardService(None,None,nb_for,sc),mlsend,async_yield)?;
+              self.call_inner_loop(MainLoopCommand::ForwardService(None,None,FWConf{ nb_for : nb_for, discover : false },sc),mlsend,async_yield)?;
             },
             MCCommand::Global(sc) => {
               self.call_inner_loop(MainLoopCommand::ProxyGlobal(GlobalCommand(None,sc)),mlsend,async_yield)?;
@@ -1042,9 +1115,11 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     let rem = {
       let se = self.slab_cache.get_mut(write_token);
       if let Some(entry) = se {
+              println!("got entry write spawn");
         let finished = match entry.state {
           // connected write stream : spawn
           ref mut e @ SlabEntryState::WriteStream(_,(_,_,true)) => {
+              println!("got entry write spawn : stream");
             let state = replace(e, SlabEntryState::Empty);
             if let SlabEntryState::WriteStream(ws,(mut write_s_in,mut write_r_in,_)) = state {
    //          let (write_s_in,write_r_in) = self.write_channel_in.new()?;
@@ -1060,13 +1135,16 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               // dest is unknown TODO check if still relevant with other use case (read side we allow
               // dest peer as rs could result from a connection with an identified peer)
               let write_service = WriteService::new(write_token,ws,self.me.clone(),with, self.enc_proto.clone(),self.peermgmt_proto.clone());
+              println!("bef write spawn");
               let write_handle = self.write_spawn.spawn(write_service, write_out.clone(), ocin, write_r_in, MC::SEND_NB_ITER)?;
+              println!("aft write spawn");
               let state = SlabEntryState::WriteSpawned((write_handle,write_s_in));
               replace(e,state);
               None
             } else {unreachable!()}
           },
           SlabEntryState::WriteStream(_,(ref mut send,_,false)) => {
+              println!("got entry write spawn : stream, unconnected");
             // TODO size limit of channel bef connected -> error on send ~= to connection failure
             send.send(command)?;
             None

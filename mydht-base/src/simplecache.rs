@@ -101,6 +101,7 @@ impl<T : KeyVal, C : KVCache<<T as KeyVal>::Key, T>> KVStore<T> for SimpleCache<
   #[inline]
   fn get_next_vals(&mut self, nb : usize) -> Option<Vec<T>> {
 
+    println!("nb in cache : {:?}",self.cache.len_c());
     let t_none : Option <&(fn(&T) -> bool)> = None;
     Some(self.cache.next_random_values(nb,t_none).into_iter().map(|v|v.clone()).collect())
   }

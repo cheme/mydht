@@ -499,6 +499,9 @@ pub trait MyDHTConf : 'static + Send + Sized
   const GLOBAL_NB_ITER : usize = 0;
   const PEERSTORE_NB_ITER : usize = 0;
   const API_NB_ITER : usize = 0;
+  /// number of time we can call for new peer on kvstore, this is not a fine discover mechanism,
+  /// some between peer query could be added in the future
+  const MAX_NB_DISCOVER_CALL : usize = 2;
   /// Spawner for main loop
   type MainloopSpawn : Spawner<
     MyDHTService<Self>,
@@ -657,6 +660,7 @@ pub trait MyDHTConf : 'static + Send + Sized
 //    MioSend<<Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Send>, 
     <Self::MainLoopChannelOut as SpawnChannel<MainLoopReply<Self>>>::Recv
     )> {
+    println!("Start loop");
     let (s,r) = MioChannel(self.init_main_loop_channel_in()?).new()?;
     let (so,ro) = self.init_main_loop_channel_out()?.new()?;
 
@@ -684,6 +688,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   fn init_peer_kvstore_query_cache(&mut self) -> Result<Self::PeerStoreQueryCache>;
   fn init_peerstore_channel_in(&mut self) -> Result<Self::PeerStoreServiceChannelIn>;
   fn init_peerstore_spawner(&mut self) -> Result<Self::PeerStoreServiceSpawn>;
+  fn do_peer_query_forward_with_discover(&self) -> bool;
   /// create or load peer for our transport (ourselve)
   fn init_ref_peer(&mut self) -> Result<Self::PeerRef>;
   /// for start_loop usage
@@ -1218,6 +1223,16 @@ fn sphandler_res<A, E : Debug + Display> (res : StdResult<A, E>) {
     Err(e) => error!("Thread exit due to error : {}",e),
   }
 }
+
+
+#[derive(Clone,Debug)]
+pub struct FWConf {
+  /// only use for forward local to get nb of local to try
+  pub nb_for : usize,
+  /// do we run discovering if not enough peers
+  pub discover : bool,
+}
+
 
 static NULL_QUERY_ID : usize = 0; // TODO replace by optional value to None!!
 pub type GlobalHandle<MC : MyDHTConf> = <MC::GlobalServiceSpawn as Spawner<MC::GlobalService,GlobalDest<MC>,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Recv>>::Handle;

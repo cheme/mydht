@@ -3,6 +3,9 @@
 //! service) 
 //! TODO for this KVStore : currently no commit are done : run some : fix rules : on drop and every
 //! n insert
+//! !!! TODO currently when forwarding, if no route for forward or failure to forward there is no
+//! adjustment of the query : need to include a function call back message on error to
+//! MainLoop::ForwardService command
 use std::collections::VecDeque;
 use std::mem::replace;
 use kvstore::StoragePriority;
@@ -55,6 +58,7 @@ use mydhtresult::{
 };
 use super::mainloop::{
   MainLoopCommand,
+  MainLoopSubCommand,
 };
 use kvstore::{
   KVStore,
@@ -85,6 +89,7 @@ use super::server2::{
   ReadDest,
 };
 use super::{
+  FWConf,
   MyDHTConf,
   GetOrigin,
   GlobalHandleSend,
@@ -116,6 +121,8 @@ pub struct KVStoreService<P,RP,V,RV,S,DR,QC> {
   pub store : Option<S>,
   pub dht_rules : DR,
   pub query_cache : QC,
+  /// do we forward with discover peer capability
+  pub discover : bool,
   pub _ph : PhantomData<(P,V,RV)>,
 }
 
@@ -358,7 +365,7 @@ pub enum KVStoreCommand<P : Peer, PR, V : KeyVal, VR> {
   /// force a commit for store
   CommitStore,
   /// exec a fn on a subset of the store
-  Subset(usize, fn(V) -> GlobalReply<P,PR,KVStoreCommand<P,PR,V,VR>,KVStoreReply<VR>>),
+  Subset(usize, fn(Vec<V>) -> GlobalReply<P,PR,KVStoreCommand<P,PR,V,VR>,KVStoreReply<VR>>),
   Find(QueryMsg<P>, V::Key,Option<ApiQueryId>),
   FindLocally(V::Key,ApiQueryId),
   Store(QueryID,Vec<VR>),
@@ -429,7 +436,7 @@ pub enum KVStoreCommandSend<P : Peer, PR, V : KeyVal, VR : SRef> {
   /// Do nothing but lazy initialize of store as any command.
   Start,
   CommitStore,
-  Subset(usize, fn(V) -> GlobalReply<P,PR,KVStoreCommand<P,PR,V,VR>,KVStoreReply<VR>>),
+  Subset(usize, fn(Vec<V>) -> GlobalReply<P,PR,KVStoreCommand<P,PR,V,VR>,KVStoreReply<VR>>),
   Find(QueryMsg<P>, V::Key,Option<ApiQueryId>),
   FindLocally(V::Key,ApiQueryId),
   Store(QueryID,Vec<<VR as SRef>::Send>),
@@ -554,8 +561,11 @@ impl<
       KVStoreCommand::Subset(nb,f) => {
         match store.get_next_vals(nb) {
           Some(vals) => {
-            let cmds = vals.into_iter().map(|v|f(v)).collect();
-            return Ok(GlobalReply::Mult(cmds));
+            println!("store next vals : {:?}",vals.len());
+//            let cmds = vals.into_iter().map(|v|f(v)).collect();
+ //           return Ok(GlobalReply::Mult(cmds));
+            let cmd = f(vals);
+            return Ok(cmd);
           },
           None => {
             panic!("KVStore use as backend does not allow subset");
@@ -598,7 +608,7 @@ impl<
                if !self.dht_rules.notfoundreply(&old_mode_info.get_mode()) {
                  // clone could be removed
                  let (odpr,odka,qid) = old_mode_info.clone().fwd_dests(&owith);
-                 return Ok(GlobalReply::Forward(odpr,odka,0,KVStoreCommand::Store(qid,vs)));
+                 return Ok(GlobalReply::Forward(odpr,odka,FWConf{ nb_for : 0, discover : true },KVStoreCommand::Store(qid,vs)));
                } else {
                  vres.append(&mut vs);
                  if nb_res == vres.len() {
@@ -624,7 +634,7 @@ impl<
            },
            QReply::Dist(old_mode_info,owith,_,vres,_) => {
              let (odpr,odka,qid) = old_mode_info.fwd_dests(&owith);
-             return Ok(GlobalReply::Forward(odpr,odka,0,KVStoreCommand::Store(qid,vres)));
+             return Ok(GlobalReply::Forward(odpr,odka,FWConf{ nb_for : 0, discover : true },KVStoreCommand::Store(qid,vres)));
            },
          }
        }
@@ -669,11 +679,11 @@ impl<
            QReply::Dist(old_mode_info,owith,_,vres,_) => {
              if vres.len() > 0 {
                let (odpr,odka,qid) = old_mode_info.fwd_dests(&owith);
-               return Ok(GlobalReply::Forward(odpr,odka,0,KVStoreCommand::Store(qid,vres)));
+               return Ok(GlobalReply::Forward(odpr,odka,FWConf{nb_for : 0, discover : true},KVStoreCommand::Store(qid,vres)));
              } else {
                if self.dht_rules.notfoundreply(&old_mode_info.get_mode()) {
                  let (odpr,odka,qid) = old_mode_info.fwd_dests(&owith);
-                 return Ok(GlobalReply::Forward(odpr,odka,0,KVStoreCommand::NotFound(qid)));
+                 return Ok(GlobalReply::Forward(odpr,odka,FWConf{nb_for : 0, discover : true},KVStoreCommand::NotFound(qid)));
                } else {
                  return Ok(GlobalReply::NoRep);
                }
@@ -685,6 +695,8 @@ impl<
       },
 
       KVStoreCommand::Find(mut querymess, key,o_api_queryid) => {
+        // test here use o_api_query_id considering it implies next statement
+        assert!(o_api_queryid.is_some() != owith.is_some());
         let oval = store.get_val(&key); 
         if oval.is_some() {
           querymess.nb_res -= 1;
@@ -699,7 +711,7 @@ impl<
               None => {
                 // reply
                 let (odpr,odka,qid) = querymess.mode_info.fwd_dests(&owith);
-                return Ok(GlobalReply::Forward(odpr,odka,0,KVStoreCommand::Store(qid,vec![<VR as Ref<V>>::new(val)])));
+                return Ok(GlobalReply::Forward(odpr,odka,FWConf{nb_for : 0, discover : true},KVStoreCommand::Store(qid,vec![<VR as Ref<V>>::new(val)])));
               },
             }
           }
@@ -710,7 +722,7 @@ impl<
               },
               None => {
                 let (odpr,odka,qid) = querymess.mode_info.fwd_dests(&owith);
-                return Ok(GlobalReply::Forward(odpr,odka,0,KVStoreCommand::NotFound(qid)));
+                return Ok(GlobalReply::Forward(odpr,odka,FWConf{nb_for : 0, discover : true},KVStoreCommand::NotFound(qid)));
               },
             }
           } else {
@@ -746,20 +758,24 @@ impl<
         } else {
           (Vec::with_capacity(querymess.nb_res),oval)
         };
-        let query = if let Some(apiqid) = o_api_queryid {
-          Query(qid, QReply::Local(apiqid,querymess.nb_res,vres,nb_not_found,querymess.prio), Some(expire))
+
+        if let Some(apiqid) = o_api_queryid {
+          let query = Query(qid, QReply::Local(apiqid,querymess.nb_res,vres,nb_not_found,querymess.prio), Some(expire));
+          self.query_cache.query_add(qid, query);
         } else {
-          // clone on owith could be removed
-          Query(qid, QReply::Dist(old_mode_info.clone(),owith.clone(),querymess.nb_res,vres,nb_not_found), Some(expire))
+          if querymess.mode_info.do_store() {
+            // clone on owith could be removed
+            let query = Query(qid, QReply::Dist(old_mode_info.clone(),owith.clone(),querymess.nb_res,vres,nb_not_found), Some(expire));
+            self.query_cache.query_add(qid, query);
+          }
         };
-        self.query_cache.query_add(qid, query);
         if oval.is_some() && !do_reply_not_found {
           let (odpr,odka,oqid) = old_mode_info.fwd_dests(&owith);
-          let found = GlobalReply::Forward(odpr,odka,0,KVStoreCommand::Store(oqid,vec![oval.unwrap()]));
-          let pquery = GlobalReply::Forward(None,None,querymess.nb_forw as usize,KVStoreCommand::Find(querymess,key,None));
+          let found = GlobalReply::Forward(odpr,odka,FWConf{nb_for : 0, discover : true},KVStoreCommand::Store(oqid,vec![oval.unwrap()]));
+          let pquery = GlobalReply::Forward(None,None,FWConf{ nb_for : querymess.nb_forw as usize, discover : self.discover},KVStoreCommand::Find(querymess,key,None));
           return Ok(GlobalReply::Mult(vec![found,pquery]));
         }
-        return Ok(GlobalReply::Forward(None,None,querymess.nb_forw as usize,KVStoreCommand::Find(querymess,key,None)));
+        return Ok(GlobalReply::Forward(None,None,FWConf{ nb_for : querymess.nb_forw as usize, discover : self.discover},KVStoreCommand::Find(querymess,key,None)));
       },
       KVStoreCommand::FindLocally(key,apiqueryid) => {
         let o_val = store.get_val(&key).map(|v|<VR as Ref<V>>::new(v));
@@ -813,4 +829,19 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<M
     }
   }
 //}
+pub fn peer_ping<P : Peer,PR>(v : Vec<P>) -> GlobalReply<P,PR,KVStoreCommand<P,PR,P,PR>,KVStoreReply<PR>> {
+  let cmds = v.into_iter().map(|p|GlobalReply::MainLoop(MainLoopSubCommand::TryConnect(p.get_key(),p.get_address().clone()))).collect();
+  GlobalReply::Mult(cmds)
+}
+pub fn peer_discover<P : Peer,PR>(v : Vec<P>) -> GlobalReply<P,PR,KVStoreCommand<P,PR,P,PR>,KVStoreReply<PR>> {
+  let dests = v.into_iter().map(|p|(p.get_key(),p.get_address().clone())).collect();
+  GlobalReply::MainLoop(MainLoopSubCommand::Discover(dests))
+}
+
+
+/*pub fn peer_discover<MC : MyDHTConf>(v : Vec<MC::Peer>) -> GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>> {
+  GlobalReply::ForwardMainLoop(MainLoopSubCommand::TryConnect(p.get_key(),p.get_address().clone()))).collect();
+}*/
+
+
 

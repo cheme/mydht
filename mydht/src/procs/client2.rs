@@ -136,6 +136,7 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
   type CommandOut = WriteReply<MC>;
 
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+    println!("Start write!");
     match req {
       WriteCommand::Write => {
         let mut stream = WriteYield(&mut self.stream, async_yield);
@@ -164,6 +165,7 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
         stream.flush()?;
       },
       WriteCommand::Ping(chal) => {
+        println!("a ping start!!");
         let mut stream = WriteYield(&mut self.stream, async_yield);
  //       let chal = self.peermgmt.challenge(self.from.borrow());
         let sign = self.peermgmt.signmsg(self.from.borrow(), &chal);
@@ -179,11 +181,13 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
 
         shad_write_end(&mut shad, &mut stream)?;
         stream.flush()?;
+        println!("a ping done!!");
 //        return Ok(WriteReply::MainLoop(MainLoopCommand::NewChallenge(self.token,chal)));
 
       },
       WriteCommand::Service(command) => {
         self.forward_proto(command,async_yield)?;
+        println!("a write done!!");
       },
 /*      WriteCommand::GlobalService(command) => {
         self.forward_proto(MCCommand::Global(command),async_yield)?;
@@ -229,6 +233,7 @@ impl<MC : MyDHTConf> WriteService<MC> {
 }
 /// command for readservice
 pub enum WriteCommand<MC : MyDHTConf> {
+  /// TODO remove this!!!
   Write,
   /// ping TODO chal as Ref<Vec<u8>>
   Ping(Vec<u8>),
