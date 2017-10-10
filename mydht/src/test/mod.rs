@@ -212,13 +212,13 @@ fn simu_amix_proxy_peer_discovery () {
   let nbpeer = 5;
   let mut rules = DHTRULES_DEFAULT.clone();
   rules.nbhopfact = nbpeer - 1;
-  let rcs = runningcontext1_old(nbpeer.to_usize().unwrap(),rules);
+  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::AMix(9),
 //    chunk : QueryChunk::None,
     hop_hist : None,
   };
-  peerconnect_scenario(&qconf, 2, rcs)
+  peerconnect_scenario2(&qconf, 2, rcs)
 }
 
 #[cfg(feature="with-extra-test")]
@@ -227,13 +227,13 @@ fn simu_asynch_peer_discovery () {
   let nbpeer = 5;
   let mut rules = DHTRULES_DEFAULT.clone();
   rules.nbhopfact = nbpeer - 1;
-  let rcs = runningcontext1_old(nbpeer.to_usize().unwrap(),rules);
+  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
   let qconf = QueryConf {
     mode : QueryMode::Asynch,
 //    chunk : QueryChunk::None,
     hop_hist : Some((3,true)),
   };
-  peerconnect_scenario(&qconf, 2, rcs)
+  peerconnect_scenario2(&qconf, 2, rcs)
 }
 
 
@@ -352,12 +352,33 @@ fn runningcontext1_old (nbpeer : usize, dhtrules : DhtRules) -> Vec<RunningConte
 fn peerconnect_scenario2 (queryconf : &QueryConf, knownratio : usize, contexts : Vec<TestConf<PeerTest, TransportTest, Json, TestingRules,SimpleRules>>) {
   let nodes : Vec<(PeerTest,SimpleRules)> = contexts.iter().map(|c|(c.me.clone(),c.rules.clone())).collect();
   let mut rng = thread_rng();
+  let mut ix_context = 0;
+  let mut me = None;
   let mut procs : Vec<ApiSendIn<TestConf<PeerTest,TransportTest,Json,TestingRules,SimpleRules>>> = contexts.into_iter().map(|mut context|{
     info!("node : {:?}", context.me);
 
+    if me == None {
+      // to be use in queries asynch
+      me = Some(context.me.clone());
+    }
 //        rng.shuffle(noderng);
     let others = replace(&mut context.others, None).unwrap();
-    let bpeers = others.into_iter().filter(|i| (*i != context.me && rng.gen_range(0,knownratio) == 0) ).collect();
+    let mut bpeers : Vec<PeerTest>;
+    // default route is used for querying : next peer from kvstore use a 2/3 ratio cf kvcache
+    // next_random_values which involve that first peer need at leet 2 peers so we filter until at
+    // least 2 : done only for first peer (proxy of query make discovery likely for others
+    // This implementation does not make a lot of sense (was seemingly to make nb of proxy peer
+    // more random??) and should change
+    if ix_context == 0 {
+      while {
+        let ot2 = others.clone();
+        bpeers = ot2.into_iter().filter(|i| (*i != context.me && rng.gen_range(0,knownratio) == 0) ).collect();
+        bpeers.len() < 2
+      } {}
+    } else {
+        bpeers = others.into_iter().filter(|i| (*i != context.me && rng.gen_range(0,knownratio) == 0) ).collect();
+    }
+    ix_context += 1;
     context.others = Some(bpeers);
 
 //        let mut noderng : &mut [PeerTest] = bpeers.as_slice();
@@ -377,7 +398,7 @@ fn peerconnect_scenario2 (queryconf : &QueryConf, knownratio : usize, contexts :
     let prio = 1;
     let nb_hop = rule.nbhop(prio);
     let nb_for = rule.nbquery(prio);
-    let qm = queryconf.query_message(n, nb_res, nb_hop, nb_for, prio);
+    let qm = queryconf.query_message(me.as_ref().unwrap(), nb_res, nb_hop, nb_for, prio);
     let peer_q = ApiCommand::call_peer_reply(KVStoreCommand::Find(qm,n.get_key(),None),o_res.clone());
     fprocs.send(peer_q).unwrap();
     let o_res = clone_wait_one_result(&o_res,None).unwrap();
@@ -395,48 +416,7 @@ fn peerconnect_scenario2 (queryconf : &QueryConf, knownratio : usize, contexts :
 
 
 }
-/// ration is 1 for all 2 for half and so on.
-fn peerconnect_scenario<RT : RunningTypes> (queryconf : &QueryConf, knownratio : usize, contexts : Vec<RunningContext<RT>>) 
-where <RT:: P as KeyVal>::Key : Ord + Hash,
-      <RT:: V as KeyVal>::Key : Hash
-{
 
-  let nodes : Vec<RT::P> = contexts.iter().map(|c|(*c.me).clone()).collect();
-  let mut rng = thread_rng();
-/*  let procs : Vec<DHT<RT>> = contexts.into_iter().map(|context|{
-    info!("node : {:?}", context.me);
-
-//        rng.shuffle(noderng);
-    let bpeers = nodes.clone().into_iter().filter(|i| (*i != *context.me && rng.gen_range(0,knownratio) == 0) ).map(|p|Arc::new(p)).collect();
-//        let mut noderng : &mut [PeerTest] = bpeers.as_slice();
-    DHT::boot_server(Arc:: new(context),
-      move || Some(new_inmap()), 
-      move || Some(SimpleCacheQuery::new(false)), 
-      move || Some(SimpleCache::new(None)), 
-      Vec::new(), 
-      bpeers).unwrap()
-  }).collect();
-
-  thread::sleep_ms(2000); // TODO remove this
-  // find all node from the first node first node
-  let ref fprocs = procs[0];
-
-  let mut itern = nodes.iter();
-  itern.next();
-  for n in itern {
-    // local find 
-    let fpeer = fprocs.find_peer(n.get_key(), queryconf, 1); // TODO put in future first then match result (simultaneous search)
-    let matched = match fpeer {
-      Some(v) => *v == *n,
-      _ => false,
-    };
-    assert!(matched, "Peer not found {:?}", n);
-  }
-
-  for p in procs.iter(){p.shutdown()}
-//    procs.iter().map(|p|{p.shutdown()}); // no cause lazy
-*/
-}
 
 fn peerconnect_test<RT : RunningTypes> (queryconf : &QueryConf, contexts : Vec<RunningContext<RT>>) 
 where <RT:: P as KeyVal>::Key : Ord + Hash,

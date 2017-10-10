@@ -122,6 +122,12 @@ impl<P : Peer,RP : Borrow<P>,GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Key
 impl<P : Peer,RP : Borrow<P>,GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Key,GP>>
   Cache<<P as KeyVal>::Key,GP> for InefficientmapBase2<P,RP,GP,C> {
   fn add_val_c(& mut self, k : <P as KeyVal>::Key, v : GP) {
+    // warn common mistake to forget that add val can also remove
+    if self.peers.has_val_c(&k) {
+      if let Some(ix) = self.peers_nbquery.iter().position(|nid|nid.0 == k) {
+        self.peers_nbquery.remove(ix);
+      }
+    }
     self.peers_nbquery.push({
       let (p,ows) = v.get_peer_ref();
       (p.get_key(),ows)

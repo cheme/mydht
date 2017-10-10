@@ -653,7 +653,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     let pk = pr.borrow().get_key();
     // TODO conflict for existing peer (close )
     // TODO useless has_val_c : u
-    if let Some(p_entry) = self.peer_cache.get_val_c(&pk) {
+    let o_slab_remove = if let Some(p_entry) = self.peer_cache.get_val_c(&pk) {
       // TODO update peer, if xisting write should be drop (new one should be use) and read could
       // receive a message for close on timeout (read should stay open as at the other side on
       // double connect the peer can keep sending on this read : the new read could timeout in
@@ -661,10 +661,8 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       // TODO add a logg for this removeal and one for double read_token
       // TODO clean close??
       // TODO check if read is finished and remove if finished
-      if let Some(t) = p_entry.get_write_token() {
-        self.slab_cache.remove(t);
-      }
-    };
+      p_entry.get_write_token()
+    } else { None };
     self.peer_cache.add_val_c(pk, PeerCacheEntry {
       peer : pr.clone(),
       read : owread,
@@ -674,6 +672,13 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     let update_peer = KVStoreCommand::StoreLocally(pr,0,None);
     // peer_service update
     send_with_handle_panic!(&mut self.peerstore_send,&mut self.peerstore_handle,GlobalCommand(None,update_peer),"Panic sending to peerstore TODO consider restart (init of peerstore is a fn)");
+    // now that cache update remove can be done without race (considering send is ordered)
+    if let Some(t) = o_slab_remove {
+      println!("slab cache remove : {:?}",t);
+      self.slab_cache.remove(t);
+    }
+
+
 //    self.peerstore_send.send()?;
     Ok(())
   }
@@ -727,6 +732,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                       next_qid : command.get_api_reply(),
                       api_qid : None,
                     });
+                  println!("this one i");
                     self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
             println!("Aft ping send to write service");
                     nb_send += 1;
@@ -806,6 +812,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                 _ => fwconf.discover,
               };
               if do_connect {
+                println!("doCONNECT");
                 let (write_token,ort) = self.connect_with(&ka.1)?;
 
                 if MC::AUTH_MODE == ShadowAuthType::NoAuth {
@@ -822,6 +829,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                     api_qid : None,
                   });
                   // send a ping
+                  println!("this one j");
                   self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
                   nb_disco += 1;
                 }
@@ -834,6 +842,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
         let sg = if fwconf.nb_for > 0 {
           let (sg, mut dests) = self.route.route(fwconf.nb_for,sg,&mut self.slab_cache, &mut self.peer_cache)?;
+          println!("dests:{:?}",&dests[..]);
           ws_res.append(&mut dests);
           sg
         } else {
@@ -863,11 +872,13 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         let mut ldest = None;
         for dest in ws_res {
           if let Some(d) = ldest {
+                  println!("this one a");
             self.write_stream_send(d,WriteCommand::Service(sg.clone()), <MC>::init_write_spawner_out()?, None)?;
           }
           ldest = Some(dest);
         }
         if let Some(d) = ldest {
+                  println!("this one b");
           self.write_stream_send(d,WriteCommand::Service(sg), <MC>::init_write_spawner_out()?, None)?;
         }
       },
@@ -931,6 +942,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             api_qid : oapi,
           });
           // send a ping
+                  println!("this one c");
           self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
         }
 
@@ -965,6 +977,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         // send pong with 2nd challeng
         let pongmess = WriteCommand::Pong(pr,chal,rtok,Some(chal2));
         // with is not used because the command will init it
+                  println!("this one d");
         self.write_stream_send(wtok, pongmess, <MC>::init_write_spawner_out()?, None)?; // TODO remove peer on error
       },
  
@@ -975,9 +988,11 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             self.update_peer(pr.clone(),pp,Some(chal_entry.write_tok),Some(rtok))?;
             if let Some(nchal) = nextchal {
               let pongmess = WriteCommand::Pong(pr,nchal,rtok,None);
+                  println!("this one e");
               self.write_stream_send(chal_entry.write_tok, pongmess, <MC>::init_write_spawner_out()?, None)?;
             }
             if let Some(next_msg) = chal_entry.next_msg {
+                  println!("this one f");
               self.write_stream_send(chal_entry.write_tok, next_msg, <MC>::init_write_spawner_out()?, None)?;
             }
             if let Some(qid) = chal_entry.api_qid {
@@ -1040,17 +1055,22 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           } else { unreachable!() }
         } else { None };
         if let Some(command) =  oc {
+                  println!("this one g");
           self.write_stream_send(write_token, command, <MC>::init_write_spawner_out()?, None)?;
         }
 
       },
       MainLoopCommand::FailConnect(write_token) => {
+        println!("slab cache remove fc : {:?}",write_token);
         if let Some(SlabEntry {
           state : state,
           os : os,
           peer : peer,
         }) = self.slab_cache.remove(write_token) {
-          os.map(|s|self.slab_cache.remove(s));
+          os.map(|s|{
+        println!("slab cache remove fc2 : {:?}",s);
+            self.slab_cache.remove(s)
+          });
           peer.map(|p|self.peer_cache.remove_val_c(p.borrow().get_key_ref()));
         }
       },
@@ -1174,6 +1194,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               (false,None,None)
             };
             if o_sp_write.is_some() {
+                  println!("this one h");
               self.write_stream_send(tok.0 - START_STREAM_IX, o_sp_write.unwrap(), <MC>::init_write_spawner_out()?, None)?;
             }
             if sp_read {

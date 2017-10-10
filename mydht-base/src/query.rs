@@ -202,10 +202,10 @@ impl<R : Peer> QueryModeMsg<R> {
       QueryModeMsg::Asynch(k,a,qid) => (None,Some(vec![(k,a)]),qid),
     }
   }
-  pub fn do_store (&self) -> bool {
+  pub fn do_store_on_forward (&self) -> bool {
     match self {
-      &QueryModeMsg::AProxy (..) => false,
-      &QueryModeMsg::Asynch (..) => true,
+      &QueryModeMsg::AProxy (..) => true,
+      &QueryModeMsg::Asynch (..) => false,
       &QueryModeMsg::AMix (..) => true,
     }
   }
@@ -247,7 +247,11 @@ impl<R : Peer> QueryModeMsg<R> {
     pub fn new_hop (&self, p : &R, qid : QueryID,nbdec : u8) -> Self {
         match self {
             &QueryModeMsg::AProxy (_) => QueryModeMsg::AProxy (qid),
-            &QueryModeMsg::Asynch (ref k,ref a,ref qid) => QueryModeMsg::Asynch (k.clone(), a.clone(), qid.clone()),
+            &QueryModeMsg::Asynch (ref k,ref a,_) => {
+              println!("k next : {:?}",k);
+              QueryModeMsg::Asynch (k.clone(), a.clone(), qid.clone())
+            },
+            
             &QueryModeMsg::AMix (a,_) if a > 0 => QueryModeMsg::AMix (a - min(a,nbdec),qid),
             &QueryModeMsg::AMix (_,_)  => QueryModeMsg::Asynch (p.get_key(), p.get_address().clone(), qid),
         }
