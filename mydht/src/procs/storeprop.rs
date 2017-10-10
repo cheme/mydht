@@ -579,6 +579,7 @@ impl<
       },
       KVStoreCommand::Store(qid,mut vs) => {
 
+        println!("A store kv command !!");
         let removereply = match self.query_cache.query_get_mut(&qid) {
          Some(query) => {
            match *query {
@@ -695,6 +696,7 @@ impl<
       },
 
       KVStoreCommand::Find(mut querymess, key,o_api_queryid) => {
+        println!("find store command is_dist :{}",owith.is_some());
         // test here use o_api_query_id considering it implies next statement
         assert!(o_api_queryid.is_some() != owith.is_some());
         let oval = store.get_val(&key); 
@@ -711,6 +713,7 @@ impl<
               None => {
                 // reply
                 let (odpr,odka,qid) = querymess.mode_info.fwd_dests(&owith);
+        println!("A store kv forward !!");
                 return Ok(GlobalReply::Forward(odpr,odka,FWConf{nb_for : 0, discover : true},KVStoreCommand::Store(qid,vec![<VR as Ref<V>>::new(val)])));
               },
             }
@@ -722,6 +725,7 @@ impl<
               },
               None => {
                 let (odpr,odka,qid) = querymess.mode_info.fwd_dests(&owith);
+        println!("A store nf forward !!");
                 return Ok(GlobalReply::Forward(odpr,odka,FWConf{nb_for : 0, discover : true},KVStoreCommand::NotFound(qid)));
               },
             }
@@ -771,10 +775,12 @@ impl<
         };
         if oval.is_some() && !do_reply_not_found {
           let (odpr,odka,oqid) = old_mode_info.fwd_dests(&owith);
+        println!("A store kv with finds forward !!");
           let found = GlobalReply::Forward(odpr,odka,FWConf{nb_for : 0, discover : true},KVStoreCommand::Store(oqid,vec![oval.unwrap()]));
           let pquery = GlobalReply::Forward(None,None,FWConf{ nb_for : querymess.nb_forw as usize, discover : self.discover},KVStoreCommand::Find(querymess,key,None));
           return Ok(GlobalReply::Mult(vec![found,pquery]));
         }
+        println!("A find kv forward !!");
         return Ok(GlobalReply::Forward(None,None,FWConf{ nb_for : querymess.nb_forw as usize, discover : self.discover},KVStoreCommand::Find(querymess,key,None)));
       },
       KVStoreCommand::FindLocally(key,apiqueryid) => {

@@ -382,7 +382,6 @@ fn peerconnect_scenario2 (queryconf : &QueryConf, knownratio : usize, contexts :
     fprocs.send(peer_q).unwrap();
     let o_res = clone_wait_one_result(&o_res,None).unwrap();
     assert!(o_res.0.len() == 1, "Peer not found {:?}", n);
- 
   }
 
   /* TODO uncomment when call_shutdown reply is implemented
@@ -869,6 +868,13 @@ where <P as KeyVal>::Key : Hash
   type PeerStoreServiceSpawn = ThreadPark;
   type PeerStoreServiceChannelIn = MpscChannel;
  
+  type SynchListenerSpawn = ThreadPark;
+
+  const NB_SYNCH_CONNECT : usize = 3;
+  type SynchConnectChannelIn = MpscChannel;
+  type SynchConnectSpawn = ThreadPark;
+
+
   fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>> {
     let others = self.others.clone().unwrap();
     Ok(Box::new(
@@ -1007,6 +1013,17 @@ where <P as KeyVal>::Key : Hash
     Ok(ThreadPark)
     //Ok(Blocker)
   }
+  fn init_synch_listener_spawn(&mut self) -> Result<Self::SynchListenerSpawn> {
+    Ok(ThreadPark)
+  }
+
+  fn init_synch_connect_spawn(&mut self) -> Result<Self::SynchConnectSpawn> {
+    Ok(ThreadPark)
+  }
+  fn init_synch_connect_channel_in(&mut self) -> Result<Self::SynchConnectChannelIn> {
+    Ok(MpscChannel)
+  }
+
 
 }
 /*     
@@ -1097,6 +1114,7 @@ fn initpeers_test (nbpeer : usize, map : &[&[usize]], meths : TestingRules, rule
 
          modeshauth : ShadowModeTest::NoShadow,
          modeshmsg : ShadowModeTest::SimpleShift,
+         //modeshmsg : ShadowModeTest::SimpleShift,
     };
     nodes.push(peer);
   };

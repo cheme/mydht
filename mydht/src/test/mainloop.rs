@@ -114,7 +114,6 @@ use service::{
   SpawnChannel,
   MpscChannel,
   MpscChannelRef,
-  NoChannel,
   NoRecv,
   LocalRcChannel,
   SpawnerYield,
@@ -132,6 +131,8 @@ use service::{
   ThreadPark,
   ThreadParkRef,
 
+  NoSpawn,
+  NoChannel,
   CpuPool,
   CpuPoolFuture,
 };
@@ -490,6 +491,14 @@ mod test_tcp_all_block_thread {
     type PeerStoreServiceSpawn = ThreadPark; // TODO should behave with local return suspend
     type PeerStoreServiceChannelIn = MpscChannel;
     type PeerKVStore = SimpleCache<Self::Peer,HashMap<<Self::Peer as KeyVal>::Key,Self::Peer>>;
+
+    type SynchListenerSpawn = ThreadPark;
+
+    const NB_SYNCH_CONNECT : usize = 0;
+    type SynchConnectChannelIn = NoChannel;
+    type SynchConnectSpawn = NoSpawn;
+
+
     fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>> {
       Ok(Box::new(
         ||{
@@ -605,6 +614,16 @@ mod test_tcp_all_block_thread {
       Ok(ThreadPark)
       //Ok(Blocker)
     }
+    fn init_synch_listener_spawn(&mut self) -> Result<Self::SynchListenerSpawn> {
+      Ok(ThreadPark)
+    }
+     fn init_synch_connect_spawn(&mut self) -> Result<Self::SynchConnectSpawn> {
+      Ok(NoSpawn)
+    }
+    fn init_synch_connect_channel_in(&mut self) -> Result<Self::SynchConnectChannelIn> {
+      Ok(NoChannel)
+    }
+ 
 
 
 

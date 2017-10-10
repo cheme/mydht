@@ -3,6 +3,15 @@ use std::borrow::Borrow;
 use peer::{PeerMgmtMeths};
 use query::{self,QueryConf,QueryPriority,QueryMode,QueryModeMsg,LastSent,QueryMsg};
 use rules::DHTRules;
+use procs::synch_transport::{
+  SynchConnListenerCommandDest,
+  SynchConnListener,
+  SynchConnListenerCommandIn,
+  SynchConnectDest,
+  SynchConnect,
+  SynchConnectCommandIn,
+
+};
 use mydht_base::route2::{
   RouteBase,
   RouteBaseMessage,
@@ -159,6 +168,7 @@ mod server2;
 pub mod noservice;
 mod client2;
 mod peermgmt;
+mod synch_transport;
 //mod server;
 //mod client;
 //mod peermanager;
@@ -511,7 +521,6 @@ pub trait MyDHTConf : 'static + Send + Sized
     NoRecv
       >;
       
-
   /// channel for input
   type MainLoopChannelIn : SpawnChannel<MainLoopCommand<Self>>;
   /// TODO out mydht command
@@ -650,6 +659,27 @@ pub trait MyDHTConf : 'static + Send + Sized
     <Self::PeerStoreServiceChannelIn as SpawnChannel<GlobalCommand<Self::PeerRef,KVStoreCommand<Self::Peer,Self::PeerRef,Self::Peer,Self::PeerRef>>>>::Recv
   >;
   type PeerStoreServiceChannelIn : SpawnChannel<GlobalCommand<Self::PeerRef,KVStoreCommand<Self::Peer,Self::PeerRef,Self::Peer,Self::PeerRef>>>;
+
+  type SynchListenerSpawn : Spawner<
+    SynchConnListener<Self::Transport>,
+    SynchConnListenerCommandDest<Self>,
+    DefaultRecv<SynchConnListenerCommandIn, NoRecv>
+  >;
+
+  // number of possible simultaneus connections
+  const NB_SYNCH_CONNECT : usize;
+  // default to infinite as common use case is a pool of parked threads
+  const SYNCH_CONNECT_NB_ITER : usize = 0;
+  type SynchConnectChannelIn : SpawnChannel<SynchConnectCommandIn<Self::Transport>>;
+  type SynchConnectSpawn : Spawner<
+    SynchConnect<Self::Transport>,
+    SynchConnectDest<Self>,
+    <Self::SynchConnectChannelIn as SpawnChannel<SynchConnectCommandIn<Self::Transport>>>::Recv
+  >;
+
+  fn init_synch_listener_spawn(&mut self) -> Result<Self::SynchListenerSpawn>;
+  fn init_synch_connect_channel_in(&mut self) -> Result<Self::SynchConnectChannelIn>;
+  fn init_synch_connect_spawn(&mut self) -> Result<Self::SynchConnectSpawn>;
 
 
   /// Start the main loop TODO change sender to avoid mainloop proxies (an API sender like for
@@ -1260,4 +1290,10 @@ Spawner<
   >
 >::Handle;
 
+pub type SynchConnectHandle<MC : MyDHTConf> = <MC::SynchConnectSpawn as 
+ Spawner<
+    SynchConnect<MC::Transport>,
+    SynchConnectDest<MC>,
+    <MC::SynchConnectChannelIn as SpawnChannel<SynchConnectCommandIn<MC::Transport>>>::Recv
+  >>::Handle;
 

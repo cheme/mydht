@@ -6,6 +6,15 @@ use log;
 use std::collections::VecDeque;
 use mydht_base::route2::GetPeerRef;
 use std::borrow::Borrow;
+use procs::synch_transport::{
+  SynchConnListener,
+  SynchConnListenerCommandDest,
+  SynchConnListenerCommandIn,
+  SynchConnect,
+  SynchConnectCommandIn,
+  SynchConnectDest,
+
+};
 use query::{
   QueryPriority,
 };
@@ -46,6 +55,7 @@ use super::{
   GlobalHandleSend,
   ApiHandle,
   PeerStoreHandle,
+  SynchConnectHandle,
   ApiHandleSend,
   Route,
   send_with_handle,
@@ -159,15 +169,21 @@ macro_rules! register_state_r {($self:ident,$rs:ident,$os:expr,$entrystate:path,
       os : $os,
       peer : None,
     });
-    if let $entrystate(ref mut rs,_) = $self.slab_cache.get_mut(token).unwrap().state {
+    let sync_st = if let $entrystate(ref mut rs,_) = $self.slab_cache.get_mut(token).unwrap().state {
       if rs.register(&$self.poll, Token(token + START_STREAM_IX), Ready::readable(),
         PollOpt::edge())? {
         debug!("Asynch r transport successfully registered");
+        false
       } else {
-        debug!("RTransport not registered, service configuration for read must run in separate thread and probably without pooling");
+        debug!("Transport not registered, stream is considered as synch stream and connected");
+        true
       }
     } else {
       unreachable!();
+    };
+    if sync_st {
+      let (smgmt,_) = $self.peermgmt_channel_in.new()?; // TODO  peer management is unlinked (no service implemented yet)
+      $self.start_read_stream_listener(token,$os,smgmt)?;
     }
     token
   }
@@ -269,6 +285,11 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
   ProxyGlobal(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>),
 //  GlobalApi(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>,MC::ApiReturn),
   ProxyApiReply(MCReply<MC>),
+  /// Synch transport received conn
+  ConnectedR(<MC::Transport as Transport>::ReadStream, Option<<MC::Transport as Transport>::WriteStream>, <MC::Transport as Transport>::Address),
+  /// Synch transport conn result
+  ConnectedW(usize,<MC::Transport as Transport>::WriteStream, Option<<MC::Transport as Transport>::ReadStream>),
+  FailConnect(usize),
 }
 /// Send variant (to use when inner ref are not Sendable)
 pub enum MainLoopCommandSend<MC : MyDHTConf>
@@ -296,6 +317,9 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
 //  GlobalApi(GlobalCommandSend<<MC::PeerRef as SRef>::Send,<MC::GlobalServiceCommand as SRef>::Send>,MC::ApiReturn),
   ProxyApiReply(<MCReply<MC> as SRef>::Send),
 //  ProxyApiGlobalReply(<MC::GlobalServiceReply as SRef>::Send),
+  ConnectedR(<MC::Transport as Transport>::ReadStream, Option<<MC::Transport as Transport>::WriteStream>, <MC::Transport as Transport>::Address),
+  ConnectedW(usize,<MC::Transport as Transport>::WriteStream, Option<<MC::Transport as Transport>::ReadStream>),
+  FailConnect(usize),
 }
 
 impl<MC : MyDHTConf> Clone for MainLoopCommand<MC> 
@@ -322,6 +346,9 @@ impl<MC : MyDHTConf> Clone for MainLoopCommand<MC>
 //      MainLoopCommand::GlobalApi(ref rcs,ref ret) => MainLoopCommand::GlobalApi(rcs.clone(),ret.clone()),
       MainLoopCommand::ProxyApiReply(ref rcs) => MainLoopCommand::ProxyApiReply(rcs.clone()),
 //      MainLoopCommand::ProxyApiGlobalReply(ref rcs) => MainLoopCommand::ProxyApiGlobalReply(rcs.clone()),
+      MainLoopCommand::ConnectedR(..) => unreachable!(),
+      MainLoopCommand::ConnectedW(..) => unreachable!(),
+      MainLoopCommand::FailConnect(six) => MainLoopCommand::FailConnect(six),
     }
   }
 }
@@ -353,6 +380,10 @@ impl<MC : MyDHTConf> SRef for MainLoopCommand<MC>
 //      MainLoopCommand::GlobalApi(ref rcs,ref ret) => MainLoopCommandSend::GlobalApi(rcs.get_sendable(),ret.clone()),
       MainLoopCommand::ProxyApiReply(ref rcs) => MainLoopCommandSend::ProxyApiReply(rcs.get_sendable()),
 //      MainLoopCommand::ProxyApiLocalReply(ref rcs) => MainLoopCommandSend::ProxyApiLocalReply(rcs.get_sendable()),
+      // curently no service usage on synch listener
+      MainLoopCommand::ConnectedR(..) => unreachable!(),
+      MainLoopCommand::ConnectedW(..) => unreachable!(),
+      MainLoopCommand::FailConnect(i) => MainLoopCommandSend::FailConnect(i),
     }
   }
 }
@@ -383,13 +414,17 @@ impl<MC : MyDHTConf> SToRef<MainLoopCommand<MC>> for MainLoopCommandSend<MC>
 //      MainLoopCommandSend::GlobalApi(rcs,r) => MainLoopCommand::GlobalApi(rcs.to_ref(),r),
       MainLoopCommandSend::ProxyApiReply(rcs) => MainLoopCommand::ProxyApiReply(rcs.to_ref()),
 //      MainLoopCommandSend::ProxyApiLocalReply(rcs) => MainLoopCommand::ProxyApiLocalReply(rcs.to_ref()),
+      MainLoopCommandSend::ConnectedR(..) => unreachable!(),
+      MainLoopCommandSend::ConnectedW(..) => unreachable!(),
+      MainLoopCommandSend::FailConnect(i) => MainLoopCommand::FailConnect(i),
     }
   }
 }
 
 pub struct MDHTState<MC : MyDHTConf> {
   me : MC::PeerRef,
-  transport : MC::Transport,
+  transport : Option<MC::Transport>,
+  transport_synch : Option<Arc<MC::Transport>>,
   route : MC::Route,
   slab_cache : MC::Slab,
   peer_cache : MC::PeerCache,
@@ -422,6 +457,15 @@ pub struct MDHTState<MC : MyDHTConf> {
   peerstore_handle : PeerStoreHandle<MC>,
 
   discover_wait_route : VecDeque<(MCCommand<MC>,usize,usize)>,
+
+
+  synch_connect_ix : usize,
+  synch_connect_spawn : MC::SynchConnectSpawn,
+  synch_connect_channel_in : MC::SynchConnectChannelIn,
+  synch_connect_handle_send : Vec<(
+    SynchConnectHandle<MC>,
+    <MC::SynchConnectChannelIn as SpawnChannel<SynchConnectCommandIn<MC::Transport>>>::Send,
+  )>,
 }
 
 impl<MC : MyDHTConf> MDHTState<MC> {
@@ -430,13 +474,22 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     let dhtrules_proto = conf.init_dhtrules_proto()?;
     let transport = conf.init_transport()?;
     let route = conf.init_route()?;
-    if transport.register(&poll, LISTENER, Ready::readable(),
+    let (transport, transport_synch) = if transport.register(&poll, LISTENER, Ready::readable(),
                     PollOpt::edge())? {
       debug!("Asynch transport successfully registered");
+      (Some(transport),None)
     } else {
       debug!("Transport not registered, service configuration for read must run in separate thread and probably without pooling");
-      panic!("TODO spawn a thread listening on transport accept with send Mainloop ReadStream, option Writestream and address (same as accept) -> new main loop message required");
-    }
+      let atransport = Arc::new(transport);
+      // start infinite listener loop
+      conf.init_synch_listener_spawn()?.spawn(
+        SynchConnListener(atransport.clone()),
+        SynchConnListenerCommandDest(mlsend.clone()),
+        None,
+        DefaultRecv(NoRecv,SynchConnListenerCommandIn),
+        0)?;
+      (None,Some(atransport))
+    };
     let me = conf.init_ref_peer()?;
     let read_spawn = conf.init_read_spawner()?;
     let write_spawn = conf.init_write_spawner()?;
@@ -489,6 +542,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     let s = MDHTState {
       me : me,
       transport : transport,
+      transport_synch : transport_synch,
       route : route,
       slab_cache : conf.init_main_loop_slab_cache()?,
       peer_cache : conf.init_main_loop_peer_cache()?,
@@ -515,6 +569,10 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       peerstore_send : peerstore_send,
       peerstore_handle : peerstore_handle,
       discover_wait_route : VecDeque::new(),
+      synch_connect_ix : 0,
+      synch_connect_handle_send : Vec::with_capacity(MC::NB_SYNCH_CONNECT),
+      synch_connect_channel_in : conf.init_synch_connect_channel_in()?,
+      synch_connect_spawn : conf.init_synch_connect_spawn()?,
     };
     Ok(s)
   }
@@ -522,8 +580,10 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
   fn connect_with(&mut self, dest_address : &<MC::Peer as Peer>::Address) -> Result<(usize, Option<usize>)> {
     // TODO duration will be removed
-    // first check cache if there is a connect already : no (if peer yes)
-    let (ws,ors) = self.transport.connectwith(&dest_address, CrateDuration::seconds(1000))?;
+    if self.transport.is_some() {
+      // first check cache if there is a connect already : no (if peer yes) TODO remove duration
+      // from connect (should be contained in transport when possible
+      let (ws,ors) = self.transport.as_ref().unwrap().connectwith(&dest_address, CrateDuration::seconds(1000))?;
 
       let (s,r) = self.write_channel_in.new()?;
 
@@ -533,13 +593,58 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       // register readstream for multiplex transport
       let ort = ors.map(|rs| -> Result<Option<usize>> {
         let read_token = register_state_r!(self,rs,Some(write_token),SlabEntryState::ReadStream,None);
-        panic!("TODO if register false : start read service anyway");
         // update read reference
         self.slab_cache.get_mut(write_token).map(|r|r.os = Some(read_token));
         Ok(Some(read_token))
       }).unwrap_or(Ok(None))?;
+      Ok((write_token,ort))
+    } else {
+      let (s,r) = self.write_channel_in.new()?;
+      let connect_token = self.slab_cache.insert (
+        SlabEntry {
+          state : SlabEntryState::WriteConnectSynch((s,r,false)),
+//           state : SlabEntryState::WriteConnectSynch((ref write_s_in ,ref write_r_in,ref has_connect)),
+          os : None,
+          peer : None,
+        }
+      );
+      let do_spawn = if self.synch_connect_ix == self.synch_connect_handle_send.len() {
+        if self.synch_connect_handle_send.len() < MC::NB_SYNCH_CONNECT {
+          true
+        } else {
+          // restart pool
+          self.synch_connect_ix = 0;
+          self.synch_connect_handle_send[self.synch_connect_ix].0.is_finished()
+        }
+      } else {
+        // spawn a new on finish (the service is stateless and we do not restart from its state :
+        // WARN this could become an issue if it evolves
+        self.synch_connect_handle_send[self.synch_connect_ix].0.is_finished()
+      };
+      if do_spawn {
+        let atr = self.transport_synch.as_ref().unwrap().clone();
+        // spawn new
+        let (s,r) = self.synch_connect_channel_in.new()?;
+        let h = self.synch_connect_spawn.spawn(
+          SynchConnect(atr),
+          SynchConnectDest(self.mainloop_send.clone()),
+          Some(SynchConnectCommandIn(connect_token,dest_address.clone())),
+          r,
+          MC::SYNCH_CONNECT_NB_ITER)?;
+        if self.synch_connect_ix < self.synch_connect_handle_send.len() {
+          self.synch_connect_handle_send[self.synch_connect_ix] = (h,s);
+        } else {
+          self.synch_connect_handle_send.push((h,s));
+        }
+      } else {
+        self.synch_connect_handle_send[self.synch_connect_ix].1.send(SynchConnectCommandIn(connect_token,dest_address.clone()))?;
+      }
+      // move ix
+      self.synch_connect_ix += 1;
 
-    Ok((write_token,ort))
+      Ok((connect_token,None))
+    }
+
   }
 
   fn update_peer(&mut self, pr : MC::PeerRef, pp : PeerPriority, owtok : Option<usize>, owread : Option<usize>) -> Result<()> {
@@ -890,7 +995,65 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       MainLoopCommand::RejectReadSpawn(..) => panic!("TODO in this case challenge check fail + api from challenge cache (if next_qid) !!!"),
       MainLoopCommand::ProxyWrite(..) => panic!("TODO"),
       MainLoopCommand::NewPeer(..) => panic!("TODO"), // TODO send to peermgmt
+      MainLoopCommand::ConnectedR(rs,ows,ad) => {
+        let read_token = register_state_r!(self,rs,None,SlabEntryState::ReadStream,None);
+        // register writestream for multiplex transport
+        ows.map(|ws| -> Result<()> {
+          let (s,r) = self.write_channel_in.new()?;
+          // connection done on listener so edge immediatly and state has_connect to true
+          let write_token = register_state_w!(self,PollOpt::edge(),ws,(s,r,true),Some(read_token),SlabEntryState::WriteStream);
+          // update read reference
+          self.slab_cache.get_mut(read_token).map(|r|r.os = Some(write_token));
+          Ok(())
+        }).unwrap_or(Ok(()))?;
 
+
+      },
+      MainLoopCommand::ConnectedW(write_token,ws,ors) => {
+        // reg rt
+        let ort = ors.map(|rs| -> Result<Option<usize>> {
+          let read_token = register_state_r!(self,rs,Some(write_token),SlabEntryState::ReadStream,None);
+          // update read reference
+          self.slab_cache.get_mut(write_token).map(|r|r.os = Some(read_token));
+          Ok(Some(read_token))
+        }).unwrap_or(Ok(None))?;
+   
+        let to_wr = if let Some(&SlabEntry {
+           state : SlabEntryState::WriteConnectSynch((ref write_s_in ,ref write_r_in,ref has_connect)),
+           os : _,
+           peer : _,
+        }) = self.slab_cache.get(write_token) {
+           true
+        } else {
+          warn!("transport connected synchronously with an unknown connection query");
+          false
+        };
+        let oc = if to_wr {
+          let ent_p = &mut self.slab_cache.get_mut(write_token).unwrap().state;
+          let entry = replace(ent_p,SlabEntryState::Empty);
+          if let SlabEntryState::WriteConnectSynch(mut st) = entry {
+            // is connected
+            st.2 = true;
+            let oc = st.1.recv()?;
+            replace(ent_p,SlabEntryState::WriteStream(ws, st));
+            oc
+          } else { unreachable!() }
+        } else { None };
+        if let Some(command) =  oc {
+          self.write_stream_send(write_token, command, <MC>::init_write_spawner_out()?, None)?;
+        }
+
+      },
+      MainLoopCommand::FailConnect(write_token) => {
+        if let Some(SlabEntry {
+          state : state,
+          os : os,
+          peer : peer,
+        }) = self.slab_cache.remove(write_token) {
+          os.map(|s|self.slab_cache.remove(s));
+          peer.map(|p|self.peer_cache.remove_val_c(p.borrow().get_key_ref()));
+        }
+      },
     }
 
     Ok(())
@@ -939,7 +1102,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               // yield_spawn.spawn_yield();
           },
           LISTENER => {
-              let read_token = try_breakloop!(self.transport.accept(), "Transport accept failure : {}", 
+              let read_token = try_breakloop!(self.transport.as_ref().unwrap().accept(), "Transport accept failure : {}", 
               |(rs,ows,ad) : (<MC::Transport as Transport>::ReadStream,Option<<MC::Transport as Transport>::WriteStream>,<MC::Transport as Transport>::Address)| -> Result<usize> {
 /*              let wad = if ows.is_some() {
                   Some(ad.clone())
@@ -971,9 +1134,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               let os = ca.os;
               match ca.state {
                 SlabEntryState::ReadStream(_,_) => {
-
                   (true,None,os)
                 },
+                SlabEntryState::WriteConnectSynch(..) => unreachable!(),
                 SlabEntryState::WriteStream(ref mut ws,(_,ref mut write_r_in,ref mut has_connect)) => {
                   // case where spawn reach its nb_loop and return, should not happen as yield is
                   // only out of service call (nb_loop test is out of nb call) for receiver which is not registered.
@@ -1014,30 +1177,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               self.write_stream_send(tok.0 - START_STREAM_IX, o_sp_write.unwrap(), <MC>::init_write_spawner_out()?, None)?;
             }
             if sp_read {
-              let owrite_send = match os {
-                Some(s) => {
-                  self.get_write_handle_send(s)
-                },
-                None => None,
-              };
-
-    //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
-    //(self.mainloop_send).send((MainLoopCommand::Start))?;
-             let gl = match self.global_handle.get_weak_handle() {
-                Some(h) => Some(HandleSend(self.global_send.clone(),h)),
-                None => None,
-              };
-
-              let mut rd = ReadDest {
-                mainloop : self.mainloop_send.clone(),
-                peermgmt : smgmt.clone(),
-                global : gl,
-                write : owrite_send,
-                read_token : tok.0 - START_STREAM_IX,
-              };
     //(self.mainloop_send).send((MainLoopCommand::Start))?;
     //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
-              self.start_read_stream_listener(tok.0 - START_STREAM_IX, rd)?;
+              self.start_read_stream_listener(tok.0 - START_STREAM_IX,os,smgmt.clone())?;
             }
 
 
@@ -1059,8 +1201,31 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
   /// The state of the slab entry must be checked before, return error on wrong state
   fn start_read_stream_listener(&mut self, read_token : usize,
-    mut read_out : ReadDest<MC>,
+    os : Option<usize>,
+    smgmt : <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send,
                                 ) -> Result<()> {
+    let owrite_send = match os {
+      Some(s) => {
+        self.get_write_handle_send(s)
+      },
+      None => None,
+    };
+
+//(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
+//(self.mainloop_send).send((MainLoopCommand::Start))?;
+   let gl = match self.global_handle.get_weak_handle() {
+      Some(h) => Some(HandleSend(self.global_send.clone(),h)),
+      None => None,
+    };
+
+    let mut read_out = ReadDest {
+      mainloop : self.mainloop_send.clone(),
+      peermgmt : smgmt.clone(),
+      global : gl,
+      write : owrite_send,
+      read_token : read_token,
+    };
+
     //read_out.send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
     let se = self.slab_cache.get_mut(read_token);
     if let Some(entry) = se {
@@ -1143,6 +1308,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               None
             } else {unreachable!()}
           },
+          SlabEntryState::WriteConnectSynch((ref mut send,_,_)) |
           SlabEntryState::WriteStream(_,(ref mut send,_,false)) => {
               println!("got entry write spawn : stream, unconnected");
             // TODO size limit of channel bef connected -> error on send ~= to connection failure

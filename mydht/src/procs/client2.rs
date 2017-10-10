@@ -186,8 +186,9 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
 
       },
       WriteCommand::Service(command) => {
+
+        println!("Sending to another peer !!");
         self.forward_proto(command,async_yield)?;
-        println!("a write done!!");
       },
 /*      WriteCommand::GlobalService(command) => {
         self.forward_proto(MCCommand::Global(command),async_yield)?;
@@ -202,7 +203,9 @@ impl<MC : MyDHTConf> WriteService<MC> {
 
   fn forward_proto<S : SpawnerYield, R : OptInto<MC::ProtoMsg>>(&mut self, command: R, async_yield : &mut S) -> Result<()> {
     if command.can_into() {
+
       let mut stream = WriteYield(&mut self.stream, async_yield);
+
       if self.shad_msg.is_none() {
         let mut shad = match MC::AUTH_MODE {
           ShadowAuthType::NoAuth => {
@@ -215,12 +218,14 @@ impl<MC : MyDHTConf> WriteService<MC> {
             }
           },
         };
+
         // write head before storing
         shad_write_header(&mut shad, &mut stream)?;
         self.shad_msg = Some(shad);
       }
 
       let mut shad = self.shad_msg.as_mut().unwrap();
+
       let pmess = command.opt_into().unwrap();
       send_msg_msg(&pmess, &mut stream, &self.enc, &mut shad)?;
       for att in pmess.get_attachments() {

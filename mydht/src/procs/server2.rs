@@ -177,13 +177,13 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
               return self.call(req,async_yield);*/
               unreachable!()
             },
-            ShadowAuthType::Public => self.from.borrow().get_shadower_r_auth(),
-            ShadowAuthType::Private => {
+            ShadowAuthType::Public | ShadowAuthType::Private => self.from.borrow().get_shadower_r_auth(),
+/*            ShadowAuthType::Private => {
               match self.with {
                 Some (ref w) => w.borrow().get_shadower_r_auth(),
                 None => return Err(Error("No dest in read for private network, could not allow receive".to_string(),ErrorKind::Bug,None)),
               }
-            },
+            },*/
           };
 
           shad_read_header(&mut shad, &mut stream)?;
@@ -262,6 +262,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
                     }
                   },
                 };
+                println!("is auth set to thrue");
                 self.is_auth = true;
                 let pref = MC::PeerRef::new(withpeer);
                 //self.with = Some(pref.get_sendable());
@@ -276,7 +277,9 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
         } else {
           // init shad if needed
           if self.shad_msg.is_none() {
-            let mut shad = match MC::AUTH_MODE {
+            let mut shad = 
+                self.from.borrow().get_shadower_r_msg();
+/*match MC::AUTH_MODE {
               ShadowAuthType::NoAuth => {
                 self.from.borrow().get_shadower_r_msg()
               },
@@ -286,8 +289,9 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
                   None => {return Err(Error("reader set as auth but no with peer and not NoAuth auth".to_string(), ErrorKind::Bug,None));},
                 }
               },
-            };
+            };*/
             shad_read_header(&mut shad, &mut stream)?;
+
             self.shad_msg = Some(shad);
           }
           let shad = self.shad_msg.as_mut().unwrap();

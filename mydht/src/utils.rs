@@ -227,6 +227,7 @@ pub fn send_msg<P : Peer, M, T : Write, E : MsgEnc<P,M>, S : ExtWrite>(m : &Prot
   Ok(())
 }
 pub fn send_msg_msg<P : Peer, M, T : Write, E : MsgEnc<P,M>, S : ExtWrite>(m : &M, t : &mut T, e : &E, s : &mut S) -> MDHTResult<()> {
+
   let mut cw = CompExtWInner(t,s);
   e.encode_msg_into(&mut cw,m)?;
   Ok(())

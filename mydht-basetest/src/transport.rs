@@ -219,6 +219,7 @@ where
               },
               tok => if let Some(ca) = cache.get_mut(tok.0 - START_STREAM_IX) {
                 match ca.state {
+                  SlabEntryState::WriteConnectSynch(..) => unreachable!(),
                   SlabEntryState::ReadStream(_,_) => {
                     let state = mem::replace(&mut ca.state, SlabEntryState::Empty);
                     if let SlabEntryState::ReadStream(rs,_) = state {
