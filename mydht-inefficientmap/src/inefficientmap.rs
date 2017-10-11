@@ -66,7 +66,7 @@ impl<P : Peer,RP : Borrow<P>, GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Ke
 impl<P : Peer,RP : Borrow<P>, GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Key,GP>>
 InefficientmapBase2<P,RP,GP,C> {
 
-  fn get_closest(&mut self, nbnode : usize, filter : Option<&VecDeque<P::Key>>) -> Vec<usize> {
+  fn get_closest(&mut self, nbnode : usize, mut filter : Option<&mut VecDeque<P::Key>>) -> Vec<usize> {
     let mut r = Vec::new();
     if self.peers_nbquery.len() == 0 {
       return r
@@ -78,14 +78,16 @@ InefficientmapBase2<P,RP,GP,C> {
       let nid = self.peers_nbquery.get(self.next).unwrap();
       debug!("!!!in closest node {:?}", nid);
       let mut filtered = false;
-      if let Some(ref filter) = filter {
-        if filter.iter().find(|r|**r == nid.0) != None {
+      if let Some(ref mut filt) = filter {
+        println!("in filter {:?}",filt);
+        if filt.iter().find(|r|**r == nid.0) != None {
           filtered = true
         }
       }
       if !filtered {
         if let Some(ws) = nid.1 {
           r.push(ws);
+          filter.as_mut().map(|f|f.push_back(nid.0.clone()));
           i += 1;
         }
       }
@@ -110,11 +112,13 @@ InefficientmapBase2<P,RP,GP,C> {
 
 impl<P : Peer,RP : Borrow<P>,GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Key,GP>>
   RouteBase2<P,RP,GP> for InefficientmapBase2<P,RP,GP,C> {
-  fn route_base<MSG : RouteBaseMessage<P>>(&mut self, nb : usize, m : MSG, _ : RouteMsgType) -> MydhtResult<(MSG,Vec<usize>)> {
+  fn route_base<MSG : RouteBaseMessage<P>>(&mut self, nb : usize, mut m : MSG, _ : RouteMsgType) -> MydhtResult<(MSG,Vec<usize>)> {
     let closest = {
-      let filter = m.get_filter();
+      let filter = m.get_filter_mut();
       self.get_closest(nb,filter)
     };
+    m.adjust_lastsent_next_hop(closest.len());
+//fn update_lastsent_conf<P : Peer> ( queryconf : &QueryMsg<P>,  peers : &Vec<Arc<P>>, nbquery : u8) -> QueryMsg<P> {
     Ok((m,closest))
   }
 }

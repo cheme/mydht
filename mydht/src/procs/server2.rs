@@ -275,6 +275,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
           }
 //pub fn receive_msg<P : Peer, V : KeyVal, T : Read, E : MsgEnc, S : ExtRead>(t : &mut T, e : &E, s : &mut S) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
         } else {
+
           // init shad if needed
           if self.shad_msg.is_none() {
             let mut shad = 

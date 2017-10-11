@@ -87,16 +87,16 @@ impl<P : Peer> QueryMsg<P> {
 
   }
 
-  pub fn get_filter(&self) -> Option<&VecDeque<<P as KeyVal>::Key>> {
+  pub fn get_filter_mut(&mut self) -> Option<&mut VecDeque<<P as KeyVal>::Key>> {
     match self.hop_hist {
-      Some(LastSent::LastSentPeer(_,ref lpeers))
-      | Some(LastSent::LastSentHop(_,ref lpeers)) => {
-        Some(&lpeers)
+      Some(LastSent::LastSentPeer(_,ref mut lpeers))
+      | Some(LastSent::LastSentHop(_,ref mut lpeers)) => {
+        Some(lpeers)
       },
       _ => None,
     }
   }
-  /// after getting a route, update query
+  /// after getting a route, update query TODO del (split in two)
   pub fn update_lastsent_conf<RP : Ref<P>>(&mut self,  peers : &Vec<RP>, nbquery : u8) {
     match self.hop_hist {
       Some(LastSent::LastSentPeer(maxnb,ref mut lpeers)) => {
@@ -127,6 +127,39 @@ impl<P : Peer> QueryMsg<P> {
       None => (),
     };
   }
+/*  pub fn add_lastsent<RP : Ref<P>>(&mut self,  peer : &RP) {
+    match self.hop_hist {
+      Some(LastSent::LastSentPeer(_,ref mut lpeers)) | Some(LastSent::LastSentHop(_,ref mut lpeers)) => {
+        lpeers.push_back(peer.borrow().get_key());
+      },
+      None => (),
+    };
+  }*/
+  /// after getting a route, update query
+  pub fn adjust_lastsent_next_hop(&mut self, nbquery : usize) {
+    match self.hop_hist {
+      Some(LastSent::LastSentPeer(maxnb,ref mut lpeers)) => {
+        if lpeers.len() > maxnb {
+          for _ in 0..(lpeers.len() - maxnb) {
+            lpeers.pop_front();
+          };
+        }
+      },
+      Some(LastSent::LastSentHop(ref mut hop,ref mut lpeers)) => {
+        if *hop > 0 {
+          // buffer one more hop
+          *hop -= 1;
+        } else {
+          for _ in 0..nbquery { // this is an approximation (could be less)
+            lpeers.pop_front();
+          };
+        };
+      },
+      None => (),
+    };
+  }
+
+
 
 
 }

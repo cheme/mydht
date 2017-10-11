@@ -1,5 +1,6 @@
 //! Client service
 use procs::OptInto;
+use std::io::Cursor;
 use std::borrow::Borrow;
 use peer::Peer;
 use peer::{
@@ -228,6 +229,13 @@ impl<MC : MyDHTConf> WriteService<MC> {
 
       let pmess = command.opt_into().unwrap();
       send_msg_msg(&pmess, &mut stream, &self.enc, &mut shad)?;
+/*      let mut cursor = Cursor::new(Vec::new());
+      send_msg_msg(&pmess, &mut cursor, &self.enc, &mut shad)?;
+      let v = cursor.into_inner();
+      println!("writing size : {}",v.len());
+      println!("writing  : {:?}",&v[..]);
+      stream.write_all(&v[..]);*/
+
       for att in pmess.get_attachments() {
         send_att(att, &mut stream, &self.enc, &mut shad)?;
       }

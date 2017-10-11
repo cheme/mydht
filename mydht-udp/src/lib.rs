@@ -1,3 +1,16 @@
+//! 
+//!
+//! TODO this implementation of udp stream totally broke new transport design it may run in unauth
+//! mode as we may send all at once for a message and receive without origin info, mostly useless :
+//! previous dht associated transport with its address so new transport may run, this new design
+//! does not (in unauth it should equival transport add and peer key). For new design using slab
+//! token may be resonable even if not secure at all (start 0 is ping, start usize other is peer
+//! read token -> bad design local transport token is the only design : thread synch is bad then
+//! plus two variant : none thread sync can be a use case).
+//! Routing by origin address is only safe design : then send to reader (a thread or not safe
+//! buffer)
+//!
+//!
 //! disconnected udp proto
 //! In this model only one thread read (on receive connection)
 //! ping is not use to establish connection (in disconnected when receiving ping user is online and

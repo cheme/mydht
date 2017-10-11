@@ -88,7 +88,6 @@ pub trait KVCache<K, V> : Sized + Cache<K,V> {
   /// Plus non optimized vec instantiation (buffer should be internal to cache).
   /// Note that without enough value in cache (need at least two time more value than expected nb
   /// result). And result is feed through a costy iteration.
-  /// 
   fn next_random_values<'a,F>(&'a mut self, queried_nb : usize, f : Option<&F>) -> Vec<&'a V> where K : 'a,
   F : Fn(&V) -> bool,
   {
@@ -97,19 +96,26 @@ pub trait KVCache<K, V> : Sized + Cache<K,V> {
       Some(fil) => self.len_where_c(fil),
       None => self.len_c(),
     };
+    if l == 0 || queried_nb == 0 { 
+      return Vec::new();
+    }
+
+
     let rat = self.distrib_ratio();
     let randrat = l * rat.0 / rat.1;
     let nb = if queried_nb > randrat {
       //println!("applying randrat");
-      randrat
+      if randrat == 0 {
+        // round up
+        1
+      } else {
+        // round down
+        randrat
+      }
     } else {
       queried_nb
     };
     
-    if nb == 0 {
-      return Vec::new();
-    }
-
     let xess = {
       let m = l % 8;
       if m == 0 {

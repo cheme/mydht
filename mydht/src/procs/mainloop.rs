@@ -637,6 +637,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           self.synch_connect_handle_send.push((h,s));
         }
       } else {
+        self.synch_connect_handle_send[self.synch_connect_ix].0.unyield()?;
         self.synch_connect_handle_send[self.synch_connect_ix].1.send(SynchConnectCommandIn(connect_token,dest_address.clone()))?;
       }
       // move ix

@@ -75,10 +75,14 @@ impl QueryConf {
       QueryMode::AMix(ref nb) => QueryModeMsg::AMix(nb.clone(),QUERY_ID_DEFAULT),
     };
     let hop_hist = self.hop_hist.map(|(nb,mode)| {
+      let mut hist = VecDeque::new();
+      if nb > 0 {
+        hist.push_back(me.get_key());
+      }
       if mode {
-        LastSent::LastSentHop(nb,VecDeque::new())
+        LastSent::LastSentHop(nb,hist)
       } else {
-        LastSent::LastSentPeer(nb,VecDeque::new())
+        LastSent::LastSentPeer(nb,hist)
       }
     });
     QueryMsg {

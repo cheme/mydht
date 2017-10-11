@@ -375,11 +375,19 @@ pub enum KVStoreCommand<P : Peer, PR, V : KeyVal, VR> {
 }
 
 impl<P : Peer, PR, V : KeyVal, VR> RouteBaseMessage<P> for KVStoreCommand<P,PR,V,VR> {
-  fn get_filter(&self) -> Option<&VecDeque<<P as KeyVal>::Key>> {
+  fn get_filter_mut(&mut self) -> Option<&mut VecDeque<<P as KeyVal>::Key>> {
     match *self {
-      KVStoreCommand::Find(ref qm,_,_) => qm.get_filter(),
+      KVStoreCommand::Find(ref mut qm,_,_) => qm.get_filter_mut(),
       _ => None,
     }
+  }
+
+  fn adjust_lastsent_next_hop(&mut self, nbquery : usize) {
+    match *self {
+      KVStoreCommand::Find(ref mut qm,_,_) => qm.adjust_lastsent_next_hop(nbquery),
+      _ => (),
+    }
+ 
   }
 }
 
@@ -726,7 +734,7 @@ impl<
               },
               None => {
                 let (odpr,odka,qid) = querymess.mode_info.fwd_dests(&owith);
-        println!("A store nf forward !!{:?}",qid);
+        println!("A store nf forward !!{:?}, {:?}",qid, self.me.borrow().get_key_ref());
                 return Ok(GlobalReply::Forward(odpr,odka,FWConf{nb_for : 0, discover : true},KVStoreCommand::NotFound(qid)));
               },
             }
@@ -735,10 +743,10 @@ impl<
           }
         }
         //let do_store = querymess.mode_info.do_store() && querymess.rem_hop > 0;
-        let qid = if o_api_queryid.is_some() || querymess.mode_info.do_store_on_forward() {
-          self.query_cache.new_id()
+        let (qid,st) = if o_api_queryid.is_some() || querymess.mode_info.do_store_on_forward() {
+          (self.query_cache.new_id(),true)
         } else {
-          querymess.get_query_id()
+          (querymess.get_query_id(),false)
         };
         let old_mode_info = querymess.to_next_hop(self.me.borrow(),qid, &self.dht_rules);
         // forward
@@ -769,7 +777,7 @@ impl<
           let query = Query(qid, QReply::Local(apiqid,querymess.nb_res,vres,nb_not_found,querymess.prio), Some(expire));
           self.query_cache.query_add(qid, query);
         } else {
-          if querymess.mode_info.do_store_on_forward() {
+          if st {
             // clone on owith could be removed
             println!("query dist stored {}", qid);
             let query = Query(qid, QReply::Dist(old_mode_info.clone(),owith.clone(),querymess.nb_res,vres,nb_not_found), Some(expire));

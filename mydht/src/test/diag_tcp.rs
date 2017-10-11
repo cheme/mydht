@@ -3,6 +3,10 @@
 //!
 
 extern crate mydht_tcp;
+use procs::api::{
+  ApiSendIn,
+};
+
 use msgenc::json::Json;
 use msgenc::MsgEnc;
 use DHT;
@@ -18,9 +22,12 @@ use mydht_basetest::transport::connect_rw_with_optional;
 use time::Duration;
 use super::{
   initpeers,
+  initpeers2,
   DHTRULES_DEFAULT,
   ALLTESTMODE,
   finddistantpeer,
+  finddistantpeer2,
+  TestConf,
 };
 use rules::simplerules::{DhtRules};
 #[cfg(test)]
@@ -66,6 +73,26 @@ fn initpeers_tcp<M : PeerMgmtMeths<Node> + Clone> (start_port : u16, nbpeer : us
   };
   initpeers(nodes, transports, map, meths, rules,Json,sim)
 }
+fn initpeers_tcp2 (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u32>)
+  -> Vec<(Node, ApiSendIn<TestConf<Node,Tcp,Json,TestingRules,SimpleRules>>)> {
+  let mut nodes = Vec::new();
+  let mut transports = Vec::new();
+
+  for i in 0 .. nbpeer {
+    let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), start_port + i.to_u16().unwrap());
+    let tcp_transport = Tcp::new(
+      &addr,
+      Duration::seconds(5), // timeout
+    //  Duration::seconds(5), // conn timeout
+      true,//mult
+    ).unwrap();
+    transports.push(tcp_transport);
+    nodes.push(Node {nodeid: "NodeID".to_string() + &(i + 1).to_string()[..], address : SerSocketAddr(addr)});
+  };
+  initpeers2(nodes, transports, map, meths, rules,Json,sim)
+}
+
+
 
 #[test]
 fn connect_rw () {
@@ -101,8 +128,8 @@ fn testpeer4hopget () {
     for m in ALLTESTMODE.iter() {
       let mut rules = DHTRULES_DEFAULT.clone();
       rules.nbhopfact = 3;
-      let peers = initpeers_tcp(startport,n, map, TestingRules::new_no_delay(), rules, None);
-      finddistantpeer(peers,n,(*m).clone(),2,map,true);
+      let peers = initpeers_tcp2(startport,n, map, TestingRules::new_no_delay(), rules.clone(), None);
+      finddistantpeer2(peers,n,(*m).clone(),2,map,true,SimpleRules::new(rules));
       startport = startport + 4 * nbport; // 4 * is useless but due to big nb of open port (both way) it may help some still open port.
     };
    
@@ -114,8 +141,8 @@ fn testpeer4hopget () {
       if let &QueryMode::Asynch = m {
         rules.nbqueryfact = 0.0; // nb query is 1 + prio * nbqfact
       };
-      let peers = initpeers_tcp(startport,n, map, TestingRules::new_no_delay(), rules, None);
-      finddistantpeer(peers,n,(*m).clone(),1,map,false);
+      let peers = initpeers_tcp2(startport,n, map, TestingRules::new_no_delay(), rules.clone(), None);
+      finddistantpeer2(peers,n,(*m).clone(),1,map,false,SimpleRules::new(rules));
       startport = startport + nbport;
     };
 }

@@ -21,7 +21,8 @@ pub trait GetPeerRef<P,RP> {
   fn get_peer_ref(&self) -> (&P,Option<usize>);
 }
 pub trait RouteBaseMessage<P : Peer> {
-  fn get_filter(&self) -> Option<&VecDeque<<P as KeyVal>::Key>>;
+  fn get_filter_mut(&mut self) -> Option<&mut VecDeque<<P as KeyVal>::Key>>;
+  fn adjust_lastsent_next_hop(&mut self, nbquery : usize);
 }
 pub enum RouteMsgType {
   Local,

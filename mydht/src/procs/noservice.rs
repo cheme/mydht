@@ -46,7 +46,8 @@ impl ApiRepliable for NoCommandReply {
 
 impl<P : Peer> RouteBaseMessage<P> for NoCommandReply {
   #[inline]
-  fn get_filter(&self) -> Option<&VecDeque<<P as KeyVal>::Key>> {
+  fn get_filter_mut(&mut self) -> Option<&mut VecDeque<<P as KeyVal>::Key>> {
     None
   }
+  fn adjust_lastsent_next_hop(&mut self,_ : usize) {}
 }
