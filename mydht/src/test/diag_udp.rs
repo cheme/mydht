@@ -102,9 +102,7 @@ use rules::simplerules::{DhtRules};
 use peer::test::TestingRules;
 #[cfg(test)]
 use node::Node;
-use DHT;
 use peer::PeerMgmtMeths;
-use procs::RunningTypes;
 use std::marker::PhantomData;
 use rules::simplerules::SimpleRules;
 use num::traits::ToPrimitive;
@@ -113,17 +111,6 @@ use procs::ClientMode;
 #[cfg(test)]
 use mydht_basetest::transport::connect_rw_with_optional_non_managed;
 
-struct RunningTypesImpl<M : PeerMgmtMeths<Node>, T : Transport, E : MsgEnc<Node,Node>> (PhantomData<(M,T,E)>);
-
-impl<M : PeerMgmtMeths<Node>, T : Transport<Address=SerSocketAddr>, E : MsgEnc<Node,Node>> RunningTypes for RunningTypesImpl<M, T, E> {
-  type A = SerSocketAddr;
-  type P = Node;
-  type V = Node;
-  type M = M;
-  type R = SimpleRules;
-  type E = E;
-  type T = T;
-}
 
 #[test]
 fn connect_rw () {

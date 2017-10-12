@@ -10,7 +10,6 @@ use kvcache::KVCache;
 use std::collections::HashMap;
 use std::sync::mpsc::{Sender};
 use std::marker::PhantomData;
-use procs::mesgs::{PeerMgmtMessage};
 use peer::Peer;
 use keyval::KeyVal;
 use transport::{ReadTransportStream,WriteTransportStream};
@@ -31,22 +30,5 @@ pub trait QueryCache<P : Peer,V,RP : Ref<P>> {
   /// get a new id , used before query_add
   fn new_id(&mut self) -> QueryID;
 }
-/*
-pub fn cache_clean
- <P : Peer,
-  R : 
-  V : KeyVal,
-  TR : ReadTransportStream,
-  TW : WriteTransportStream,
-  QC : QueryCache<P,R,V>>
- (qc : & mut QC, 
-  sp : &Sender<PeerMgmtMessage<P,V,TR,TW>>) {
-    let to_clean = qc.cache_clean_nodes();
-    for q in to_clean.into_iter(){
-      debug!("Cache clean process relase a query");
-      q.release_query(sp);
-    }
-}
-*/
 
 

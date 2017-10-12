@@ -225,7 +225,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
 
             },
             ProtoMessage::PONG(mut withpeer,initial_chal, sig, next_chal) => {
-              println!("a pong received");
+              debug!("a pong received from {:?}", withpeer.get_key_ref());
 
               let atsize = withpeer.attachment_expected_size();
               if atsize > 0 {
@@ -262,7 +262,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
                     }
                   },
                 };
-                println!("is auth set to thrue");
+                debug!("server service switch to authenticated");
                 self.is_auth = true;
                 let pref = MC::PeerRef::new(withpeer);
                 //self.with = Some(pref.get_sendable());

@@ -21,38 +21,11 @@ use std::path::{PathBuf};
 use std::marker::{PhantomData};
 use std::io::{SeekFrom,Write,Read,Seek};
 use std::fs::OpenOptions;
-use rand::{thread_rng,Rng};
-use num::traits::ToPrimitive;
+use rand::{
+  thread_rng,
+  Rng,
+};
 use utils::Ref;
-/*
-//impl<T : KeyVal> KVCache<T> for SimpleCache<T> {
-//impl<T : KeyVal> KVCache for SimpleCache<T> {
-/// Not used correctly for the time being need some more work
-impl<T : KeyVal> KVCache<T::Key, Arc<T>> for SimpleCache<T> {
-  // type K = T::Key;
-  //type KV = Arc<T>;
-  #[inline]
-  fn c_add_val(& mut self, k : T::Key, v : Arc<T>, (persistent, _) : (bool, Option<CachePolicy>)){
-    // if cache we should consider caching priority and 
-    // time in cache In fact only for testing cause persistent is not even persistent
-    if persistent {
-      self.cache.insert(k, v);
-    }
-  }
-
-  #[inline]
-  fn c_get_val(& self, k : &T::Key) -> Option<Arc<T>>{
-    self.cache.get(k).cloned()
-  }
-
-  #[inline]
-  fn c_remove_val(& mut self, k : &T::Key){
-    self.cache.remove(k);
-  }
-
-}
-
-*/
 
 pub type HashMapQuery<P,V,RP> = HashMap<QueryID, Query<P,V,RP>>;
 //pub type CacheQuery<P,V> = KVCache<QueryID, Query<P,V>>;
@@ -133,19 +106,6 @@ impl<P : Peer, V, RP : Ref<P>, C : KVCache<QueryID, Query<P,V,RP>>> QueryCache<P
     if mr.is_err() { // TODO return result instead
       error!("map in place failure during cache clean : {:?}", mr.err());
     };
-/* 
-    for mut q in self.cache.iter(){
-      match (q.1).get_expire() {
-        Some(date) => if date > expire {
-          warn!("expired query to be cleaned : {:?}", q.0);
-          remq.push(q.1.clone());
-          remqid.push(q.0.clone());
-        },
-        None => {
-          initexpire.push(q.1.clone());//q is arc
-        },
-      }
-    }*/
     for mut q in initexpire.iter() {
       // clean cache at next clean : why ?? TODO document it
       self.cache.update_val_c(q,|mut mq| {mq.set_expire(expire); Ok(())});

@@ -1,12 +1,6 @@
 //! tests for bytes_wr
 
 
-use mydht_base::bytes_wr::{
- BytesR,
- BytesW,
- new_bytes_w,
- new_bytes_r,
-};
 use std::io::{
   Write,
   Read,

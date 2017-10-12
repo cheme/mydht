@@ -1,22 +1,37 @@
 
-use serde::{Serializer,Serialize,Deserialize,Deserializer};
-use serde::de::{DeserializeOwned};
+use serde::{
+  Serializer,
+  Serialize,
+  Deserialize,
+  Deserializer,
+};
+use serde::de::DeserializeOwned;
 use serde_json as json;
 use serde_json::error::Error as JSonError;
 //use rustc_serialize::{Encodable,Decodable};
 use super::MsgEnc;
-use keyval::{KeyVal,Attachment};
-use peer::{Peer};
+use keyval::{
+  KeyVal,
+  Attachment,
+};
+use peer::Peer;
 use super::ProtoMessage;
 use super::send_variant::ProtoMessage as ProtoMessageSend;
 use std::io::Write;
 use std::io::Read;
 use mydhtresult::Result as MDHTResult;
-use mydhtresult::{Error,ErrorKind};
+use mydhtresult::{
+  Error,
+  ErrorKind,
+};
 use std::error::Error as StdError;
 use super::write_attachment;
 use super::read_attachment;
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{
+  LittleEndian,
+  ReadBytesExt,
+  WriteBytesExt,
+};
 use num::traits::ToPrimitive;
 
 
@@ -35,21 +50,12 @@ const MAX_BUFF : usize = 10000000; // use for attachment send/receive -- 21888 s
 const BUFF_TRUE : [u8; 1] = [1];
 const BUFF_FALSE : [u8; 1] = [0];
 
-//#[derive(RustcDecodable,RustcEncodable)]
-//struct has_attachment(bool);
 
 unsafe impl Send for Json {
 }
 
 impl<P : Peer, M : Serialize + DeserializeOwned> MsgEnc<P,M> for Json {
-/*  fn encode<P : Peer, V : KeyVal> (&self, mesg : &ProtoMessage<P,V>) -> Option<Vec<u8>>{
-    json::encode(mesg).ok().map(|m| m.into_bytes())
-  }*/
- 
-/*  fn decode<P : Peer, V : KeyVal> (&self, buff : &[u8]) -> Option<ProtoMessage<P,V>>{
-    //  should not & on deref of cow...
-    json::decode(&(*String::from_utf8_lossy(buff))).ok()
-  }*/
+
   fn encode_into<'a, W : Write> (&self, w : &mut W, mesg : &ProtoMessageSend<'a,P>) -> MDHTResult<()> 
 where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a {
@@ -71,13 +77,6 @@ where <P as Peer>::Address : 'a,
   /// attach into will simply add bytes afterward json cont (no hex or base64 costly enc otherwhise
   /// it would be into message)
   fn attach_into<W : Write> (&self, w : &mut W, a : &Attachment) -> MDHTResult<()> {
-/*    let has_at = if a.is_some() {
-      BUFF_TRUE
-    } else {
-      BUFF_FALSE
-    };
-    try!(w.write_all(&has_at));
-*/
     write_attachment(w,a)
   }
 
@@ -107,16 +106,7 @@ where <P as Peer>::Address : 'a,
   }
 
   fn attach_from<R : Read>(&self, r : &mut R, mlen : usize) -> MDHTResult<Attachment> {
-/*    let mut buf = [0];
-    try!(r.read(&mut buf));
-    match buf[0] {
-      i if i == 0 => Ok(None),
-      i if i == 1 => {
-          debug!("Reding an attached file");*/
-      read_attachment(r,mlen)
-      /*},
-      _ => Err(Error("Invalid attachment description".to_string(), ErrorKind::SerializingError, None)),
-    }*/
+    read_attachment(r,mlen)
   }
 
 

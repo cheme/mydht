@@ -307,7 +307,7 @@ fn test_rand_generic () {
   let mut m : HashMap<usize, bool> = HashMap::new();
   assert!(0 == m.next_random_values(1,t_none).len());
   m.insert(1,true);
-  assert!(0 == m.next_random_values(1,t_none).len());
+  assert!(1 == m.next_random_values(1,t_none).len());
   m.insert(2,true);
   assert!(1 == m.next_random_values(1,t_none).len());
   assert!(1 == m.next_random_values(2,t_none).len());

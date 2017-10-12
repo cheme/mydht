@@ -52,7 +52,6 @@ pub mod send_variant {
   use peer::{Peer};
   use query::{QueryID,QueryMsg};
   use serde::{Serializer,Serialize};
-  use super::{DistantEnc,DistantEncAtt};
 
   #[derive(Serialize,Debug)]
   pub enum ProtoMessage<'a,P : Peer + 'a> {
@@ -60,12 +59,6 @@ pub mod send_variant {
     /// reply contain peer for update of distant peer info, for instance its listener address for a
     /// tcp transport.
     PONG(&'a P,Vec<u8>,Vec<u8>,Option<Vec<u8>>),
-/*    STORENODE(Option<QueryID>, Option<DistantEnc<&'a P>>),
-    STOREVALUE(Option<QueryID>, Option<DistantEnc<&'a V>>),
-    STOREVALUEATT(Option<QueryID>, Option<DistantEncAtt<&'a V>>),
-    FINDNODE(QueryMsg<P>, P::Key),
-    FINDVALUE(QueryMsg<P>, V::Key),
-    PROXY(Option<usize>), // No content as message decode will be done by reading following payload*/
   }
 
 }
@@ -74,7 +67,6 @@ pub mod send_variant {
 
 #[derive(Deserialize,Debug)]
 /// Messages between peers
-/// TODO ref variant for send !!!!
 #[serde(bound(deserialize = ""))]
 pub enum ProtoMessage<P : Peer> {
   /// Our node pinging plus challenge and message signing
@@ -86,53 +78,8 @@ pub enum ProtoMessage<P : Peer> {
   ///  - Optionnally a challeng for authentifying back (second challenge)
   ///  P is added for reping on lost PING, TODO could be remove and simply origin key in pong
   PONG(P,Vec<u8>,Vec<u8>,Option<Vec<u8>>),
-/*  /// reply to query of propagate, if no queryid is used it is a node propagate
-  STORENODE(Option<QueryID>, Option<DistantEnc<P>>), // reply to synch or asynch query - note no mix in query mode -- no signature, since we go with a ping before adding a node (ping is signed) TODO allow a signing with primitive only for this ?? and possible not ping afterwad
-  /// reply to query of propagate, if no queryid is used it is a node propagate
-  STOREVALUE(Option<QueryID>, Option<DistantEnc<V>>), // reply to synch or asynch query - note no mix in query mode
-  /// reply to query of propagate
-  STOREVALUEATT(Option<QueryID>, Option<DistantEncAtt<V>>), // same as store value but use encoding distant with attachment
-  /// Query for Peer
-  FINDNODE(QueryMsg<P>, P::Key), // int is remaining nb hop -- TODO plus message signing for private node communication (add a primitive to check mess like those
-  /// Query for Value
-  FINDVALUE(QueryMsg<P>, V::Key),*/
 }
 
-
-#[derive(Debug)]
-/// Choice of an encoding without attachment
-pub struct DistantEnc<V> (pub V);
-#[derive(Debug)]
-/// Choice of an encoding with attachment
-pub struct DistantEncAtt<V> (pub V);
-
-impl<'a, V : KeyVal> Serialize for DistantEnc<&'a V>{
-  fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
-    // not local without attach
-    self.0.encode_kv(s, false, false)
-  }
-}
-
-impl<'de,V : KeyVal> Deserialize<'de> for DistantEnc<V> {
-  fn deserialize<D:Deserializer<'de>> (d : D) -> Result<DistantEnc<V>, D::Error> {
-    // not local without attach
-    <V as KeyVal>::decode_kv(d, false, false).map(|v|DistantEnc(v))
-  }
-}
-
-impl<'a, V : KeyVal> Serialize for DistantEncAtt<&'a V>{
-  fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
-    // not local with attach
-        self.0.encode_kv(s, false, true)
-  }
-}
-
-impl<'de,V : KeyVal>  Deserialize<'de> for DistantEncAtt<V> {
-  fn deserialize<D:Deserializer<'de>> (d : D) -> Result<DistantEncAtt<V>, D::Error> {
-    // not local with attach
-    <V as KeyVal>::decode_kv(d, false, true).map(|v|DistantEncAtt(v))
-  }
-}
 
 
 /// common utility for encode implementation (attachment should allways be following bytes)

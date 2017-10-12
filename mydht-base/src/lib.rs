@@ -351,7 +351,6 @@ pub mod procs;
 pub mod rules;
 pub mod route;
 pub mod route2;
-pub mod bytes_wr;
 pub mod service;
 #[cfg(feature="tunnel-impl")]
 pub mod tunnel;

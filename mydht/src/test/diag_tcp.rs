@@ -9,7 +9,6 @@ use procs::api::{
 
 use msgenc::json::Json;
 use msgenc::MsgEnc;
-use DHT;
 use self::mydht_tcp::Tcp;
 use utils;
 use transport::{
@@ -34,23 +33,11 @@ use node::Node;
 use peer::test::TestingRules;
 use query::{QueryConf,QueryMode,QueryPriority};
 use peer::PeerMgmtMeths;
-use procs::RunningTypes;
 use std::marker::PhantomData;
 use rules::simplerules::SimpleRules;
 use num::traits::ToPrimitive;
 use keyval::KeyVal;
 
-struct RunningTypesImpl<M : PeerMgmtMeths<Node>, T : Transport, E : MsgEnc<Node,Node>> (PhantomData<(M,T,E)>);
-
-impl<M : PeerMgmtMeths<Node>, T : Transport<Address=SerSocketAddr>, E : MsgEnc<Node,Node>> RunningTypes for RunningTypesImpl<M, T, E> {
-  type A = SerSocketAddr;
-  type P = Node;
-  type V = Node;
-  type M = M;
-  type R = SimpleRules;
-  type E = E;
-  type T = T;
-}
 
 
 

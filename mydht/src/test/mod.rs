@@ -79,18 +79,12 @@ use self::mydht_slab::slab::{
 };
 
 use std::thread;
-use DHT;
 use std::hash::Hash;
 use simplecache::SimpleCache;
 use self::mydht_inefficientmap::inefficientmap::Inefficientmap;
 use self::mydht_inefficientmap::inefficientmap::InefficientmapBase2;
 use self::mydht_inefficientmap::inefficientmap::new as new_inmap;
 use rules::simplerules::{SimpleRules,DhtRules};
-use procs::{
-  RunningContext, 
-  RunningTypes,
-  RunningTypesImpl,
-};
 use peer::test::{
   TestingRules,
   PeerTest,
@@ -246,7 +240,6 @@ fn simu_asynch_peer_discovery () {
   E : MsgEnc, 
   T : Transport<Address = A>>
 */ 
-type RunningTypes1 = RunningTypesImpl<LocalAdd, PeerTest, PeerTest, TestingRules, SimpleRules, Json, TransportTest>;
 
 /// init with all peers as others : filtering is done in scenario (random removal and remove self)
 fn runningcontext1 (nbpeer : usize, dhtrules : DhtRules) -> Vec<TestConf<PeerTest, TransportTest, Json, TestingRules,SimpleRules>> {
@@ -624,7 +617,6 @@ struct TestConf<P,T,ENC,PM,DR> {
   pub do_peer_query_forward_with_discover : bool,
 }
 
-//type RunningTypes1 = RunningTypesImpl<LocalAdd, PeerTest, PeerTest, TestingRules, SimpleRules, Json, TransportTest>;
 impl<
   P : Peer,
   T : Transport<Address = <P as Peer>::Address>,

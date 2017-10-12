@@ -6,12 +6,6 @@ use peer::{
   NoShadow,
   PeerMgmtMeths,
 };
-use procs::{
-  //RunningContext, 
-  RunningProcesses, 
-  ArcRunningContext, 
-  RunningTypes,
-};
 use std::sync::Arc;
 use std::thread;
 

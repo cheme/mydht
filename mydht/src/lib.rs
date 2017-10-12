@@ -114,10 +114,8 @@ mod node{
 
 
 mod peer;
-mod pool;
 mod procs;
 mod query;
-//mod route;
 mod transport;
 mod msgenc;
 pub mod utils;
@@ -128,8 +126,6 @@ mod test;
 
 // reexport
 pub use peer::{PeerPriority,PeerState};
-pub use procs::{DHT, RunningContext, RunningProcesses, ArcRunningContext, RunningTypes};
-pub use procs::{store_val, find_val, find_local_val};
 pub use query::{QueryConf,QueryPriority,QueryMode,LastSentConf};
 pub use kvstore::{CachePolicy};
 pub use mydht_base::kvstore::{StoragePriority};
@@ -174,12 +170,10 @@ pub mod dhtif{
   pub use mydht_base::keyval::{KeyVal,FileKeyVal,Key};
   pub use rules::DHTRules;
   pub use peer::{Peer,PeerMgmtMeths};
-  pub use procs::{ClientMode,ServerMode};
 }
 pub mod kvstoreif{
   pub use mydht_base::kvcache::{KVCache};
   pub use mydht_base::kvstore::{KVStore, KVStoreRel};
-  pub use procs::mesgs::{KVStoreMgmtMessage};
 }
 pub mod transportif{
   pub use transport::{Transport,TransportStream};

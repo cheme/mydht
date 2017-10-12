@@ -119,66 +119,6 @@ pub fn random_bytes(size : usize) -> Vec<u8> {
 }
 
 
-/*
-pub fn send_msg<'a,P : Peer + 'a, V : KeyVal + 'a, T : WriteTransportStream, E : MsgEnc, S : ShadowW> (
-   m : &ProtoMessageSend<'a,P,V>, 
-   a : Option<&Attachment>, 
-   t : &mut T, 
-   e : &E,
-   s : &mut S,
-   smode : S::ShadowMode,
-  ) -> MDHTResult<()> 
-where <P as Peer>::Address : 'a,
-      <P as KeyVal>::Key : 'a,
-      <V as KeyVal>::Key : 'a {
-  s.set_mode(smode); // TODO remove smode as parameter and set less frequently in code!!!
-  {
-    let mut sws = new_shadow_write_once(t,s);
-    try!(e.encode_into(&mut sws,m));
-    try!(e.attach_into(&mut sws,a)); // TODO shadow that to!!!
-    try!(sws.suspend()) // write end and flush
-  };
-  try!(t.flush());
-  Ok(())
-}
-
-
-/// TODO switch receive_msg to this interface
-pub fn receive_msg_tmp2<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc, S : ShadowR>(t : &mut T, e : &E, s : &mut S) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
-  let mut srs = new_shadow_read_once (t,s);
-  let m = try!(e.decode_from(&mut srs));
-  let oa = try!(e.attach_from(&mut srs));
-  try!(srs.read_end()); // not in drop to catch error
-  Ok((m,oa))
-}
-
-
-#[inline]
-pub fn receive_msg<P : Peer, V : KeyVal, T : ReadTransportStream + Read, E : MsgEnc, S : ShadowR>(t : &mut T, e : &E, s : &mut S) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
-  receive_msg_tmp2(t,e,s).ok()
-}
-*/
-/*
-pub fn receive_msg<P : Peer, V : KeyVal, T : TransportStream, E : MsgEnc>(t : &mut T, e : &E) -> Option<(ProtoMessage<P,V>, Option<Attachment>)> {
-  let rs = t.streamread();
-  match rs {
-    Ok((m, at)) => {
-      debug!("recv {:?}",m);
-      let pm : Option<ProtoMessage<P,V>> = e.decode(&m[..]);
-      pm.map(|r|(r, at))
-    },
-    Err(_) => None, // TODO check if an attachment
-  }
-}*/
-/*
-pub fn sendUnconnectMsg<P : Per, V : KeyVal, T : TransportStream, E : MsgEnc>( p : Arc<P>, m : &ProtoMessage<P,V>, t : &mut T, e : &E ) -> bool {
-    let mut sc : IoResult<T> = <T as TransportStream>::connectwith((*p).clone(), Duration::seconds(5));
-    match sc {
-      None => false,
-      Some (mut s) => sendMsg(&s, e),
-    }
-}*/
-
 pub fn receive_msg<P : Peer, M, T : Read, E : MsgEnc<P,M>, S : ExtRead>(t : &mut T, e : &E, s : &mut S) -> MDHTResult<ProtoMessage<P>> {
   let mut cr = CompExtRInner(t,s);
   let m = e.decode_from(&mut cr)?;
