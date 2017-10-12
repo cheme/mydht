@@ -8,14 +8,12 @@ use procs::api::{
 };
 
 use msgenc::json::Json;
-use msgenc::MsgEnc;
 use self::mydht_tcp::Tcp;
 use utils;
 use transport::{
-  Transport,
   SerSocketAddr,
 };
-use std::net::{SocketAddr,Ipv4Addr};
+use std::net::{Ipv4Addr};
 #[cfg(test)]
 use mydht_basetest::transport::connect_rw_with_optional;
 use time::Duration;
@@ -31,17 +29,14 @@ use rules::simplerules::{DhtRules};
 use node::Node;
 
 use peer::test::TestingRules;
-use query::{QueryConf,QueryMode,QueryPriority};
-use peer::PeerMgmtMeths;
-use std::marker::PhantomData;
+use query::{QueryMode};
 use rules::simplerules::SimpleRules;
 use num::traits::ToPrimitive;
-use keyval::KeyVal;
 
 
 
 
-fn initpeers_tcp2 (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u32>)
+fn initpeers_tcp2 (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u64>)
   -> Vec<(Node, ApiSendIn<TestConf<Node,Tcp,Json,TestingRules,SimpleRules>>)> {
   let mut nodes = Vec::new();
   let mut transports = Vec::new();

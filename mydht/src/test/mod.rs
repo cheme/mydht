@@ -5,7 +5,6 @@ extern crate mydht_slab;
 
 use std::borrow::Borrow;
 use mydhtresult::Result;
-use std::result::Result as StdResult;
 use rules::DHTRules;
 use transport::Transport;
 use procs::{
@@ -18,15 +17,14 @@ use kvcache::{
 use procs::deflocal::{
   LocalReply,
 };
-use utils;
 use utils::{
   OneResult,
   new_oneresult,
   clone_wait_one_result,
   Ref,
   ArcRef,
-  RcRef,
-  CloneRef,
+//  RcRef,
+//  CloneRef,
 
 };
 use std::time::Instant;
@@ -46,25 +44,16 @@ use query::simplecache::{
 };
 
 use procs::{
-  MCCommand,
   MCReply,
   PeerCacheRouteBase,
   RWSlabEntry,
-  OptInto,
-  OptFrom,
 };
 use procs::api::{
   Api,
-  ApiReply,
   ApiResult,
-  ApiQueriable,
   ApiQueryId,
-  ApiRepliable,
 };
 
-use std::sync::{
-  Arc,
-};
 use procs::{
   ApiCommand,
 };
@@ -81,10 +70,11 @@ use self::mydht_slab::slab::{
 use std::thread;
 use std::hash::Hash;
 use simplecache::SimpleCache;
-use self::mydht_inefficientmap::inefficientmap::Inefficientmap;
 use self::mydht_inefficientmap::inefficientmap::InefficientmapBase2;
-use self::mydht_inefficientmap::inefficientmap::new as new_inmap;
-use rules::simplerules::{SimpleRules,DhtRules};
+use rules::simplerules::{
+  SimpleRules,
+  DhtRules,
+};
 use peer::test::{
   TestingRules,
   PeerTest,
@@ -92,18 +82,11 @@ use peer::test::{
 };
 use keyval::{
   KeyVal,
-  GettableAttachments,
-  SettableAttachments,
 };
 use rand::{thread_rng,Rng};
 use query::{QueryConf,QueryMode};
 use query::{
-  Query,
-  QReply,
-  QueryID,
-  QueryModeMsg,
-  QueryMsg,
-  PropagateMsg,
+  //Query,
   QueryPriority,
 };
 use procs::noservice::{
@@ -112,40 +95,38 @@ use procs::noservice::{
 use service::{
   NoService,
   NoSpawn,
-  Service,
-  MioChannel,
-  SpawnChannel,
+  //Service,
+  //MioChannel,
+  //SpawnChannel,
   MpscChannel,
-  MpscChannelRef,
+//  MpscChannelRef,
   NoChannel,
-  NoRecv,
-  LocalRcChannel,
-  SpawnerYield,
+  //NoRecv,
+  //LocalRcChannel,
+  //SpawnerYield,
   SpawnSend,
-  LocalRc,
+ // LocalRc,
  // MpscSender,
   NoSend,
 
-  Spawner,
-  Blocker,
-  RestartOrError,
-  Coroutine,
-  RestartSameThread,
-  ThreadBlock,
+  //Spawner,
+  //Blocker,
+  //RestartOrError,
+  //Coroutine,
+  //RestartSameThread,
+ // ThreadBlock,
   ThreadPark,
-  ThreadParkRef,
+ // ThreadParkRef,
 
-  CpuPool,
-  CpuPoolFuture,
+  //CpuPool,
+  //CpuPoolFuture,
 };
 
 
 use kvstore::{
-  StoragePriority,
   KVStore,
 };
 use msgenc::json::Json;
-use utils::ArcKV;
 use peer::PeerMgmtMeths;
 use msgenc::MsgEnc;
 use num::traits::ToPrimitive;
@@ -376,7 +357,7 @@ fn simpeer2hopget () {
 }
 
 fn finddistantpeer2<P : Peer, T : Transport<Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>> + Clone>
-   (mut peers : Vec<(P, ApiSendIn<TestConf<P,T,E,TestingRules,SimpleRules>>)>, nbpeer : usize, qm : QueryMode, prio : QueryPriority, map : &[&[usize]], find : bool, rules : SimpleRules)
+   (mut peers : Vec<(P, ApiSendIn<TestConf<P,T,E,TestingRules,SimpleRules>>)>, nbpeer : usize, qm : QueryMode, prio : QueryPriority, _map : &[&[usize]], find : bool, rules : SimpleRules)
   where  <P as KeyVal>::Key : Hash {
     let queryconf = QueryConf {
       mode : qm.clone(), 
@@ -858,7 +839,7 @@ fn confinitpeers1(me : PeerTest, others : Vec<PeerTest>, transport : TransportTe
 /// Sim is not to be used in similar case as before : there is no guaranties all peers will be
 /// queried : in fact with  hashmap kvstore default implementation only a ratio of 2/3 peer will be
 /// queried by call to subset on peer connect discovery thus it is bad for test with single route.
-fn initpeers2<P : Peer, T : Transport<Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>> + Clone> (nodes : Vec<P>, transports : Vec<T>, map : &[&[usize]], meths : TestingRules, rules : DhtRules, enc : E, sim : Option<u32>) 
+fn initpeers2<P : Peer, T : Transport<Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>> + Clone> (nodes : Vec<P>, transports : Vec<T>, map : &[&[usize]], meths : TestingRules, rules : DhtRules, enc : E, sim : Option<u64>) 
   -> Vec<(P, ApiSendIn< TestConf<P,T,E,TestingRules,SimpleRules>  >)> 
   where  <P as KeyVal>::Key : Hash 
   {
@@ -885,12 +866,12 @@ fn initpeers2<P : Peer, T : Transport<Address = <P as Peer>::Address>,E : MsgEnc
    if sim.is_some() {
      // all has started
      for n in result.iter_mut(){
-       thread::sleep_ms(100); // local get easily stuck
+       thread::sleep(Duration::from_millis(100)); // local get easily stuck
        let refresh_command = ApiCommand::refresh_peer(10000); // Warn hard coded value.
        n.1.send(refresh_command).unwrap();
      };
      // ping established
-     thread::sleep_ms(sim.unwrap());
+     thread::sleep(Duration::from_millis(sim.unwrap()));
    } else {
      //establish connection by peerping of bpeers and wait result : no need to sleep
      for n in result.iter_mut(){
@@ -913,9 +894,9 @@ fn initpeers2<P : Peer, T : Transport<Address = <P as Peer>::Address>,E : MsgEnc
 
 // local transport usage is faster than actual transports
 // Yet default to one second
-static DEF_SIM : Option<u32> = Some(2000);
+static DEF_SIM : Option<u64> = Some(2000);
 
-fn initpeers_test2 (nbpeer : usize, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u32>) -> Vec<(PeerTest, ApiSendIn<TestConf<PeerTest,TransportTest,Json,TestingRules,SimpleRules>>)> {
+fn initpeers_test2 (nbpeer : usize, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u64>) -> Vec<(PeerTest, ApiSendIn<TestConf<PeerTest,TransportTest,Json,TestingRules,SimpleRules>>)> {
   let transports = TransportTest::create_transport(nbpeer,true,true);
   let mut nodes = Vec::new();
   for i in 0 .. nbpeer {

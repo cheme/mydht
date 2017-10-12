@@ -17,19 +17,12 @@ use self::readwrite_comp::{
   CompExtWInner,
   CompExtRInner,
 };
-use num::bigint::{BigUint,RandBigInt};
 use rand::Rng;
 use rand::thread_rng;
-use std::sync::{Arc,Mutex,Condvar};
-use transport::{ReadTransportStream,WriteTransportStream};
-use keyval::{Attachment,SettableAttachment};
+use keyval::{Attachment};
 use msgenc::{MsgEnc,ProtoMessage};
 use msgenc::send_variant::ProtoMessage as ProtoMessageSend;
-use keyval::{KeyVal};
-use std::fmt::{Formatter,Debug};
-use std::fmt::Error as FmtError;
 //use keyval::{AsKeyValIf};
-use keyval::{FileKeyVal};
 use peer::Peer;
 #[cfg(feature="openssl-impl")]
 use self::openssl::hash::{Hasher,MessageDigest};
@@ -43,23 +36,12 @@ use self::crypto::sha2::Sha256;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::fs::File;
-use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6, Ipv4Addr, Ipv6Addr};
-use std::io::Result as IoResult;
-use std::str::FromStr;
-use std::env;
-use std::fs;
 //use std::iter;
 //use std::borrow::ToOwned;
 //use std::ffi::OsStr;
-use std::path::{Path,PathBuf};
-use self::time::Timespec;
-use serde::{Serializer,Serialize,Deserializer,Deserialize};
 //use rustc_serialize::hex::{ToHex,FromHex};
-use std::ops::Deref;
 use mydhtresult::Result as MDHTResult;
 
-#[cfg(test)]
-use std::thread;
 
 
 
@@ -175,13 +157,13 @@ pub fn send_msg_msg<P : Peer, M, T : Write, E : MsgEnc<P,M>, S : ExtWrite>(m : &
 
 pub fn send_att<P : Peer, M, T : Write, E : MsgEnc<P,M>, S : ExtWrite>(att : &Attachment, t : &mut T, e : &E, s : &mut S) -> MDHTResult<()> {
   let mut cw = CompExtWInner(t,s);
-  let m = e.attach_into(&mut cw,att)?;
-  Ok(())
+  e.attach_into(&mut cw,att)
 }
 
 
 
 
+// TODO unused ? remove
 #[cfg(feature="rust-crypto-impl")]
 pub fn hash_buf_crypto(buff : &[u8], digest : &mut Digest) -> Vec<u8> {
   let bsize = digest.block_size();
@@ -211,7 +193,7 @@ pub fn hash_buf_crypto(buff : &[u8], digest : &mut Digest) -> Vec<u8> {
   rbuf.to_vec()
 }
 
-
+// TODO unused ? remove
 #[cfg(not(feature="openssl-impl"))]
 #[cfg(feature="rust-crypto-impl")]
 pub fn hash_file_crypto(f : &mut File, digest : &mut Digest) -> Vec<u8> {
@@ -263,6 +245,7 @@ pub fn hash_file_crypto(f : &mut File, digest : &mut Digest) -> Vec<u8> {
   rbuf.to_vec()
 }
 
+// TODO return result!! TODO unused??? : remove
 #[cfg(feature="openssl-impl")]
 pub fn hash_openssl(f : &mut File) -> Vec<u8> {
   let mut digest = Hasher::new(MessageDigest::sha256()).unwrap(); // TODO in filestore parameter with a supported hash enum // TODO return error
@@ -321,6 +304,6 @@ pub fn hash_openssl(f : &mut File) -> Vec<u8> {
     },
   };
  
-  digest.finish().unwrap()
+  digest.finish2().unwrap().to_vec()
 }
 

@@ -5,7 +5,6 @@ use super::{
   MainLoopCommand,
 };
 use peer::{
-  PeerMgmtMeths,
   PeerPriority,
 };
 

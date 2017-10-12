@@ -2,7 +2,6 @@
 
 use peer::{
   Peer,
-  NoShadow,
 };
 use std::io::{
   Write,
@@ -53,10 +52,6 @@ impl ShadowTest {
         w.write(v2)
       },
     }
-  }
-  #[inline]
-  fn shadow_sim_flush<W : Write> (&mut self, w : &mut W) -> IoResult<()> {
-    Ok(())
   }
   #[inline]
   fn read_shadow_iter_sim<R : Read> (&mut self, k : &[u8], r : &mut R, buf: &mut [u8]) -> IoResult<usize> {
@@ -143,7 +138,7 @@ impl ExtWrite for ShadowTest {
 
 
   #[inline]
-  fn flush_into<W : Write>(&mut self, w : &mut W) -> IoResult<()> {Ok(())}
+  fn flush_into<W : Write>(&mut self, _ : &mut W) -> IoResult<()> {Ok(())}
   #[inline]
   fn write_end<W : Write>(&mut self, _ : &mut W) -> IoResult<()> {Ok(())}
 }

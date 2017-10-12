@@ -1,26 +1,15 @@
-use serde::{Serialize};
-use serde::de::{DeserializeOwned};
 use std::collections::{HashMap};
-use std::hash::Hash;
 use query::{QueryID, Query};
 use query::cache::QueryCache;
 //use std::time::Duration;
 use peer::Peer;
 use std::time::Instant;
-use keyval::{KeyVal,Key};
-use kvstore::{KVStore,KVStoreRel};
 use kvcache::{KVCache};
-use kvstore::CachePolicy;
 use mydhtresult::Result as MDHTResult;
 //use rustc_serialize::{Encodable, Decodable, Encoder, Decoder};
-use serde_json as json;
 //use std::fs::{File};
-use std::fs::{copy};
-use std::path::{PathBuf};
 //use utils::ArcKV;
 use std::marker::{PhantomData};
-use std::io::{SeekFrom,Write,Read,Seek};
-use std::fs::OpenOptions;
 use rand::{
   thread_rng,
   Rng,

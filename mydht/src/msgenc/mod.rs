@@ -6,22 +6,6 @@
 //! message and/or cryptiong content
 
 
-use keyval::{KeyVal,Attachment};
-use peer::{Peer};
-use query::{QueryID,QueryMsg};
-use serde::{Serializer,Serialize,Deserializer,Deserialize};
-use mydhtresult::Result as MDHTResult;
-use std::io::Write;
-use std::io::Read;
-use mydhtresult::{Error,ErrorKind};
-use std::fs::File;
-use std::io::{Seek,SeekFrom};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use num::traits::ToPrimitive;
-use mydht_base::utils;
-use std::error::Error as StdError;
-use self::send_variant::ProtoMessage as ProtoMessageSend;
-
 
 pub use mydht_base::msgenc::*;
 

@@ -349,7 +349,7 @@ pub mod msgenc;
 pub mod query;
 pub mod procs;
 pub mod rules;
-pub mod route;
+//pub mod route;
 pub mod route2;
 pub mod service;
 #[cfg(feature="tunnel-impl")]

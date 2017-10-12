@@ -2,28 +2,10 @@
 //!  - listen for incomming connection
 //!  - try connect in background
 use mydhtresult::Result;
-use time::Duration as CrateDuration;
 use service::{
-  HandleSend,
   Service,
-  Spawner,
   SpawnSend,
-  SpawnRecv,
-  SpawnHandle,
-  SpawnUnyield,
-  SpawnChannel,
-  MioChannel,
-  MioSend,
-  MioRecv,
-  NoYield,
-  YieldReturn,
   SpawnerYield,
-  WriteYield,
-  ReadYield,
-  DefaultRecv,
-  DefaultRecvChannel,
-  NoRecv,
-  NoSend,
 };
 use procs::{
   MyDHTConf,
@@ -35,6 +17,9 @@ use transport::Transport;
 use super::mainloop::{
   MainLoopCommand,
 };
+use super::{
+  MainLoopSendIn,
+};
 
 
 //------------sync listenner
@@ -43,18 +28,18 @@ use super::mainloop::{
 pub struct SynchConnListenerCommandIn;
 pub enum SynchConnListenerCommandOut<T : Transport> {
   Skip,
-  Connected(<T as Transport>::ReadStream, Option<<T as Transport>::WriteStream>, <T as Transport>::Address),
+  Connected(<T as Transport>::ReadStream, Option<<T as Transport>::WriteStream>),
 }
-pub struct SynchConnListenerCommandDest<MC : MyDHTConf>(pub MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>);
+pub struct SynchConnListenerCommandDest<MC : MyDHTConf>(pub MainLoopSendIn<MC>);
 pub struct SynchConnListener<T : Transport> (pub Arc<T>);
 impl<T : Transport> Service for SynchConnListener<T> {
   type CommandIn = SynchConnListenerCommandIn;
   type CommandOut = SynchConnListenerCommandOut<T>;
 
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+  fn call<S : SpawnerYield>(&mut self, _req: Self::CommandIn, _async_yield : &mut S) -> Result<Self::CommandOut> {
     match self.0.accept() {
-      Ok((rs,ows,tad)) => {
-        return Ok(SynchConnListenerCommandOut::Connected(rs,ows,tad));
+      Ok((rs,ows)) => {
+        return Ok(SynchConnListenerCommandOut::Connected(rs,ows));
       },
       // ignore error
       Err(e) => error!("Transport accept error : {}",e),
@@ -67,8 +52,8 @@ impl<MC : MyDHTConf> SpawnSend<SynchConnListenerCommandOut<MC::Transport>> for S
   const CAN_SEND : bool = true;
   fn send(&mut self, r : SynchConnListenerCommandOut<MC::Transport>) -> Result<()> {
     match r {
-      SynchConnListenerCommandOut::Connected(rs,ows,ad) => {
-        self.0.send(MainLoopCommand::ConnectedR(rs,ows,ad))?;
+      SynchConnListenerCommandOut::Connected(rs,ows) => {
+        self.0.send(MainLoopCommand::ConnectedR(rs,ows))?;
       },
       SynchConnListenerCommandOut::Skip => (),
     };
@@ -87,16 +72,16 @@ pub enum SynchConnectCommandOut<T : Transport> {
   /// contain slab index and streams
   Connected(usize, <T as Transport>::WriteStream, Option<<T as Transport>::ReadStream>),
 }
-pub struct SynchConnectDest<MC : MyDHTConf>(pub MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>);
+pub struct SynchConnectDest<MC : MyDHTConf>(pub MainLoopSendIn<MC>);
 pub struct SynchConnect<T : Transport> (pub Arc<T>);
 
 impl<T : Transport> Service for SynchConnect<T> {
   type CommandIn = SynchConnectCommandIn<T>;
   type CommandOut = SynchConnectCommandOut<T>;
 
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut S) -> Result<Self::CommandOut> {
     let SynchConnectCommandIn(slab_ix,add) = req;
-    Ok(match self.0.connectwith(&add, CrateDuration::seconds(1000)) {
+    Ok(match self.0.connectwith(&add) {
       Ok((ws,ors)) => SynchConnectCommandOut::Connected(slab_ix,ws,ors),
       Err(e) => {
         debug!("Could not connect: {}",e);

@@ -10,7 +10,6 @@ use mydhtresult::Result as MDHTResult;
 //use std::fs::{File};
 use std::fs::{copy};
 use std::path::{PathBuf};
-//use utils::ArcKV;
 use std::marker::{PhantomData};
 use std::io::{SeekFrom,Write,Read,Seek};
 use std::fs::OpenOptions;

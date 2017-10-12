@@ -1,20 +1,8 @@
 use query::{QueryID, Query};
 
-use serde::{Serialize};
-use serde::de::{DeserializeOwned};
 //use std::time::Duration;
-use time;
-use rand::thread_rng;
-use rand::Rng;
-use kvcache::KVCache;
-use std::collections::HashMap;
-use std::sync::mpsc::{Sender};
-use std::marker::PhantomData;
 use peer::Peer;
-use keyval::KeyVal;
-use transport::{ReadTransportStream,WriteTransportStream};
 use mydhtresult::Result as MDHTResult;
-use kvstore::CachePolicy;
 use utils::Ref;
 
 //TODO rewrite with parameterization ok!! (generic simplecache) TODO move to mod.rs

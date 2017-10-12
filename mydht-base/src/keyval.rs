@@ -1,8 +1,13 @@
 
 //! KeyVal common traits
 use std::path::{PathBuf};
-use serde::{Serializer,Serialize,Deserialize,Deserializer};
-use serde::de::{DeserializeOwned};
+use serde::{
+  Serializer,
+  Serialize,
+//  Deserialize,
+  Deserializer,
+};
+use serde::de::DeserializeOwned;
 use std::fmt;
 //use num::traits::ToPrimitive;
 

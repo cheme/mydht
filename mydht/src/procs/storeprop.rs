@@ -7,10 +7,7 @@
 //! adjustment of the query : need to include a function call back message on error to
 //! MainLoop::ForwardService command
 use std::collections::VecDeque;
-use std::mem::replace;
-use kvstore::StoragePriority;
 use mydht_base::route2::RouteBaseMessage;
-use std::convert::From;
 use keyval::{
   KeyVal,
   GettableAttachments,
@@ -20,13 +17,11 @@ use keyval::{
 use utils::{
   SRef,
   SToRef,
-  SerRef,
 };
 use super::deflocal::{
   GlobalDest,
 };
 use rules::DHTRules;
-use std::time;
 use std::time::Instant;
 use procs::deflocal::{
   GlobalReply,
@@ -37,9 +32,8 @@ use query::cache::{
 };
 use super::api::{
   ApiQueryId,
-  ApiCommand,
 };
-use serde::{Serializer,Serialize,Deserializer};
+use serde::{Serialize};
 use serde::de::DeserializeOwned;
 use peer::{
   Peer,
@@ -48,7 +42,6 @@ use query::{
   Query,
   QReply,
   QueryID,
-  QueryModeMsg,
   QueryMsg,
   PropagateMsg,
   QueryPriority,
@@ -57,49 +50,25 @@ use mydhtresult::{
   Result,
 };
 use super::mainloop::{
-  MainLoopCommand,
   MainLoopSubCommand,
 };
 use kvstore::{
   KVStore,
-  CachePolicy,
 };
 use service::{
   Service,
   Spawner,
-  SpawnUnyield,
   SpawnSend,
-  SpawnRecv,
-  SpawnHandle,
   SpawnChannel,
-  MioChannel,
-  MioSend,
-  MioRecv,
-  NoYield,
-  YieldReturn,
   SpawnerYield,
-  WriteYield,
-  ReadYield,
-  DefaultRecv,
-  DefaultRecvChannel,
-  NoRecv,
-  NoSend,
-};
-use super::server2::{
-  ReadDest,
 };
 use super::{
   FWConf,
   MyDHTConf,
-  GetOrigin,
-  GlobalHandleSend,
   OptFrom,
   ApiQueriable,
   ApiRepliable,
   MCCommand,
-};
-use super::server2::{
-  ReadReply,
 };
 use std::marker::PhantomData;
 use utils::{
@@ -185,7 +154,7 @@ impl<MC : MyDHTConf<GlobalServiceCommand = KVStoreCommand<<MC as MyDHTConf>::Pee
   {
   fn can_from(c : &MCCommand<MC>) -> bool {
     match *c {
-      MCCommand::Local(ref lc) => {
+      MCCommand::Local(..) => {
         false
       },
       MCCommand::Global(ref gc) => {
@@ -398,11 +367,11 @@ impl<P : Peer, PR, V : KeyVal, VR> ApiQueriable for KVStoreCommand<P,PR,V,VR> {
       KVStoreCommand::Start => false,
       KVStoreCommand::CommitStore => false,
       KVStoreCommand::Subset(..) => false,
-      KVStoreCommand::Find(ref qm,ref k,ref oaqid) => true,
-      KVStoreCommand::FindLocally(ref k,ref oaqid) => true,
-      KVStoreCommand::Store(ref qid,ref vrp) => false,
-      KVStoreCommand::NotFound(ref qid) => false,
-      KVStoreCommand::StoreLocally(ref rp,ref qp,ref oaqid) => true,
+      KVStoreCommand::Find(..) => true,
+      KVStoreCommand::FindLocally(..) => true,
+      KVStoreCommand::Store(..) => false,
+      KVStoreCommand::NotFound(..) => false,
+      KVStoreCommand::StoreLocally(..) => true,
     }
   }
   fn set_api_reply(&mut self, i : ApiQueryId) {
@@ -558,7 +527,7 @@ impl<
   type CommandOut = GlobalReply<P,RP,KVStoreCommand<P,RP,V,VR>,KVStoreReply<VR>>;
   //    KVStoreReply<P,V,RP>;
 
-  fn call<Y : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut Y) -> Result<Self::CommandOut> {
+  fn call<Y : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut Y) -> Result<Self::CommandOut> {
     if self.store.is_none() {
       self.store = Some(self.init_store.call(())?);
     }

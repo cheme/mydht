@@ -3,13 +3,9 @@
 
 
 use keyval::{
-  KeyVal,
   Attachment,
 };
 use peer::{Peer};
-use query::{QueryID,QueryMsg};
-use serde::{Serializer,Serialize,Deserializer,Deserialize};
-use serde::de::{DeserializeOwned};
 use mydhtresult::Result as MDHTResult;
 use std::io::Write;
 use std::io::Read;
@@ -20,7 +16,6 @@ use std::io::{Seek,SeekFrom};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use num::traits::ToPrimitive;
 use utils;
-use std::error::Error as StdError;
 use self::send_variant::ProtoMessage as ProtoMessageSend;
 
 
@@ -48,10 +43,7 @@ where <P as Peer>::Address : 'a;
 
 
 pub mod send_variant {
-  use keyval::{KeyVal};
   use peer::{Peer};
-  use query::{QueryID,QueryMsg};
-  use serde::{Serializer,Serialize};
 
   #[derive(Serialize,Debug)]
   pub enum ProtoMessage<'a,P : Peer + 'a> {

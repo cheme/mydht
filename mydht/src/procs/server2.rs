@@ -1,8 +1,5 @@
 //! Server service aka receiving process
 use std::mem::replace;
-use super::storeprop::{
-  KVStoreCommand,
-};
 use super::deflocal::{
   LocalDest,
   GlobalCommand,
@@ -16,7 +13,6 @@ use super::mainloop::{
 };
 use super::client2::{
   WriteCommand,
-  WriteService,
 };
 
 use utils::{
@@ -34,24 +30,17 @@ use peer::{
 use std::borrow::Borrow;
 use transport::{
   Transport,
-  Address,
-  Address as TransportAddress,
-  SlabEntry,
-  SlabEntryState,
-  Registerable,
 };
 use msgenc::{
-  MsgEnc,
   ProtoMessage,
 };
 use super::{
   MyDHTConf,
   MCCommand,
-  PeerRefSend,
   ShadowAuthType,
   GlobalHandleSend,
   ApiHandleSend,
-  OptInto,
+  MainLoopSendIn,
 };
 use peer::Peer;
 use keyval::{
@@ -61,37 +50,17 @@ use keyval::{
 };
 use service::{
   send_with_handle,
-  HandleSend,
   Service,
   Spawner,
   SpawnSend,
   SpawnSendWithHandle,
-  SpawnRecv,
   SpawnHandle,
   SpawnChannel,
-  MioChannel,
-  MioSend,
-  MioRecv,
-  NoYield,
-  YieldReturn,
   SpawnerYield,
-  SpawnUnyield,
-  WriteYield,
   ReadYield,
-  DefaultRecv,
-  DefaultRecvChannel,
-  NoRecv,
-  NoSend,
 };
 use mydhtresult::{
   Result,
-  Error,
-  ErrorKind,
-  ErrorLevel as MdhtErrorLevel,
-};
-use std::io::{
-  Write,
-  Read,
 };
 
 
@@ -104,7 +73,6 @@ pub struct ReadService<MC : MyDHTConf> {
   from : MC::PeerRef,
   //with : Option<PeerRefSend<MC>>,
   with : Option<MC::PeerRef>,
-  shad : Option<<MC::Peer as Peer>::ShadowRMsg>,
   peermgmt : MC::PeerMgmtMeths,
   token : usize,
   prio : Option<PeerPriority>,
@@ -147,7 +115,6 @@ impl<MC : MyDHTConf> ReadService<MC> {
       enc : enc,
       from : me,
       with : with,
-      shad : None,
       peermgmt : peermgmt,
       token : token,
       prio : None,
@@ -210,12 +177,12 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
                   if peer_prio == PeerPriority::Unchecked {
                     // send accept query to peermgmt service : it will update cache
                     let pref = MC::PeerRef::new(p);
-                    return Ok(ReadReply::PeerMgmt(PeerMgmtCommand::Accept(pref.clone(),MainLoopCommand::NewPeerChallenge(pref,peer_prio,self.token,chal))));
+                    return Ok(ReadReply::PeerMgmt(PeerMgmtCommand::Accept(pref.clone(),MainLoopCommand::NewPeerChallenge(pref,self.token,chal))));
                   } else {
                     // send RefPeer to peermgmt with new priority
 //                    return Ok(ReadReply::PeerMgmt(PeerMgmtCommand::NewPrio(MC::PeerRef::new(p),peer_prio)))
 //                    return Ok(ReadReply::NewPeer(MC::PeerRef::new(p),peer_prio,self.token,chal))
-                    return Ok(ReadReply::MainLoop(MainLoopCommand::NewPeerChallenge(MC::PeerRef::new(p),peer_prio,self.token,chal)));
+                    return Ok(ReadReply::MainLoop(MainLoopCommand::NewPeerChallenge(MC::PeerRef::new(p),self.token,chal)));
                   }
                 } else {
                   // send refuse peer with token to mainloop 
@@ -271,7 +238,6 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
               }
 
             },
-            _ => return Err(Error("wrong state for peer not authenticated yet".to_string(),ErrorKind::PingError,None)),
           }
 //pub fn receive_msg<P : Peer, V : KeyVal, T : Read, E : MsgEnc, S : ExtRead>(t : &mut T, e : &E, s : &mut S) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
         } else {
@@ -394,7 +360,7 @@ pub enum ReadReply<MC : MyDHTConf> {
 }
 
 pub struct ReadDest<MC : MyDHTConf> {
-  pub mainloop : MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>,
+  pub mainloop : MainLoopSendIn<MC>,
   // TODO switch to optionnal handle send similar to write
   pub peermgmt : <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send,
   pub global : Option<GlobalHandleSend<MC>>,
@@ -450,7 +416,7 @@ impl<MC : MyDHTConf> SpawnSend<ReadReply<MC>> for ReadDest<MC> {
           self.mainloop.send(MainLoopCommand::ProxyWrite(self.read_token,wc))?;
         }
       },
-      ReadReply::NewPeer(pr,pp,tok,chal) => {
+      ReadReply::NewPeer(_pr,_pp,_tok,_chal) => {
         panic!("unused TODO remove??");
 //        self.send(ReadReply::MainLoop(MainLoopCommand::NewPeer(pr.clone(),pp,Some(tok))))?;
  //       self.send(ReadReply::Write(WriteCommand::Pong(pr,chal,rtok)))?;

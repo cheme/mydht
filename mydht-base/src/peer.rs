@@ -13,14 +13,7 @@ use std::io::{
 use readwrite_comp::{
   ExtRead,
   ExtWrite,
-  CompW,
-  CompWState,
-  CompR,
-  CompRState,
 };
-use std::fmt::Debug;
-use serde::{Serialize, Deserialize};
-use serde::de::DeserializeOwned;
 
 /// A peer is a special keyval with an attached address over the network
 pub trait Peer : KeyVal + 'static {
@@ -80,7 +73,7 @@ impl ExtWrite for NoShadow {
     w.write(cont)
   }   
   #[inline]
-  fn flush_into<W : Write>(&mut self, w : &mut W) -> IoResult<()> {Ok(())}
+  fn flush_into<W : Write>(&mut self, _ : &mut W) -> IoResult<()> {Ok(())}
   #[inline]
   fn write_end<W : Write>(&mut self, _ : &mut W) -> IoResult<()> {Ok(())}
 }

@@ -1,10 +1,8 @@
 //! Default proxy local service implementation
 use super::{
-  send_with_handle,
   FWConf,
 };
 use utils::{
-  Ref,
   SRef,
   SToRef,
 };
@@ -23,37 +21,19 @@ use super::api::{
 };
 use service::{
   Service,
-  Spawner,
-  SpawnUnyield,
   SpawnSend,
   SpawnSendWithHandle,
-  SpawnRecv,
-  SpawnHandle,
-  SpawnChannel,
-  MioChannel,
-  MioSend,
-  MioRecv,
-  NoYield,
-  YieldReturn,
   SpawnerYield,
-  WriteYield,
-  ReadYield,
-  DefaultRecv,
-  DefaultRecvChannel,
-  NoRecv,
-  NoSend,
 };
 use super::server2::{
   ReadDest,
 };
 use super::{
   MyDHTConf,
-  GetOrigin,
-  GlobalHandleSend,
   ApiHandleSend,
-  OptInto,
   MCCommand,
   MCReply,
+  MainLoopSendIn,
 };
 use super::storeprop::{
   KVStoreCommand,
@@ -64,7 +44,6 @@ use super::server2::{
 };
 use keyval::KeyVal;
 use peer::Peer;
-use std::marker::PhantomData;
 
 //pub struct GlobalCommand<MC : MyDHTConf>(pub Option<MC::PeerRef>, pub MC::GlobalServiceCommand);
 #[derive(Clone)]
@@ -213,7 +192,7 @@ pub struct LocalDest<MC : MyDHTConf> {
 }
 
 pub struct GlobalDest<MC : MyDHTConf> {
-  pub mainloop : MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>,
+  pub mainloop : MainLoopSendIn<MC>,
   pub api : Option<ApiHandleSend<MC>>,
 }
 impl<MC : MyDHTConf> Clone for LocalDest<MC> {

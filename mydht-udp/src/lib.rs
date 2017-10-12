@@ -31,8 +31,6 @@
 //!
 
 
-#![feature(slice_bytes)]
-#![feature(convert)]
 
 #[macro_use] extern crate log;
 extern crate byteorder;
@@ -46,8 +44,6 @@ use mydht_base::transport::{
   Transport,
   ReadTransportStream,
   WriteTransportStream,
-  SpawnRecMode,
-  ReaderHandle,
   SerSocketAddr,
   Registerable,
 };
@@ -56,7 +52,6 @@ use std::io::Result as IoResult;
 use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
 use std::net::SocketAddr;
-use time::Duration;
 
 use mydht_base::mydhtresult::{Result,Error,ErrorKind};
 //use peer::Peer;
@@ -76,17 +71,15 @@ pub struct Udp {
   sock : UdpSocket,  // reference socket the only one to do receive
   /// size of buff for msg reception (and maxsize for sending to) 
   buffsize : usize,
-  spawn : bool,
 }
 
 impl Udp {
   /// warning bind on initialize
-  pub fn new (p : &SocketAddr, s : usize, spawn : bool) -> IoResult<Udp> {
+  pub fn new (p : &SocketAddr, s : usize) -> IoResult<Udp> {
     let socket = try!(UdpSocket::bind(p));
     Ok(Udp {
       sock : socket,
       buffsize : s,
-      spawn : spawn,
     })
   }
 }
@@ -188,60 +181,20 @@ impl Transport for Udp {
   type Address = SerSocketAddr;
   
 
-  fn do_spawn_rec(&self) -> SpawnRecMode {
-    if self.spawn {
-      SpawnRecMode::LocalSpawn
-    } else {
-      SpawnRecMode::Local
-    }
-  }
-
-  fn start<C> (&self, readhandle : C) -> Result<()>
-    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<ReaderHandle> {
-    let buffsize = self.buffsize;
-    let mut tmpvec : Vec<u8> = vec![0; buffsize];
-    let buf = tmpvec.as_mut_slice();
-    loop {
-      match self.sock.recv_from(buf) {
-        Ok((size, from)) => {
-          debug!("received udp frame from {}, size {}", from, size);
-          // TODO test with small size to see if full size here
-          if size < buffsize {
-            // let slice = &buff[0,size]
-            // TODO very unsafe (bug) : to remove as the buf can be send in another thread -> we need a
-            // persistence of buf for every 'from' value containing a buffer and a shadower. !!!
-            // consider tcp transport broken unless this is implemented (unless local and no thread
-            // plus shadower doing nothing)
-            let r = unsafe {
-              slice::from_raw_parts(buf.as_ptr(), size).to_vec()
-            };
-            match readhandle(ReadUdpStream(r), None) {
-              Ok(_) => (),
-              Err(e) => error!("Read handler failure : {}",e),
-            }
-          }else{
-            error!("Datagram on udp transport with size {:?} over buff {:?}, lost datagram", size, buffsize);
-          }
-        },
-        Err(e) => error!("Couldnot receive datagram {}",e),
-      }
-    };
-    //Ok(())
-  }
-  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>, Self::Address)> {
+  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>)> {
     let mut tmpvec : Vec<u8> = vec![0; self.buffsize];
     let buf = tmpvec.as_mut_slice();
-    let (size,ad) = self.sock.recv_from(buf)?;
-          if size < self.buffsize {
-            // TODO test safe approach
-            let r = unsafe {
-              slice::from_raw_parts(buf.as_ptr(), size).to_vec()
-            };
-            Ok((ReadUdpStream(r), None,SerSocketAddr(ad)))
-         } else {
-            error!("Datagram on udp transport with size {:?} over buff {:?}, lost datagram", size, self.buffsize);
-            Err(Error("Udp Oversized datagram".to_string(), ErrorKind::ExpectedError, None))
-          }
+    let (size,_ad) = self.sock.recv_from(buf)?;
+    if size < self.buffsize {
+      // TODO test safe approach
+      let r = unsafe {
+        slice::from_raw_parts(buf.as_ptr(), size).to_vec()
+      };
+      Ok((ReadUdpStream(r), None))
+    } else {
+      error!("Datagram on udp transport with size {:?} over buff {:?}, lost datagram", size, self.buffsize);
+      Err(Error("Udp Oversized datagram".to_string(), ErrorKind::ExpectedError, None))
+    }
    
   }
 
@@ -249,7 +202,7 @@ impl Transport for Udp {
   /// does not return a read handle as udp is unconnected (variant with read buf synch would need to
   /// be returned).
   /// Function never fail as udp is unconnected (write will fail!!)
-  fn connectwith(&self, p : &SerSocketAddr, _ : Duration) -> IoResult<(UdpStream, Option<ReadUdpStream>)> {
+  fn connectwith(&self, p : &SerSocketAddr) -> IoResult<(UdpStream, Option<ReadUdpStream>)> {
     let readso = try!(self.sock.try_clone());
     // get socket (non connected cannot timeout)
     Ok((UdpStream {

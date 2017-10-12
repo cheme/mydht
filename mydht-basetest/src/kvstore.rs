@@ -2,19 +2,20 @@
 //! (bidirectional dependency))
 //! TODO seems pretty useless : remove??
 use keyval::KeyVal;
-use node::{Node,NodeID};
-use readwrite_comp::{
-  ExtRead,
-  ExtWrite,
+use node::{
+  Node,
+  NodeID,
 };
 
 use peer::{Peer};
 use std::cmp::Eq;
 use std::cmp::PartialEq;
 
-use keyval::{Attachment,SettableAttachment};
+use keyval::{
+  Attachment,
+  SettableAttachment,
+};
 
-use serde::{Serialize, Serializer, Deserializer};
 
 
 

@@ -1,13 +1,12 @@
-use kvstore::{StoragePriority};
 use std::time::Duration;
 use kvstore::{CachePolicy};
-use query::{QueryPriority,QueryID,QueryMode};
+use query::{
+  QueryPriority,
+  QueryMode,
+};
 use rules::DHTRules as DHTRulesIf;
 //use peer::{PeerPriority};
-use std::sync::Mutex;
-use rand::{thread_rng,Rng};
 use num::traits::ToPrimitive;
-use std::time::Instant;
 use procs::ClientMode;
 
 
@@ -54,7 +53,7 @@ impl DHTRulesIf for SimpleRules {
     1
   }
 
-  fn notfoundreply (&self, mode : &QueryMode) -> bool {
+  fn notfoundreply (&self, _mode : &QueryMode) -> bool {
     self.1.not_found_reply
   }
   // here both a static counter and a rand one just for show // TODO switch QueryID to BigInt

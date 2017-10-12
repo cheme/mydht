@@ -1,16 +1,12 @@
 
 use rand::{thread_rng, Rng};
-use std::io::Write;
+use std::thread;
+use std::time::Duration;
 use peer::{
   Peer,
-  NoShadow,
   PeerMgmtMeths,
 };
-use std::sync::Arc;
-use std::thread;
 
-use keyval::{KeyVal};
-use keyval::{Attachment,SettableAttachment};
 use peer::PeerPriority;
 //use utils;
 use mydht_basetest::transport::LocalAdd;
@@ -26,11 +22,11 @@ pub struct TestingRules {
   /// in percent
 //  pub delay_variance : usize,
   /// in ms
-  pub delay_ms_chal : u32,
-  pub delay_ms_sign : u32,
-  pub delay_ms_check : u32,
-  pub delay_ms_accept : u32,
-  pub delay_ms_accept_hook : u32,
+  pub delay_ms_chal : u64,
+  pub delay_ms_sign : u64,
+  pub delay_ms_check : u64,
+  pub delay_ms_accept : u64,
+  pub delay_ms_accept_hook : u64,
 }
 
 impl TestingRules {
@@ -56,7 +52,7 @@ impl TestingRules {
     }
   }
 
-  pub fn new_small_delay_heavy_accept(accdur : Option<u32>) -> TestingRules {
+  pub fn new_small_delay_heavy_accept(accdur : Option<u64>) -> TestingRules {
     TestingRules {
       //delay_variance : 30,
       delay_ms_chal : 15,
@@ -70,23 +66,23 @@ impl TestingRules {
 
 impl<P : Peer> PeerMgmtMeths<P> for TestingRules {
   fn challenge (&self, _ : &P) -> Vec<u8> {
-    thread::sleep_ms(self.delay_ms_chal);
+    thread::sleep(Duration::from_millis(self.delay_ms_chal));
     let mut s = vec![0; 4]; // four bytes challenge
     thread_rng().fill_bytes(&mut s);
     s
   }
   fn signmsg (&self, n : &P, chal : &[u8]) -> Vec<u8> {
-    thread::sleep_ms(self.delay_ms_sign);
+    thread::sleep(Duration::from_millis(self.delay_ms_sign));
     format!("{:?}, {:?}",n.get_key(), chal).into_bytes()
   }
   fn checkmsg (&self, n : &P, chal : &[u8], sign : &[u8]) -> bool {
-    thread::sleep_ms(self.delay_ms_check);
+    thread::sleep(Duration::from_millis(self.delay_ms_check));
     format!("{:?}, {:?}",n.get_key(), chal).into_bytes() == sign
   }
   fn accept
   (&self, _ : &P)
   -> Option<PeerPriority> {
-    thread::sleep_ms(self.delay_ms_accept);
+    thread::sleep(Duration::from_millis(self.delay_ms_accept));
     Some (PeerPriority::Normal)
   }
   /*fn for_accept_ping<M : PeerMgmtMeths<P,V>, RT : RunningTypes<P=P,V=V,A=P::Address,M=M>>

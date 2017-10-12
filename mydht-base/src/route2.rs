@@ -1,15 +1,12 @@
 use std::collections::VecDeque;
-use transport::{
-  Transport,
-  Address,
-};
 use mydhtresult::Result;
 
-use peer::{Peer,PeerState,PeerStateChange};
+use peer::{
+  Peer,
+  PeerPriority,
+};
 use keyval::KeyVal;
 
-use std::sync::Arc;
-use std::marker::PhantomData;
 
 use std::borrow::Borrow;
 use kvcache::Cache;
@@ -18,7 +15,7 @@ use kvcache::Cache;
 /// tech trait to adapt to peercacheentry
 /// return peer ref for internal route base implementation, and optional index of write
 pub trait GetPeerRef<P,RP> {
-  fn get_peer_ref(&self) -> (&P,Option<usize>);
+  fn get_peer_ref(&self) -> (&P,&PeerPriority,Option<usize>);
 }
 pub trait RouteBaseMessage<P : Peer> {
   fn get_filter_mut(&mut self) -> Option<&mut VecDeque<<P as KeyVal>::Key>>;

@@ -7,68 +7,29 @@ extern crate mydht_udp;
 use rules::DHTRules;
 use std::borrow::Borrow;
 use procs::storeprop::{
-  KVStoreService,
   KVStoreCommand,
   KVStoreReply,
-  KVStoreProtoMsgWithPeer,
 };
 use procs::api::{
-  Api,
-  ApiReply,
   ApiResult,
-  ApiQueriable,
-  ApiQueryId,
-  ApiRepliable,
 };
 use procs::{
-  MCCommand,
   MCReply,
-  PeerCacheRouteBase,
-  RWSlabEntry,
-  OptInto,
-  OptFrom,
 };
 
 
 use service::{
-  NoService,
-  NoSpawn,
-  Service,
-  MioChannel,
-  SpawnChannel,
-  MpscChannel,
-  MpscChannelRef,
-  NoChannel,
-  NoRecv,
-  LocalRcChannel,
-  SpawnerYield,
   SpawnSend,
-  LocalRc,
- // MpscSender,
-  NoSend,
-
-  Spawner,
-  Blocker,
-  RestartOrError,
-  Coroutine,
-  RestartSameThread,
-  ThreadBlock,
-  ThreadPark,
-  ThreadParkRef,
-
-  CpuPool,
-  CpuPoolFuture,
 };
 
 
 use utils::{
-  OneResult,
   new_oneresult,
   clone_wait_one_result,
   Ref,
   ArcRef,
-  RcRef,
-  CloneRef,
+//  RcRef,
+ // CloneRef,
 
 };
 use procs::{
@@ -79,19 +40,14 @@ use self::mydht_bincode::Bincode;
 use procs::api::{
   ApiSendIn,
 };
-
-
-use msgenc::MsgEnc;
 use transport::{
-  Transport,
   SerSocketAddr,
 };
 use self::mydht_udp::Udp;
 use utils;
 use keyval::KeyVal;
-use std::net::{SocketAddr,Ipv4Addr};
-use kvstore::StoragePriority;
-use query::{QueryConf,QueryMode,QueryPriority};
+use std::net::{Ipv4Addr};
+use query::{QueryConf};
 use super::{
   initpeers2,
   TestConf,
@@ -102,8 +58,6 @@ use rules::simplerules::{DhtRules};
 use peer::test::TestingRules;
 #[cfg(test)]
 use node::Node;
-use peer::PeerMgmtMeths;
-use std::marker::PhantomData;
 use rules::simplerules::SimpleRules;
 use num::traits::ToPrimitive;
 use procs::ClientMode;
@@ -118,32 +72,21 @@ fn connect_rw () {
 
   let a1 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port));
   let a2 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
-  let tcp_transport_1 : Udp = Udp::new (&a1, 500, true).unwrap();
-  let tcp_transport_2 : Udp = Udp::new (&a2, 500, true).unwrap();
+  let tcp_transport_1 : Udp = Udp::new (&a1, 500).unwrap();
+  let tcp_transport_2 : Udp = Udp::new (&a2, 500).unwrap();
 
   connect_rw_with_optional_non_managed(tcp_transport_1,tcp_transport_2,&a1,&a2,false,false,false,false);
 }
 
-#[test]
-fn connect_rw_nospawn () {
-  let start_port = 60100;
 
-  let a1 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port));
-  let a2 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
-  let tcp_transport_1 : Udp = Udp::new (&a1, 500, false).unwrap();
-  let tcp_transport_2 : Udp = Udp::new (&a2, 500, false).unwrap();
-
-  connect_rw_with_optional_non_managed(tcp_transport_1,tcp_transport_2,&a1,&a2,false,false,true,false);
-}
-
-fn initpeers_udp2 (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u32>)
+fn initpeers_udp2 (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u64>)
   -> Vec<(Node, ApiSendIn<TestConf<Node,Udp,Bincode,TestingRules,SimpleRules>>)> {
   let mut nodes = Vec::new();
   let mut transports = Vec::new();
 
   for i in 0 .. nbpeer {
     let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), start_port + i.to_u16().unwrap());
-    let udp_transport = Udp::new(&addr,2048,true).unwrap(); // here udp with a json encoding with last sed over a few hop : we need a big buffer
+    let udp_transport = Udp::new(&addr,2048).unwrap(); // here udp with a json encoding with last sed over a few hop : we need a big buffer
     transports.push(udp_transport);
     nodes.push(Node {nodeid: "NodeID".to_string() + &(i + 1).to_string()[..], address : SerSocketAddr(addr)});
   };

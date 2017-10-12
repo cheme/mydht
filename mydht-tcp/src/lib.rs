@@ -30,7 +30,11 @@ use std::time::Duration as StdDuration;
 //use std::thread::Thread;
 //use peer::{Peer};
 //use mydht_base::transport::{ReadTransportStream,WriteTransportStream};
-use mydht_base::transport::{Transport,ReaderHandle,SerSocketAddr,Registerable};
+use mydht_base::transport::{
+  Transport,
+  SerSocketAddr,
+  Registerable,
+};
 //use std::iter;
 //use utils;
 //use super::Attachment;
@@ -74,56 +78,25 @@ impl Transport for Tcp {
   type ReadStream = TcpStream;
   type WriteStream = TcpStream;
   type Address = SerSocketAddr;
-  fn start<C> (&self, readhandler : C) -> Result<()>
-    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<ReaderHandle> {
-    for socket in self.listener.incoming() {
-      match socket {
-        Err(e) => {error!("Socket acceptor error : {:?}", e);}
-        Ok(s)  => {
-          debug!("Initiating socket exchange : ");
-          debug!("  - From {:?}", s.local_addr());
-          debug!("  - From {:?}", s.peer_addr());
-          debug!("  - With {:?}", s.peer_addr());
-          if self.mult {
-//            try!(s.set_keepalive (self.streamtimeout.num_seconds().to_u32()));
-            try!(s.set_read_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs)));
-            try!(s.set_write_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs)));
-
-            let rs = try!(s.try_clone());
-            match readhandler(rs,Some(s)) {
-              Ok(_) => (),
-              Err(e) => error!("Read handler failure : {}",e),
-            }
-          } else {
-            match readhandler(s,None) {
-              Ok(_) => (),
-              Err(e) => error!("Read handler failure : {}",e),
-            }
-          }
-        }
-      }
-    };
-    Ok(())
-  }
  
-  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>, Self::Address)> {
+  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>)> {
     let (s,ad) = self.listener.accept()?;
     debug!("Initiating socket exchange : ");
     debug!("  - From {:?}", s.local_addr());
     debug!("  - With {:?}", s.peer_addr());
+    debug!("  - At {:?}", ad);
     try!(s.set_read_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs)));
     try!(s.set_write_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs)));
     if self.mult {
 //            try!(s.set_keepalive (self.streamtimeout.num_seconds().to_u32()));
         let rs = try!(s.try_clone());
-        Ok((s,Some(rs),SerSocketAddr(ad)))
+        Ok((s,Some(rs)))
     } else {
-        Ok((s,None,SerSocketAddr(ad)))
+        Ok((s,None))
     }
   }
 
-  fn connectwith(&self,  p : &SerSocketAddr, _ : Duration) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
-    // connect TODO new api timeout (third param)
+  fn connectwith(&self,  p : &SerSocketAddr) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
     //let s = TcpStream::connect_timeout(p, self.connecttimeout);
     let s = try!(TcpStream::connect(p.0));
 //    try!(s.set_keepalive (self.streamtimeout.num_seconds().to_u32()));

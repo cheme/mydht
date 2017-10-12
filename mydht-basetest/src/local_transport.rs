@@ -36,13 +36,17 @@ use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
 use std::io::{Read,Write};
 use mydht_base::mydhtresult::{Result,Error,ErrorKind};
-use time::Duration as CrateDuration;
 use std::time::{
   Instant,
   Duration,
 };
 use std::thread;
-use mydht_base::transport::{Transport,Address,ReadTransportStream,WriteTransportStream,SpawnRecMode,ReaderHandle,Registerable,};
+use mydht_base::transport::{
+  Transport,
+  ReadTransportStream,
+  WriteTransportStream,
+  Registerable,
+};
 #[cfg(test)]
 use transport as ttest;
 use transport::LocalAdd;
@@ -108,7 +112,7 @@ impl AsynchTransportTest {
     let mut sreg = Vec::with_capacity(nb);
     let mut listener_ready = Vec::with_capacity(nb);
     let mut listener_reg = Vec::with_capacity(nb);
-    for i in 0..nb {
+    for _ in 0..nb {
       let (registration, set_readiness) = Registration::new2();
       listener_ready.push(set_readiness);
       listener_reg.push(registration);
@@ -117,7 +121,7 @@ impl AsynchTransportTest {
       let mut irreg = Vec::with_capacity(nb);
       let mut isreg = Vec::with_capacity(nb);
 
-      for j in 0..nb {
+      for _ in 0..nb {
         let (rregistration,rset_readiness) = Registration::new2();
         let (sregistration,sset_readiness) = Registration::new2();
         irready.push(rset_readiness);
@@ -348,134 +352,66 @@ impl Transport for TransportTest {
   /// index in transport dir
   type Address = LocalAdd;
 
-  fn start<C> (&self, readhandler : C) -> Result<()>
-    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<ReaderHandle> {
-      // lock mutex indefinitely but it is the only occurence
-      let r = self.recv.lock().unwrap();
-
-      loop {
-        match r.recv() {
-          Ok((addr, nbcon_from, nbcon_with, content)) => {
-            if content.len() > 0 {
-              assert!(nbcon_with == 0 || nbcon_from == 0);
-              let (clis,nbcon) = if nbcon_with == 0 {
-                (self.cli_from.lock().unwrap(),nbcon_from)
-              } else {
-                (self.cli_with.lock().unwrap(),nbcon_with)
-              };
-              match clis.get(addr) {
-                Some(ref s) => {
-                  try!(s.get(nbcon - 1).unwrap().send(content));
-                },
-                _ => {
-                  if self.managed {
-                    error!("received message but no connection established");
-                    panic!("received message but no connection established");
-                  } else {
-                    // TODO useless channel ... 
-                    let (_,r) = mpsc::channel();
-                    // bad clone but for test... cf TODO chanel : local read stream should be enum
-                    let rs = LocalReadStream(r,(*content).clone(),true,self.managed);
-                    try!(readhandler(rs,None));
-                  }
-                },
-              };
-            } else {
-              // new connection // TODO Not if !managed (all on connection 0)
-              
-              assert!(nbcon_with == 0);
-              // no connection message when not managed
-              assert!(self.managed);
-              let (locread, connb) = 
-              {
-                let (s,r) = mpsc::channel();
-                let mut clis = self.cli_from.lock().unwrap();
-                let mut cur = clis.get_mut(addr).unwrap();
-                cur.push(s);
-                let nbcon = cur.len();
-                assert!(nbcon == nbcon_from);
-                (LocalReadStream(r,Vec::new(),true,self.managed), nbcon)
-              };
-
-              let locwrite = if self.multiplex {
-                let dest = self.dir.lock().unwrap().get(addr).unwrap().clone();
-                Some(LocalWriteStream(self.address, 0, connb, dest.clone(),true))
-              } else {
-                None
-              };
-              try!(readhandler(locread,locwrite));
-            }
-          },
-          Err(_) => {
-            error!("transport test receive failure");
-          },
-        }
-      }
-      // TODO read on reader , route to either thread
-      //Ok(())
-  }
-
-  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>, Self::Address)> {
+  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>)> {
 
     let r = self.recv.lock().unwrap();
     let (addr, nbcon_from, nbcon_with, content) = r.recv()?;
-            if content.len() > 0 {
-              assert!(nbcon_with == 0 || nbcon_from == 0);
-              let (clis,nbcon) = if nbcon_with == 0 {
-                (self.cli_from.lock().unwrap(),nbcon_from)
-              } else {
-                (self.cli_with.lock().unwrap(),nbcon_with)
-              };
-              match clis.get(addr) {
-                Some(ref s) => {
-                  try!(s.get(nbcon - 1).unwrap().send(content));
-                  Err(Error("Test transport send : ignore".to_string(), ErrorKind::ExpectedError, None))
-                },
-                _ => {
-                  if self.managed {
-                    error!("received message but no connection established");
-                    panic!("received message but no connection established");
-                  } else {
-                    // TODO useless channel ... 
-                    let (_,r) = mpsc::channel();
-                    // bad clone but for test... cf TODO chanel : local read stream should be enum
-                    let rs = LocalReadStream(r,(*content).clone(),true,self.managed);
-                    Ok((rs,None, LocalAdd(addr)))
-                  }
-                },
-              }
-            } else {
-              // new connection // TODO Not if !managed (all on connection 0)
-              
-              assert!(nbcon_with == 0);
-              // no connection message when not managed
-              assert!(self.managed);
-              let (locread, connb) = 
-              {
-                let (s,r) = mpsc::channel();
-                let mut clis = self.cli_from.lock().unwrap();
-                let mut cur = clis.get_mut(addr).unwrap();
-                cur.push(s);
-                let nbcon = cur.len();
-                assert!(nbcon == nbcon_from);
-                (LocalReadStream(r,Vec::new(),true,self.managed), nbcon)
-              };
+    if content.len() > 0 {
+      assert!(nbcon_with == 0 || nbcon_from == 0);
+      let (clis,nbcon) = if nbcon_with == 0 {
+        (self.cli_from.lock().unwrap(),nbcon_from)
+      } else {
+        (self.cli_with.lock().unwrap(),nbcon_with)
+      };
+      match clis.get(addr) {
+        Some(ref s) => {
+          try!(s.get(nbcon - 1).unwrap().send(content));
+          Err(Error("Test transport send : ignore".to_string(), ErrorKind::ExpectedError, None))
+        },
+        _ => {
+          if self.managed {
+            error!("received message but no connection established");
+            panic!("received message but no connection established");
+          } else {
+            // TODO useless channel ... 
+            let (_,r) = mpsc::channel();
+            // bad clone but for test... cf TODO chanel : local read stream should be enum
+            let rs = LocalReadStream(r,(*content).clone(),true,self.managed);
+            Ok((rs,None))
+          }
+        },
+      }
+    } else {
+      // new connection // TODO Not if !managed (all on connection 0)
+      
+      assert!(nbcon_with == 0);
+      // no connection message when not managed
+      assert!(self.managed);
+      let (locread, connb) = 
+      {
+        let (s,r) = mpsc::channel();
+        let mut clis = self.cli_from.lock().unwrap();
+        let cur = clis.get_mut(addr).unwrap();
+        cur.push(s);
+        let nbcon = cur.len();
+        assert!(nbcon == nbcon_from);
+        (LocalReadStream(r,Vec::new(),true,self.managed), nbcon)
+      };
 
-              let locwrite = if self.multiplex {
-                let dest = self.dir.lock().unwrap().get(addr).unwrap().clone();
-                Some(LocalWriteStream(self.address, 0, connb, dest.clone(),true))
-              } else {
-                None
-              };
-              Ok((locread,locwrite, LocalAdd(addr)))
-            }
-
+      let locwrite = if self.multiplex {
+        let dest = self.dir.lock().unwrap().get(addr).unwrap().clone();
+        Some(LocalWriteStream(self.address, 0, connb, dest.clone(),true))
+      } else {
+        None
+      };
+      Ok((locread,locwrite))
+    }
   }
-  fn connectwith(&self, address : &Self::Address, _ : CrateDuration) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
+  fn connectwith(&self, address : &Self::Address) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
     
     let (locread,connb) =  if self.managed {
       let mut clis = self.cli_with.lock().unwrap();
-      let mut cur = clis.get_mut(address.0).unwrap();
+      let cur = clis.get_mut(address.0).unwrap();
       // done in both case to keep up to date index of con (useless channel when non connected)
       let (s,r) = mpsc::channel();
       cur.push(s);
@@ -512,13 +448,6 @@ impl Transport for TransportTest {
 
   }
 
-  fn do_spawn_rec(&self) -> SpawnRecMode {
-    if self.managed {
-      SpawnRecMode::Threaded
-    } else {
-      SpawnRecMode::LocalSpawn
-    }
-  }
 }
 
 // costy, should switch to cpupool futures?
@@ -536,14 +465,11 @@ impl Transport for AsynchTransportTest {
   type WriteStream = AsynchLocalWriteStream;
   type Address = LocalAdd;
 
-  fn start<C> (&self, readhandler : C) -> Result<()>
-    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<ReaderHandle> {
-      panic!("TODO remove from trait : not for asynch")
-  }
 
-  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>, Self::Address)> {
-    let (rs,ows,ad) = self.0.accept()?;
-    let rregistration = self.5.get_rregistration(ad.0,self.0.address);
+  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>)> {
+    let (_rs,_ows) = self.0.accept()?;
+    panic!("No address any more from inner type : use fonction, but anyway need redesign cf errors in testing");
+/*    let rregistration = self.5.get_rregistration(ad.0,self.0.address);
     let oalws = match ows {
       Some(ws) => {
         let wregistration = self.5.get_wregistration(self.0.address,ad.0);
@@ -560,12 +486,12 @@ impl Transport for AsynchTransportTest {
     trigger_registration(now + self.2, self.5.get_rsetready(ad.0,self.0.address).clone(), Ready::readable());
     Ok((
         AsynchLocalReadStream(rs,self.1,self.2,self.3, Instant::now() + self.2, self.5.clone(), rregistration),
-        oalws,
-        ad))
+        oalws
+        ))*/
   }
 
-  fn connectwith(&self, address : &Self::Address, cd : CrateDuration) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
-    let (ws,ors) = self.0.connectwith(address, cd)?;
+  fn connectwith(&self, address : &Self::Address) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
+    let (ws,ors) = self.0.connectwith(address)?;
     let con_time = Instant::now() + self.1;
     let wregistration = self.5.get_wregistration(self.0.address,address.0);
     let oalrs = match ors {
@@ -586,10 +512,6 @@ impl Transport for AsynchTransportTest {
         oalrs))
   }
  
-  fn do_spawn_rec(&self) -> SpawnRecMode {
-    self.0.do_spawn_rec()
-  }
-
 
 }
 

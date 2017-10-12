@@ -21,8 +21,6 @@ extern crate futures_cpupool;
 extern crate futures;
 extern crate mio;
 
-use std::borrow::Borrow;
-use std::result::Result as StdResult;
 use utils::{
   SRef,
   SToRef,
@@ -60,11 +58,11 @@ use std::cell::RefCell;
 use std::sync::{
   Arc,
 };
-use std::sync::atomic::{
+/*use std::sync::atomic::{
   AtomicBool,
   AtomicUsize,
   Ordering,
-};
+};*/
 use self::parking_lot::{
   Mutex,
   Condvar,
@@ -77,7 +75,6 @@ use mydhtresult::{
   Error,
   ErrorKind,
   ErrorLevel,
-  ErrorLevel as MdhtErrorLevel,
 };
 use std::io::{
   Result as IoResult,
@@ -716,10 +713,10 @@ macro_rules! spawn_loop {($service:ident,$spawn_out:ident,$ocin:ident,$r:ident,$
               $spawn_out.send(r)?;
             }
           },
-          Err(e) => if e.level() == MdhtErrorLevel::Ignore {
+          Err(e) => if e.level() == ErrorLevel::Ignore {
             // suspend with YieldReturn 
             return $return_build;
-          } else if e.level() == MdhtErrorLevel::Panic {
+          } else if e.level() == ErrorLevel::Panic {
             panic!("In spawner : {:?}",e);
           } else {
             $result = Err(e);
@@ -1009,50 +1006,6 @@ impl<S,D,R> Clone for ThreadHandleBlockWeak<S,D,R> {
   }
 }
 pub struct ThreadYieldBlock;
-macro_rules! thread_handle {($name:ident,$nameweak:ident,$yield:expr) => {
-
-impl<S,D,R> SpawnUnyield for $nameweak<S,D,R> {
-  #[inline]
-  fn is_finished(&mut self) -> bool {
-    self.0.lock().is_some()
-  }
-  #[inline]
-  fn unyield(&mut self) -> Result<()> {
-    $yield(self)
-  }
-}
-
-impl<S,D,R> SpawnUnyield for $name<S,D,R> {
-  #[inline]
-  fn is_finished(&mut self) -> bool {
-    self.0.lock().is_some()
-  }
-  #[inline]
-  fn unyield(&mut self) -> Result<()> {
-    $yield(self)
-  }
-}
-impl<S,D,R> SpawnHandle<S,D,R> for $name<S,D,R> {
-  type WeakHandle = $nameweak<S,D,R>;
-  #[inline]
-  fn unwrap_state(mut self) -> Result<(S,D,R,Result<()>)> {
-    let mut mlock = self.0.lock();
-    if mlock.is_some() {
-      //let ost = mutex.into_inner();
-      let ost = replace(&mut (*mlock),None);
-      Ok(ost.unwrap())
-    } else {
-      Err(Error("unwrap state on unfinished thread".to_string(), ErrorKind::Bug, None))
-    }
-  }
-
-  #[inline]
-  fn get_weak_handle(&self) -> Option<Self::WeakHandle> {
-    Some($nameweak(self.0.clone()))
-  }
-}
-
-}}
 
 impl<S,D,R> SpawnUnyield for ThreadHandleBlockWeak<S,D,R> {
   #[inline]
@@ -1078,7 +1031,7 @@ impl<S,D,R> SpawnUnyield for ThreadHandleBlock<S,D,R> {
 impl<S,D,R> SpawnHandle<S,D,R> for ThreadHandleBlock<S,D,R> {
   type WeakHandle = ThreadHandleBlockWeak<S,D,R>;
   #[inline]
-  fn unwrap_state(mut self) -> Result<(S,D,R,Result<()>)> {
+  fn unwrap_state(self) -> Result<(S,D,R,Result<()>)> {
     let mut mlock = self.0.lock();
     if mlock.is_some() {
       //let ost = mutex.into_inner();
@@ -1307,8 +1260,8 @@ impl<S : 'static + Send + Service + SRef, D : SRef + 'static + SpawnSend<S::Comm
   fn spawn (
     &mut self,
     mut service : S,
-    mut spawn_out : D,
-    mut ocin : Option<<S as Service>::CommandIn>,
+    spawn_out : D,
+    ocin : Option<<S as Service>::CommandIn>,
     mut recv : R,
     mut nb_loop : usize
   ) -> Result<Self::Handle> {
@@ -1498,9 +1451,9 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
                 }
                 return okfuture((service,spawn_out,Ok(())));
               },
-              Err(e) => if e.level() == MdhtErrorLevel::Ignore {
+              Err(e) => if e.level() == ErrorLevel::Ignore {
                 panic!("This should only yield loop, there is an issue with implementation");
-              } else if e.level() == MdhtErrorLevel::Panic {
+              } else if e.level() == ErrorLevel::Panic {
                 panic!("In spawner cpufuture panic : {:?} ",e);
               } else {
                 return okfuture((service,spawn_out,Err(e)));

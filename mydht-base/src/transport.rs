@@ -1,55 +1,31 @@
-#[cfg(feature="mio-impl")]
-extern crate coroutine;
 
 use mio::{Poll,Token,Ready,PollOpt};
 use std::ops::Deref;
-use byteorder::{
-  LittleEndian,
-  ReadBytesExt,
-  WriteBytesExt
-};
 use std::str::FromStr;
 use std::io::Result as IoResult;
 use std::result::Result as StdResult;
 use std::io::Write;
 use std::io::Read;
-use std::io::{
-  Error as IoError,
-  ErrorKind as IoErrorKind,
-};
 
-use time::Duration;
 
 use mydhtresult::{
   Result,
-  ErrorKind,
-  Error,
 };
-use std::error::Error as ErrorTrait;
 
-use std::thread::JoinHandle;
 
-use serde::{Serialize, Deserialize, Serializer, Deserializer};
-use serde::de::{DeserializeOwned};
+use serde::{
+  Serialize, 
+  Deserialize, 
+  Serializer, 
+  Deserializer,
+};
+use serde::de::DeserializeOwned;
 use std::fmt::Debug;
 use std::net::{SocketAddr};
 use std::net::Shutdown;
 use std::net::{TcpStream};
 use mio::net::TcpStream as MioStream;
-#[cfg(feature="mio-impl")]
-use self::coroutine::Handle as CoHandle;
 
-#[cfg(test)]
-use std::io::Cursor;
-#[cfg(test)]
-use std::net::{
-  SocketAddrV4,
-  Ipv4Addr,
-  SocketAddrV6,
-  Ipv6Addr,
-};
-
-//use utils::Ref;
 
 /// entry discribing the read or write stream
 pub struct SlabEntry<T : Transport, RR, WR, WB, RP> {
@@ -183,30 +159,14 @@ pub trait Transport : Send + Sync + 'static + Registerable {
   type WriteStream : WriteTransportStream;
   type Address : Address;
  
-  /// TODO remove (loop spawner are used : replace by spawner type)
-  fn do_spawn_rec(&self) -> SpawnRecMode {SpawnRecMode::Threaded}
-  
-
-  /// depending on impl method should send stream to peermgmt as a writestream (for instance tcp socket are
-  /// read/write).
-  /// D fn will not start every time (only if WriteStream created), and is only to transmit stream
-  /// to either peermanager or as query (waiting for auth).
-  /// TODO remove
-  fn start<C> (&self, C) -> Result<()>
-    where C : Fn(Self::ReadStream,Option<Self::WriteStream>) -> Result<ReaderHandle>;
 
   /// transport listen for incomming connection 
-  ///
-  /// TODO remove address (not related to peer address
-  /// and accessible by transport handle
-  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>, Self::Address)>;
+  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>)>;
 
   /// Sometimes : for instance with tcp, the writestream is the same as the read stream,
   /// if we expect to use the same (and not open two socket), receive watching process should be
   /// start.
-  ///
-  /// TODO remove duration timeout (not for all transport)
-  fn connectwith(&self, &Self::Address, Duration) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)>;
+  fn connectwith(&self, &Self::Address) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)>;
 
   /// Disconnect an active connection in case we have a no spawn transport model (eg deregister a
   /// socket on an event_loop).
@@ -215,21 +175,6 @@ pub trait Transport : Send + Sync + 'static + Registerable {
   fn disconnect(&self, &Self::Address) -> IoResult<bool> {Ok(false)}
 }
 
-#[cfg(feature="mio-impl")]
-pub enum SpawnRecMode {
-  Local,
-  LocalSpawn, // local with spawn
-  Threaded,
-  Coroutine,
-}
-
-#[cfg(not(feature="mio-impl"))]
-pub enum SpawnRecMode {
-  Local,
-  LocalSpawn, // local with spawn
-  Threaded,
-  Coroutine, // TODO remove (issue with pattern matching)
-}
 
 
 // TODO add clone constraint with possibility to panic!("clone is not allowed : local send
@@ -282,24 +227,6 @@ fn streamread(&mut self) -> IoResult<(Vec<u8>,Option<Attachment>)>;
 */
 }
 
-#[cfg(feature="mio-impl")]
-/// possible handle when starting a server process to read
-pub enum ReaderHandle {
-  Local, // Nothing, run locally
-  LocalTh(JoinHandle<()>), // run locally but in a thread
-  Thread(JoinHandle<()>),
-  Coroutine(CoHandle),
-  // Scoped // TODO?
-}
-
-#[cfg(not(feature="mio-impl"))]
-/// possible handle when starting a server process to read
-pub enum ReaderHandle {
-  Local, // Nothing, run locally
-  LocalTh(JoinHandle<()>), // run locally but in a thread
-  Thread(JoinHandle<()>),
-  // Scoped // TODO?
-}
 impl Registerable for TcpStream {
 
   fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {

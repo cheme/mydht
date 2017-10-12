@@ -9,7 +9,6 @@ use rand::thread_rng;
 use rand::Rng;
 use bit_vec::BitVec;
 
-pub mod rand_cache;
 
 /// cache base trait to use in storage (transient or persistant) relative implementations
 /// TODO refacto : do not &K, K must be &Something

@@ -2,13 +2,11 @@ use std::time::Duration;
 use peer::Peer;
 use query::QueryPriority;
 use query::{QueryMode,QueryMsg};
-use kvstore::StoragePriority;
 use kvstore::CachePolicy;
 //use transport::Transport;
 use procs::ClientMode;
 //use procs::ServerMode;
 use num;
-use std::cmp::max;
 use std::cmp::min;
 use num::traits::ToPrimitive;
 use std::sync::Arc;
@@ -30,6 +28,10 @@ pub trait DHTRules : Sync + Send + 'static {
   fn nbquery (&self, QueryPriority) -> u8;
 
   /// if reply true not found is replied (faster reply than timeout)
+  /// TODO rename ? In storeprop it also define result : the result is imediatly return if there is no not
+  /// found reply, because timeout will occurs for all peers at aproximately the same time for a partial
+  /// result (not as many result as queried). If not found reply is activated, result to query is
+  /// returned only when it got enough results (found and not found).
   fn notfoundreply (&self, mode : &QueryMode) -> bool;
 
   /// Number of no reply requires to consider no result, default implementation is suitable for

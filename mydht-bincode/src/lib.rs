@@ -1,11 +1,10 @@
-#[macro_use] extern crate log;
 #[macro_use] extern crate mydht_base;
 extern crate bincode;
 extern crate serde;
 #[cfg(test)]
 extern crate mydht_basetest;
 
-use serde::{Serializer,Serialize,Deserialize,Deserializer};
+use serde::{Serialize};
 use serde::de::{DeserializeOwned};
 //use rustc_serialize::{Serialize,Decodable};
 use mydht_base::msgenc::MsgEnc;

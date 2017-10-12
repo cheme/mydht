@@ -1,11 +1,4 @@
 #![feature(custom_derive)]
-#![feature(fs_walk)]
-#![feature(path_ext)]
-#![feature(convert)]
-#![feature(semaphore)]
-#![feature(deque_extras)]
-#![feature(socket_timeout)]
-#![feature(slice_bytes)] // in wot
 #![feature(fn_traits)]
 #![feature(associated_type_defaults)]
 
@@ -28,38 +21,36 @@ extern crate coroutine;
 extern crate mydht_basetest;
 extern crate mio;
 
-
 /// Local service will simply proxy to Global service
 #[macro_export]
 macro_rules! localproxyglobal(() => (
 
-    type GlobalServiceCommand = Self::LocalServiceCommand; // def
-    type GlobalServiceReply  = Self::LocalServiceReply; // def
-    type LocalService = DefLocalService<Self>; // def
-    const LOCAL_SERVICE_NB_ITER : usize = 1; // def
-    type LocalServiceSpawn = Blocker; // def
-    type LocalServiceChannelIn = NoChannel; // def
+  type GlobalServiceCommand = Self::LocalServiceCommand; // def
+  type GlobalServiceReply  = Self::LocalServiceReply; // def
+  type LocalService = DefLocalService<Self>; // def
+  const LOCAL_SERVICE_NB_ITER : usize = 1; // def
+  type LocalServiceSpawn = Blocker; // def
+  type LocalServiceChannelIn = NoChannel; // def
 
-    #[inline]
-    fn init_local_spawner(&mut self) -> Result<Self::LocalServiceSpawn> {
-      Ok(Blocker)
-    }
-    #[inline]
-    fn init_local_channel_in(&mut self) -> Result<Self::LocalServiceChannelIn> {
-      Ok(NoChannel)
-    }
-    #[inline]
-    fn init_local_service(me : Self::PeerRef, with : Option<Self::PeerRef>) -> Result<Self::LocalService> {
-      Ok(DefLocalService{
-        from : me,
-        with : with,
-        })
-    }
+  #[inline]
+  fn init_local_spawner(&mut self) -> Result<Self::LocalServiceSpawn> {
+    Ok(Blocker)
+  }
+  #[inline]
+  fn init_local_channel_in(&mut self) -> Result<Self::LocalServiceChannelIn> {
+    Ok(NoChannel)
+  }
+  #[inline]
+  fn init_local_service(me : Self::PeerRef, with : Option<Self::PeerRef>) -> Result<Self::LocalService> {
+    Ok(DefLocalService{
+      from : me,
+      with : with,
+      })
+  }
 ));
 
 #[macro_export]
 macro_rules! nolocal(() => (
-
 
   const LOCAL_SERVICE_NB_ITER : usize = 1;// = 1;
   type LocalServiceCommand = NoCommandReply;
@@ -123,7 +114,9 @@ pub mod rules;
 //pub mod wot;
 #[cfg(test)]
 mod test;
-
+pub use procs::{ApiCommand,Api,MyDHTConf};
+pub use procs::deflocal::DefLocalService;
+pub use procs::MyDHT;
 // reexport
 pub use peer::{PeerPriority,PeerState};
 pub use query::{QueryConf,QueryPriority,QueryMode,LastSentConf};

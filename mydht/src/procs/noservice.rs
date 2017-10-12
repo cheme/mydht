@@ -11,13 +11,6 @@ use peer::{
 use keyval::{
   KeyVal,
 };
-use service::{
-  Service,
-  SpawnerYield,
-};
-use mydhtresult::{
-  Result,
-};
 use std::collections::VecDeque;
 
 #[derive(Debug,Clone)]

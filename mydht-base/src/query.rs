@@ -1,11 +1,8 @@
-use serde::{Serializer,Serialize,Deserialize,Deserializer};
-use serde::de::DeserializeOwned;
 use keyval::KeyVal;
 use peer::Peer;
 use rules::DHTRules;
 use kvstore::StoragePriority;
 use std::collections::VecDeque;
-use std::sync::Arc;
 use std::mem::replace;
 use utils::{
   Ref,

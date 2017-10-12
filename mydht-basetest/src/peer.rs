@@ -1,27 +1,24 @@
 
-#[cfg(test)]
 use readwrite_comp::{ExtWrite,ExtRead};
 
-#[cfg(test)]
-use std::io::{Write,Read};
+use std::io::Write;
 
-#[cfg(test)]
 use rand::thread_rng;
-#[cfg(test)]
 use rand::Rng;
-#[cfg(test)]
 use std::io::Cursor;
 use keyval::{KeyVal};
 use keyval::{Attachment,SettableAttachment};
 //use utils;
 use transport::LocalAdd;
-use mydht_base::route::byte_rep::{
-    DHTElemBytes,
-};
+
 use shadow::{
   ShadowTest,
+};
+#[cfg(test)]
+use shadow::{
   shadower_test,
 };
+
 use shadow::{
   ShadowModeTest,
 };
@@ -84,19 +81,6 @@ impl Peer for PeerTest {
 
 }
 
-impl<'a> DHTElemBytes<'a> for PeerTest {
-    // return ing Vec<u8> is stupid but it is for testing
-    type Bytes = Vec<u8>;
-    fn bytes_ref_keb (&'a self) -> Self::Bytes {
-      self.nodeid.bytes_ref_keb()
-      // res.push((self.address).0 as u8); // should be key related
-    }
-    fn kelem_eq_keb(&self, other : &Self) -> bool {
-      self.nodeid == other.nodeid
-      && self.address == other.address
-    }
-}
-
 
 #[cfg(test)]
 fn peertest_shadower_test (input_length : usize, write_buffer_length : usize,
@@ -117,11 +101,10 @@ read_buffer_length : usize, smodeauth : ShadowModeTest, smodemsg : ShadowModeTes
  
   shadower_test(to_p.clone(),input_length,write_buffer_length,read_buffer_length);
   // non std
-  shadower_sym(to_p,input_length,write_buffer_length,read_buffer_length);
+  shadower_sym(input_length,write_buffer_length,read_buffer_length);
 
 }
-#[cfg(test)]
-pub fn shadower_sym (to_p : PeerTest, input_length : usize, write_buffer_length : usize,
+pub fn shadower_sym (input_length : usize, write_buffer_length : usize,
 read_buffer_length : usize) 
 {
 
@@ -129,8 +112,8 @@ read_buffer_length : usize)
   thread_rng().fill_bytes(&mut inputb);
   let mut output = Cursor::new(Vec::new());
   let input = inputb;
-  let mut from_shad = to_p.get_shadower_w_msg();
-  let mut to_shad = to_p.get_shadower_r_msg();
+ // let mut from_shad = to_p.get_shadower_w_msg();
+ // let mut to_shad = to_p.get_shadower_r_msg();
 
   // sim test
   let sim_shad = ShadowTest::new_shadow_sim().unwrap();
@@ -158,11 +141,11 @@ read_buffer_length : usize)
       ix += shad_sim_w.write_into(&mut output, &input[ix..]).unwrap();
     }
   }
-  let el = output.get_ref().len();
+ // let el = output.get_ref().len();
   shad_sim_w.write_end(&mut output).unwrap();
   shad_sim_w.flush_into(&mut output).unwrap();
   output.flush().unwrap();
-  let el = output.get_ref().len();
+ // let el = output.get_ref().len();
   ix = 0;
   let mut readbuf = vec![0;read_buffer_length];
 

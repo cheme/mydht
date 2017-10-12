@@ -20,14 +20,10 @@
 //!    inplace : probably a callback fn in fwd message).
 use mydhtresult::{
   Result,
-  Error,
 };
-use peer::Peer;
-use keyval::KeyVal;
 
 use procs::storeprop::{
   KVStoreCommand,
-  KVStoreReply,
   peer_ping,
 };
 use mydht_base::kvcache::{
@@ -36,53 +32,30 @@ use mydht_base::kvcache::{
 use super::mainloop::{
   MainLoopCommand,
 };
-use super::client2::WriteCommand;
 use super::{
   MyDHTConf,
   MCCommand,
   MCReply,
   FWConf,
+  MainLoopSendIn,
 };
 use transport::{
   Transport,
 };
 use super::deflocal::{
   GlobalCommand,
-  GlobalCommandSend,
-  GlobalReply,
 };
 
-use super::mainloop::{
-  MainLoopSubCommand,
-};
 
 
 use service::{
-  HandleSend,
   Service,
-  Spawner,
-  Blocker,
-  NoChannel,
   SpawnSend,
-  SpawnRecv,
-  SpawnHandle,
   SpawnChannel,
-  MioChannel,
-  MioSend,
-  MioRecv,
-  NoYield,
-  YieldReturn,
   SpawnerYield,
-  WriteYield,
-  ReadYield,
-  DefaultRecv,
-  DefaultRecvChannel,
-  NoRecv,
-  NoSend,
 };
 use utils::{
   OneResult,
-  ret_one_result,
 };
 use std::time::{
   Duration,
@@ -90,19 +63,16 @@ use std::time::{
 };
 use std::marker::PhantomData;
 
-/// local apiQuery
-pub struct ApiQuery(ApiQueryId);
 
-/// TODO add a query cache over cond var
-/// implemetation of an api service using stored condvar for returning results
-/// TODO refactor query cache to use it or replace it by Slab!!
+/// An implementation of api service using a kvcache as storage and with a max duration
+/// No clean cache is currently call : TODO merge with QueryCache (same thing)
 pub struct Api<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>>(pub QC,pub Duration,pub usize,pub PhantomData<MC>);
 
 impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service for Api<MC,QC> {
   type CommandIn = ApiCommand<MC>;
   type CommandOut = ApiReply<MC>;
 
-  fn call<S : SpawnerYield>(&mut self, req : Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+  fn call<S : SpawnerYield>(&mut self, req : Self::CommandIn, _async_yield : &mut S) -> Result<Self::CommandOut> {
     Ok(match req {
       ApiCommand::MainLoop(mlc) => {
         ApiReply::ProxyMainloop(mlc)
@@ -207,7 +177,7 @@ impl<MC : MyDHTConf> ApiCommand<MC> {
   pub fn try_connect_reply(ad : <MC::Transport as Transport>::Address, ret : MC::ApiReturn) -> ApiCommand<MC> {
     ApiCommand::ServiceCommand(MCCommand::TryConnect(ad,None),0,ret)
   }
-  pub fn call_shutdown_reply(ret : MC::ApiReturn) -> ApiCommand<MC> {
+  pub fn call_shutdown_reply(_ret : MC::ApiReturn) -> ApiCommand<MC> {
     unimplemented!()
     // TODO change TryConnect MCCommand to generic MDHT enum command
     //ApiCommand::ServiceCommand(MCCommand::Shutdown,0,ret) -> could be MainLoopSubCommand !!!!
@@ -272,14 +242,16 @@ where MC::LocalServiceReply : Clone,
   }
 }
 
+/// send input for api : use mainloop TODO option weak handle to api
 pub struct ApiSendIn<MC : MyDHTConf> {
 //    pub api_direct : Option<ApiHandleSend<MC>>,
-    pub main_loop : MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>,
+    pub main_loop : MainLoopSendIn<MC>,
 }
 
+/// api dest to mainloop
 pub struct ApiDest<MC : MyDHTConf> {
   // TODO direct send
-    pub main_loop : MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>,
+    pub main_loop : MainLoopSendIn<MC>,
 }
 
 impl<MC : MyDHTConf> SpawnSend<ApiReply<MC>> for ApiDest<MC> {
@@ -365,7 +337,7 @@ impl<MC : MyDHTConf> SpawnSend<ApiCommand<MC>> for ApiSendIn<MC> {
       ApiCommand::ServiceCommand(cmd,nb_f,ret) => self.main_loop.send(MainLoopCommand::ForwardApi(cmd,nb_f,ret))?,
 //  ForwardServiceLocal(MC::LocalServiceCommand,MC::PeerRef),
 //      ApiCommand::ServiceCommand(MCCommand::Global(cmd),ret) => self.main_loop.send(MainLoopCommand::GlobalApi(cmd,ret))?,
-      ApiCommand::ServiceReply(rep) => {
+      ApiCommand::ServiceReply(..) => {
         unreachable!()
 //        let oqid = rep.get_api_reply();
  //       panic!("TODO get from cache an unlock cond var")

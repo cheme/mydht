@@ -1,23 +1,16 @@
-use std::sync::{Arc,Mutex,Condvar};
-use serde::{Serializer,Serialize,Deserializer};
-use serde::de::{DeserializeOwned};
 //use peer::{PeerPriority};
-use std::time::{Instant,Duration};
+use std::time::Instant;
 use peer::Peer;
-use std::sync::mpsc::{Sender};
-use kvstore::CachePolicy;
 use std::collections::VecDeque;
 //use procs::RunningProcesses;
-use keyval::{KeyVal};
-use kvstore::{StoragePriority};
+use kvstore::{
+  StoragePriority,
+};
 use utils::{
-  Either,
   Ref,
 };
 use procs::api::ApiQueryId;
 //use num::traits::ToPrimitive;
-use rules::DHTRules;
-use transport::{ReadTransportStream,WriteTransportStream};
 pub use mydht_base::query::*;
 
 pub mod cache;

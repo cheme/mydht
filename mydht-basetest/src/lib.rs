@@ -1,4 +1,3 @@
-#![feature(associated_consts)]
 
 
 #[macro_use] extern crate log;
@@ -19,7 +18,6 @@ mod keyval {
 
 
 mod kvstore;
-pub mod route;
 pub mod local_transport;
 pub mod transport;
 pub mod peer;

@@ -9,47 +9,40 @@ extern crate mio;
 #[cfg(test)]
 extern crate mydht_basetest;
 
-use std::sync::mpsc;
+/*use std::sync::mpsc;
 use std::sync::mpsc::{Sender};
 use std::result::Result as StdResult;
-use std::mem;
+use std::mem;*/
 //use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::Result as IoResult;
 use mydht_base::mydhtresult::Result;
-use std::io::Error as IoError;
+/*use std::io::Error as IoError;
 use std::io::ErrorKind as IoErrorKind;
 use std::io::Write;
-use std::io::Read;
-use time::Duration;
+use std::io::Read;*/
 use std::time::Duration as StdDuration;
-use mydht_base::transport::{Transport,ReadTransportStream,WriteTransportStream,SpawnRecMode,ReaderHandle,Registerable};
+use mydht_base::transport::{
+  Transport,
+  Registerable,
+};
 use std::net::SocketAddr;
 //use self::mio::tcp::TcpSocket;
 use self::mio::net::TcpListener;
-use std::fmt::Debug;
 use self::mio::net::TcpStream;
 //use self::mio::tcp;
 use self::mio::Token;
 use self::mio::Poll;
 use self::mio::Ready;
 use self::mio::PollOpt;
-use self::mio::tcp::Shutdown;
 //use super::Attachment;
-use num::traits::ToPrimitive;
-use self::vec_map::VecMap;
 //use std::sync::Mutex;
 //use std::sync::Arc;
 //use std::sync::Condvar;
 //use std::sync::PoisonError;
-use std::error::Error;
-use mydht_base::utils::{self,OneResult};
 //use std::os::unix::io::AsRawFd;
 //use std::os::unix::io::FromRawFd;
 use mydht_base::transport::{SerSocketAddr};
 
-#[cfg(feature="with-extra-test")]
-#[cfg(test)]
-use mydht_basetest::transport::connect_rw_with_optional;
 #[cfg(test)]
 use mydht_basetest::transport::{
   reg_mpsc_recv_test as reg_mpsc_recv_test_base,
@@ -61,26 +54,12 @@ use mydht_basetest::transport::{
 };
 #[cfg(feature="with-extra-test")]
 #[cfg(test)]
-use mydht_basetest::transport::connect_rw_with_optional_non_managed;
-#[cfg(feature="with-extra-test")]
-#[cfg(test)]
 use mydht_base::utils::{sa4};
 
 
 #[cfg(feature="with-extra-test")]
 #[cfg(test)]
 use std::net::Ipv4Addr;
-#[cfg(feature="with-extra-test")]
-#[cfg(test)]
-use std::sync::Arc;
-#[cfg(feature="with-extra-test")]
-#[cfg(test)]
-use mydht_base::transport::Address;
-#[cfg(feature="with-extra-test")]
-#[cfg(test)]
-use std::thread;
-
-const CONN_REC : usize = 0;
 
 /// Tcp struct : two options, timeout for connect and time out when connected.
 pub struct Tcp {
@@ -110,34 +89,26 @@ impl Transport for Tcp {
   type WriteStream = TcpStream;
   type Address = SerSocketAddr;
 
-  /// if spawn we do not loop (otherwhise we should not event loop at all), the thread is just for
-  /// one message.
-  fn do_spawn_rec(&self) -> SpawnRecMode {
-        SpawnRecMode::Local
-  }
 
-  fn start<C> (&self, readhandler : C) -> Result<()>
-    where C : Fn(TcpStream,Option<TcpStream>) -> Result<ReaderHandle> {
-    Ok(())
-  }
-  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>, Self::Address)> {
+  fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>)> {
     let (s,ad) = self.listener.accept()?;
     debug!("Initiating socket exchange : ");
     debug!("  - From {:?}", s.local_addr());
     debug!("  - With {:?}", s.peer_addr());
+    debug!("  - At {:?}", ad);
     s.set_keepalive(self.keepalive)?;
 //    try!(s.set_write_timeout(self.timeout.num_seconds().to_u64().map(Duration::from_secs)));
     if self.mult {
 //            try!(s.set_keepalive (self.timeout.num_seconds().to_u32()));
         let rs = try!(s.try_clone());
-        Ok((s,Some(rs),SerSocketAddr(ad)))
+        Ok((s,Some(rs)))
     } else {
-        Ok((s,None,SerSocketAddr(ad)))
+        Ok((s,None))
     }
   }
 
 
-  fn connectwith(&self,  p : &SerSocketAddr, timeout : Duration) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
+  fn connectwith(&self,  p : &SerSocketAddr) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
     let s = TcpStream::connect(&p.0)?;
     s.set_keepalive(self.keepalive)?;
     // TODO set nodelay and others!!

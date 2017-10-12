@@ -1,33 +1,21 @@
 //! Client service
 use procs::OptInto;
-use std::io::Cursor;
 use std::borrow::Borrow;
 use peer::Peer;
 use peer::{
   PeerMgmtMeths,
-  PeerPriority,
 };
 use super::api::{
   ApiQueryId,
-  ApiQueriable,
-  ApiRepliable,
 };
 use keyval::{
   KeyVal,
-  SettableAttachment,
-  SettableAttachments,
   GettableAttachments,
 };
 use transport::{
   Transport,
-  Address,
-  Address as TransportAddress,
-  SlabEntry,
-  SlabEntryState,
-  Registerable,
 };
 use utils::{
-  Ref,
   SRef,
   SToRef,
   shad_write_header,
@@ -38,12 +26,8 @@ use utils::{
 };
 use super::{
   MyDHTConf,
-  PeerRefSend,
   ShadowAuthType,
   MCCommand,
-};
-use msgenc::{
-  MsgEnc,
 };
 use msgenc::send_variant::{
   ProtoMessage,
@@ -52,40 +36,22 @@ use msgenc::send_variant::{
 
 use service::{
   Service,
-  Spawner,
-  SpawnSend,
-  SpawnRecv,
-  SpawnHandle,
-  SpawnChannel,
-  MioChannel,
-  MioSend,
-  MioRecv,
-  NoYield,
-  YieldReturn,
   SpawnerYield,
   WriteYield,
-  ReadYield,
-  DefaultRecv,
-  DefaultRecvChannel,
-  NoRecv,
-  NoSend,
 };
 use mydhtresult::{
   Result,
   Error,
   ErrorKind,
-  ErrorLevel as MdhtErrorLevel,
 };
 use std::io::{
   Write,
-  Read,
 };
 use super::api::ApiReply;
 
 // TODO put in its own module
 pub struct WriteService<MC : MyDHTConf> {
   stream : <MC::Transport as Transport>::WriteStream,
-  is_auth : bool,
   enc : MC::MsgEnc,
   from : MC::PeerRef,
 //  from : PeerRefSend<MC>,
@@ -93,6 +59,8 @@ pub struct WriteService<MC : MyDHTConf> {
   with : Option<MC::PeerRef>,
   peermgmt : MC::PeerMgmtMeths,
   token : usize,
+  read_token : Option<usize>,
+  /// shadow to use when auth is fine
   shad_msg : Option<<MC::Peer as Peer>::ShadowWMsg>,
 }
 
@@ -101,12 +69,12 @@ impl<MC : MyDHTConf> WriteService<MC> {
   pub fn new(token : usize, ws : <MC::Transport as Transport>::WriteStream, me : MC::PeerRef, with : Option<MC::PeerRef>, enc : MC::MsgEnc, peermgmt : MC::PeerMgmtMeths) -> Self {
     WriteService {
       stream : ws,
-      is_auth : false,
       enc : enc,
       from : me,
       with : with,
       peermgmt : peermgmt,
       token : token,
+      read_token : None,
       shad_msg : None,
     }
   }
@@ -117,8 +85,6 @@ pub fn get_shad_auth<MC : MyDHTConf>(from : &MC::PeerRef,with : &Option<MC::Peer
 //pub fn get_shad_auth<MC : MyDHTConf>(from : &PeerRefSend<MC>,with : &Option<PeerRefSend<MC>>) -> <MC::Peer as Peer>::ShadowWAuth {
   match MC::AUTH_MODE {
     ShadowAuthType::NoAuth => {
-      /*self.is_auth = true;
-      return self.call(req,async_yield);*/
       unreachable!()
     },
     ShadowAuthType::Public => from.borrow().get_shadower_w_auth(),
@@ -146,6 +112,7 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
         stream.write_all(buf).unwrap(); // unwrap for testing only (thread without error catching
       },
       WriteCommand::Pong(rp,chal,read_token,option_chal2) => {
+        self.read_token = Some(read_token);
         let mut stream = WriteYield(&mut self.stream, async_yield);
         // update dest : this ensure that on after auth with is initialized! Remember that with may
         // contain initializing shared secret for message shadow.

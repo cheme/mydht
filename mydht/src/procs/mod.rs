@@ -1,7 +1,5 @@
-use std::sync::mpsc::{Sender};
-use std::borrow::Borrow;
 use peer::{PeerMgmtMeths};
-use query::{self,QueryConf,QueryPriority,QueryMode,QueryModeMsg,LastSent,QueryMsg};
+
 use rules::DHTRules;
 use procs::synch_transport::{
   SynchConnListenerCommandDest,
@@ -18,7 +16,6 @@ use mydht_base::route2::{
   RouteMsgType,
 };
 use kvstore::{
-  StoragePriority, 
   KVStore,
 };
 use procs::storeprop::{
@@ -41,45 +38,30 @@ use keyval::{
 };
 use query::cache::QueryCache;
 //use self::mesgs::{PeerMgmtMessage,PeerMgmtInitMessage,KVStoreMgmtMessage,QueryMgmtMessage,ClientMessage,ClientMessageIx};
-use std::sync::{Arc,Condvar,Mutex};
-use std::sync::mpsc::channel;
-use std::thread;
 use peer::Peer;
-use time::Duration;
 use self::deflocal::{
   LocalReply,
-  DefLocalService,
   GlobalCommand,
   GlobalReply,
   LocalDest,
   GlobalDest,
 };
 use utils::{
-  self,
   SRef,
   SToRef,
 };
 use msgenc::{
   MsgEnc,
 };
-use serde::{Serializer,Serialize,Deserialize,Deserializer};
+use serde::{Serialize};
 use serde::de::{DeserializeOwned};
-use std::result::Result as StdResult;
 //use num::traits::ToPrimitive;
-use std::marker::PhantomData;
-use std::fmt::{Debug,Display};
 use transport::{
   Transport,
-  Address,
-  Address as TransportAddress,
   SlabEntry,
-  SlabEntryState,
-  Registerable,
-  WriteTransportStream,
 };
 use kvcache::{
   SlabCache,
-  KVCache,
   Cache,
 };
 use self::peermgmt::{
@@ -87,22 +69,16 @@ use self::peermgmt::{
 };
 use mydhtresult::{
   Result,
-  Error,
-  ErrorKind,
-  ErrorLevel as MdhtErrorLevel,
 };
 
+pub use procs::api::Api;
 pub use mydht_base::procs::*;
 use service::{
   HandleSend,
   Service,
   Spawner,
-  Blocker,
-  NoChannel,
   SpawnSend,
-  SpawnRecv,
   SpawnHandle,
-  SpawnUnyield,
   SpawnChannel,
   MioChannel,
   MioSend,
@@ -110,10 +86,7 @@ use service::{
   NoYield,
   YieldReturn,
   SpawnerYield,
-  WriteYield,
-  ReadYield,
   DefaultRecv,
-  DefaultRecvChannel,
   NoRecv,
   NoSend,
   send_with_handle,
@@ -123,11 +96,11 @@ pub use self::mainloop::{
   MainLoopCommand,
   //PeerCacheEntry,
   MDHTState,
+  MyDHT,
 };
 use self::server2::{
   ReadService,
   ReadCommand,
-  ReadReply,
   ReadDest,
 };
 use self::client2::{
@@ -147,7 +120,7 @@ macro_rules! send_with_handle_panic {
     }
   })
 }
-
+/*
 macro_rules! send_with_handle_log {
   ($s:expr,$h:expr,$c:expr,$lvl:expr,$($arg:tt)+) => ({
     if send_with_handle($s,$h,$c)?.is_some() {
@@ -155,7 +128,7 @@ macro_rules! send_with_handle_log {
     }
   })
 }
-
+*/
 
 
 mod mainloop;
@@ -209,7 +182,8 @@ impl<T, U> OptInto<U> for T where U: OptFrom<T>
     U::opt_from(self)
   }
 }
-pub struct MyDHTService<MC : MyDHTConf>(pub MC, pub MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>, pub <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply<MC>>>::Send,pub MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>);
+
+pub struct MyDHTService<MC : MyDHTConf>(pub MC, pub MainLoopRecvIn<MC>, pub <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply<MC>>>::Send,pub MainLoopSendIn<MC>);
 
 #[derive(Clone,Eq,PartialEq)]
 pub enum ShadowAuthType {
@@ -226,7 +200,7 @@ impl<MC : MyDHTConf> Service for MyDHTService<MC> {
   type CommandIn = MainLoopCommand<MC>;
   type CommandOut = MainLoopReply<MC>;
 
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut S) -> Result<Self::CommandOut> {
     let mut state = MDHTState::init_state(&mut self.0, &mut self.3)?;
     let mut yield_spawn = NoYield(YieldReturn::Loop);
 //    (self.3).send((MainLoopCommand::Start))?;
@@ -244,19 +218,14 @@ impl<MC : MyDHTConf> Service for MyDHTService<MC> {
 
 pub type RWSlabEntry<MC : MyDHTConf> = SlabEntry<
   MC::Transport,
-//  (),
-  //SpawnerRefsRead2<ReadService<MC>, MC::ReadDest, MC::ReadChannelIn, MC::ReadSpawn>,
-  SpawnerRefsDefRecv2<ReadService<MC>,ReadCommand, ReadDest<MC>, MC::ReadChannelIn, MC::ReadSpawn>,
-//  SpawnerRefs<ReadService<MC>,MC::ReadDest,DefaultRecvChannel<ReadCommand,MC::ReadChannelIn>,MC::ReadSpawn>,
-  SpawnerRefs2<WriteService<MC>,WriteCommand<MC>,MC::WriteDest,MC::WriteChannelIn,MC::WriteSpawn>,
-  // bool is has_connect
+  SpawnerRefsDefRecv<ReadService<MC>,ReadCommand, ReadDest<MC>, MC::ReadChannelIn, MC::ReadSpawn>,
+  SpawnerRefs<WriteService<MC>,WriteCommand<MC>,MC::WriteDest,MC::WriteChannelIn,MC::WriteSpawn>,
   (<MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::Send,<MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::Recv,bool),
   MC::PeerRef>;
 
-type SpawnerRefs<S : Service,D,CI : SpawnChannel<S::CommandIn>,SP : Spawner<S,D,CI::Recv>> = (SP::Handle,CI::Send); 
-type SpawnerRefs2<S : Service,COM_IN, D,CI : SpawnChannel<COM_IN>,SP : Spawner<S,D,CI::Recv>> = (SP::Handle,CI::Send); 
-type SpawnerRefsDefRecv2<S : Service,COM_IN,D, CI : SpawnChannel<COM_IN>, RS : Spawner<S,D,DefaultRecv<COM_IN,CI::Recv>>> = (RS::Handle,CI::Send);
-type SpawnerRefsRead2<S : Service,D, CI : SpawnChannel<ReadCommand>, RS : Spawner<S,D,DefaultRecv<ReadCommand,CI::Recv>>> = (RS::Handle,CI::Send);
+type SpawnerRefs<S : Service,COM, D,CI : SpawnChannel<COM>,SP : Spawner<S,D,CI::Recv>> = (SP::Handle,CI::Send); 
+type SpawnerRefsDefRecv<S : Service,COM,D, CI : SpawnChannel<COM>, RS : Spawner<S,D,DefaultRecv<COM,CI::Recv>>> = (RS::Handle,CI::Send);
+//type SpawnerRefsRead2<S : Service,D, CI : SpawnChannel<ReadCommand>, RS : Spawner<S,D,DefaultRecv<ReadCommand,CI::Recv>>> = (RS::Handle,CI::Send);
 
 /*pub trait Spawner<
   S : Service,
@@ -297,7 +266,7 @@ impl<MC : MyDHTConf> Route<MC> for PeerCacheRouteBase
 {
   const USE_SERVICE : bool = false;
 //pub trait RouteBase<P : Peer,GP : GetPeerRef<P>, C : KVCache<<P as KeyVal>::Key,GP>,LOC : RouteBaseMessage<P>> {
-  fn route(&mut self, nb : usize, mcc : MCCommand<MC>, slab : &mut MC::Slab, cache : &mut MC::PeerCache) -> Result<(MCCommand<MC>,Vec<usize>)> {
+  fn route(&mut self, nb : usize, mcc : MCCommand<MC>, _slab : &mut MC::Slab, cache : &mut MC::PeerCache) -> Result<(MCCommand<MC>,Vec<usize>)> {
     Ok(match mcc {
       MCCommand::Local(c) => {
         let (c,r) = cache.route_base(nb,c,RouteMsgType::Local)?;
@@ -685,7 +654,6 @@ pub trait MyDHTConf : 'static + Send + Sized
   #[inline]
   fn start_loop(mut self : Self) -> Result<(
     ApiSendIn<Self>,
-//    MioSend<<Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Send>, 
     <Self::MainLoopChannelOut as SpawnChannel<MainLoopReply<Self>>>::Recv
     )> {
     println!("Start loop");

@@ -2,7 +2,6 @@ extern crate time;
 use serde::{Serializer,Serialize,Deserialize,Deserializer};
 use std::marker::PhantomData;
 use std::ops::Deref;
-use std::str::FromStr;
 use std::net::SocketAddr;
 use std::net::SocketAddrV4;
 use std::net::SocketAddrV6;
@@ -22,10 +21,6 @@ use std::fmt::{Formatter,Debug};
 use std::fmt::Error as FmtError;
 use std::time::Duration;
 use self::time::Timespec;
-use keyval::KeyVal;
-use keyval::FileKeyVal;
-use keyval::Attachment;
-use keyval::SettableAttachment;
 #[cfg(not(feature="openssl-impl"))]
 #[cfg(feature="rust-crypto-impl")]
 use std::io::{
@@ -645,102 +640,6 @@ pub fn sa6(a: Ipv6Addr, p: u16) -> SocketAddr {
 }
 
 
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct ArcKV<KV : KeyVal> (pub Arc<KV>);
-
-impl<KV : KeyVal> Serialize for ArcKV<KV> {
-  fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
-    // default to local without att
-    self.0.encode_kv(s, true, false)
-  }
-}
-
-impl<'de,KV : KeyVal> Deserialize<'de> for ArcKV<KV> {
-  fn deserialize<D:Deserializer<'de>> (d : D) -> Result<ArcKV<KV>, D::Error> {
-    // default to local without att
-    Self::decode_kv(d, true, false)
-  }
-}
-/*
-impl<KV : KeyVal> AsKeyValIf for ArcKV<KV> 
-  {
-  type KV = KV;
-  type BP = ();
-  fn as_keyval_if(& self) -> & Self::KV {
-    &(*self.0)
-  }
-  fn build_from_keyval(_ : (), kv : Self::KV) -> Self {
-    ArcKV::new(kv)
-  }
-  fn decode_bef<D:Deserializer> (d : &mut D, is_local : bool, with_att : bool) -> Result<Self::BP, D::Error> {Ok(())}
-}
-*/
-impl<KV : KeyVal> ArcKV<KV> {
-  #[inline]
-  pub fn new(kv : KV) -> ArcKV<KV> {
-    ArcKV(Arc::new(kv))
-  }
-}
-
-impl<V : KeyVal> Deref for ArcKV<V> {
-  type Target = V;
-  fn deref<'a> (&'a self) -> &'a V {
-    &self.0
-  }
-}
-
-
-
-impl<KV : KeyVal> KeyVal for ArcKV<KV> {
-  type Key = <KV as KeyVal>::Key;
-  #[inline]
-  fn get_key(&self) -> <KV as KeyVal>::Key {
-    self.0.get_key()
-  }
-  #[inline]
-  fn get_key_ref(&self) -> &<KV as KeyVal>::Key {
-    self.0.get_key_ref()
-  }
-  #[inline]
-  fn get_attachment(&self) -> Option<&Attachment> {
-    self.0.get_attachment() 
-  }
-  #[inline]
-  fn encode_kv<S:Serializer> (&self, s: S, is_local : bool, with_att : bool) -> Result<S::Ok, S::Error> {
-    self.0.encode_kv(s, is_local, with_att)
-  }
-  #[inline]
-  fn decode_kv<'de,D:Deserializer<'de>> (d : D, is_local : bool, with_att : bool) -> Result<Self, D::Error> {
-    <KV as KeyVal>::decode_kv(d, is_local, with_att).map(|r|ArcKV::new(r))
-  }
-}
-
-impl<KV : KeyVal> SettableAttachment for ArcKV<KV> {
-  #[inline]
-  /// set attachment, 
-  fn set_attachment(& mut self, fi:&Attachment) -> bool {
-    // only solution : make unique and then new Arc : functional style : costy : a copy of every
-    // keyval with an attachment not serialized in it.
-    // Othewhise need a kvmut used for protomess only
-    // currently no use of weak pointer over our Arc, so when used after receiving a message
-    // (unique arc) no clone may occurs (see fn doc).
-    let kv = Arc::make_mut(&mut self.0);
-    kv.set_attachment(fi)
-  }
-
-}
-impl<V : FileKeyVal> FileKeyVal for ArcKV<V> {
-  #[inline]
-  fn name(&self) -> String {
-    self.0.name()
-  }
-
-  #[inline]
-  fn from_path(tmpf : PathBuf) -> Option<ArcKV<V>> {
-    <V as FileKeyVal>::from_path(tmpf).map(|v|ArcKV::new(v))
-  }
-}
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TimeSpecExt(pub Timespec);

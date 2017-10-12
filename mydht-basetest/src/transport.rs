@@ -1,33 +1,30 @@
 //! Test primitives for transports.
-extern crate byteorder;
 extern crate mio;
 extern crate slab;
 extern crate coroutine;
 extern crate futures;
 extern crate futures_cpupool;
 use self::futures::Future;
+
+use std::thread::JoinHandle;
 use self::futures::future::ok;
-use self::futures::future::FutureResult;
+//use self::futures::future::FutureResult;
 use self::futures_cpupool::CpuPool;
 use self::futures_cpupool::CpuFuture;
 use std::cell::RefCell;
-use std::cell::RefMut;
+//use std::cell::RefMut;
 use std::rc::Rc;
-use std::thread::JoinHandle;
 use self::coroutine::asymmetric::{
   Handle as CoRHandle,
   Coroutine,
 };
-use std::cmp::max;
 use std::cmp::min;
 use std::thread;
 use std::time::Duration as StdDuration; 
-use time::Duration;
 use std::sync::mpsc;
 use mydht_base::transport::{
   Transport,
   Address,
-  ReaderHandle,
   Registerable,
   ReadTransportStream,
   WriteTransportStream,
@@ -41,7 +38,6 @@ use std::mem;
 use std::io::{
   Write,
   Read,
-  Error as IoError,
   ErrorKind as IoErrorKind,
   Result as IoResult,
 };
@@ -75,13 +71,18 @@ use std::sync::atomic::{
   AtomicBool,
   Ordering,
 };
-use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 const LISTENER : Token = Token(0);
 const MPSC_TEST : Token = Token(1);
 const START_STREAM_IX : usize = 2;
 
 
+pub enum ReaderHandle {
+  Local, // Nothing, run locally
+  LocalTh(JoinHandle<()>), // run locally but in a thread
+  Thread(JoinHandle<()>),
+  // Scoped // TODO?
+}
 pub struct MpscRec<T> {
   mpsc : Receiver<T>,
   reg : Registration,
@@ -165,51 +166,46 @@ where
                       PollOpt::edge())?);
   assert!(true == transport.register(&poll, LISTENER, Ready::readable(),
                       PollOpt::edge())?);
-  let mut iter = 0;
+//  let mut iter = 0;
   loop {
     poll.poll(&mut events, None).unwrap();
       for event in events.iter() {
           match event.token() {
               LISTENER => {
                 try_breakloop!(transport.accept(), "Transport accept failure : {}", 
-                |(rs,ows,ad) : (T::ReadStream,Option<T::WriteStream>,T::Address)| -> Result<()> {
-                  let wad = if ows.is_some() {
-                    Some(ad.clone())
-                  } else {
-                    None
-                  };
-                let read_token = {
-                  let read_entry = cache.vacant_entry();
-                  let read_token = read_entry.key();
-                  assert!(true == rs.register(&poll, Token(read_token + START_STREAM_IX), Ready::readable(),
-                    PollOpt::edge())?);
-                  read_entry.insert(SlabEntry {
-                    state : SlabEntryState::ReadStream(rs,None),
-                    os : None,
-                    peer : Some(ad),
-                  });
-                  read_token
-                };
-
-                ows.map(|ws| -> Result<()> {
-                  let write_token = {
-                    let write_entry = cache.vacant_entry();
-                    let write_token = write_entry.key();
-                    assert!(true == ws.register(&poll, Token(write_token + START_STREAM_IX), Ready::writable(),
+                |(rs,ows) : (T::ReadStream,Option<T::WriteStream>)| -> Result<()> {
+                  let read_token = {
+                    let read_entry = cache.vacant_entry();
+                    let read_token = read_entry.key();
+                    assert!(true == rs.register(&poll, Token(read_token + START_STREAM_IX), Ready::readable(),
                       PollOpt::edge())?);
-                    write_entry.insert(SlabEntry {
-                      state : SlabEntryState::WriteStream(ws,()),
-                      os : Some(read_token),
-                      peer : wad,
+                    read_entry.insert(SlabEntry {
+                      state : SlabEntryState::ReadStream(rs,None),
+                      os : None,
+                      peer : None,
                     });
-                    write_token
+                    read_token
                   };
-                  cache[read_token].os = Some(write_token);
+
+                  ows.map(|ws| -> Result<()> {
+                    let write_token = {
+                      let write_entry = cache.vacant_entry();
+                      let write_token = write_entry.key();
+                      assert!(true == ws.register(&poll, Token(write_token + START_STREAM_IX), Ready::writable(),
+                        PollOpt::edge())?);
+                      write_entry.insert(SlabEntry {
+                        state : SlabEntryState::WriteStream(ws,()),
+                        os : Some(read_token),
+                        peer : None,
+                      });
+                      write_token
+                    };
+                    cache[read_token].os = Some(write_token);
+                    Ok(())
+                  }).unwrap_or(Ok(()))?;
+                  connect_done.fetch_add(1,Ordering::Relaxed);
                   Ok(())
-                }).unwrap_or(Ok(()))?;
-                connect_done.fetch_add(1,Ordering::Relaxed);
-                Ok(())
-              });
+                });
               
               },
               MPSC_TEST => {
@@ -263,9 +259,8 @@ pub fn sync_tr_start<T : Transport,C>(transport : Arc<T>,c : C) -> Result<()>
     where C : Send + 'static + Fn(T::ReadStream,Option<T::WriteStream>) -> Result<ReaderHandle>
 {
     thread::spawn(move || {
-     || -> Result<_> {
-      try_infiniteloop!(transport.accept(), "Mpsc failure on client reception, ignoring : {}",|(rs, ows, _)| c(rs,ows) );
-      Ok(())
+     || -> Result<()> {
+      try_infiniteloop!(transport.accept(), "Mpsc failure on client reception, ignoring : {}",|(rs, ows)| c(rs,ows) );
      }().unwrap();
     });
     Ok(())
@@ -354,7 +349,7 @@ pub fn connect_rw_with_optional<A : Address, T : Transport<Address=A>> (t1 : T, 
   sync_tr_start(at2c,readhandler2).unwrap();
 //  thread::sleep_ms(3000);
   }
-  let cres = at2.connectwith(a1, Duration::milliseconds(300));
+  let cres = at2.connectwith(a1);
   assert!(cres.as_ref().is_ok(),"{:?}", cres.as_ref().err());
   let (mut ws, mut ors) = cres.unwrap();
   if with_optional {
@@ -377,7 +372,7 @@ pub fn connect_rw_with_optional<A : Address, T : Transport<Address=A>> (t1 : T, 
     },
     // test in read handler
     None => {
-      let cres = at1.connectwith(a2, Duration::milliseconds(300));
+      let cres = at1.connectwith(a2);
       assert!(cres.is_ok());
       let mut ws = cres.unwrap().0;
       let wr = ws.write(&mess_from[..]);
@@ -478,7 +473,7 @@ pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A
   sync_tr_start(at2c,readhandler2).unwrap();
 //  thread::sleep_ms(3000);
   }
-  let cres = at2.connectwith(a1, Duration::milliseconds(300));
+  let cres = at2.connectwith(a1);
   assert!(cres.as_ref().is_ok(),"{:?}", cres.as_ref().err());
   let (mut ws, mut ors) = cres.unwrap();
   if with_connect_rs {
@@ -499,7 +494,7 @@ pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A
     },
     // test in read handler
     None => {
-      let cres = at1.connectwith(a2, Duration::milliseconds(300));
+      let cres = at1.connectwith(a2);
       assert!(cres.is_ok());
       let mut ws = cres.unwrap().0;
       let wr = ws.write(&mess_from[..]);
@@ -620,13 +615,13 @@ pub fn reg_connect_2<T : Transport>(fromadd : &T::Address, t : T, c0 : T, c1 : T
   let connect_done = Arc::new(AtomicUsize::new(0));
   spawn_loop_async(t, transport_reg_r, transport_reg_w, controller,notused,Vec::new(),connect_done.clone(),Arc::new(CpuPool::new(1))).unwrap();
 
-  let mut ws0 = c0.connectwith(fromadd, Duration::seconds(5)).unwrap();
+  let mut ws0 = c0.connectwith(fromadd).unwrap();
 
   ws0.0.write(&content[..]).unwrap();
   
   while !next_it.load(Ordering::Relaxed) { }
 
-  let mut ws1 = c1.connectwith(fromadd, Duration::seconds(5)).unwrap();
+  let mut ws1 = c1.connectwith(fromadd).unwrap();
   ws1.0.write(&content[..]).unwrap();
 
   while next_it.load(Ordering::Relaxed) { }
@@ -705,13 +700,13 @@ impl<'a,T : Transport> SlabEntryInnerState<'a,T, (Vec<u8>,usize,T::ReadStream), 
       _ => panic!("wrong state for send"),
     }
   }
-  /// non blocking recv up to wouldblock
+/*  /// non blocking recv up to wouldblock
   pub fn recv(&mut self, bufsize : usize) -> Result<()> {
     match self.0.state {
       SlabEntryState::ReadSpawned(ref mut rr) => RsState(rr).recv(bufsize),
       _ => panic!("wrong state for recv"),
     }
-  }
+  }*/
 }
 fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,CpuFuture<(),Error>,CpuFuture<T::WriteStream,Error>,(),T::Address>>, t : &T, cpupool : Arc<CpuPool>) -> Result<()> {
     match command {
@@ -723,7 +718,7 @@ fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<
         if c {
           // do nothing (no connection closed here)
         } else {
-          let (ws,ors) = t.connectwith(&ad, Duration::seconds(5)).unwrap();
+          let (ws,ors) = t.connectwith(&ad).unwrap();
           let ork = if ors.is_some() {
             Some(cache.insert(SlabEntry {
               state : SlabEntryState::ReadStream(ors.unwrap(),None),
@@ -745,7 +740,7 @@ fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<
           ork.map(|rix|cache[rix].os=Some(vkey));
         };
       },
-      SimpleLoopCommand::SendTo(ad, content, bufsize) => {
+      SimpleLoopCommand::SendTo(ad, content, _) => {
         let (_, ref mut c) = cache.iter_mut().find(|&(_, ref e)|e.peer.as_ref() == Some(&ad) && match e.state {
           SlabEntryState::WriteStream(_,_) | SlabEntryState::WriteSpawned(_) => true,
           _ => false,
@@ -763,9 +758,9 @@ fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<
           },
           SlabEntryState::WriteSpawned (_) => {
             let state = mem::replace(&mut c.state, SlabEntryState::Empty);
-            if let SlabEntryState::WriteSpawned(mut wr) = state {
+            if let SlabEntryState::WriteSpawned(wr) = state {
               let f : CpuFuture<T::WriteStream,Error> = cpupool.spawn(wr.and_then(|mut w| {
-                let mut incontent = content;
+                let incontent = content;
                 WriteCpuPool(&mut w).write_all(&incontent[..]).unwrap();// TODO replace by implementaiton with right size buffer
                 ok(w)
               }));
@@ -775,7 +770,7 @@ fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<
           _ => panic!("failed write : not connected"),
         };
       },
-      SimpleLoopCommand::Expect(ad, expect,ended) => {
+      SimpleLoopCommand::Expect(_ad, _expect,_ended) => {
         panic!("no expect");
       },
     };
@@ -793,7 +788,7 @@ fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopComma
         if c {
           // do nothing (no connection closed here)
         } else {
-          let (ws,ors) = t.connectwith(&ad, Duration::seconds(5)).unwrap();
+          let (ws,ors) = t.connectwith(&ad).unwrap();
           let ork = if ors.is_some() {
             Some(cache.insert(SlabEntry {
               state : SlabEntryState::ReadStream(ors.unwrap(),None),
@@ -824,7 +819,7 @@ fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopComma
           SlabEntryState::WriteStream(_,_) => {
             let state = mem::replace(&mut c.state, SlabEntryState::Empty);
             if let SlabEntryState::WriteStream(ws,_) = state {
-              let mut ces = thread_park_w_spawn(ws,bufsize);
+              let ces = thread_park_w_spawn(ws,bufsize);
               ces.0.send(content).unwrap();
               /*if ces.2.is_some() {
                 if let Some(ref isstart) = ces.2.as_ref() {
@@ -851,7 +846,7 @@ fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopComma
           _ => panic!("failed write : not connected"),
         };
       },
-      SimpleLoopCommand::Expect(ad, expect,ended) => {
+      SimpleLoopCommand::Expect(_ad, _expect,_ended) => {
         panic!("no expect");
       },
     };
@@ -868,7 +863,7 @@ fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T
         if c {
           // do nothing (no connection closed here)
         } else {
-          let (ws,ors) = t.connectwith(&ad, Duration::seconds(5)).unwrap();
+          let (ws,ors) = t.connectwith(&ad).unwrap();
           let ork = if ors.is_some() {
             Some(cache.insert(SlabEntry {
               state : SlabEntryState::ReadStream(ors.unwrap(),None),
@@ -906,7 +901,7 @@ fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T
           _ => panic!("failed write : not connected"),
         };
       },
-      SimpleLoopCommand::Expect(ad, expect,ended) => {
+      SimpleLoopCommand::Expect(_ad, _expect,_ended) => {
         panic!("no expect");
       },
     };
@@ -926,7 +921,7 @@ fn corout_ows2<TW : 'static + Write>(mut ws : TW, content : Vec<u8>, bufsize : u
     let buf = Rc::new(RefCell::new(content));
     let bc = buf.clone();
     let mut cohandle = Coroutine::spawn(move|corout,_| {
-      let mut it = 0;
+//      let mut it = 0;
       loop {
         let mut blen = 0;
         while blen == 0 {
@@ -936,7 +931,7 @@ fn corout_ows2<TW : 'static + Write>(mut ws : TW, content : Vec<u8>, bufsize : u
           }
         }
         let iw = WriteCorout(&mut ws,corout).write(&buf.borrow()[..min(bufsize,blen)]).unwrap();
-        it += 1;
+        //it += 1;
         if iw > 0 {
           let mut bmut = buf.borrow_mut();
           bmut.reverse();
@@ -962,7 +957,7 @@ fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cach
         if c {
           // do nothing (no connection closed here)
         } else {
-          let (ws,ors) = t.connectwith(&ad, Duration::seconds(5)).unwrap();
+          let (ws,ors) = t.connectwith(&ad).unwrap();
           let ork = if ors.is_some() {
             Some(cache.insert(SlabEntry {
               state : SlabEntryState::ReadStream(ors.unwrap(),None),
@@ -1003,7 +998,7 @@ fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cach
         };
         SlabEntryInnerState(c).send(bufsize)?;
       },
-      SimpleLoopCommand::Expect(ad, expect,ended) => {
+      SimpleLoopCommand::Expect(_ad, expect,ended) => {
 //        let (_, ref mut e) = cache.iter_mut().find(|&(_, ref e)|(e.rr.is_some())).unwrap();
 //        panic!("e : {:?}, par : {:?}",e.peer,ad);
  //       let (_, ref mut e) = cache.iter_mut().find(|&(_, ref e)|e.peer == ad && (e.rr.is_some())).unwrap();
@@ -1065,7 +1060,7 @@ fn transport_corout_w_testing<T : Transport>(ocw : Option<(Rc<RefCell<Vec<u8>>>,
     },
   }
 }
-fn transport_cpupool_w_testing<W : 'static + Send,T>(ocw : Option<CpuFuture<W,Error>>, ows : Option<W>, _ : &T,bufsize : usize,cpupool : Arc<CpuPool>) -> Result<CpuFuture<W,Error>> {
+fn transport_cpupool_w_testing<W : 'static + Send,T>(ocw : Option<CpuFuture<W,Error>>, ows : Option<W>, _ : &T,_bufsize : usize,cpupool : Arc<CpuPool>) -> Result<CpuFuture<W,Error>> {
   match ocw {
     Some(s) => {
       return Ok(s);
@@ -1103,7 +1098,7 @@ fn thread_park_w_spawn<W : 'static + Send + Write>(ws : W, bufsize : usize) -> (
 
 fn transport_threadpark_w_testing<W : 'static + Send + Write,T>(ocw : Option<(Sender<Vec<u8>>,JoinHandle<()>)>, ows : Option<W>, _ : &T,bufsize : usize) -> Result<(Sender<Vec<u8>>,JoinHandle<()>)> {
   match ocw {
-    Some(mut s) => {
+    Some(s) => {
       s.1.thread().unpark();
       return Ok(s);
     },
@@ -1144,13 +1139,13 @@ fn transport_corout_r_testing<T : Transport>(ocr : Option<CoRHandle>, ors : Opti
 }
 fn transport_cpupool_r_testing<T : Transport>(ocr : Option<CpuFuture<(),Error>>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>, expected : Vec<u8>, cpupool : Arc<CpuPool>) -> Result<CpuFuture<(),Error>> {
   match ocr {
-    Some(mut s) => {
+    Some(s) => {
      // s.poll().unwrap(); // poll
       return Ok(s);
     },
     None => (),
   };
-  let mut cpufut = cpupool.spawn_fn(move || {
+  let cpufut = cpupool.spawn_fn(move || {
     let mut rs = ors.unwrap();
     let mut nbread : usize = 0;
     let mut buf = vec![0;contentsize];
@@ -1165,7 +1160,7 @@ fn transport_cpupool_r_testing<T : Transport>(ocr : Option<CpuFuture<(),Error>>,
 }
 fn transport_threadpark_r_testing<T : Transport>(ocr : Option<JoinHandle<()>>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>, expected : Vec<u8>) -> Result<JoinHandle<()>> {
   match ocr {
-    Some(mut s) => {
+    Some(s) => {
       s.thread().unpark();
       return Ok(s);
     },
@@ -1185,7 +1180,7 @@ fn transport_threadpark_r_testing<T : Transport>(ocr : Option<JoinHandle<()>>, o
 }
   
 
-pub fn reg_rw_corout_testing<T : Transport>(fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize) {
+pub fn reg_rw_corout_testing<T : Transport>(_fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize) {
   let mut contents = Vec::with_capacity(nbmess);
   let mut all_r = vec![0;nbmess * content_size];
   for im in 0 .. nbmess {
@@ -1201,10 +1196,10 @@ pub fn reg_rw_corout_testing<T : Transport>(fromadd : T::Address, tfrom : T, toa
   let ended_expect = Arc::new(AtomicUsize::new(0));
   let ended_expectf = Arc::new(AtomicUsize::new(0));
   let connect_done = Arc::new(AtomicUsize::new(0));
-  let tomsg = spawn_loop_async(tto, move |a,b,c,cended,all_r,cpp|
-                               transport_corout_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended, all_r), move |a,b,c,cpp| transport_corout_w_testing(a,b,c,write_buf_size), simple_command_controller_corout,ended_expect.clone(),all_r,connect_done.clone(),Arc::new(CpuPool::new(1))).unwrap();
-  let frommsg = spawn_loop_async(tfrom, move |a,b,c,cended,all_r,cpp| 
-                                transport_corout_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended, all_r), move |a,b,c,cpp| transport_corout_w_testing(a,b,c,write_buf_size), simple_command_controller_corout,ended_expectf.clone(),Vec::new(),connect_done.clone(),Arc::new(CpuPool::new(1))).unwrap();
+  let _tomsg = spawn_loop_async(tto, move |a,b,c,cended,all_r,_cpp|
+                               transport_corout_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended, all_r), move |a,b,c,_cpp| transport_corout_w_testing(a,b,c,write_buf_size), simple_command_controller_corout,ended_expect.clone(),all_r,connect_done.clone(),Arc::new(CpuPool::new(1))).unwrap();
+  let frommsg = spawn_loop_async(tfrom, move |a,b,c,cended,all_r,_cpp| 
+                                transport_corout_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended, all_r), move |a,b,c,_cpp| transport_corout_w_testing(a,b,c,write_buf_size), simple_command_controller_corout,ended_expectf.clone(),Vec::new(),connect_done.clone(),Arc::new(CpuPool::new(1))).unwrap();
 
   // send and receive commands
   frommsg.send(SimpleLoopCommand::ConnectWith(toadd.clone())).unwrap();
@@ -1375,8 +1370,8 @@ pub fn reg_rw_testing<T : Transport>(fromadd : T::Address, tfrom : T, toadd : T:
   //spawn_loop_async(tto, transport_reg_r1, transport_reg_w1, controller1).unwrap();
   //spawn_loop_async(tfrom, transport_reg_r_testing, transport_reg_w_testing, controller2).unwrap();
 
-  let tomsg = spawn_loop_async(tto, move |a,b,c,cended,all_r,cpp| transport_reg_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended), move |a,b,c,cpp| transport_reg_w_testing(a,b,c,write_buf_size), simple_command_controller,ended_expect.clone(),Vec::new(),connect_done.clone(),Arc::new(CpuPool::new(1))).unwrap();
-  let frommsg = spawn_loop_async(tfrom, move |a,b,c,cended,all_r,cpp| transport_reg_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended), move |a,b,c,cpp| transport_reg_w_testing(a,b,c,write_buf_size), simple_command_controller,ended_expect.clone(),Vec::new(),connect_done.clone(),Arc::new(CpuPool::new(1))).unwrap();
+  let tomsg = spawn_loop_async(tto, move |a,b,c,cended,_all_r,_cpp| transport_reg_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended), move |a,b,c,_cpp| transport_reg_w_testing(a,b,c,write_buf_size), simple_command_controller,ended_expect.clone(),Vec::new(),connect_done.clone(),Arc::new(CpuPool::new(1))).unwrap();
+  let frommsg = spawn_loop_async(tfrom, move |a,b,c,cended,_all_r,_cpp| transport_reg_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended), move |a,b,c,_cpp| transport_reg_w_testing(a,b,c,write_buf_size), simple_command_controller,ended_expect.clone(),Vec::new(),connect_done.clone(),Arc::new(CpuPool::new(1))).unwrap();
 
   // send and receive commands
   frommsg.send(SimpleLoopCommand::ConnectWith(toadd.clone())).unwrap();
@@ -1395,7 +1390,8 @@ pub fn reg_rw_testing<T : Transport>(fromadd : T::Address, tfrom : T, toadd : T:
   while ended_expect.load(Ordering::Relaxed) != nbmess { }
 }
 
-pub fn reg_rw_cpupool_testing<T : Transport>(fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize, numcpu : usize) {
+
+pub fn reg_rw_cpupool_testing<T : Transport>(_fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize, numcpu : usize) {
   assert!(numcpu > 1);
   let mut contents = Vec::with_capacity(nbmess);
   let mut all_r = vec![0;nbmess * content_size];
@@ -1414,7 +1410,7 @@ pub fn reg_rw_cpupool_testing<T : Transport>(fromadd : T::Address, tfrom : T, to
   let ended_expectf = Arc::new(AtomicUsize::new(0));
   let connect_done = Arc::new(AtomicUsize::new(0));
   let cpp = cpupool.clone();
-  let tomsg = spawn_loop_async(tto, move |a,b,c,cended,all_r,cpp1|
+  let _tomsg = spawn_loop_async(tto, move |a,b,c,cended,all_r,cpp1|
                                transport_cpupool_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended, all_r,cpp1), move |a,b,c,cpp2| transport_cpupool_w_testing(a,b,c,write_buf_size,cpp2), move|c,ca,t,cpp3|simple_command_controller_cpupool(c,ca,t,cpp3),ended_expect.clone(),all_r,connect_done.clone(),cpp).unwrap();
   let cpp = cpupool.clone();
 
@@ -1431,7 +1427,7 @@ pub fn reg_rw_cpupool_testing<T : Transport>(fromadd : T::Address, tfrom : T, to
   while ended_expect.load(Ordering::Relaxed) != 1 { }
 
 }
-pub fn reg_rw_threadpark_testing<T : Transport>(fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize) {
+pub fn reg_rw_threadpark_testing<T : Transport>(_fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize) {
 
   let mut contents = Vec::with_capacity(nbmess);
   let mut all_r = vec![0;nbmess * content_size];
@@ -1450,7 +1446,7 @@ pub fn reg_rw_threadpark_testing<T : Transport>(fromadd : T::Address, tfrom : T,
   let ended_expectf = Arc::new(AtomicUsize::new(0));
   let connect_done = Arc::new(AtomicUsize::new(0));
   let cpp = cpupool.clone();
-  let tomsg = spawn_loop_async(tto, move |a,b,c,cended,all_r,_|
+  let _tomsg = spawn_loop_async(tto, move |a,b,c,cended,all_r,_|
                                transport_threadpark_r_testing(a,b,c,read_buf_size,content_size * nbmess,cended, all_r), move |a,b,c,_| transport_threadpark_w_testing(a,b,c,write_buf_size), move|c,ca,t,_|simple_command_controller_threadpark(c,ca,t),ended_expect.clone(),all_r,connect_done.clone(),cpp).unwrap();
   let cpp = cpupool.clone();
 
@@ -1465,6 +1461,5 @@ pub fn reg_rw_threadpark_testing<T : Transport>(fromadd : T::Address, tfrom : T,
   }
 
   while ended_expect.load(Ordering::Relaxed) != 1 { }
-
 }
 

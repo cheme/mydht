@@ -5,18 +5,14 @@ extern crate mydht_tcp_loop;
 extern crate mydht_slab;
 use kvstore::StoragePriority;
 use query::{
-  Query,
-  QReply,
-  QueryID,
+  //Query,
+ // QReply,
   QueryModeMsg,
   QueryMsg,
-  PropagateMsg,
-  QueryPriority,
+//  PropagateMsg,
+  //QueryPriority,
 };
 
-use kvstore::{
-  KVStore,
-};
 use query::simplecache::{
   SimpleCacheQuery,
   HashMapQuery,
@@ -27,7 +23,6 @@ use procs::storeprop::{
   KVStoreCommand,
   KVStoreProtoMsg,
   //KVStoreProtoMsgSend,
-  KVStoreReply,
 };
 use utils::{
   OneResult,
@@ -42,7 +37,6 @@ use procs::{
 };
 use procs::api::{
   Api,
-  ApiReply,
   ApiResult,
   ApiQueriable,
   ApiQueryId,
@@ -50,25 +44,13 @@ use procs::api::{
 };
 use procs::{
   ApiCommand,
-  ApiSendIn,
-  MyDHTService,
   FWConf,
 };
-use procs::{
-  MainLoopReply,
-  MainLoopCommand,
-};
-use kvcache::KVCache;
 
 use std::sync::Arc;
-use std::mem::replace;
 use std::thread;
 use mydhtresult::{
   Result,
-};
-use std::sync::mpsc::{
-  Receiver as MpscReceiver,
-  Sender as MpscSender,
 };
 
 use std::collections::HashMap;
@@ -79,7 +61,6 @@ use keyval::{
   Attachment,
 };
 use msgenc::json::Json;
-use msgenc::MsgEnc;
 use self::mydht_slab::slab::{
   Slab,
 };
@@ -89,7 +70,6 @@ use self::mydht_tcp_loop::{
 use procs::{
   MyDHTConf,
   RWSlabEntry,
-  ShadowAuthType,
   Route,
 };
 use procs::{
@@ -102,68 +82,61 @@ use procs::deflocal::{
   DefLocalService,
 };
 
-use std::net::{SocketAddr,Ipv4Addr};
+use std::net::{Ipv4Addr};
 use transport::{
-  Transport,
   SerSocketAddr,
 };
 use node::Node;
 use service::{
   Service,
-  MioChannel,
-  SpawnChannel,
+ // MioChannel,
+ // SpawnChannel,
   MpscChannel,
-  MpscChannelRef,
-  NoRecv,
-  LocalRcChannel,
+ // MpscChannelRef,
+  //NoRecv,
+ // LocalRcChannel,
   SpawnerYield,
-  SpawnSend,
-  LocalRc,
+ // LocalRc,
  // MpscSender,
   NoSend,
 
-  Spawner,
   Blocker,
-  RestartOrError,
-  Coroutine,
-  RestartSameThread,
-  ThreadBlock,
+ // RestartOrError,
+ // Coroutine,
+ // RestartSameThread,
+ // ThreadBlock,
   ThreadPark,
-  ThreadParkRef,
+ // ThreadParkRef,
 
   NoSpawn,
   NoChannel,
-  CpuPool,
-  CpuPoolFuture,
+ // CpuPool,
+ // CpuPoolFuture,
 };
 use super::DHTRULES_DEFAULT;
-use mydht_basetest::transport::{
+/*use mydht_basetest::transport::{
   LocalAdd,
 };
 use mydht_basetest::peer::{
   PeerTest,
 };
-
 use mydht_basetest::local_transport::{
   AsynchTransportTest,
-};
+};*/
 use peer::test::{
   TestingRules,
-  ShadowModeTest,
 };
 use utils;
 use utils::{
-  Ref,
   ArcRef,
-  RcRef,
-  CloneRef,
+//  RcRef,
+ // CloneRef,
 };
 use peer::Peer;
 use simplecache::SimpleCache;
 use std::marker::PhantomData;
 use rules::simplerules::{
   SimpleRules,
-  DhtRules,
 };
 
 /// test service message
@@ -337,6 +310,12 @@ pub struct TestMdhtConf (pub String, pub usize, pub bool);
 mod test_tcp_all_block_thread {
   use super::*;
 
+  use utils::Ref;
+
+  use kvcache::KVCache;
+  use service::{
+    SpawnSend,
+  };
   impl Service for TestService<TestMdhtConf> 
   {
     type CommandIn = GlobalCommand<<TestMdhtConf as MyDHTConf>::PeerRef,<TestMdhtConf as MyDHTConf>::GlobalServiceCommand>;
@@ -639,9 +618,9 @@ mod test_tcp_all_block_thread {
     //let state1 = conf1.init_state().unwrap();
     //let state2 = conf2.init_state().unwrap();
 
-    let (sendcommand2,_) = conf2.start_loop().unwrap();
+    let (_sendcommand2,_) = conf2.start_loop().unwrap();
     // avoid connection refused TODO replace by a right connect test (ping address)
-    thread::sleep_ms(100);
+    thread::sleep(Duration::from_millis(100));
     let (mut sendcommand1,_) = conf1.start_loop().unwrap();
     let addr2 = utils::sa4(Ipv4Addr::new(127,0,0,1), port2 as u16);
     let command = ApiCommand::try_connect(SerSocketAddr(addr2));
@@ -650,7 +629,7 @@ mod test_tcp_all_block_thread {
 
   //  thread::sleep_ms(1000); // issue with this sleep : needded
     sendcommand1.send(command).unwrap();
-    thread::sleep_ms(1000);
+    thread::sleep(Duration::from_millis(1000));
 //    let touch = ApiCommand::local_service(TestCommand::Touch);
     let touch = ApiCommand::call_service(TestCommand::Touch);
    // let o_res = new_oneresult((Vec::with_capacity(1),1,1));
@@ -674,7 +653,7 @@ mod test_tcp_all_block_thread {
 //    sendcommand1.send(command2).unwrap();
 
     // no service to check connection, currently only for testing and debugging : sleep
-    thread::sleep_ms(3000);
+    thread::sleep(Duration::from_millis(3000));
 
   }
 }
