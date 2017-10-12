@@ -93,7 +93,6 @@ use std::net::{SocketAddr,Ipv4Addr};
 use kvstore::StoragePriority;
 use query::{QueryConf,QueryMode,QueryPriority};
 use super::{
-  initpeers,
   initpeers2,
   TestConf,
   ALLTESTMODE,
@@ -150,18 +149,6 @@ fn connect_rw_nospawn () {
   connect_rw_with_optional_non_managed(tcp_transport_1,tcp_transport_2,&a1,&a2,false,false,true,false);
 }
 
-fn initpeers_udp<M : PeerMgmtMeths<Node> + Clone> (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : M, rules : DhtRules, sim : Option<u32>) -> Vec<(Node, DHT<RunningTypesImpl<M,Udp,Bincode>>)>{
-  let mut nodes = Vec::new();
-  let mut transports = Vec::new();
-
-  for i in 0 .. nbpeer {
-    let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), start_port + i.to_u16().unwrap());
-    let udp_transport = Udp::new(&addr,2048,true).unwrap(); // here udp with a json encoding with last sed over a few hop : we need a big buffer
-    transports.push(udp_transport);
-    nodes.push(Node {nodeid: "NodeID".to_string() + &(i + 1).to_string()[..], address : SerSocketAddr(addr)});
-  };
-  initpeers(nodes, transports, map, meths, rules,Bincode,sim)
-}
 fn initpeers_udp2 (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u32>)
   -> Vec<(Node, ApiSendIn<TestConf<Node,Udp,Bincode,TestingRules,SimpleRules>>)> {
   let mut nodes = Vec::new();

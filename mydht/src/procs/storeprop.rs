@@ -569,7 +569,7 @@ impl<
       KVStoreCommand::Subset(nb,f) => {
         match store.get_next_vals(nb) {
           Some(vals) => {
-            println!("store next vals : {:?}",vals.len());
+            debug!("Nb store next vals for subset : {:?}",vals.len());
 //            let cmds = vals.into_iter().map(|v|f(v)).collect();
  //           return Ok(GlobalReply::Mult(cmds));
             let cmd = f(vals);
@@ -587,7 +587,7 @@ impl<
       },
       KVStoreCommand::Store(qid,mut vs) => {
 
-        println!("A store kv command {:?}!!",qid);
+        debug!("A store kv command received with id {:?}",qid);
         let removereply = match self.query_cache.query_get_mut(&qid) {
          Some(query) => {
            match *query {
@@ -660,7 +660,7 @@ impl<
         }
       },
       KVStoreCommand::NotFound(qid) => {
-        println!("A store nf received! : {:?}",qid);
+        debug!("A store not found command received with id : {:?}",qid);
         let remove = match self.query_cache.query_get_mut(&qid) {
          Some(query) => {
           match *query {
@@ -705,7 +705,7 @@ impl<
       },
 
       KVStoreCommand::Find(mut querymess, key,o_api_queryid) => {
-        println!("find store command is_dist :{}",owith.is_some());
+        debug!("Find command received is_dist : {}",owith.is_some());
         // test here use o_api_query_id considering it implies next statement
         assert!(o_api_queryid.is_some() != owith.is_some());
         let oval = store.get_val(&key); 
@@ -722,7 +722,6 @@ impl<
               None => {
                 // reply
                 let (odpr,odka,qid) = querymess.mode_info.fwd_dests(&owith);
-        println!("A store kv forward !!,{:?}",qid);
                 return Ok(GlobalReply::Forward(odpr,odka,FWConf{nb_for : 0, discover : true},KVStoreCommand::Store(qid,vec![<VR as Ref<V>>::new(val)])));
               },
             }
@@ -734,7 +733,6 @@ impl<
               },
               None => {
                 let (odpr,odka,qid) = querymess.mode_info.fwd_dests(&owith);
-        println!("A store nf forward !!{:?}, {:?}",qid, self.me.borrow().get_key_ref());
                 return Ok(GlobalReply::Forward(odpr,odka,FWConf{nb_for : 0, discover : true},KVStoreCommand::NotFound(qid)));
               },
             }
@@ -773,25 +771,21 @@ impl<
         };
 
         if let Some(apiqid) = o_api_queryid {
-            println!("query loc stored {}", qid);
           let query = Query(qid, QReply::Local(apiqid,querymess.nb_res,vres,nb_not_found,querymess.prio), Some(expire));
           self.query_cache.query_add(qid, query);
         } else {
           if st {
             // clone on owith could be removed
-            println!("query dist stored {}", qid);
             let query = Query(qid, QReply::Dist(old_mode_info.clone(),owith.clone(),querymess.nb_res,vres,nb_not_found), Some(expire));
             self.query_cache.query_add(qid, query);
           }
         };
         if oval.is_some() && !do_reply_not_found {
           let (odpr,odka,oqid) = old_mode_info.fwd_dests(&owith);
-        println!("A store kv with finds forward, oqid {:?} !!",oqid);
           let found = GlobalReply::Forward(odpr,odka,FWConf{nb_for : 0, discover : true},KVStoreCommand::Store(oqid,vec![oval.unwrap()]));
           let pquery = GlobalReply::Forward(None,None,FWConf{ nb_for : querymess.nb_forw as usize, discover : self.discover},KVStoreCommand::Find(querymess,key,None));
           return Ok(GlobalReply::Mult(vec![found,pquery]));
         }
-        println!("A find kv forward !! {:?}",qid);
         return Ok(GlobalReply::Forward(None,None,FWConf{ nb_for : querymess.nb_forw as usize, discover : self.discover},KVStoreCommand::Find(querymess,key,None)));
       },
       KVStoreCommand::FindLocally(key,apiqueryid) => {

@@ -21,11 +21,9 @@ use std::net::{SocketAddr,Ipv4Addr};
 use mydht_basetest::transport::connect_rw_with_optional;
 use time::Duration;
 use super::{
-  initpeers,
   initpeers2,
   DHTRULES_DEFAULT,
   ALLTESTMODE,
-  finddistantpeer,
   finddistantpeer2,
   TestConf,
 };
@@ -56,23 +54,6 @@ impl<M : PeerMgmtMeths<Node>, T : Transport<Address=SerSocketAddr>, E : MsgEnc<N
 
 
 
-fn initpeers_tcp<M : PeerMgmtMeths<Node> + Clone> (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : M, rules : DhtRules, sim : Option<u32>) -> Vec<(Node, DHT<RunningTypesImpl<M,Tcp,Json>>)> {
-  let mut nodes = Vec::new();
-  let mut transports = Vec::new();
-
-  for i in 0 .. nbpeer {
-    let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), start_port + i.to_u16().unwrap());
-    let tcp_transport = Tcp::new(
-      &addr,
-      Duration::seconds(5), // timeout
-    //  Duration::seconds(5), // conn timeout
-      true,//mult
-    ).unwrap();
-    transports.push(tcp_transport);
-    nodes.push(Node {nodeid: "NodeID".to_string() + &(i + 1).to_string()[..], address : SerSocketAddr(addr)});
-  };
-  initpeers(nodes, transports, map, meths, rules,Json,sim)
-}
 fn initpeers_tcp2 (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u32>)
   -> Vec<(Node, ApiSendIn<TestConf<Node,Tcp,Json,TestingRules,SimpleRules>>)> {
   let mut nodes = Vec::new();

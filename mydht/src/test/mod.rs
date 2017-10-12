@@ -237,48 +237,6 @@ fn simu_asynch_peer_discovery () {
 }
 
 
-#[test]
-fn aproxy_peer_discovery () {
-  let nbpeer = 5;
-  let mut rules = DHTRULES_DEFAULT.clone();
-  rules.nbhopfact = nbpeer - 1;
-  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
-  let qconf = QueryConf {
-    mode : QueryMode::AProxy,
-//    chunk : QueryChunk::None,
-    hop_hist : Some((4,false)),
-  };
-  peerconnect_test2(&qconf, rcs)
-}
-
-#[test]
-fn amix_proxy_peer_discovery () {
-  let nbpeer = 6;
-  let mut rules = DHTRULES_DEFAULT.clone();
-  rules.nbhopfact = nbpeer - 1;
-  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
-  let qconf = QueryConf {
-    mode : QueryMode::AMix(9),
-//    chunk : QueryChunk::None,
-    hop_hist : None,
-  };
-  peerconnect_test2(&qconf, rcs)
-}
-
-#[test]
-fn asynch_peer_discovery () {
-  let nbpeer = 9;
-  let mut rules = DHTRULES_DEFAULT.clone();
-  rules.nbhopfact = nbpeer - 1;
-  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
-  let qconf = QueryConf {
-    mode : QueryMode::Asynch,
-//    chunk : QueryChunk::None,
-    hop_hist : Some((5,true)),
-  };
-  peerconnect_test2(&qconf, rcs)
-}
-
 /*struct RunningTypesImpl<
   A : Address,
   P : Peer<Address = A>,
@@ -391,87 +349,6 @@ fn peerconnect_scenario2 (queryconf : &QueryConf, knownratio : usize, contexts :
 
 
 }
-
-
-fn peerconnect_test2 (queryconf : &QueryConf, contexts : Vec<TestConf<PeerTest, TransportTest, Json, TestingRules,SimpleRules>>) {
-  let nodes : Vec<(PeerTest,SimpleRules)> = contexts.iter().map(|c|(c.me.clone(),c.rules.clone())).collect();
-  // topography will be if 1/3 size connected nodes and bridge in between
-  let nb = contexts.len();
-  let gnb = nb / 6;
-  let mid = nb / 2;
-//  let nodes : Vec<PeerTest> = contexts.iter().map(|c|c.me.clone()).collect();
-  let mut rng = thread_rng();
-
-
-  let mut me = None;
-  let mut procs : Vec<ApiSendIn<TestConf<PeerTest,TransportTest,Json,TestingRules,SimpleRules>>> = contexts.into_iter().zip(0..nb).map(|(mut context,ix)|{
-    info!("node : {:?}", context.me);
-
-    if me == None {
-      // to be use in queries asynch
-      me = Some(context.me.clone());
-    }
-//        rng.shuffle(noderng);
-    let mut bpeers : Vec<PeerTest> =  Vec::new();
-    if ix < mid {
-      bpeers.push(nodes.get(ix + 1).unwrap().0.clone());
-    } else if ix > mid {
-      bpeers.push(nodes.get(ix - 1).unwrap().0.clone());
-    };
-    if ix < gnb {
-      for i in 0 .. gnb {
-        if i != ix && i != ix + 1 {
-          bpeers.push(nodes.get(i).unwrap().0.clone());
-        }
-      }
-    } else if ix > (nb - gnb) {
-      for i in (nb - gnb) .. nb {
-        if i != ix && i != ix - 1 {
-          bpeers.push(nodes.get(i).unwrap().0.clone());
-        }
-      }
-    };
-
-
-    context.others = Some(bpeers);
-
-//        let mut noderng : &mut [PeerTest] = bpeers.as_slice();
-    let (sendcommand,_) = context.start_loop().unwrap();
-    sendcommand
-  }).collect();
-  // find all node from the first node first node
-  let ref mut fprocs = procs[0];
-
-  let mut itern = nodes.iter();
-  itern.next();
-  for &(ref n,ref rule) in itern {
-    // local find 
-    let nb_res = 1;
-    let o_res = new_oneresult((Vec::with_capacity(nb_res),nb_res,nb_res));
-    // prio is same as nbhop with simple rules
-    let prio = 1;
-    let nb_hop = rule.nbhop(prio);
-    let nb_for = rule.nbquery(prio);
-    let qm = queryconf.query_message(me.as_ref().unwrap(), nb_res, nb_hop, nb_for, prio);
-    let peer_q = ApiCommand::call_peer_reply(KVStoreCommand::Find(qm,n.get_key(),None),o_res.clone());
-    fprocs.send(peer_q).unwrap();
-    let o_res = clone_wait_one_result(&o_res,None).unwrap();
-    assert!(o_res.0.len() == 1, "Peer not found {:?}", n);
-  }
-
-  /* TODO uncomment when call_shutdown reply is implemented
-  for p in procs.iter_mut(){
-    let o_res = new_oneresult((Vec::with_capacity(1),1,1));
-    let shutc = ApiCommand::call_shutdown_reply(o_res);
-    let o_res = clone_wait_one_result(&o_res,None).unwrap();
-    assert!(o_res.0.len() == 1, "Fail shutdown");
-  }
-  */
-
-
-
-}
-
 
 #[cfg(test)]
 static FEWTESTMODE : [QueryMode; 2] = [
@@ -734,83 +611,6 @@ fn simloopget (){ // TODO this only test loop over our node TODO circuit loop t
     };
 }
 
-/// sim indicate if the read map need to wait for the ping back, in this case using sim = true add
-/// some delay to test (more a simulation).
-fn finddistantpeer<RT : RunningTypes> (peers : Vec<(RT::P,DHT<RT>)>, nbpeer : usize, qm : QueryMode, prio : QueryPriority, map : &[&[usize]], find : bool) {
-    let queryconf = QueryConf {
-      mode : qm.clone(), 
-//      chunk : QueryChunk::None, 
-      hop_hist : Some((3,true))
-    }; // note that we only unloop to 3 hop 
-    let dest = peers.get(nbpeer -1).unwrap().0.clone();
-    let fpeer = peers.get(0).unwrap().1.find_peer(dest.get_key(), &queryconf, prio);
-    let matched = match fpeer {
-       Some(ref v) => **v == dest,
-       _ => false,
-    };
-    if find {
-      assert!(matched, "Peer not found {:?} , {:?}", dest, qm);
-    }else{
-      assert!(!matched, "Peer found {:?} , {:?}", fpeer, qm);
-    }
-}
-
-
-fn initpeers<E : MsgEnc<RT::P,RT::V> + Clone, RT : RunningTypes<R = SimpleRules, E = E>> (nodes : Vec<RT::P>, transports : Vec<RT::T>, map : &[&[usize]], meths : RT::M, dhtrules : DhtRules, enc : RT::E, sim : Option<u32>) -> Vec<(RT::P, DHT<RT>)> 
-where <RT as RunningTypes>::M : Clone,
-      <<RT as RunningTypes>::P as KeyVal>::Key : Hash + Ord,
-      <<RT as RunningTypes>::V as KeyVal>::Key : Hash,
-  {
-  let mut i = 0;// TODO redesign with zip of map and nodes iter
-/*  let result :  Vec<(RT::P, DHT<RT>, Vec<Arc<RT::P>>)> = transports.into_iter().map(|t|{
-    let n = nodes.get(i).unwrap();
-    info!("node : {:?}", n);
-    println!("{:?}",map[i]);
-    let bpeers : Vec<Arc<RT::P>> = map[i].iter().map(|j| nodes.get(*j-1).unwrap().clone()).map(|p|Arc::new(p)).collect();
-    i += 1;
-    let nsp = Arc::new(n.clone());
-    (n.clone(), 
-    DHT::boot_server(Arc:: new(
-       RunningContext::new( 
-         nsp,
-         meths.clone(),
-         SimpleRules::new(dhtrules.clone()),
-         enc.clone(),
-         t,
-        )), 
-        move || Some(new_inmap()), 
-        move || Some(SimpleCacheQuery::new(false)), 
-        move || Some(SimpleCache::new(None)), 
-        bpeers.clone(), Vec::new(),
-     ).unwrap(),
-     bpeers
-     )
-   }).collect();
-   if sim.is_some() {
-     // all has started
-     for n in result.iter(){
-       thread::sleep_ms(100); // local get easily stuck
-       n.1.refresh_closest_peers(1000); // Warn hard coded value.
-     };
-     // ping established
-     thread::sleep_ms(sim.unwrap());
-   } else {
-     //establish connection by peerping of bpeers and wait result : no need to sleep
-     for n in result.iter(){
-       for p in n.2.iter(){
-         assert!(n.1.ping_peer((*p).clone()));
-       }
-     };
-   
-   };
-
-   
-   result.into_iter().map(|n|(n.0,n.1)).collect()
-   */
-  Vec::new()
-
-}
-
 struct TestConf<P,T,ENC,PM,DR> {
   pub me : P,
   pub others : Option<Vec<P>>,
@@ -897,7 +697,7 @@ where <P as KeyVal>::Key : Hash
       move ||{
         let others = others.clone();
         let mut sc = SimpleCache::new(None);
-        println!("init kvstore with nb val {}",others.len());
+        debug!("init kvstore with nb val {}",others.len());
         for o in others.into_iter() {
           sc.add_val(o,None);
         }
@@ -1142,23 +942,6 @@ fn initpeers_test2 (nbpeer : usize, map : &[&[usize]], meths : TestingRules, rul
 }
 
 
-fn initpeers_test (nbpeer : usize, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u32>) -> Vec<(PeerTest, DHT<RunningTypes1>)> {
-  let transports = TransportTest::create_transport(nbpeer,true,true);
-  let mut nodes = Vec::new();
-  for i in 0 .. nbpeer {
-    let peer = PeerTest {
-         nodeid: "dummyID".to_string() + (&i.to_string()[..]), 
-         address : LocalAdd(i),
-         keyshift : i as u8 + 1,
-
-         modeshauth : ShadowModeTest::NoShadow,
-         modeshmsg : ShadowModeTest::SimpleShift,
-         //modeshmsg : ShadowModeTest::SimpleShift,
-    };
-    nodes.push(peer);
-  };
-  initpeers(nodes, transports, map, meths, rules, Json, sim)
-}
 
 #[cfg(feature="with-extra-test")]
 #[test]
@@ -1200,7 +983,6 @@ fn simpeer2hopfindval () {
 
       let o_res = new_oneresult((Vec::with_capacity(nb_res),nb_res,nb_res));
       let nb_hop = srules.nbhop(prio);
-      println!("NOBHOP : {:?}",nb_hop);
       let nb_for = srules.nbquery(prio);
       let qm = queryconf.query_message(&peers.get(0).unwrap().0, nb_res, nb_hop, nb_for, prio);
       let peer_q = ApiCommand::call_service_reply(KVStoreCommand::Find(qm,val.get_key(),None),o_res.clone());

@@ -650,7 +650,6 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
   fn update_peer(&mut self, pr : MC::PeerRef, pp : PeerPriority, owtok : Option<usize>, owread : Option<usize>) -> Result<()> {
     debug!("Peer added with slab entries : w{:?}, r{:?}",owtok,owread);
-    println!("Peer added with slab entries : w{:?}, r{:?}",owtok,owread);
     let pk = pr.borrow().get_key();
     // TODO conflict for existing peer (close )
     // TODO useless has_val_c : u
@@ -675,7 +674,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     send_with_handle_panic!(&mut self.peerstore_send,&mut self.peerstore_handle,GlobalCommand(None,update_peer),"Panic sending to peerstore TODO consider restart (init of peerstore is a fn)");
     // now that cache update remove can be done without race (considering send is ordered)
     if let Some(t) = o_slab_remove {
-      println!("slab cache remove : {:?}",t);
+      debug!("slab cache remove due to double connect : {:?}",t);
       self.slab_cache.remove(t);
     }
 
@@ -705,7 +704,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           },
 
           MainLoopSubCommand::Discover(lkad) => {
-            println!("Discover fwd to : {:?}", lkad.len());
+            debug!("Discover fwd to : {:?}", lkad.len());
             if let Some((command, nb_for, rem_call)) = self.discover_wait_route.pop_back() {
 
               let mut nb_send = 0;
@@ -715,9 +714,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                 // do not use connected peer (some may be accepted in between but it is view as
                 // harmless)
                 if !self.peer_cache.has_val_c(&ka.0) {
-            println!("Bef connect");
                   let (write_token,ort) = self.connect_with(&ka.1)?;
-            println!("Aft connect");
 
                   if MC::AUTH_MODE == ShadowAuthType::NoAuth {
                     // no auth to do
@@ -733,9 +730,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                       next_qid : command.get_api_reply(),
                       api_qid : None,
                     });
-                  println!("this one i");
                     self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
-            println!("Aft ping send to write service");
                     nb_send += 1;
                   }
                 }
@@ -813,7 +808,6 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                 _ => fwconf.discover,
               };
               if do_connect {
-                println!("doCONNECT");
                 let (write_token,ort) = self.connect_with(&ka.1)?;
 
                 if MC::AUTH_MODE == ShadowAuthType::NoAuth {
@@ -830,7 +824,6 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                     api_qid : None,
                   });
                   // send a ping
-                  println!("this one j");
                   self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
                   nb_disco += 1;
                 }
@@ -843,7 +836,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
         let sg = if fwconf.nb_for > 0 {
           let (sg, mut dests) = self.route.route(fwconf.nb_for,sg,&mut self.slab_cache, &mut self.peer_cache)?;
-          println!("dests:{:?}",&dests[..]);
+          debug!("dests replied from route call of {} :{:?}",fwconf.nb_for,&dests[..]);
           ws_res.append(&mut dests);
           sg
         } else {
@@ -865,7 +858,6 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             // api)
             if nb_ok == 0 {
               debug!("Global command not forwarded, no dest found by route");
-              println!("no dest for command");
             }
 
           }
@@ -873,13 +865,11 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         let mut ldest = None;
         for dest in ws_res {
           if let Some(d) = ldest {
-                  println!("this one a");
             self.write_stream_send(d,WriteCommand::Service(sg.clone()), <MC>::init_write_spawner_out()?, None)?;
           }
           ldest = Some(dest);
         }
         if let Some(d) = ldest {
-                  println!("this one b");
           self.write_stream_send(d,WriteCommand::Service(sg), <MC>::init_write_spawner_out()?, None)?;
         }
       },
@@ -943,7 +933,6 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             api_qid : oapi,
           });
           // send a ping
-                  println!("this one c");
           self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
         }
 
@@ -978,7 +967,6 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         // send pong with 2nd challeng
         let pongmess = WriteCommand::Pong(pr,chal,rtok,Some(chal2));
         // with is not used because the command will init it
-                  println!("this one d");
         self.write_stream_send(wtok, pongmess, <MC>::init_write_spawner_out()?, None)?; // TODO remove peer on error
       },
  
@@ -989,11 +977,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             self.update_peer(pr.clone(),pp,Some(chal_entry.write_tok),Some(rtok))?;
             if let Some(nchal) = nextchal {
               let pongmess = WriteCommand::Pong(pr,nchal,rtok,None);
-                  println!("this one e");
               self.write_stream_send(chal_entry.write_tok, pongmess, <MC>::init_write_spawner_out()?, None)?;
             }
             if let Some(next_msg) = chal_entry.next_msg {
-                  println!("this one f");
               self.write_stream_send(chal_entry.write_tok, next_msg, <MC>::init_write_spawner_out()?, None)?;
             }
             if let Some(qid) = chal_entry.api_qid {
@@ -1056,20 +1042,19 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           } else { unreachable!() }
         } else { None };
         if let Some(command) =  oc {
-                  println!("this one g");
           self.write_stream_send(write_token, command, <MC>::init_write_spawner_out()?, None)?;
         }
 
       },
       MainLoopCommand::FailConnect(write_token) => {
-        println!("slab cache remove fc : {:?}",write_token);
+        debug!("slab cache remove on connect failure ws : {:?}",write_token);
         if let Some(SlabEntry {
           state : state,
           os : os,
           peer : peer,
         }) = self.slab_cache.remove(write_token) {
           os.map(|s|{
-        println!("slab cache remove fc2 : {:?}",s);
+            debug!("slab cache remove fc ors : {:?}",s);
             self.slab_cache.remove(s)
           });
           peer.map(|p|self.peer_cache.remove_val_c(p.borrow().get_key_ref()));
@@ -1195,7 +1180,6 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               (false,None,None)
             };
             if o_sp_write.is_some() {
-                  println!("this one h");
               self.write_stream_send(tok.0 - START_STREAM_IX, o_sp_write.unwrap(), <MC>::init_write_spawner_out()?, None)?;
             }
             if sp_read {
@@ -1302,11 +1286,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     let rem = {
       let se = self.slab_cache.get_mut(write_token);
       if let Some(entry) = se {
-              println!("got entry write spawn");
         let finished = match entry.state {
           // connected write stream : spawn
           ref mut e @ SlabEntryState::WriteStream(_,(_,_,true)) => {
-              println!("got entry write spawn : stream");
             let state = replace(e, SlabEntryState::Empty);
             if let SlabEntryState::WriteStream(ws,(mut write_s_in,mut write_r_in,_)) = state {
    //          let (write_s_in,write_r_in) = self.write_channel_in.new()?;
@@ -1322,9 +1304,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               // dest is unknown TODO check if still relevant with other use case (read side we allow
               // dest peer as rs could result from a connection with an identified peer)
               let write_service = WriteService::new(write_token,ws,self.me.clone(),with, self.enc_proto.clone(),self.peermgmt_proto.clone());
-              println!("bef write spawn");
               let write_handle = self.write_spawn.spawn(write_service, write_out.clone(), ocin, write_r_in, MC::SEND_NB_ITER)?;
-              println!("aft write spawn");
               let state = SlabEntryState::WriteSpawned((write_handle,write_s_in));
               replace(e,state);
               None
@@ -1332,7 +1312,6 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           },
           SlabEntryState::WriteConnectSynch((ref mut send,_,_)) |
           SlabEntryState::WriteStream(_,(ref mut send,_,false)) => {
-              println!("got entry write spawn : stream, unconnected");
             // TODO size limit of channel bef connected -> error on send ~= to connection failure
             send.send(command)?;
             None
