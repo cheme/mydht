@@ -103,7 +103,7 @@ pub enum KVStoreProtoMsg<P : Peer, V : KeyVal,R : Ref<V> + Serialize + Deseriali
   FIND(QueryMsg<P>, V::Key),
   /// Depending upon stored query, should propagate
   STORE(QueryID, Vec<R>),
-  NOT_FOUND(QueryID),
+  NOTFOUND(QueryID),
   /// first usize is remaining nb_hop, and second is nb query forward (same behavior as for Query
   /// Msg)
   PROPAGATE(PropagateMsg<P>, R),
@@ -228,7 +228,7 @@ pub enum KVStoreProtoMsgSend<'a, P : Peer, V : KeyVal> {
   FIND(&'a QueryMsg<P>, &'a V::Key),
   /// Depending upon stored query, should propagate
   STORE(QueryID, &'a Vec<&'a V>),
-  NOT_FOUND(QueryID),
+  NOTFOUND(QueryID),
   /// first usize is remaining nb_hop, and second is nb query forward (same behavior as for Query
   /// Msg)
   PROPAGATE(&'a PropagateMsg<P>, &'a V),
@@ -264,7 +264,7 @@ impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwn
         Some(KVStoreProtoMsg::STORE(qid,vrs))
       },
     //  StoreMult(QueryID,Vec<VR>),
-      KVStoreCommand::NotFound(qid) => Some(KVStoreProtoMsg::NOT_FOUND(qid)),
+      KVStoreCommand::NotFound(qid) => Some(KVStoreProtoMsg::NOTFOUND(qid)),
       KVStoreCommand::StoreLocally(..) => None,
     }
   }
@@ -279,7 +279,7 @@ impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwn
       KVStoreProtoMsg::STORE(qid,refval) => {
         KVStoreCommand::Store(qid,refval)
       },
-      KVStoreProtoMsg::NOT_FOUND(qid) => {
+      KVStoreProtoMsg::NOTFOUND(qid) => {
         KVStoreCommand::NotFound(qid)
       },
       KVStoreProtoMsg::PROPAGATE(..) => {

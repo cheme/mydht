@@ -28,6 +28,7 @@ use super::{
   MyDHTConf,
   ShadowAuthType,
   MCCommand,
+  PeerRefSend,
 };
 use msgenc::send_variant::{
   ProtoMessage,
@@ -153,7 +154,7 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
       },
       WriteCommand::Service(command) => {
 
-        debug!("Client service proxying command");
+        debug!("Client service proxying command, write token {}",self.token);
         self.forward_proto(command,async_yield)?;
       },
 /*      WriteCommand::GlobalService(command) => {
@@ -240,7 +241,7 @@ pub enum WriteCommandSend<MC : MyDHTConf>
   /// Vec<u8> being chalenge store in mainloop process
   Ping(Vec<u8>),
   /// pong a peer with challenge and read token
-  Pong(<MC::PeerRef as SRef>::Send, Vec<u8>, usize, Option<Vec<u8>>),
+  Pong(PeerRefSend<MC>, Vec<u8>, usize, Option<Vec<u8>>),
   Service(<MCCommand<MC> as SRef>::Send),
   //GlobalService(<MC::GlobalServiceCommand as SRef>::Send),
 }

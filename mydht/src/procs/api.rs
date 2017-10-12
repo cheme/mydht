@@ -189,25 +189,25 @@ impl<MC : MyDHTConf> ApiCommand<MC> {
     ApiCommand::MainLoop(MainLoopCommand::PeerStore(kvscom))
   }
  
-  pub fn call_peer_reply(mut c : KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>, ret : MC::ApiReturn) -> ApiCommand<MC> {
+  pub fn call_peer_reply(c : KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>, ret : MC::ApiReturn) -> ApiCommand<MC> {
     // fw conf to def val, is replaced by kvstore service anyway.
     ApiCommand::ServiceCommand(MCCommand::PeerStore(c),0,ret)
   }
 
-  pub fn call_service_reply(mut c : MC::GlobalServiceCommand, ret : MC::ApiReturn) -> ApiCommand<MC> {
+  pub fn call_service_reply(c : MC::GlobalServiceCommand, ret : MC::ApiReturn) -> ApiCommand<MC> {
     ApiCommand::ServiceCommand(MCCommand::Global(c),0,ret)
   }
  
-  pub fn call_service(mut c : MC::GlobalServiceCommand) -> ApiCommand<MC> {
+  pub fn call_service(c : MC::GlobalServiceCommand) -> ApiCommand<MC> {
     let cmd = MainLoopCommand::ProxyGlobal(GlobalCommand(None,c));
     ApiCommand::MainLoop(cmd)
   }
  
-  pub fn call_service_local(mut c : MC::LocalServiceCommand, nb_for : usize ) -> ApiCommand<MC> {
+  pub fn call_service_local(c : MC::LocalServiceCommand, nb_for : usize ) -> ApiCommand<MC> {
     let cmd = MainLoopCommand::ForwardService(None,None,FWConf{ nb_for : nb_for, discover : false },MCCommand::Local(c));
     ApiCommand::MainLoop(cmd)
   }
-  pub fn call_service_local_reply(mut c : MC::LocalServiceCommand, nb_for : usize, ret : MC::ApiReturn) -> ApiCommand<MC> {
+  pub fn call_service_local_reply(c : MC::LocalServiceCommand, nb_for : usize, ret : MC::ApiReturn) -> ApiCommand<MC> {
     ApiCommand::ServiceCommand(MCCommand::Local(c),nb_for,ret)
   }
 

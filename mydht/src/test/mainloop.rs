@@ -180,7 +180,7 @@ pub enum TestCommand<MC : MyDHTConf> {
   TouchQ(Option<usize>,usize),
   /// param is query ix from which we receive q : this is a distant reply to a touchq
   TouchQR(Option<usize>),
-  Ph(PhantomData<MC>),
+  _Ph(PhantomData<MC>),
 }
 impl<MC : MyDHTConf> Clone for TestCommand<MC> {
   fn clone(&self) -> Self {
@@ -188,7 +188,7 @@ impl<MC : MyDHTConf> Clone for TestCommand<MC> {
       TestCommand::Touch => TestCommand::Touch,
       TestCommand::TouchQ(a,b) => TestCommand::TouchQ(a,b),
       TestCommand::TouchQR(a) => TestCommand::TouchQR(a),
-      TestCommand::Ph(..) => TestCommand::Ph(PhantomData),
+      TestCommand::_Ph(..) => TestCommand::_Ph(PhantomData),
     }
   }
 }
@@ -223,13 +223,11 @@ impl<PR> OptFrom<KVStoreReply<PR>> for TestReply {
 }*/
 #[derive(Clone)]
 pub enum TestReply {
-  Touch,
   TouchQ(Option<usize>),
 }
 /*impl OptInto<TestMessage> for TestReply {
   fn can_into(&self) -> bool {
     match *self {
-      TestReply::Touch => false,
       TestReply::TouchQ(_) => false,
     }
   }
@@ -244,7 +242,7 @@ impl<MC : MyDHTConf> OptInto<TestMessage<MC>> for TestCommand<MC> {
       TestCommand::Touch => true,
       TestCommand::TouchQ(..) => true,
       TestCommand::TouchQR(..) => true,
-      TestCommand::Ph(..) => false,
+      TestCommand::_Ph(..) => false,
     }
   }
   fn opt_into(self) -> Option<TestMessage<MC>> {
@@ -252,7 +250,7 @@ impl<MC : MyDHTConf> OptInto<TestMessage<MC>> for TestCommand<MC> {
       TestCommand::Touch => Some(TestMessage::Touch),
       TestCommand::TouchQ(qid,nbfor) => Some(TestMessage::TouchQ(qid,nbfor)),
       TestCommand::TouchQR(qid) => Some(TestMessage::TouchQR(qid)),
-      TestCommand::Ph(..) => None,
+      TestCommand::_Ph(..) => None,
     }
   }
 }
@@ -262,9 +260,9 @@ impl<MC : MyDHTConf> ApiQueriable for TestCommand<MC> {
   fn is_api_reply(&self) -> bool {
     match *self {
       TestCommand::Touch => false,
-      TestCommand::TouchQ(qid,_) => true,
+      TestCommand::TouchQ(..) => true,
       TestCommand::TouchQR(..) => false,
-      TestCommand::Ph(..) => false,
+      TestCommand::_Ph(..) => false,
     }
   }
   #[inline]
@@ -273,7 +271,7 @@ impl<MC : MyDHTConf> ApiQueriable for TestCommand<MC> {
       TestCommand::Touch => (),
       TestCommand::TouchQ(ref mut qid,_) => *qid = Some(aid.0),
       TestCommand::TouchQR(..) => (),
-      TestCommand::Ph(..) => (),
+      TestCommand::_Ph(..) => (),
     }
 
   }
@@ -292,7 +290,6 @@ impl ApiRepliable for TestReply {
   #[inline]
   fn get_api_reply(&self) -> Option<ApiQueryId> {
     match *self {
-      TestReply::Touch => None,
       TestReply::TouchQ(ref qid) => qid.as_ref().map(|id|ApiQueryId(*id)),
     }
   }
@@ -320,14 +317,14 @@ mod test_tcp_all_block_thread {
   {
     type CommandIn = GlobalCommand<<TestMdhtConf as MyDHTConf>::PeerRef,<TestMdhtConf as MyDHTConf>::GlobalServiceCommand>;
     type CommandOut = GlobalReply<<TestMdhtConf as MyDHTConf>::Peer,<TestMdhtConf as MyDHTConf>::PeerRef,<TestMdhtConf as MyDHTConf>::GlobalServiceCommand,<TestMdhtConf as MyDHTConf>::GlobalServiceReply>;
-    fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+    fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut S) -> Result<Self::CommandOut> {
       match req {
-        GlobalCommand(_,TestCommand::Ph(..)) => unreachable!(),
+        GlobalCommand(_,TestCommand::_Ph(..)) => unreachable!(),
         GlobalCommand(owith,TestCommand::Touch) => {
-          println!("TOUCH!!!");
+          println!("TOUCH!!!{:?}",owith.is_some());
           Ok(GlobalReply::NoRep)
         },
-        GlobalCommand(Some(p),TestCommand::TouchQ(id,nb_for)) => {
+        GlobalCommand(Some(p),TestCommand::TouchQ(id,_nb_for)) => {
           println!("TOUCHQ dist !!!{:?}",id);
           // no local storage
           Ok(GlobalReply::Forward(Some(vec![p]),None,FWConf{nb_for : 0, discover:false},TestCommand::TouchQR(id)))
@@ -345,7 +342,7 @@ mod test_tcp_all_block_thread {
   //Forward(Option<Vec<MC::PeerRef>>,usize,MC::GlobalServiceCommand),
         },
         GlobalCommand(owith,TestCommand::TouchQR(id)) => {
-          println!("TOUCHQR!!!{:?}",id);
+          println!("TOUCHQR!!!{:?} , with {:?}",id,owith.is_some());
           Ok(GlobalReply::Api(TestReply::TouchQ(id)))
         },
       }

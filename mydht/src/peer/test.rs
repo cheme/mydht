@@ -40,7 +40,7 @@ impl TestingRules {
       delay_ms_accept_hook : 0,
     }
   }
-
+/* Do not delete : for next tests
   pub fn new_small_delay_light_accept() -> TestingRules {
     TestingRules {
       //delay_variance : 30,
@@ -62,6 +62,7 @@ impl TestingRules {
       delay_ms_accept_hook : 500,
     }
   }
+  */
 }
 
 impl<P : Peer> PeerMgmtMeths<P> for TestingRules {

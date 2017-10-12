@@ -22,7 +22,7 @@ pub type HashMapQuery<P,V,RP> = HashMap<QueryID, Query<P,V,RP>>;
 //pub struct SimpleCacheQuery<P : Peer, V : KeyVal> {
 pub struct SimpleCacheQuery<P : Peer, V, RP : Ref<P>, C : KVCache<QueryID, Query<P,V,RP>>> {
   cache : C,
- // cache : HashMap<QueryID, Query<P,V>>,
+  // cache : HashMap<QueryID, Query<P,V>>,
   /// use randow id, if false sequential ids will be used
   randomids : bool,
   lastid : QueryID,
@@ -95,9 +95,9 @@ impl<P : Peer, V, RP : Ref<P>, C : KVCache<QueryID, Query<P,V,RP>>> QueryCache<P
     if mr.is_err() { // TODO return result instead
       error!("map in place failure during cache clean : {:?}", mr.err());
     };
-    for mut q in initexpire.iter() {
+    for q in initexpire.iter() {
       // clean cache at next clean : why ?? TODO document it
-      self.cache.update_val_c(q,|mut mq| {mq.set_expire(expire); Ok(())});
+      self.cache.update_val_c(q,|mq| {mq.set_expire(expire); Ok(())}).unwrap();
     };
 
     let mut remq : Vec<Query<P,V,RP>> = Vec::with_capacity(remqid.len());

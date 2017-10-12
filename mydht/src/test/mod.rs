@@ -11,9 +11,9 @@ use procs::{
   PeerCacheEntry,
   ChallengeEntry,
 };
-use kvcache::{
-  KVCache,
-};
+
+
+
 use procs::deflocal::{
   LocalReply,
 };
@@ -923,7 +923,7 @@ fn simpeer2hopfindval () {
     let val = PeerTest {
          nodeid: "to_find".to_string(),
          address : LocalAdd(999),
-         keyshift : 1000,
+         keyshift : 60,
 
          modeshauth : ShadowModeTest::NoShadow,
          modeshmsg : ShadowModeTest::SimpleShift,

@@ -114,12 +114,13 @@ pub mod rules;
 //pub mod wot;
 #[cfg(test)]
 mod test;
-pub use procs::{ApiCommand,Api,MyDHTConf};
+pub use procs::{ApiCommand,Api,MyDHTConf,PeerCacheRouteBase};
 pub use procs::deflocal::DefLocalService;
 pub use procs::MyDHT;
 // reexport
 pub use peer::{PeerPriority,PeerState};
 pub use query::{QueryConf,QueryPriority,QueryMode,LastSentConf};
+pub use query::simplecache::HashMapQuery;
 pub use kvstore::{CachePolicy};
 pub use mydht_base::kvstore::{StoragePriority};
 pub use mydht_base::keyval::{Attachment,SettableAttachment};

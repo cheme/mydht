@@ -44,8 +44,6 @@ pub struct Json;
 /// a technical limit to protomessage length TODO make it dynamic ( strored in Json struct)
 const MAX_BUFF : usize = 10000000; // use for attachment send/receive -- 21888 seems to be maxsize
 
-const BUFF_TRUE : [u8; 1] = [1];
-const BUFF_FALSE : [u8; 1] = [0];
 
 
 unsafe impl Send for Json {

@@ -50,6 +50,7 @@ use super::{
   send_with_handle,
   ShadowAuthType,
   MainLoopRecvIn,
+  PeerRefSend,
 };
 use std::marker::PhantomData;
 use std::mem::replace;
@@ -235,20 +236,20 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
   SubCommand(MainLoopSubCommand<MC::Peer>),
   TryConnect(<MC::Transport as Transport>::Address,Option<ApiQueryId>),
 //  ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
-  ForwardService(Option<Vec<<MC::PeerRef as SRef>::Send>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,FWConf,<MCCommand<MC> as SRef>::Send),
+  ForwardService(Option<Vec<PeerRefSend<MC>>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,FWConf,<MCCommand<MC> as SRef>::Send),
   ForwardApi(<MCCommand<MC> as SRef>::Send,usize,MC::ApiReturn),
-  PeerStore(GlobalCommandSend<<MC::PeerRef as SRef>::Send,KVStoreCommandSend<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>),
+  PeerStore(GlobalCommandSend<PeerRefSend<MC>,KVStoreCommandSend<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>),
   /// reject stream for this token and Address
   RejectReadSpawn(usize),
   /// reject a peer (accept fail), usize are write stream token and read stream token
   RejectPeer(<MC::Peer as KeyVal>::Key,Option<usize>,Option<usize>),
   /// new peer accepted with optionnal read stream token
-  NewPeer(<MC::PeerRef as SRef>::Send,PeerPriority,Option<usize>),
-  NewPeerChallenge(<MC::PeerRef as SRef>::Send,usize,Vec<u8>),
-  NewPeerUncheckedChallenge(<MC::PeerRef as SRef>::Send,PeerPriority,usize,Vec<u8>,Option<Vec<u8>>),
+  NewPeer(PeerRefSend<MC>,PeerPriority,Option<usize>),
+  NewPeerChallenge(PeerRefSend<MC>,usize,Vec<u8>),
+  NewPeerUncheckedChallenge(PeerRefSend<MC>,PeerPriority,usize,Vec<u8>,Option<Vec<u8>>),
   ProxyWrite(usize,WriteCommandSend<MC>),
-  ProxyGlobal(GlobalCommandSend<<MC::PeerRef as SRef>::Send,<MC::GlobalServiceCommand as SRef>::Send>),
-//  GlobalApi(GlobalCommandSend<<MC::PeerRef as SRef>::Send,<MC::GlobalServiceCommand as SRef>::Send>,MC::ApiReturn),
+  ProxyGlobal(GlobalCommandSend<PeerRefSend<MC>,<MC::GlobalServiceCommand as SRef>::Send>),
+//  GlobalApi(GlobalCommandSend<PeerRefSend<MC>,<MC::GlobalServiceCommand as SRef>::Send>,MC::ApiReturn),
   ProxyApiReply(<MCReply<MC> as SRef>::Send),
 //  ProxyApiGlobalReply(<MC::GlobalServiceReply as SRef>::Send),
   ConnectedR(<MC::Transport as Transport>::ReadStream, Option<<MC::Transport as Transport>::WriteStream>),
@@ -1149,7 +1150,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       None => None,
     };
 
-    let mut read_out = ReadDest {
+    let read_out = ReadDest {
       mainloop : self.mainloop_send.clone(),
       peermgmt : smgmt.clone(),
       global : gl,
@@ -1252,7 +1253,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         if finished.is_some() {
           let state = replace(&mut entry.state, SlabEntryState::Empty);
           if let SlabEntryState::WriteSpawned((handle,sender)) = state {
-            let (serv,mut sen,recv,result) = handle.unwrap_state()?;
+            let (serv,sen,recv,result) = handle.unwrap_state()?;
             if result.is_ok() {
               // restart
               let write_handle = self.write_spawn.spawn(serv, sen, finished, recv, MC::SEND_NB_ITER)?;

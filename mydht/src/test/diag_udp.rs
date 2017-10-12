@@ -144,7 +144,7 @@ fn simpeer2hopfindval_udp () {
     //let map : &[&[usize]] = &[&[],&[1,3],&[],&[3]];
     let map : &[&[usize]] = &[&[],&[1]];
 
-    let mut startport = 73440;
+    let startport = 57440;
     let prio = 1;
 
     let mut rules = DHTRULES_DEFAULT.clone();
