@@ -241,6 +241,64 @@ pub enum MainLoopReply<MC : MyDHTConf> {
   /// TODO
   Ended,
 }
+
+impl<MC : MyDHTConf> Clone for MainLoopReply<MC>
+  where MC::GlobalServiceCommand : Clone,
+        MC::LocalServiceCommand : Clone,
+        MC::GlobalServiceReply : Clone,
+        MC::LocalServiceReply : Clone {
+  fn clone(&self) -> Self {
+    match *self {
+      MainLoopReply::ServiceReply(ref rep) =>
+        MainLoopReply::ServiceReply(rep.clone()),
+      MainLoopReply::Ended =>
+        MainLoopReply::Ended,
+    }
+  }
+}
+
+pub enum MainLoopReplySend<MC : MyDHTConf>
+  where MC::GlobalServiceCommand : SRef,
+        MC::LocalServiceCommand : SRef,
+        MC::GlobalServiceReply : SRef,
+        MC::LocalServiceReply : SRef {
+  ServiceReply(MCReplySend<MC>),
+  Ended,
+}
+
+impl<MC : MyDHTConf> SRef for MainLoopReply<MC> 
+  where MC::GlobalServiceCommand : SRef,
+        MC::LocalServiceCommand : SRef,
+        MC::GlobalServiceReply : SRef,
+        MC::LocalServiceReply : SRef {
+  type Send = MainLoopReplySend<MC>;
+  fn get_sendable(&self) -> Self::Send {
+    match *self {
+      MainLoopReply::ServiceReply(ref rep) =>
+        MainLoopReplySend::ServiceReply(rep.get_sendable()),
+      MainLoopReply::Ended =>
+        MainLoopReplySend::Ended,
+    }
+  }
+}
+
+impl<MC : MyDHTConf> SToRef<MainLoopReply<MC>> for MainLoopReplySend<MC> 
+  where MC::GlobalServiceCommand : SRef,
+        MC::LocalServiceCommand : SRef,
+        MC::GlobalServiceReply : SRef,
+        MC::LocalServiceReply : SRef {
+  fn to_ref(self) -> MainLoopReply<MC> {
+    match self {
+      MainLoopReplySend::ServiceReply(rep) =>
+        MainLoopReply::ServiceReply(rep.to_ref()),
+      MainLoopReplySend::Ended =>
+        MainLoopReply::Ended,
+    }
+  }
+}
+
+
+
 /// TODO RouteBase trait
 pub trait Route<MC : MyDHTConf> {
   /// if set to true, all function return an expected error and result is receive as a mainloop
@@ -500,7 +558,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   type Peer : Peer<Address = <Self::Transport as Transport>::Address>;
   /// most of the time Arc, if not much threading or smal peer description, RcCloneOnSend can be use, or AllwaysCopy
   /// or Copy.
-  type PeerRef : Ref<Self::Peer> + Serialize + DeserializeOwned;
+  type PeerRef : Ref<Self::Peer> + Serialize + DeserializeOwned + Clone;
   /// Peer management methods 
   type PeerMgmtMeths : PeerMgmtMeths<Self::Peer>;
   /// Dynamic rules for the dht

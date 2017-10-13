@@ -99,7 +99,7 @@ pub struct KVStoreService<P,RP,V,RV,S,DR,QC> {
 /// building Service protomsg. TODO make it multivaluated
 #[derive(Serialize,Deserialize,Debug)]
 #[serde(bound(deserialize = ""))]
-pub enum KVStoreProtoMsg<P : Peer, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned> {
+pub enum KVStoreProtoMsg<P : Peer, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned + Clone> {
   FIND(QueryMsg<P>, V::Key),
   /// Depending upon stored query, should propagate
   STORE(QueryID, Vec<R>),
@@ -112,18 +112,18 @@ pub enum KVStoreProtoMsg<P : Peer, V : KeyVal,R : Ref<V> + Serialize + Deseriali
 /// Protomessage to use in simple Dht with no localservice command and a KV store as main service
 #[derive(Serialize,Deserialize,Debug)]
 #[serde(bound(deserialize = ""))]
-pub enum KVStoreProtoMsgWithPeer<P : Peer, RP : Ref<P> + Serialize + DeserializeOwned, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned> {
+pub enum KVStoreProtoMsgWithPeer<P : Peer, RP : Ref<P> + Serialize + DeserializeOwned + Clone, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned + Clone> {
   Main(KVStoreProtoMsg<P,V,R>),
   PeerMgmt(KVStoreProtoMsg<P,P,RP>),
 }
-impl<P : Peer, RP : Ref<P> + Serialize + DeserializeOwned, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned>
+impl<P : Peer, RP : Ref<P> + Serialize + DeserializeOwned + Clone, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned + Clone>
     GettableAttachments for KVStoreProtoMsgWithPeer<P,RP,V,R> {
   fn get_attachments(&self) -> Vec<&Attachment> {
     Vec::new()
   }
 }
 
-impl<P : Peer, RP : Ref<P> + Serialize + DeserializeOwned, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned>
+impl<P : Peer, RP : Ref<P> + Serialize + DeserializeOwned + Clone, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned + Clone>
     SettableAttachments for KVStoreProtoMsgWithPeer<P,RP,V,R> {
   fn attachment_expected_sizes(&self) -> Vec<usize> {
     Vec::new()
@@ -133,7 +133,7 @@ impl<P : Peer, RP : Ref<P> + Serialize + DeserializeOwned, V : KeyVal,R : Ref<V>
   }
 }
 
-impl<MC : MyDHTConf<GlobalServiceCommand = KVStoreCommand<<MC as MyDHTConf>::Peer,<MC as MyDHTConf>::PeerRef,V,R>>, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned> 
+impl<MC : MyDHTConf<GlobalServiceCommand = KVStoreCommand<<MC as MyDHTConf>::Peer,<MC as MyDHTConf>::PeerRef,V,R>>, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned + Clone> 
   Into<MCCommand<MC>> 
   for KVStoreProtoMsgWithPeer<MC::Peer, MC::PeerRef, V,R>  where 
    <MC as MyDHTConf>::GlobalServiceChannelIn : SpawnChannel<GlobalCommand<<MC as MyDHTConf>::PeerRef, KVStoreCommand<<MC as MyDHTConf>::Peer, <MC as MyDHTConf>::PeerRef, V, R>>>,
@@ -146,7 +146,7 @@ impl<MC : MyDHTConf<GlobalServiceCommand = KVStoreCommand<<MC as MyDHTConf>::Pee
     }
   }
 }
-impl<MC : MyDHTConf<GlobalServiceCommand = KVStoreCommand<<MC as MyDHTConf>::Peer,<MC as MyDHTConf>::PeerRef,V,R>>, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned> 
+impl<MC : MyDHTConf<GlobalServiceCommand = KVStoreCommand<<MC as MyDHTConf>::Peer,<MC as MyDHTConf>::PeerRef,V,R>>, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned + Clone> 
   OptFrom<MCCommand<MC>>
   for KVStoreProtoMsgWithPeer<MC::Peer, MC::PeerRef, V,R>  where 
    <MC as MyDHTConf>::GlobalServiceChannelIn : SpawnChannel<GlobalCommand<<MC as MyDHTConf>::PeerRef, KVStoreCommand<<MC as MyDHTConf>::Peer, <MC as MyDHTConf>::PeerRef, V, R>>>,
@@ -238,7 +238,7 @@ pub enum KVStoreProtoMsgSend<'a, P : Peer, V : KeyVal> {
   //type ProtoMsg : Into<MCCommand<Self>> + SettableAttachments + GettableAttachments + OptFrom<MCCommand<Self>>;
 
 //pub enum KVStoreCommand<P : Peer, V : KeyVal, VR> {
-impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwned> OptFrom<KVStoreCommand<P,PR,V,VR>> for KVStoreProtoMsg<P,V,VR> {
+impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwned + Clone> OptFrom<KVStoreCommand<P,PR,V,VR>> for KVStoreProtoMsg<P,V,VR> {
   fn can_from (c : &KVStoreCommand<P,PR,V,VR>) -> bool {
     match *c {
       KVStoreCommand::Start => false,
@@ -270,7 +270,7 @@ impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwn
   }
 }
 
-impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwned> Into<KVStoreCommand<P,PR,V,VR>> for KVStoreProtoMsg<P,V,VR> {
+impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwned + Clone> Into<KVStoreCommand<P,PR,V,VR>> for KVStoreProtoMsg<P,V,VR> {
   fn into(self) -> KVStoreCommand<P,PR,V,VR> {
     match self {
       KVStoreProtoMsg::FIND(qmes,key) => {
@@ -516,9 +516,9 @@ impl<VR : SRef> SToRef<KVStoreReply<VR>> for KVStoreReplySend<VR> {
 
 impl<
   P : Peer,
-  RP : Ref<P>,
+  RP : Ref<P> + Clone,
   V : KeyVal, 
-  VR : Ref<V>, 
+  VR : Ref<V>,
   S : KVStore<V>, 
   DH : DHTRules,
   QC : QueryCache<P,VR,RP>,

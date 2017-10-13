@@ -17,6 +17,8 @@ use super::client2::{
 
 use utils::{
   Ref,
+  SRef,
+  SToRef,
   receive_msg,
   receive_msg_msg,
   receive_att,
@@ -345,6 +347,28 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
 pub enum ReadCommand {
   Run,
 }
+
+
+impl SRef for ReadCommand {
+  type Send = ReadCommand;
+  fn get_sendable(&self) -> Self::Send {
+    match *self {
+      ReadCommand::Run =>
+        ReadCommand::Run,
+    }
+  }
+}
+
+impl SToRef<ReadCommand> for ReadCommand {
+  fn to_ref(self) -> ReadCommand {
+    match self {
+      ReadCommand::Run =>
+        ReadCommand::Run,
+    }
+  }
+}
+
+
 
 
 pub enum ReadReply<MC : MyDHTConf> {

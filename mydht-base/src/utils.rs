@@ -45,7 +45,7 @@ pub static NULL_TIMESPEC : Timespec = Timespec{ sec : 0, nsec : 0};
 
 
 /// non borrow ref for self
-pub trait SRef : Clone {
+pub trait SRef : Sized {
   type Send : SToRef<Self>;
   /// get_sendable may involve a full copy or not (Ref is immutable)
   fn get_sendable(&self) -> Self::Send;

@@ -31,11 +31,14 @@ use mydht_base::kvcache::{
 };
 use super::mainloop::{
   MainLoopCommand,
+  MainLoopCommandSend,
 };
 use super::{
   MyDHTConf,
   MCCommand,
+  MCCommandSend,
   MCReply,
+  MCReplySend,
   FWConf,
   MainLoopSendIn,
 };
@@ -56,6 +59,8 @@ use service::{
 };
 use utils::{
   OneResult,
+  SRef,
+  SToRef,
 };
 use std::time::{
   Duration,
@@ -165,6 +170,84 @@ pub enum ApiCommand<MC : MyDHTConf> {
   /// remove some expected result (consider as failure)
   Adjust(ApiQueryId,usize),
 }
+
+impl<MC : MyDHTConf> Clone for ApiCommand<MC> 
+  where MC::GlobalServiceCommand : Clone,
+        MC::LocalServiceCommand : Clone,
+        MC::GlobalServiceReply : Clone,
+        MC::LocalServiceReply : Clone {
+  fn clone(&self) -> Self {
+    match *self {
+      ApiCommand::MainLoop(ref mlc) =>
+        ApiCommand::MainLoop(mlc.clone()),
+      ApiCommand::Failure(ref aqid) =>
+        ApiCommand::Failure(aqid.clone()),
+      ApiCommand::ServiceCommand(ref com,s,ref aret) =>
+        ApiCommand::ServiceCommand(com.clone(),s,aret.clone()),
+      ApiCommand::ServiceReply(ref rep) =>
+        ApiCommand::ServiceReply(rep.clone()),
+      ApiCommand::Adjust(ref aqid,s) =>
+        ApiCommand::Adjust(aqid.clone(),s),
+    }
+  }
+}
+
+pub enum ApiCommandSend<MC : MyDHTConf>
+  where MC::GlobalServiceCommand : SRef,
+        MC::LocalServiceCommand : SRef,
+        MC::GlobalServiceReply : SRef,
+        MC::LocalServiceReply : SRef {
+  MainLoop(MainLoopCommandSend<MC>),
+  Failure(ApiQueryId),
+  ServiceCommand(MCCommandSend<MC>,usize,MC::ApiReturn),
+  ServiceReply(MCReplySend<MC>),
+  Adjust(ApiQueryId,usize),
+}
+
+impl<MC : MyDHTConf> SRef for ApiCommand<MC> 
+  where MC::GlobalServiceCommand : SRef,
+        MC::LocalServiceCommand : SRef,
+        MC::GlobalServiceReply : SRef,
+        MC::LocalServiceReply : SRef {
+  type Send = ApiCommandSend<MC>;
+  fn get_sendable(&self) -> Self::Send {
+    match *self {
+      ApiCommand::MainLoop(ref mlc) =>
+        ApiCommandSend::MainLoop(mlc.get_sendable()),
+      ApiCommand::Failure(ref aqid) =>
+        ApiCommandSend::Failure(aqid.clone()),
+      ApiCommand::ServiceCommand(ref com,s,ref aret) =>
+        ApiCommandSend::ServiceCommand(com.get_sendable(),s,aret.clone()),
+      ApiCommand::ServiceReply(ref rep) =>
+        ApiCommandSend::ServiceReply(rep.get_sendable()),
+      ApiCommand::Adjust(ref aqid,s) =>
+        ApiCommandSend::Adjust(aqid.clone(),s),
+    }
+  }
+}
+
+impl<MC : MyDHTConf> SToRef<ApiCommand<MC>> for ApiCommandSend<MC> 
+  where MC::GlobalServiceCommand : SRef,
+        MC::LocalServiceCommand : SRef,
+        MC::GlobalServiceReply : SRef,
+        MC::LocalServiceReply : SRef {
+  fn to_ref(self) -> ApiCommand<MC> {
+    match self {
+      ApiCommandSend::MainLoop(mlc) =>
+        ApiCommand::MainLoop(mlc.to_ref()),
+      ApiCommandSend::Failure(aqid) =>
+        ApiCommand::Failure(aqid),
+      ApiCommandSend::ServiceCommand(com,s,aret) =>
+        ApiCommand::ServiceCommand(com.to_ref(),s,aret),
+      ApiCommandSend::ServiceReply(rep) =>
+        ApiCommand::ServiceReply(rep.to_ref()),
+      ApiCommandSend::Adjust(aqid,s) =>
+        ApiCommand::Adjust(aqid,s),
+    }
+  }
+}
+
+
 
 
 /// inner types of api command are not public,
