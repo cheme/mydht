@@ -414,8 +414,8 @@ impl<C : SRef> Clone for MpscSenderRef<C> {
 impl<C : SRef> SRef for MpscSenderRef<C> {
   type Send = MpscSenderToRef<C::Send>;
   #[inline]
-  fn get_sendable(&self) -> Self::Send {
-    MpscSenderToRef(self.0.clone())
+  fn get_sendable(self) -> Self::Send {
+    MpscSenderToRef(self.0)
   }
 }
 

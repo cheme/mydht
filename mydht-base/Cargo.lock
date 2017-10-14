@@ -2,7 +2,7 @@
 name = "mydht-base"
 version = "0.0.1"
 dependencies = [
- "bincode 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bincode 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "bit-vec 0.4.1 (git+https://github.com/cheme/bit-vec.git)",
  "byteorder 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "coroutine 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "bincode"
-version = "0.8.1"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "byteorder 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -524,7 +524,7 @@ dependencies = [
 ]
 
 [metadata]
-"checksum bincode 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)" = "6e4a2d3bab374f96192eade8f41914373d7b5fcf030ca2f45141f1e939057259"
+"checksum bincode 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)" = "e103c8b299b28a9c6990458b7013dc4a8356a9b854c51b9883241f5866fac36e"
 "checksum bit-vec 0.4.1 (git+https://github.com/cheme/bit-vec.git)" = "<none>"
 "checksum bitflags 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)" = "aad18937a628ec6abcd26d1489012cc0e18c21798210f491af69ded9b881106d"
 "checksum bitflags 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)" = "4efd02e230a02e18f92fc2735f44597385ed02ad8f831e7c1c1156ee5e1ab3a5"

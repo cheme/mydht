@@ -57,9 +57,9 @@ pub struct GlobalCommandSend<PRS,GSCS>(pub Option<PRS>, pub GSCS);
 impl<PR : SRef, GSC : SRef> SRef for GlobalCommand<PR,GSC> 
    {
   type Send = GlobalCommandSend<<PR as SRef>::Send, <GSC as SRef>::Send>;//: SToRef<Self>;
-  fn get_sendable(&self) -> Self::Send {
-    let GlobalCommand(ref opr,ref gsc) = *self;
-    GlobalCommandSend(opr.as_ref().map(|pr|pr.get_sendable()), gsc.get_sendable())
+  fn get_sendable(self) -> Self::Send {
+    let GlobalCommand(opr,gsc) = self;
+    GlobalCommandSend(opr.map(|pr|pr.get_sendable()), gsc.get_sendable())
   }
 }
 

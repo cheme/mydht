@@ -45,12 +45,12 @@ impl<MC : MyDHTConf> SRef for PeerMgmtCommand<MC>
         MC::GlobalServiceReply : SRef,
         MC::LocalServiceReply : SRef {
   type Send = PeerMgmtCommandSend<MC>;
-  fn get_sendable(&self) -> Self::Send {
-    match *self {
-      PeerMgmtCommand::Accept(ref pr,ref com) => 
+  fn get_sendable(self) -> Self::Send {
+    match self {
+      PeerMgmtCommand::Accept(pr,com) => 
         PeerMgmtCommandSend::Accept(pr.get_sendable(),com.get_sendable()),
-      PeerMgmtCommand::NewPrio(ref pr,ref pp) => 
-        PeerMgmtCommandSend::NewPrio(pr.get_sendable(),pp.clone()),
+      PeerMgmtCommand::NewPrio(pr,pp) => 
+        PeerMgmtCommandSend::NewPrio(pr.get_sendable(),pp),
     }
   }
 }

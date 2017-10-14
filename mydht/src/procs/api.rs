@@ -210,18 +210,18 @@ impl<MC : MyDHTConf> SRef for ApiCommand<MC>
         MC::GlobalServiceReply : SRef,
         MC::LocalServiceReply : SRef {
   type Send = ApiCommandSend<MC>;
-  fn get_sendable(&self) -> Self::Send {
-    match *self {
-      ApiCommand::MainLoop(ref mlc) =>
+  fn get_sendable(self) -> Self::Send {
+    match self {
+      ApiCommand::MainLoop(mlc) =>
         ApiCommandSend::MainLoop(mlc.get_sendable()),
-      ApiCommand::Failure(ref aqid) =>
-        ApiCommandSend::Failure(aqid.clone()),
-      ApiCommand::ServiceCommand(ref com,s,ref aret) =>
-        ApiCommandSend::ServiceCommand(com.get_sendable(),s,aret.clone()),
-      ApiCommand::ServiceReply(ref rep) =>
+      ApiCommand::Failure(aqid) =>
+        ApiCommandSend::Failure(aqid),
+      ApiCommand::ServiceCommand(com,s,aret) =>
+        ApiCommandSend::ServiceCommand(com.get_sendable(),s,aret),
+      ApiCommand::ServiceReply(rep) =>
         ApiCommandSend::ServiceReply(rep.get_sendable()),
-      ApiCommand::Adjust(ref aqid,s) =>
-        ApiCommandSend::Adjust(aqid.clone(),s),
+      ApiCommand::Adjust(aqid,s) =>
+        ApiCommandSend::Adjust(aqid,s),
     }
   }
 }

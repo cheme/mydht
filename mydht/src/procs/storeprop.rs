@@ -424,16 +424,16 @@ pub enum KVStoreCommandSend<P : Peer, PR, V : KeyVal, VR : SRef> {
 
 impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V>> SRef for KVStoreCommand<P,PR,V,VR> {
   type Send = KVStoreCommandSend<P,PR,V,VR>;
-  fn get_sendable(&self) -> Self::Send {
-    match *self {
+  fn get_sendable(self) -> Self::Send {
+    match self {
       KVStoreCommand::Start => KVStoreCommandSend::Start,
       KVStoreCommand::CommitStore => KVStoreCommandSend::CommitStore,
       KVStoreCommand::Subset(nb,f) => KVStoreCommandSend::Subset(nb,f),
-      KVStoreCommand::Find(ref qm,ref k,ref oaqid) => KVStoreCommandSend::Find(qm.clone(),k.clone(),oaqid.clone()),
-      KVStoreCommand::FindLocally(ref k,ref oaqid) => KVStoreCommandSend::FindLocally(k.clone(),oaqid.clone()),
-      KVStoreCommand::Store(ref qid,ref vrp) => KVStoreCommandSend::Store(qid.clone(),vrp.iter().map(|rp|rp.get_sendable()).collect()),
-      KVStoreCommand::NotFound(ref qid) => KVStoreCommandSend::NotFound(qid.clone()),
-      KVStoreCommand::StoreLocally(ref rp,ref qp,ref oaqid) => KVStoreCommandSend::StoreLocally(rp.get_sendable(),qp.clone(),oaqid.clone()),
+      KVStoreCommand::Find(qm,k,oaqid) => KVStoreCommandSend::Find(qm,k,oaqid),
+      KVStoreCommand::FindLocally(k,oaqid) => KVStoreCommandSend::FindLocally(k,oaqid),
+      KVStoreCommand::Store(qid,vrp) => KVStoreCommandSend::Store(qid,vrp.into_iter().map(|rp|rp.get_sendable()).collect()),
+      KVStoreCommand::NotFound(qid) => KVStoreCommandSend::NotFound(qid),
+      KVStoreCommand::StoreLocally(rp,qp,oaqid) => KVStoreCommandSend::StoreLocally(rp.get_sendable(),qp,oaqid),
     }
   }
 }
@@ -485,11 +485,11 @@ pub enum KVStoreReplySend<VR : SRef> {
 
 impl<VR : SRef> SRef for KVStoreReply<VR> {
   type Send = KVStoreReplySend<VR>;
-  fn get_sendable(&self) -> Self::Send {
-    match *self {
-      KVStoreReply::FoundApi(ref ovr,ref aqid) => KVStoreReplySend::FoundApi(ovr.as_ref().map(|v|v.get_sendable()),aqid.clone()),
-      KVStoreReply::FoundApiMult(ref vrs,ref aqid) => KVStoreReplySend::FoundApiMult(vrs.iter().map(|v|v.get_sendable()).collect(),aqid.clone()),
-      KVStoreReply::Done(ref aqid) => KVStoreReplySend::Done(aqid.clone()),
+  fn get_sendable(self) -> Self::Send {
+    match self {
+      KVStoreReply::FoundApi(ovr,aqid) => KVStoreReplySend::FoundApi(ovr.map(|v|v.get_sendable()),aqid),
+      KVStoreReply::FoundApiMult(vrs,aqid) => KVStoreReplySend::FoundApiMult(vrs.into_iter().map(|v|v.get_sendable()).collect(),aqid),
+      KVStoreReply::Done(aqid) => KVStoreReplySend::Done(aqid),
     }
   }
 }

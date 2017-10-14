@@ -294,26 +294,26 @@ impl<MC : MyDHTConf> SRef for MainLoopCommand<MC>
        MC::GlobalServiceReply : SRef,
        MC::LocalServiceReply : SRef {
   type Send = MainLoopCommandSend<MC>;
-  fn get_sendable(&self) -> Self::Send {
-    match *self {
+  fn get_sendable(self) -> Self::Send {
+    match self {
       MainLoopCommand::Start => MainLoopCommandSend::Start,
-      MainLoopCommand::SubCommand(ref sc) => MainLoopCommandSend::SubCommand(sc.clone()),
-      MainLoopCommand::TryConnect(ref a,ref aid) => MainLoopCommandSend::TryConnect(a.clone(),aid.clone()),
+      MainLoopCommand::SubCommand(sc) => MainLoopCommandSend::SubCommand(sc),
+      MainLoopCommand::TryConnect(a,aid) => MainLoopCommandSend::TryConnect(a,aid),
 //      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommandSend::ForwardServiceLocal(gc.get_sendable(),nb),
-      MainLoopCommand::ForwardService(ref ovp,ref okad,ref nb_for,ref c) => MainLoopCommandSend::ForwardService({
-          ovp.as_ref().map(|vp|vp.iter().map(|p|p.get_sendable()).collect())
-        },okad.clone(),nb_for.clone(),c.get_sendable()),
-      MainLoopCommand::ForwardApi(ref gc,nb_for,ref ret) => MainLoopCommandSend::ForwardApi(gc.get_sendable(),nb_for,ret.clone()),
-      MainLoopCommand::PeerStore(ref cmd) => MainLoopCommandSend::PeerStore(cmd.get_sendable()),
+      MainLoopCommand::ForwardService(ovp,okad,nb_for,c) => MainLoopCommandSend::ForwardService({
+          ovp.map(|vp|vp.into_iter().map(|p|p.get_sendable()).collect())
+        },okad,nb_for,c.get_sendable()),
+      MainLoopCommand::ForwardApi(gc,nb_for,ret) => MainLoopCommandSend::ForwardApi(gc.get_sendable(),nb_for,ret),
+      MainLoopCommand::PeerStore(cmd) => MainLoopCommandSend::PeerStore(cmd.get_sendable()),
       MainLoopCommand::RejectReadSpawn(s) => MainLoopCommandSend::RejectReadSpawn(s),
-      MainLoopCommand::RejectPeer(ref k,ref os,ref os2) => MainLoopCommandSend::RejectPeer(k.clone(),os.clone(),os2.clone()),
-      MainLoopCommand::NewPeer(ref rp,ref pp,ref os) => MainLoopCommandSend::NewPeer(rp.get_sendable(),pp.clone(),os.clone()),
-      MainLoopCommand::NewPeerChallenge(ref rp,rtok,ref chal) => MainLoopCommandSend::NewPeerChallenge(rp.get_sendable(),rtok,chal.clone()),
-      MainLoopCommand::NewPeerUncheckedChallenge(ref rp,ref pp,rtok,ref chal,ref nextchal) => MainLoopCommandSend::NewPeerUncheckedChallenge(rp.get_sendable(),pp.clone(),rtok,chal.clone(),nextchal.clone()),
-      MainLoopCommand::ProxyWrite(rt, ref rcs) => MainLoopCommandSend::ProxyWrite(rt, rcs.get_sendable()),
-      MainLoopCommand::ProxyGlobal(ref rcs) => MainLoopCommandSend::ProxyGlobal(rcs.get_sendable()),
+      MainLoopCommand::RejectPeer(k,os,os2) => MainLoopCommandSend::RejectPeer(k,os,os2),
+      MainLoopCommand::NewPeer(rp,pp,os) => MainLoopCommandSend::NewPeer(rp.get_sendable(),pp,os),
+      MainLoopCommand::NewPeerChallenge(rp,rtok,chal) => MainLoopCommandSend::NewPeerChallenge(rp.get_sendable(),rtok,chal),
+      MainLoopCommand::NewPeerUncheckedChallenge(rp,pp,rtok,chal,nextchal) => MainLoopCommandSend::NewPeerUncheckedChallenge(rp.get_sendable(),pp,rtok,chal,nextchal),
+      MainLoopCommand::ProxyWrite(rt,rcs) => MainLoopCommandSend::ProxyWrite(rt, rcs.get_sendable()),
+      MainLoopCommand::ProxyGlobal(rcs) => MainLoopCommandSend::ProxyGlobal(rcs.get_sendable()),
 //      MainLoopCommand::GlobalApi(ref rcs,ref ret) => MainLoopCommandSend::GlobalApi(rcs.get_sendable(),ret.clone()),
-      MainLoopCommand::ProxyApiReply(ref rcs) => MainLoopCommandSend::ProxyApiReply(rcs.get_sendable()),
+      MainLoopCommand::ProxyApiReply(rcs) => MainLoopCommandSend::ProxyApiReply(rcs.get_sendable()),
 //      MainLoopCommand::ProxyApiLocalReply(ref rcs) => MainLoopCommandSend::ProxyApiLocalReply(rcs.get_sendable()),
       // curently no service usage on synch listener
       MainLoopCommand::ConnectedR(..) => unreachable!(),

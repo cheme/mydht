@@ -272,9 +272,9 @@ impl<MC : MyDHTConf> SRef for MainLoopReply<MC>
         MC::GlobalServiceReply : SRef,
         MC::LocalServiceReply : SRef {
   type Send = MainLoopReplySend<MC>;
-  fn get_sendable(&self) -> Self::Send {
-    match *self {
-      MainLoopReply::ServiceReply(ref rep) =>
+  fn get_sendable(self) -> Self::Send {
+    match self {
+      MainLoopReply::ServiceReply(rep) =>
         MainLoopReplySend::ServiceReply(rep.get_sendable()),
       MainLoopReply::Ended =>
         MainLoopReplySend::Ended,
@@ -420,12 +420,12 @@ impl<MC : MyDHTConf> SRef for MCCommand<MC>
   where MC::LocalServiceCommand : SRef,
         MC::GlobalServiceCommand : SRef {
   type Send = MCCommandSend<MC>;
-  fn get_sendable(&self) -> Self::Send {
-    match *self {
-      MCCommand::Local(ref a) => MCCommandSend::Local(a.get_sendable()),
-      MCCommand::Global(ref a) => MCCommandSend::Global(a.get_sendable()),
-      MCCommand::PeerStore(ref a) => MCCommandSend::PeerStore(a.get_sendable()),
-      MCCommand::TryConnect(ref a,ref i) => MCCommandSend::TryConnect(a.clone(),i.clone()),
+  fn get_sendable(self) -> Self::Send {
+    match self {
+      MCCommand::Local(a) => MCCommandSend::Local(a.get_sendable()),
+      MCCommand::Global(a) => MCCommandSend::Global(a.get_sendable()),
+      MCCommand::PeerStore(a) => MCCommandSend::PeerStore(a.get_sendable()),
+      MCCommand::TryConnect(a,i) => MCCommandSend::TryConnect(a,i),
     }
   }
 }
@@ -487,12 +487,12 @@ impl<MC : MyDHTConf> SRef for MCReply<MC>
   where MC::LocalServiceReply : SRef,
         MC::GlobalServiceReply : SRef {
   type Send = MCReplySend<MC>;
-  fn get_sendable(&self) -> Self::Send {
-    match *self {
-      MCReply::Local(ref a) => MCReplySend::Local(a.get_sendable()),
-      MCReply::Global(ref a) => MCReplySend::Global(a.get_sendable()),
-      MCReply::PeerStore(ref a) => MCReplySend::PeerStore(a.get_sendable()),
-      MCReply::Done(ref a) => MCReplySend::Done(a.clone()),
+  fn get_sendable(self) -> Self::Send {
+    match self {
+      MCReply::Local(a) => MCReplySend::Local(a.get_sendable()),
+      MCReply::Global(a) => MCReplySend::Global(a.get_sendable()),
+      MCReply::PeerStore(a) => MCReplySend::PeerStore(a.get_sendable()),
+      MCReply::Done(a) => MCReplySend::Done(a),
     }
   }
 }

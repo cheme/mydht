@@ -5,7 +5,6 @@
 #[macro_use] extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
-extern crate time;
 extern crate num;
 extern crate rand;
 extern crate bit_vec;
@@ -30,11 +29,13 @@ macro_rules! sref_send_clone(($ty:ident) => (
 
   impl SRef for $ty {
     type Send = $ty;
-    fn get_sendable(&self) -> Self::Send {
-      self.clone()
+    #[inline]
+    fn get_sendable(self) -> Self::Send {
+      self
     }
   }
   impl SToRef<$ty> for $ty {
+    #[inline]
     fn to_ref(self) -> $ty {
       self
     }

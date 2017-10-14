@@ -262,12 +262,12 @@ impl<MC : MyDHTConf> SRef for WriteCommand<MC>
         MC::GlobalServiceCommand : SRef,
   {
   type Send = WriteCommandSend<MC>;
-  fn get_sendable(&self) -> Self::Send {
-    match *self {
+  fn get_sendable(self) -> Self::Send {
+    match self {
       WriteCommand::Write => WriteCommandSend::Write,
-      WriteCommand::Ping(ref chal) => WriteCommandSend::Ping(chal.clone()),
-      WriteCommand::Pong(ref pr,ref v,s,ref v2) => WriteCommandSend::Pong(pr.get_sendable(),v.clone(),s,v2.clone()),
-      WriteCommand::Service(ref p) => WriteCommandSend::Service(p.get_sendable()),
+      WriteCommand::Ping(chal) => WriteCommandSend::Ping(chal),
+      WriteCommand::Pong(pr,v,s,v2) => WriteCommandSend::Pong(pr.get_sendable(),v,s,v2),
+      WriteCommand::Service(p) => WriteCommandSend::Service(p.get_sendable()),
 //      WriteCommand::GlobalService(ref p) => WriteCommandSend::GlobalService(p.get_sendable()),
     }
   }

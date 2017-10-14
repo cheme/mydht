@@ -44,11 +44,11 @@ use std::borrow::Borrow;
 pub static NULL_TIMESPEC : Timespec = Timespec{ sec : 0, nsec : 0};
 
 
-/// non borrow ref for self
+/// Type with an associated type being Send and which is possible to switch to its original type
+/// Copy of content may be involved in the precess.
 pub trait SRef : Sized {
   type Send : SToRef<Self>;
-  /// get_sendable may involve a full copy or not (Ref is immutable)
-  fn get_sendable(&self) -> Self::Send;
+  fn get_sendable(self) -> Self::Send;
 }
 pub trait SToRef<T : SRef> : Send + Sized {
 //  type Ref : Ref<T,Send=Self>;
@@ -110,16 +110,15 @@ impl<T> Borrow<T> for ArcRef<T> {
   }
 }
 
-
 impl<T : Clone + Send + Sync> SRef for ArcRef<T> {
   type Send = ArcRef<T>;
   #[inline]
-  fn get_sendable(&self) -> Self::Send {
-    ArcRef(self.0.clone())
+  fn get_sendable(self) -> Self::Send {
+    self
   }
 }
 impl<T : Clone + Send + Sync> Ref<T> for ArcRef<T> {
-    #[inline]
+  #[inline]
   fn new(t : T) -> Self {
     ArcRef(Arc::new(t))
   }
@@ -179,9 +178,13 @@ impl<T> Borrow<T> for RcRef<T> {
 impl<T : Send + Clone> SRef for RcRef<T> {
   type Send = ToRcRef<T>;
   #[inline]
-  fn get_sendable(&self) -> Self::Send {
-    let t : &T = self.0.borrow();
-    ToRcRef(t.clone())
+  fn get_sendable(self) -> Self::Send {
+    match Rc::try_unwrap(self.0) {
+      Ok(content) => ToRcRef(content),
+      Err(rcref) => {
+        ToRcRef((&*rcref).clone())
+      },
+    }
   }
 }
 impl<T : Send + Clone> Ref<T> for RcRef<T> {
@@ -227,13 +230,11 @@ impl<'de,T : Clone + Send + Deserialize<'de>> Deserialize<'de> for RcRef<T> {
 }
 
 
-/// Content is always cloned when sending (copyied in various struct) but also when at multiple
+/// Content is already send and cloned as neededtsttststststs
 /// location : only for small contents
 #[derive(Clone,Eq,PartialEq)]
 pub struct CloneRef<T>(T);
 
-#[derive(Clone,Eq,PartialEq)]
-pub struct ToCloneRef<T>(T);
 
 impl<T> Borrow<T> for CloneRef<T> {
   #[inline]
@@ -243,10 +244,10 @@ impl<T> Borrow<T> for CloneRef<T> {
 }
 
 impl<T : Send + Clone> SRef for CloneRef<T> {
-  type Send = ToCloneRef<T>;
+  type Send = CloneRef<T>;
   #[inline]
-  fn get_sendable(&self) -> Self::Send {
-    ToCloneRef(self.0.clone())
+  fn get_sendable(self) -> Self::Send {
+    self
   }
 }
 impl<T : Send + Clone> Ref<T> for CloneRef<T> {
@@ -256,7 +257,7 @@ impl<T : Send + Clone> Ref<T> for CloneRef<T> {
   }
 }
 
-impl<T : Send + Clone> SToRef<CloneRef<T>> for ToCloneRef<T> {
+impl<T : Send + Clone> SToRef<CloneRef<T>> for CloneRef<T> {
   #[inline]
   fn to_ref(self) -> CloneRef<T> {
     CloneRef(self.0)
@@ -268,12 +269,6 @@ impl<T : Send + Clone> SToRef<CloneRef<T>> for ToCloneRef<T> {
 */
 }
 
-impl<T : Send + Clone> Borrow<T> for ToCloneRef<T> {
-  #[inline]
-  fn borrow(&self) -> &T {
-    &self.0
-  }
-}
 
 
 impl<T : Serialize> Serialize for CloneRef<T> {

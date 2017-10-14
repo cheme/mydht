@@ -351,8 +351,8 @@ pub enum ReadCommand {
 
 impl SRef for ReadCommand {
   type Send = ReadCommand;
-  fn get_sendable(&self) -> Self::Send {
-    match *self {
+  fn get_sendable(self) -> Self::Send {
+    match self {
       ReadCommand::Run =>
         ReadCommand::Run,
     }

@@ -204,8 +204,8 @@ impl<MC : MyDHTConf> Clone for TestCommand<MC> {
 }
 impl<MC : MyDHTConf> SRef for TestCommand<MC> {
   type Send = Self;
-  fn get_sendable(&self) -> Self::Send {
-    self.clone()
+  fn get_sendable(self) -> Self::Send {
+    self
   }
 }
 impl<MC : MyDHTConf> SToRef<TestCommand<MC>> for TestCommand<MC> {
@@ -222,8 +222,8 @@ pub enum TestReply {
 
 impl SRef for TestReply {
   type Send = Self;
-  fn get_sendable(&self) -> Self::Send {
-    self.clone()
+  fn get_sendable(self) -> Self::Send {
+    self
   }
 }
 impl SToRef<TestReply> for TestReply {
