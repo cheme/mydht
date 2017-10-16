@@ -152,8 +152,25 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
       },
     })
   }
-
 }
+
+impl<MC : MyDHTConf, QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> SRef for Api<MC,QC> where
+  QC : Send,
+  {
+  type Send = Api<MC,QC>;
+  fn get_sendable(self) -> Self::Send {
+    self
+  }
+}
+
+impl<MC : MyDHTConf, QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> SToRef<Api<MC,QC>> for Api<MC,QC> where
+  QC : Send,
+  {
+  fn to_ref(self) -> Api<MC,QC> {
+    self
+  }
+}
+
 
 #[derive(Clone,PartialEq,Eq,Hash,Debug)]
 pub struct ApiQueryId(pub usize);
@@ -312,6 +329,36 @@ pub enum ApiResult<MC : MyDHTConf> {
   NoResult,
 }
 
+pub enum ApiResultSend<MC : MyDHTConf>
+  where MC::LocalServiceReply : SRef,
+        MC::GlobalServiceReply : SRef {
+  ServiceReply(MCReplySend<MC>),
+  NoResult,
+}
+
+impl<MC : MyDHTConf> SRef for ApiResult<MC>
+  where MC::LocalServiceReply : SRef,
+        MC::GlobalServiceReply : SRef {
+  type Send = ApiResultSend<MC>;
+  fn get_sendable(self) -> Self::Send {
+    match self {
+      ApiResult::ServiceReply(rep) => ApiResultSend::ServiceReply(rep.get_sendable()),
+      ApiResult::NoResult => ApiResultSend::NoResult,
+    }
+  }
+}
+impl<MC : MyDHTConf> SToRef<ApiResult<MC>> for ApiResultSend<MC>
+  where MC::LocalServiceReply : SRef,
+        MC::GlobalServiceReply : SRef {
+  fn to_ref(self) -> ApiResult<MC> {
+    match self {
+      ApiResultSend::ServiceReply(rep) => ApiResult::ServiceReply(rep.to_ref()),
+      ApiResultSend::NoResult => ApiResult::NoResult,
+    }
+  }
+}
+
+
 impl<MC : MyDHTConf> Clone for ApiResult<MC> 
 where MC::LocalServiceReply : Clone,
       MC::GlobalServiceReply : Clone,
@@ -325,8 +372,21 @@ where MC::LocalServiceReply : Clone,
   }
 }
 
+/*
+impl<MC : MyDHTConf> Clone for ApiResultSend<MC>
+  where MC::LocalServiceReply : SRef,
+        MC::GlobalServiceReply : SRef {
+  fn clone(&self) -> Self {
+    match *self {
+      ApiResultSend::ServiceReply(ref lsr) => ApiResult::ServiceReply(lsr.clone()),
+      ApiResult::NoResult => ApiResult::NoResult,
+    }
+  }
+}
+*/
+
 /// send input for api : use mainloop TODO option weak handle to api
-pub struct ApiSendIn<MC : MyDHTConf> {
+pub struct DHTIn<MC : MyDHTConf> {
 //    pub api_direct : Option<ApiHandleSend<MC>>,
     pub main_loop : MainLoopSendIn<MC>,
 }
@@ -336,6 +396,26 @@ pub struct ApiDest<MC : MyDHTConf> {
   // TODO direct send
     pub main_loop : MainLoopSendIn<MC>,
 }
+
+impl<MC : MyDHTConf> SRef for ApiDest<MC> where
+  MainLoopSendIn<MC> : Send,
+  {
+  type Send = ApiDest<MC>;
+  fn get_sendable(self) -> Self::Send {
+    self
+  }
+}
+
+impl<MC : MyDHTConf> SToRef<ApiDest<MC>> for ApiDest<MC> where
+  MainLoopSendIn<MC> : Send,
+  {
+  fn to_ref(self) -> ApiDest<MC> {
+    self
+  }
+}
+
+
+
 
 impl<MC : MyDHTConf> SpawnSend<ApiReply<MC>> for ApiDest<MC> {
   const CAN_SEND : bool = true;
@@ -399,6 +479,45 @@ where
   }
 }
 
+// TODO fuse with other impl (duplicated code here)
+impl<MC : MyDHTConf> ApiReturn<MC> for OneResult<(Vec<ApiResultSend<MC>>,usize,usize)>
+  where MC::LocalServiceReply : SRef,
+        MC::GlobalServiceReply : SRef {
+  fn api_return(&self, rep : ApiResult<MC>) -> Result<bool> {
+    let no_res = if let ApiResult::NoResult = rep {true} else {false};
+    if match self.0.lock() {
+      Ok(mut res) => {
+        if no_res {
+          (res.0).2 -= 1;
+        } else {
+          (res.0).0.push(rep.get_sendable());
+          (res.0).1 -= 1;
+          (res.0).2 -= 1;
+        }
+        if (res.0).1 == 0 || (res.0).2 == 0 {
+          res.1 = true;
+          // avoid overflow and notify on each next result or error (allow stream)
+          (res.0).1 = 1;
+          (res.0).2 = 1;
+          true
+        } else {
+          false
+        }
+      },
+      Err(m) => {
+        error!("poisoned mutex for api result : {:?}", m);
+        false
+      },
+    } {
+      self.1.notify_all();
+      return Ok(true)
+    }
+
+    Ok(false)
+  }
+}
+
+
 pub trait ApiQueriable {
   fn is_api_reply(&self) -> bool;
   fn set_api_reply(&mut self, ApiQueryId);
@@ -410,7 +529,7 @@ pub trait ApiRepliable {
 }
 
 
-impl<MC : MyDHTConf> SpawnSend<ApiCommand<MC>> for ApiSendIn<MC> {
+impl<MC : MyDHTConf> SpawnSend<ApiCommand<MC>> for DHTIn<MC> {
   const CAN_SEND : bool = <MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send::CAN_SEND;
   fn send(&mut self, c : ApiCommand<MC>) -> Result<()> {
     match c {

@@ -34,6 +34,8 @@ use super::{
   MCCommand,
   MCReply,
   MainLoopSendIn,
+  ApiSendIn,
+  ApiWeakHandle,
 };
 use super::storeprop::{
   KVStoreCommand,
@@ -196,13 +198,54 @@ pub struct GlobalDest<MC : MyDHTConf> {
   pub api : Option<ApiHandleSend<MC>>,
 }
 impl<MC : MyDHTConf> Clone for LocalDest<MC> {
-    fn clone(&self) -> Self {
-      LocalDest{
-        read : self.read.clone(),
-        api : self.api.clone(),
-      }
+  fn clone(&self) -> Self {
+    LocalDest{
+      read : self.read.clone(),
+      api : self.api.clone(),
     }
+  }
 }
+/*
+impl<MC : MyDHTConf> SRef for  GlobalDest<MC> {
+  type Send = Self;
+  #[inline]
+  fn get_sendable(self) -> Self::Send { self }
+}
+impl<MC : MyDHTConf> SToRef<GlobalDest<MC>> for  GlobalDest<MC> {
+  fn to_ref(self) -> GlobalDest<MC> { self }
+}
+*/
+//sref_self_mc!(GlobalDest);
+
+
+
+impl<MC : MyDHTConf> SRef for GlobalDest<MC> where
+  MainLoopSendIn<MC> : Send,
+  ApiSendIn<MC> : Send,
+  ApiWeakHandle<MC> : Send,
+  {
+  type Send = GlobalDest<MC>;
+  #[inline]
+  fn get_sendable(self) -> Self::Send {
+    self
+  }
+}
+
+impl<MC : MyDHTConf> SToRef<GlobalDest<MC>> for GlobalDest<MC> where
+  MainLoopSendIn<MC> : Send,
+  ApiSendIn<MC> : Send,
+  ApiWeakHandle<MC> : Send,
+  {
+  #[inline]
+  fn to_ref(self) -> GlobalDest<MC> {
+    self
+  }
+}
+
+
+
+
+
 /*
   Forward(Option<Vec<MC::PeerRef>>,usize,MC::GlobalServiceCommand),
   /// reply to api

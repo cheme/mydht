@@ -14,10 +14,6 @@ use keyval::{
   SettableAttachments,
   Attachment,
 };
-use utils::{
-  SRef,
-  SToRef,
-};
 use super::deflocal::{
   GlobalDest,
 };
@@ -63,6 +59,9 @@ use service::{
   SpawnerYield,
 };
 use super::{
+  MainLoopSendIn,
+  ApiSendIn,
+  ApiWeakHandle,
   FWConf,
   MyDHTConf,
   OptFrom,
@@ -73,6 +72,8 @@ use super::{
 use std::marker::PhantomData;
 use utils::{
   Ref,
+  SRef,
+  SToRef,
 };
 
 
@@ -87,13 +88,87 @@ pub struct KVStoreService<P,RP,V,RV,S,DR,QC> {
   /// should be fine)
   pub me : RP,
   pub init_store : Box<Fn() -> Result<S> + Send>,
+  pub init_cache : Box<Fn() -> Result<QC> + Send>,
   pub store : Option<S>,
   pub dht_rules : DR,
-  pub query_cache : QC,
+  pub query_cache : Option<QC>,
   /// do we forward with discover peer capability
   pub discover : bool,
   pub _ph : PhantomData<(P,V,RV)>,
 }
+
+/// Warn store and query cache are dropped and rebuild at each restart (and cache need probable a costy copy)
+pub struct KVStoreServiceRef<RP : SRef,S,DR,QC> {
+  pub me : <RP as SRef>::Send,
+  pub init_store : Box<Fn() -> Result<S> + Send>,
+  pub init_cache : Box<Fn() -> Result<QC> + Send>,
+  pub dht_rules : DR,
+  pub discover : bool,
+}
+
+
+impl<
+  P : Peer,
+  RP : Ref<P> + Clone,
+  V : KeyVal, 
+  VR : Ref<V>,
+  S : KVStore<V>, 
+  DH : DHTRules,
+  QC : QueryCache<P,VR,RP>,
+  > SRef for KVStoreService<P,RP,V,VR,S,DH,QC> {
+  type Send = KVStoreServiceRef<RP,S,DH,QC>;
+  fn get_sendable(self) -> Self::Send {
+    let KVStoreService {
+      me,
+      init_store,
+      init_cache,
+      store : _,
+      dht_rules,
+      query_cache : _,
+      discover,
+      _ph,
+    } = self;
+    KVStoreServiceRef {
+      me : me.get_sendable(),
+      init_store,
+      init_cache,
+      dht_rules,
+      discover,
+    }
+  }
+}
+
+
+impl<
+  P : Peer,
+  RP : Ref<P> + Clone,
+  V : KeyVal, 
+  VR : Ref<V>,
+  S : KVStore<V>, 
+  DH : DHTRules,
+  QC : QueryCache<P,VR,RP>,
+  > SToRef<KVStoreService<P,RP,V,VR,S,DH,QC>> for KVStoreServiceRef<RP,S,DH,QC> {
+  fn to_ref(self) -> KVStoreService<P,RP,V,VR,S,DH,QC> {
+    let KVStoreServiceRef {
+      me,
+      init_store,
+      init_cache,
+      dht_rules,
+      discover,
+    } = self;
+    KVStoreService {
+      me : me.to_ref(),
+      init_store,
+      init_cache,
+      store : None,
+      dht_rules,
+      query_cache : None,
+      discover,
+      _ph : PhantomData,
+    }
+  }
+}
+ 
 
 /// Proto msg for kvstore : Not mandatory (only OptInto need implementation) but can be use when
 /// building Service protomsg. TODO make it multivaluated
@@ -531,7 +606,12 @@ impl<
     if self.store.is_none() {
       self.store = Some(self.init_store.call(())?);
     }
+    if self.query_cache.is_none() {
+      self.query_cache = Some(self.init_cache.call(())?);
+    }
+
     let store = self.store.as_mut().unwrap();
+    let query_cache = self.query_cache.as_mut().unwrap();
     let GlobalCommand(owith,req) = req;
     match req {
       KVStoreCommand::Start => (),
@@ -557,7 +637,7 @@ impl<
       KVStoreCommand::Store(qid,mut vs) => {
 
         debug!("A store kv command received with id {:?}",qid);
-        let removereply = match self.query_cache.query_get_mut(&qid) {
+        let removereply = match query_cache.query_get_mut(&qid) {
          Some(query) => {
            match *query {
              Query(_, QReply::Local(_,ref nb_res,ref mut vres,_,ref qp), _) => {
@@ -605,7 +685,7 @@ impl<
          },
        };
        if removereply {
-         let query = self.query_cache.query_remove(&qid).unwrap();
+         let query = query_cache.query_remove(&qid).unwrap();
          match query.1 {
            QReply::Local(apiqid,_,vres,_,_) => {
              return Ok(GlobalReply::Api(KVStoreReply::FoundApiMult(vres, apiqid)));
@@ -630,7 +710,7 @@ impl<
       },
       KVStoreCommand::NotFound(qid) => {
         debug!("A store not found command received with id : {:?}",qid);
-        let remove = match self.query_cache.query_get_mut(&qid) {
+        let remove = match query_cache.query_get_mut(&qid) {
          Some(query) => {
           match *query {
              Query(_, QReply::Local(_,_,_,ref mut nb_not_found,_), _) |
@@ -650,7 +730,7 @@ impl<
          },
        };
        if remove {
-         let query = self.query_cache.query_remove(&qid).unwrap();
+         let query = query_cache.query_remove(&qid).unwrap();
          match query.1 {
            QReply::Local(apiqid,_,vres,_,_) => {
              return Ok(GlobalReply::Api(KVStoreReply::FoundApiMult(vres, apiqid)));
@@ -711,7 +791,7 @@ impl<
         }
         //let do_store = querymess.mode_info.do_store() && querymess.rem_hop > 0;
         let (qid,st) = if o_api_queryid.is_some() || querymess.mode_info.do_store_on_forward() {
-          (self.query_cache.new_id(),true)
+          (query_cache.new_id(),true)
         } else {
           (querymess.get_query_id(),false)
         };
@@ -741,12 +821,12 @@ impl<
 
         if let Some(apiqid) = o_api_queryid {
           let query = Query(qid, QReply::Local(apiqid,querymess.nb_res,vres,nb_not_found,querymess.prio), Some(expire));
-          self.query_cache.query_add(qid, query);
+          query_cache.query_add(qid, query);
         } else {
           if st {
             // clone on owith could be removed
             let query = Query(qid, QReply::Dist(old_mode_info.clone(),owith.clone(),querymess.nb_res,vres,nb_not_found), Some(expire));
-            self.query_cache.query_add(qid, query);
+            query_cache.query_add(qid, query);
           }
         };
         if oval.is_some() && !do_reply_not_found {
@@ -769,6 +849,32 @@ impl<
 
 /// adapter to forward peer message into global dest
 pub struct OptPeerGlobalDest<MC : MyDHTConf> (pub GlobalDest<MC>);
+
+impl<MC : MyDHTConf> SRef for OptPeerGlobalDest<MC> where
+  MainLoopSendIn<MC> : Send,
+  ApiSendIn<MC> : Send,
+  ApiWeakHandle<MC> : Send,
+  {
+  type Send = OptPeerGlobalDest<MC>;
+  #[inline]
+  fn get_sendable(self) -> Self::Send {
+    OptPeerGlobalDest(self.0.get_sendable())
+  }
+}
+
+impl<MC : MyDHTConf> SToRef<OptPeerGlobalDest<MC>> for OptPeerGlobalDest<MC> where
+  MainLoopSendIn<MC> : Send,
+  ApiSendIn<MC> : Send,
+  ApiWeakHandle<MC> : Send,
+  {
+  #[inline]
+  fn to_ref(self) -> OptPeerGlobalDest<MC> {
+    OptPeerGlobalDest(self.0.get_sendable())
+  }
+}
+
+
+
 
 impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>>> for OptPeerGlobalDest<MC> {
   const CAN_SEND : bool = true;

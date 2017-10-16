@@ -120,6 +120,7 @@ macro_rules! send_with_handle_panic {
     }
   })
 }
+
 /*
 macro_rules! send_with_handle_log {
   ($s:expr,$h:expr,$c:expr,$lvl:expr,$($arg:tt)+) => ({
@@ -154,7 +155,7 @@ pub use self::mainloop::{
 pub use self::api::{
   ApiCommand,
   ApiReply,
-  ApiSendIn,
+  DHTIn,
 };
 
 /// Optional into trait, use for conversion between message (if into return None the message is not
@@ -183,8 +184,6 @@ impl<T, U> OptInto<U> for T where U: OptFrom<T>
   }
 }
 
-pub struct MyDHTService<MC : MyDHTConf>(pub MC, pub MainLoopRecvIn<MC>, pub <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply<MC>>>::Send,pub MainLoopSendIn<MC>);
-
 #[derive(Clone,Eq,PartialEq)]
 pub enum ShadowAuthType {
   /// skip ping/pong, dest is unknown : reply as a public server
@@ -195,6 +194,33 @@ pub enum ShadowAuthType {
   /// address only)
   Private,
 }
+
+pub struct MyDHTService<MC : MyDHTConf>(pub MC, pub MainLoopRecvIn<MC>, pub MainLoopSendOut<MC>,pub MainLoopSendIn<MC>);
+
+impl<MC : MyDHTConf> SRef for MyDHTService<MC> where
+  MC : Send,
+  MainLoopSendIn<MC> : Send,
+  MainLoopRecvIn<MC> : Send,
+  MainLoopSendOut<MC> : Send,
+  {
+  type Send = MyDHTService<MC>;
+  fn get_sendable(self) -> Self::Send {
+    self
+  }
+}
+
+impl<MC : MyDHTConf> SToRef<MyDHTService<MC>> for MyDHTService<MC> where
+  MC : Send,
+  MainLoopSendIn<MC> : Send,
+  MainLoopRecvIn<MC> : Send,
+  MainLoopSendOut<MC> : Send,
+  {
+  fn to_ref(self) -> MyDHTService<MC> {
+    self
+  }
+}
+
+
 
 impl<MC : MyDHTConf> Service for MyDHTService<MC> {
   type CommandIn = MainLoopCommand<MC>;
@@ -233,8 +259,6 @@ type SpawnerRefsDefRecv<S : Service,COM,D, CI : SpawnChannel<COM>, RS : Spawner<
   R : SpawnRecv<<S as Service>::CommandIn>> {
 */ 
   //CI::Send); 
-type MainLoopRecvIn<MC : MyDHTConf> = MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>;
-type MainLoopSendIn<MC : MyDHTConf> = MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>;
 
 pub enum MainLoopReply<MC : MyDHTConf> {
   ServiceReply(MCReply<MC>),
@@ -711,7 +735,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// others services)
   #[inline]
   fn start_loop(mut self : Self) -> Result<(
-    ApiSendIn<Self>,
+    DHTIn<Self>,
     <Self::MainLoopChannelOut as SpawnChannel<MainLoopReply<Self>>>::Recv
     )> {
     println!("Start loop");
@@ -733,13 +757,13 @@ pub trait MyDHTConf : 'static + Send + Sized
       }
       r
     })?;*/
-    Ok((ApiSendIn{
+    Ok((DHTIn{
       main_loop : s,
     },ro))
   }
 
   fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>>;
-  fn init_peer_kvstore_query_cache(&mut self) -> Result<Self::PeerStoreQueryCache>;
+  fn init_peer_kvstore_query_cache(&mut self) -> Result<Box<Fn() -> Result<Self::PeerStoreQueryCache> + Send>>;
   fn init_peerstore_channel_in(&mut self) -> Result<Self::PeerStoreServiceChannelIn>;
   fn init_peerstore_spawner(&mut self) -> Result<Self::PeerStoreServiceSpawn>;
   fn do_peer_query_forward_with_discover(&self) -> bool;
@@ -814,24 +838,29 @@ pub struct FWConf {
   pub discover : bool,
 }
 
+pub type LocalRecvIn<MC : MyDHTConf> = <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Recv;
+pub type LocalSendIn<MC : MyDHTConf> = <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Send;
+pub type LocalHandle<MC : MyDHTConf> = <MC::LocalServiceSpawn as Spawner<MC::LocalService,LocalDest<MC>,LocalRecvIn<MC>>>::Handle;
 
 
-pub type GlobalHandle<MC : MyDHTConf> = <MC::GlobalServiceSpawn as Spawner<MC::GlobalService,GlobalDest<MC>,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Recv>>::Handle;
+pub type GlobalSendIn<MC : MyDHTConf> = <MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Send;
+pub type GlobalRecvIn<MC : MyDHTConf> = <MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Recv;
+pub type GlobalHandle<MC : MyDHTConf> = <MC::GlobalServiceSpawn as Spawner<MC::GlobalService,GlobalDest<MC>,GlobalRecvIn<MC>>>::Handle;
+pub type GlobalWeakHandle<MC : MyDHTConf> = <GlobalHandle<MC> as SpawnHandle<MC::GlobalService,GlobalDest<MC>, GlobalRecvIn<MC>>>::WeakHandle;
+pub type GlobalHandleSend<MC : MyDHTConf> = HandleSend<GlobalSendIn<MC>,GlobalWeakHandle<MC>>;
 
-pub type GlobalHandleSend<MC : MyDHTConf> = HandleSend<<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Send,
-  <<
-    MC::GlobalServiceSpawn as Spawner<MC::GlobalService,GlobalDest<MC>,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Recv>>::Handle as 
-    SpawnHandle<MC::GlobalService,GlobalDest<MC>,<MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Recv>
-    >::WeakHandle
-    >;
-pub type ApiHandle<MC : MyDHTConf> = <MC::ApiServiceSpawn as Spawner<MC::ApiService,ApiDest<MC>,<MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Recv>>::Handle;
-pub type ApiHandleSend<MC : MyDHTConf> = HandleSend<<MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Send,
-  <<
-    MC::ApiServiceSpawn as Spawner<MC::ApiService,ApiDest<MC>,<MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Recv>>::Handle as 
-    SpawnHandle<MC::ApiService,ApiDest<MC>,<MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Recv>
-    >::WeakHandle
-    >;
+pub type ApiSendIn<MC : MyDHTConf> = <MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Send;
+pub type ApiRecvIn<MC : MyDHTConf> = <MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Recv;
+pub type ApiHandle<MC : MyDHTConf> = <MC::ApiServiceSpawn as Spawner<MC::ApiService,ApiDest<MC>,ApiRecvIn<MC>>>::Handle;
+pub type ApiWeakHandle<MC : MyDHTConf> = <ApiHandle<MC> as SpawnHandle<MC::ApiService,ApiDest<MC>,ApiRecvIn<MC>>>::WeakHandle;
+pub type ApiHandleSend<MC : MyDHTConf> = HandleSend<ApiSendIn<MC>,ApiWeakHandle<MC>>;
 
+
+
+pub type WriteSendIn<MC : MyDHTConf> = <MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::Send;
+pub type WriteRecvIn<MC : MyDHTConf> = <MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::Recv;
+pub type WriteHandle<MC : MyDHTConf> = <MC::WriteSpawn as Spawner<WriteService<MC>,MC::WriteDest,WriteRecvIn<MC>>>::Handle;
+pub type WriteWeakHandle<MC : MyDHTConf> = <WriteHandle<MC> as SpawnHandle<WriteService<MC>,MC::WriteDest,WriteRecvIn<MC>>>::WeakHandle;
 
 pub type PeerStoreHandle<MC : MyDHTConf> = <MC::PeerStoreServiceSpawn as 
 Spawner<
@@ -848,3 +877,8 @@ pub type SynchConnectHandle<MC : MyDHTConf> = <MC::SynchConnectSpawn as
     <MC::SynchConnectChannelIn as SpawnChannel<SynchConnectCommandIn<MC::Transport>>>::Recv
   >>::Handle;
 
+
+
+type MainLoopRecvIn<MC : MyDHTConf> = MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>;
+type MainLoopSendIn<MC : MyDHTConf> = MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>;
+type MainLoopSendOut<MC : MyDHTConf> = <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply<MC>>>::Send;

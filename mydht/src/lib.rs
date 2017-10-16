@@ -21,6 +21,28 @@ extern crate coroutine;
 extern crate mydht_basetest;
 extern crate mio;
 
+#[macro_export]
+macro_rules! sref_self_mc{($ty:ident) => (
+
+  impl<MC : MyDHTConf> SRef for $ty<MC> {
+    type Send = $ty<MC>;
+    #[inline]
+    fn get_sendable(self) -> Self::Send {
+      self
+    }
+  }
+
+  impl<MC : MyDHTConf> SToRef<$ty<MC>> for $ty<MC> {
+    #[inline]
+    fn to_ref(self) -> $ty<MC> {
+      self
+    }
+  }
+
+)}
+
+
+
 /// Local service will simply proxy to Global service
 #[macro_export]
 macro_rules! localproxyglobal(() => (

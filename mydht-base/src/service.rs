@@ -380,6 +380,7 @@ pub struct MpscChannelRef;
 pub struct MpscSenderRef<C : SRef>(MpscSender<C::Send>);
 pub struct MpscReceiverRef<C : SRef>(MpscReceiver<C::Send>);
 pub struct MpscSenderToRef<CS>(MpscSender<CS>);
+pub struct MpscReceiverToRef<CS>(MpscReceiver<CS>);
 
 impl<C : SRef> SpawnSend<C> for MpscSenderRef<C> {
   const CAN_SEND : bool = <MpscSender<C::Send>>::CAN_SEND;
@@ -405,6 +406,14 @@ impl<C : SRef> SpawnRecv<C> for MpscReceiverRef<C> {
   }
 }
 
+impl<C : SRef> SpawnRecv<C> for MpscReceiverToRef<C::Send> {
+  fn recv(&mut self) -> Result<Option<C>> {
+    let r = <MpscReceiver<C::Send> as SpawnRecv<C::Send>>::recv(&mut self.0)?;
+    Ok(r.map(|tr|tr.to_ref()))
+  }
+}
+
+
 impl<C : SRef> Clone for MpscSenderRef<C> {
   fn clone(&self) -> Self {
     MpscSenderRef(self.0.clone())
@@ -425,6 +434,22 @@ impl<C : SRef> SToRef<MpscSenderRef<C>> for MpscSenderToRef<C::Send> {
     MpscSenderRef(self.0)
   }
 }
+
+impl<C : SRef> SRef for MpscReceiverRef<C> {
+  type Send = MpscReceiverToRef<C::Send>;
+  #[inline]
+  fn get_sendable(self) -> Self::Send {
+    MpscReceiverToRef(self.0)
+  }
+}
+
+impl<C : SRef> SToRef<MpscReceiverRef<C>> for MpscReceiverToRef<C::Send> {
+  #[inline]
+  fn to_ref(self) -> MpscReceiverRef<C> {
+    MpscReceiverRef(self.0)
+  }
+}
+
 
 
 impl<C : SRef> SpawnChannel<C> for MpscChannelRef {
@@ -547,6 +572,7 @@ pub enum YieldReturn {
 
 /// set a default value to receiver (spawn loop will therefore not yield on receiver
 pub struct DefaultRecv<C,SR>(pub SR, pub C);
+pub struct DefaultRecvRef<C : SRef,SR : SRef>(DefaultRecv<<C as SRef>::Send, <SR as SRef>::Send>);
 
 impl<C : Clone, SR : SpawnRecv<C>> SpawnRecv<C> for DefaultRecv<C,SR> {
   #[inline]
@@ -556,6 +582,32 @@ impl<C : Clone, SR : SpawnRecv<C>> SpawnRecv<C> for DefaultRecv<C,SR> {
       return Ok(Some(self.1.clone()))
     }
     r
+  }
+}
+
+impl<C : SRef, SR : SRef> SRef for DefaultRecv<C,SR> 
+{ 
+  type Send = DefaultRecvRef<C,SR>;
+  #[inline]
+  fn get_sendable(self) -> Self::Send {
+    DefaultRecvRef(DefaultRecv(self.0.get_sendable(),self.1.get_sendable()))
+  }
+}
+
+impl<C : SRef, SR : SRef> SToRef<DefaultRecv<C,SR>> for DefaultRecvRef<C,SR> {
+  #[inline]
+  fn to_ref(self) -> DefaultRecv<C,SR> {
+    DefaultRecv((self.0).0.to_ref(),(self.0).1.to_ref())
+  }
+}
+impl<C : SRef, SR : SRef> SpawnRecv<C> for DefaultRecvRef<C,SR> where 
+  <C as SRef>::Send : Clone,
+  <SR as SRef>::Send : SpawnRecv<<C as SRef>::Send>,
+  {
+  #[inline]
+  fn recv(&mut self) -> Result<Option<C>> {
+    let a = self.0.recv()?;
+    Ok(a.map(|a|a.to_ref()))
   }
 }
 
@@ -583,7 +635,7 @@ pub struct NoSpawn;
 #[derive(Clone,Debug)]
 pub struct NoHandle;
 
-sref_send_clone!(NoSend);
+sref_self!(NoSend);
 
 
 
@@ -643,6 +695,9 @@ impl<C> SpawnRecv<C> for NoRecv {
   //TODO fn close(&mut self) -> Result<()> : close receiver, meaning senders will fail on send and
   //could be drop TODO also require is_close function (same for send) TODO this mus be last
 }
+
+sref_self!(NoRecv);
+
 impl<C> SpawnSend<C> for NoSend {
   const CAN_SEND : bool = false;
   #[inline]
@@ -1107,7 +1162,7 @@ impl<S,D,R> Clone for ThreadHandleParkWeak<S,D,R> {
 }
 
 pub struct ThreadHandlePark<S,D,R>(Arc<Mutex<Option<(S,D,R,Result<()>)>>>,JoinHandle<Result<()>>,Arc<(Mutex<bool>,Condvar)>);
-pub struct ThreadHandleParkRef<S,D : SRef,R>(Arc<Mutex<Option<(S,D::Send,R,Result<()>)>>>,JoinHandle<Result<()>>,Arc<(Mutex<bool>,Condvar)>);
+pub struct ThreadHandleParkRef<S : SRef,D : SRef,R : SRef>(Arc<Mutex<Option<(S::Send,D::Send,R::Send,Result<()>)>>>,JoinHandle<Result<()>>,Arc<(Mutex<bool>,Condvar)>);
 
 pub struct ThreadYieldPark(Arc<(Mutex<bool>,Condvar)>);
 
@@ -1134,7 +1189,7 @@ impl<S,D,R> SpawnUnyield for ThreadHandleParkWeak<S,D,R> {
   thread_parkunyield!();
 }
 
-impl<S,D : SRef,R> SpawnUnyield for ThreadHandleParkRef<S,D,R> {
+impl<S : SRef,D : SRef,R : SRef> SpawnUnyield for ThreadHandleParkRef<S,D,R> {
   thread_parkunyield!();
 }
 
@@ -1142,9 +1197,9 @@ impl<S,D : SRef,R> SpawnUnyield for ThreadHandleParkRef<S,D,R> {
 impl<S,D,R> SpawnUnyield for ThreadHandlePark<S,D,R> {
   thread_parkunyield!();
 }
-impl<S,D : SRef,R> SpawnHandle<S,D,R> for ThreadHandleParkRef<S,D,R> {
+impl<S : SRef,D : SRef,R : SRef> SpawnHandle<S,D,R> for ThreadHandleParkRef<S,D,R> {
 //  type WeakHandle = NoWeakHandle;
-  type WeakHandle = ThreadHandleParkWeak<S,<D as SRef>::Send,R>;
+  type WeakHandle = ThreadHandleParkWeak<<S as SRef>::Send,<D as SRef>::Send,<R as SRef>::Send>;
   #[inline]
   fn unwrap_state(self) -> Result<(S,D,R,Result<()>)> {
     let mut mlock = self.0.lock();
@@ -1152,7 +1207,7 @@ impl<S,D : SRef,R> SpawnHandle<S,D,R> for ThreadHandleParkRef<S,D,R> {
       //let ost = mutex.into_inner();
       let ost = replace(&mut (*mlock),None);
       let (s,d,r,rr) = ost.unwrap();
-      Ok((s,d.to_ref(),r,rr))
+      Ok((s.to_ref(),d.to_ref(),r.to_ref(),rr))
     } else {
       Err(Error("unwrap state on unfinished thread".to_string(), ErrorKind::Bug, None))
     }
@@ -1243,10 +1298,11 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
 }
 
 //impl<C : Ref<C>> Ref<MpscSenderRef<C>> for MpscSenderRef<C> {
-impl<S : 'static + Send + Service + SRef, D : SRef + 'static + SpawnSend<S::CommandOut>, R : 'static + Send + SpawnRecv<S::CommandIn>> 
+impl<S : 'static + Service + SRef, D : SRef + 'static + SpawnSend<S::CommandOut>, R : 'static + SRef + SpawnRecv<S::CommandIn>> 
   Spawner<S,D,R> for ThreadParkRef
   where D::Send : SpawnSend<S::CommandOut>,
-  <S as Service>::CommandIn : SRef
+        R::Send : SpawnRecv<S::CommandIn>,
+        <S as Service>::CommandIn : SRef,
 {
  
 /*impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>, R : 'static + Send + SpawnRecv<
@@ -1259,25 +1315,28 @@ impl<S : 'static + Send + Service + SRef, D : SRef + 'static + SpawnSend<S::Comm
   type Yield = ThreadYieldPark;
   fn spawn (
     &mut self,
-    mut service : S,
+    service : S,
     spawn_out : D,
     ocin : Option<<S as Service>::CommandIn>,
-    mut recv : R,
+    recv : R,
     mut nb_loop : usize
   ) -> Result<Self::Handle> {
     let skip = Arc::new((Mutex::new(false),Condvar::new()));
     let skip2 = skip.clone();
     let finished = Arc::new(Mutex::new(None));
     let finished2 = finished.clone();
+    let service_ref = service.get_sendable();
     let mut spawn_out_s = spawn_out.get_sendable();
+    let mut recv_s = recv.get_sendable();
     let ocins = ocin.map(|cin|cin.get_sendable());
     let join_handle = thread::Builder::new().spawn(move ||{
+      let mut service = service_ref.to_ref();
       let mut y = ThreadYieldPark(skip2);
       let mut err = Ok(());
       let mut ocin = ocins.map(|cin|cin.to_ref());
-      spawn_loop!(service,spawn_out_s,ocin,recv,nb_loop,y,err,Err(Error("Thread park spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
+      spawn_loop!(service,spawn_out_s,ocin,recv_s,nb_loop,y,err,Err(Error("Thread park spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
       let mut data = finished.lock();
-      *data = Some((service,spawn_out_s,recv,err));
+      *data = Some((service.get_sendable(),spawn_out_s,recv_s,err));
       Ok(())
     })?;
     return Ok(ThreadHandleParkRef(finished2,join_handle,skip));

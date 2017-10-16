@@ -107,18 +107,19 @@ error[E0277]: the trait bound `std::rc::Rc<mydht_basetest::node::Node>: std::mar
 
 At this point we could change all threaded spawner, but their is the use case where we transmit peers as RcRef or CloneRef (for instance if peers is a single ip address) and still use threading. 
 
-So the solution is to copy the Rc to the new thread, that is what SRef implemnetation of RcRef does : give a sendable type for Rc<Peer> (simply cloning Peer) and then in the spawn thread put back this to a RcRef (putting it back may not be suitable but RcRef<Peer> is the only kind of peer define in the conf and transmit to service commands).
+So the solution will be copying the Rc to the new thread, that is what SRef implemnetation of RcRef does : give a sendable type for Rc<Peer> (simply cloning Peer) and then in the spawn thread put back this to a RcRef (putting it back may not be suitable but RcRef<Peer> is the only kind of peer define in the conf and transmit to service commands).
 This sending of SRef could not be achieve with MpscChannel but another Channel implementation is doing it (cloning/unwraping on write and putting back to Ref on recv) : 'MpscChannelRef'
 ```
 pub struct MpscChannelRef;
 pub struct MpscSenderRef<C : SRef>(MpscSender<C::Send>);
 pub struct MpscReceiverRef<C : SRef>(MpscReceiver<C::Send>);
 pub struct MpscSenderToRef<CS>(MpscSender<CS>);
+pub struct MpscReceiverToRef<CS>(MpscReceiver<CS>);
 ```
 It simply wrap an MpscSender of the Send inner typer of our Ref<P> as an SRef, implementation is straightforward.
 
 Changing all our channels (ApiChannelIn, PeerStoreServiceChannelIn, MainLoopChannelIn, MainLoopChannelOut, ReadChannelIn, WriteChannelIn, PeerMgmtChannelIn, GlobalServiceChannelIn) for localproxy we already use a 'NoChannel' as input (received message is build from frame in Read service) and a non threaded spawner : see 'localproxyglobal' macro.
-After manually implementing SRef for a lot of Command and Reply struct (a macro is really needed here see for a simple example TODO add link to commit) we obtain :
+After manually implementing SRef for a lot of Command and Reply struct (a macro is really needed here see for a simple example TODO add link to commit) we still obtain :
 ```
 error[E0277]: the trait bound `std::rc::Rc<mydht_basetest::node::Node>: std::marker::Send` is not satisfied in `procs::server2::ReadService<test::mainloop::TestLocalConf>`
    --> src/test/mainloop.rs:658:6
@@ -136,6 +137,8 @@ This is also true for the Service itself, so SRef must also be implemented for o
 
 So the ThreadPark spawn need to use a Send command and similarily to what we did with channel we will use a 'ThreadPark' variant, 'ThreadParkRef' which is going to spawn thread over the associated type of RcRef<P> as an SRef which is Send (P being Mydht Peer, P is Send). Then before looping over the iteration of our service call, our type is wrapped back as an Rc.
 
+In fact all Send requirement are more or less replaced by SRef (Service, and its receiver and sender), some diffuculties occured with some service member for instance query cache of kvstore which could not be easily use as sendable when it contains Rc : in this case it was simply not send in the variant and initiated at service start similarily to kvstore storage (boxed initializer).
+
 After changin to ThreadParkRef it compiles and test run.
 
 In fact I did cheat on order of errors, first is Spawner then Channel, but it was simplier explaining in this order.
@@ -145,3 +148,4 @@ So what did we do, just change MyDHT usage of Arc to use of Rc but staying in a 
 Next step will be easiest : changing some service to run in the same thread as the main loop service. Please note that this is only possible if the transport is asynchronous, for synch transport there is a lot of thread restriction and trick that I may describe in a future post.
 
 
+Similarily, returning result 'ApiResult' is intended to contain the ArcRef, we will therefore use another kind of return resulting which will return the SRef::Send called 'ApiResultRef' for consistency. The more we advance in implementation the more it looks like SRef usage globally should be an idea.

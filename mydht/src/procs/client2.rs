@@ -55,8 +55,6 @@ pub struct WriteService<MC : MyDHTConf> {
   stream : <MC::Transport as Transport>::WriteStream,
   enc : MC::MsgEnc,
   from : MC::PeerRef,
-//  from : PeerRefSend<MC>,
-  //with : Option<PeerRefSend<MC>>,
   with : Option<MC::PeerRef>,
   peermgmt : MC::PeerMgmtMeths,
   token : usize,
@@ -64,6 +62,54 @@ pub struct WriteService<MC : MyDHTConf> {
   /// shadow to use when auth is fine
   shad_msg : Option<<MC::Peer as Peer>::ShadowWMsg>,
 }
+pub struct WriteServiceRef<MC : MyDHTConf> {
+  stream : <MC::Transport as Transport>::WriteStream,
+  enc : MC::MsgEnc,
+  from : PeerRefSend<MC>,
+  with : Option<PeerRefSend<MC>>,
+  peermgmt : MC::PeerMgmtMeths,
+  token : usize,
+  read_token : Option<usize>,
+  shad_msg : Option<<MC::Peer as Peer>::ShadowWMsg>,
+}
+
+impl<MC : MyDHTConf> SRef for WriteService<MC> where
+  {
+  type Send = WriteServiceRef<MC>;
+  fn get_sendable(self) -> Self::Send {
+    let WriteService {
+      stream, enc,
+      from,
+      with,
+      peermgmt, token, read_token, shad_msg,
+    } = self;
+    WriteServiceRef {
+      stream, enc,
+      from : from.get_sendable(),
+      with : with.map(|w|w.get_sendable()),
+      peermgmt, token, read_token, shad_msg,
+    }
+  }
+}
+
+impl<MC : MyDHTConf> SToRef<WriteService<MC>> for WriteServiceRef<MC> where
+  {
+  fn to_ref(self) -> WriteService<MC> {
+    let WriteServiceRef {
+      stream, enc,
+      from,
+      with,
+      peermgmt, token, read_token, shad_msg,
+    } = self;
+    WriteService {
+      stream, enc,
+      from : from.to_ref(),
+      with : with.map(|w|w.to_ref()),
+      peermgmt, token, read_token, shad_msg,
+    }
+  }
+}
+
 
 impl<MC : MyDHTConf> WriteService<MC> {
   //pub fn new(token : usize, ws : <MC::Transport as Transport>::WriteStream, me : PeerRefSend<MC>, with : Option<PeerRefSend<MC>>, enc : MC::MsgEnc, peermgmt : MC::PeerMgmtMeths) -> Self {

@@ -38,7 +38,7 @@ use procs::{
 
 use self::mydht_bincode::Bincode;
 use procs::api::{
-  ApiSendIn,
+  DHTIn,
 };
 use transport::{
   SerSocketAddr,
@@ -80,7 +80,7 @@ fn connect_rw () {
 
 
 fn initpeers_udp2 (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u64>)
-  -> Vec<(Node, ApiSendIn<TestConf<Node,Udp,Bincode,TestingRules,SimpleRules>>)> {
+  -> Vec<(Node, DHTIn<TestConf<Node,Udp,Bincode,TestingRules,SimpleRules>>)> {
   let mut nodes = Vec::new();
   let mut transports = Vec::new();
 

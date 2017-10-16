@@ -1,6 +1,7 @@
 extern crate time;
 use serde::{Serializer,Serialize,Deserialize,Deserializer};
 use std::marker::PhantomData;
+use std::mem::replace;
 use std::ops::Deref;
 use std::net::SocketAddr;
 use std::net::SocketAddrV4;
@@ -424,6 +425,7 @@ pub fn change_one_result<V : Send> (ores : &OneResult<V>, v : V) {
   }
 }
 
+
 /// Racy change value but with condition
 pub fn change_one_result_ifneq<V : Send + Eq> (ores : &OneResult<V>, neq : &V, v : V) {
   match ores.0.lock() {
@@ -469,6 +471,44 @@ pub fn clone_wait_one_result<V : Clone + Send> (ores : &OneResult<V>, newval : O
  };
  r
 }
+
+#[inline]
+/// use only for small clonable stuff or arc it TODO return MyDHTResult!!
+/// Second parameter let you specify a new value.
+pub fn replace_wait_one_result<V : Send> (ores : &OneResult<V>, newval : V) -> Option<V> {
+ let r = match ores.0.lock() {
+    Ok(mut guard) => {
+      let mut res = None;
+      loop {
+        match ores.1.wait(guard) {
+          Ok(mut r) => {
+            if r.1 {
+              r.1 = false;
+              let rv = replace(&mut r.0,newval);
+//          Some(*r)
+              res = Some(rv);
+              break;
+            } else {
+              debug!("spurious wait");
+              guard = r;
+            };
+          },
+          Err(_) => {
+            error!("Condvar issue for return res");
+            break;
+          }, // TODO what to do??? panic?
+        }
+      };
+      res
+    },
+    Err(m) => {
+      error!("poisonned mutex on one res : {:?}", m);
+      None
+    }, // not logic
+ };
+ r
+}
+
 /// same as clone_wait_one_result but with condition, if condition is not reach value is returned
 /// (value will be neq value condition)
 pub fn clone_wait_one_result_ifneq<V : Clone + Send + Eq> (ores : &OneResult<V>, neqval : &V, newval : Option<V>) -> Option<V> {

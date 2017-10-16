@@ -37,17 +37,19 @@ use procs::storeprop::{
 use utils::{
   OneResult,
   new_oneresult,
-  clone_wait_one_result,
+  replace_wait_one_result,
 };
 use procs::{
   OptInto,
   OptFrom,
   MCCommand,
   MCReply,
+  MCReplySend,
 };
 use procs::api::{
   Api,
   ApiResult,
+  ApiResultSend,
   ApiQueriable,
   ApiQueryId,
   ApiRepliable,
@@ -293,13 +295,24 @@ impl ApiRepliable for TestReply {
 }
 
 
-pub struct TestRoute<MDC : MyDHTConf>(PhantomData<MDC>);
+pub struct TestRoute<MC : MyDHTConf>(PhantomData<MC>);
+
+pub struct TestService<MC : MyDHTConf>(PhantomData<MC>);
+
+sref_self_mc!(TestService);
+
+/*impl<MC : MyDHTConf> SRef for  GlobalDest<MC> {
+  type Send = Self;
+  #[inline]
+  fn get_sendable(self) -> Self::Send { self }
+}
+impl<MC : MyDHTConf> SToRef<GlobalDest<MC>> for  GlobalDest<MC> {
+  fn to_ref(self) -> GlobalDest<MC> { self }
+}*/
 
 
-pub struct TestService<MDC : MyDHTConf>(PhantomData<MDC>);
 
-
-macro_rules! service_conf_test{($testconf:ident,$testtest:ident,$startport:expr) => (
+macro_rules! service_conf_test{($testconf:ident,$testtest:ident,$startport:expr,$apires:ident,$mcrep:ident) => (
   /// peer name, listener port, is_multiplexed
   pub struct $testconf (pub String, pub usize, pub bool);
 
@@ -428,17 +441,17 @@ macro_rules! service_conf_test{($testconf:ident,$testtest:ident,$startport:expr)
     let touchq = ApiCommand::call_service_reply(TestCommand::TouchQ(None,1),o_res.clone());
     sendcommand1.send(touch).unwrap();
     sendcommand1.send(touchq).unwrap();
-    let o_res = clone_wait_one_result(&o_res,None).unwrap();
+    let o_res = replace_wait_one_result(&o_res,(Vec::new(),0,999)).unwrap();
     assert!(o_res.0.len() == 2);
     for v in o_res.0.iter() {
-      assert!(if let &ApiResult::ServiceReply(MCReply::Global(TestReply::TouchQ(Some(1)))) = v {true} else {false});
+      assert!(if let &$apires::ServiceReply($mcrep::Global(TestReply::TouchQ(Some(1)))) = v {true} else {false});
     }
     let o_res = new_oneresult((Vec::with_capacity(2),2,2));
     let peer_local = ApiCommand::call_peer_reply(KVStoreCommand::Find(query_message_1(),"peer2".to_string(),None),o_res.clone());
     let peer_self = ApiCommand::call_peer_reply(KVStoreCommand::Find(query_message_1(),"peer1".to_string(),None),o_res.clone());
     sendcommand1.send(peer_local).unwrap();
     sendcommand1.send(peer_self).unwrap();
-    let o_res = clone_wait_one_result(&o_res,None).unwrap();
+    let o_res = replace_wait_one_result(&o_res,(Vec::new(),0,999)).unwrap();
     assert!(o_res.0.len() == 2);
   //Find(QueryMsg<P>, V::Key,Option<ApiQueryId>),
 //    sendcommand1.send(command2).unwrap();
@@ -450,7 +463,21 @@ macro_rules! service_conf_test{($testconf:ident,$testtest:ident,$startport:expr)
 
 )}
 
-service_conf_test!(TestAllThConf,test_connect_all_th,48880);
+pub fn query_message_1<P : Peer>() -> QueryMsg<P> {
+  QueryMsg {
+    mode_info : QueryModeMsg::AProxy(0),
+    hop_hist : None,
+    // TODO delete storage prio
+    storage : StoragePriority::Local,
+    rem_hop : 1,
+    nb_forw : 1,
+    prio : 0,
+    nb_res : 1,
+  }
+}
+
+
+service_conf_test!(TestAllThConf,test_connect_all_th,48880,ApiResult,MCReply);
 
 impl MyDHTConf for TestAllThConf {
 
@@ -527,9 +554,13 @@ impl MyDHTConf for TestAllThConf {
   fn do_peer_query_forward_with_discover(&self) -> bool {
     false
   }
-  fn init_peer_kvstore_query_cache(&mut self) -> Result<Self::PeerStoreQueryCache> {
-    // non random id
-    Ok(SimpleCacheQuery::new(false))
+  fn init_peer_kvstore_query_cache(&mut self) -> Result<Box<Fn() -> Result<Self::PeerStoreQueryCache> + Send>> {
+    Ok(Box::new(
+      ||{
+        // non random id
+        Ok(SimpleCacheQuery::new(false))
+      }
+    ))
   }
   fn init_peerstore_channel_in(&mut self) -> Result<Self::PeerStoreServiceChannelIn> {
     Ok(MpscChannel)
@@ -641,8 +672,8 @@ impl MyDHTConf for TestAllThConf {
     Ok(NoChannel)
   }
 }
-/*
-service_conf_test!(TestLocalConf,test_connect_all_local,48883);
+
+service_conf_test!(TestLocalConf,test_connect_all_local,48883,ApiResultSend,MCReplySend);
 
 impl MyDHTConf for TestLocalConf {
 
@@ -675,9 +706,9 @@ impl MyDHTConf for TestLocalConf {
   localproxyglobal!();
   type GlobalService = TestService<Self>;
   type GlobalServiceSpawn = ThreadParkRef;
-  type GlobalServiceChannelIn = MpscChannel;
-  type ApiReturn = OneResult<(Vec<ApiResult<Self>>,usize,usize)>;
-  type ApiService = Api<Self,HashMap<ApiQueryId,(OneResult<(Vec<ApiResult<Self>>,usize,usize)>,Instant)>>;
+  type GlobalServiceChannelIn = MpscChannelRef;
+  type ApiReturn = OneResult<(Vec<ApiResultSend<Self>>,usize,usize)>;
+  type ApiService = Api<Self,HashMap<ApiQueryId,(OneResult<(Vec<ApiResultSend<Self>>,usize,usize)>,Instant)>>;
   type ApiServiceSpawn = ThreadParkRef;
   type ApiServiceChannelIn = MpscChannelRef;
   type PeerStoreQueryCache = SimpleCacheQuery<Self::Peer,Self::PeerRef,Self::PeerRef,HashMapQuery<Self::Peer,Self::PeerRef,Self::PeerRef>>;
@@ -700,9 +731,13 @@ impl MyDHTConf for TestLocalConf {
   fn do_peer_query_forward_with_discover(&self) -> bool {
     false
   }
-  fn init_peer_kvstore_query_cache(&mut self) -> Result<Self::PeerStoreQueryCache> {
-    // non random id
-    Ok(SimpleCacheQuery::new(false))
+  fn init_peer_kvstore_query_cache(&mut self) -> Result<Box<Fn() -> Result<Self::PeerStoreQueryCache> + Send>> {
+    Ok(Box::new(
+      ||{
+        // non random id
+        Ok(SimpleCacheQuery::new(false))
+      }
+    ))
   }
   fn init_peerstore_channel_in(&mut self) -> Result<Self::PeerStoreServiceChannelIn> {
     Ok(MpscChannelRef)
@@ -715,7 +750,7 @@ impl MyDHTConf for TestLocalConf {
   fn init_ref_peer(&mut self) -> Result<Self::PeerRef> {
      let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), self.1 as u16);
      let val = Node {nodeid: self.0.clone(), address : SerSocketAddr(addr)};
-     Ok(ArcRef::new(val))
+     Ok(RcRef::new(val))
     // Ok(RcRef::new(val))
   }
   fn get_main_spawner(&mut self) -> Result<Self::MainloopSpawn> {
@@ -814,20 +849,8 @@ impl MyDHTConf for TestLocalConf {
     Ok(NoChannel)
   }
 }
-*/
 
-pub fn query_message_1<P : Peer>() -> QueryMsg<P> {
-  QueryMsg {
-    mode_info : QueryModeMsg::AProxy(0),
-    hop_hist : None,
-    // TODO delete storage prio
-    storage : StoragePriority::Local,
-    rem_hop : 1,
-    nb_forw : 1,
-    prio : 0,
-    nb_res : 1,
-  }
-}
+
 /*mod test_dummy_all_block_thread {
   use super::*;
   use std::time::Duration;

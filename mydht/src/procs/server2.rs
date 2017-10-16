@@ -43,6 +43,14 @@ use super::{
   GlobalHandleSend,
   ApiHandleSend,
   MainLoopSendIn,
+  ApiSendIn,
+  ApiWeakHandle,
+  GlobalSendIn,
+  GlobalWeakHandle,
+  LocalHandle,
+  LocalSendIn,
+  WriteSendIn,
+  WriteWeakHandle,
 };
 use peer::Peer;
 use keyval::{
@@ -79,19 +87,98 @@ pub struct ReadService<MC : MyDHTConf> {
   token : usize,
   prio : Option<PeerPriority>,
   shad_msg : Option<<MC::Peer as Peer>::ShadowRMsg>,
-  local_sp : Option<(
-    <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Send, 
-    <MC::LocalServiceSpawn as Spawner<
-      MC::LocalService,
-      LocalDest<MC>,
-      <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Recv
-    >>::Handle)>,
+  local_sp : Option<(LocalSendIn<MC>, LocalHandle<MC>)>,
   local_spawner : MC::LocalServiceSpawn,
   local_channel_in : MC::LocalServiceChannelIn,
   read_dest_proto : ReadDest<MC>,
   api_dest_proto : Option<ApiHandleSend<MC>>,
 //      dhtrules_proto : conf.init_dhtrules_proto()?,
 }
+
+/// Note that local handle is not send : cannot restart if state suspend
+pub struct ReadServiceSend<MC : MyDHTConf> {
+  stream : <MC::Transport as Transport>::ReadStream,
+  is_auth : bool,
+  enc : MC::MsgEnc,
+  from : <MC::PeerRef as SRef>::Send,
+  with : Option<<MC::PeerRef as SRef>::Send>,
+  peermgmt : MC::PeerMgmtMeths,
+  token : usize,
+  prio : Option<PeerPriority>,
+  shad_msg : Option<<MC::Peer as Peer>::ShadowRMsg>,
+  local_spawner : MC::LocalServiceSpawn,
+  local_channel_in : MC::LocalServiceChannelIn,
+  read_dest_proto : ReadDest<MC>,
+  api_dest_proto : Option<ApiHandleSend<MC>>,
+}
+
+impl<MC : MyDHTConf> SRef for ReadService<MC> where
+  MC::LocalServiceSpawn : Send,
+  MC::LocalServiceChannelIn : Send,
+  <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send : Send,
+  <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Send : Send,
+  MainLoopSendIn<MC> : Send,
+  ApiSendIn<MC> : Send,
+  ApiWeakHandle<MC> : Send,
+  GlobalSendIn<MC> : Send,
+  GlobalWeakHandle<MC> : Send,
+  WriteSendIn<MC> : Send,
+  WriteWeakHandle<MC> : Send,
+  {
+  type Send = ReadServiceSend<MC>;
+  #[inline]
+  fn get_sendable(self) -> Self::Send {
+    let ReadService {
+      stream, is_auth, enc,
+      from,
+      with,
+      peermgmt, token, prio, shad_msg, 
+      local_sp, 
+      local_spawner, local_channel_in, read_dest_proto, api_dest_proto,
+    } = self;
+    ReadServiceSend {
+      stream, is_auth, enc,
+      from : from.get_sendable(),
+      with : with.map(|w|w.get_sendable()),
+      peermgmt, token, prio, shad_msg, 
+      local_spawner, local_channel_in, read_dest_proto, api_dest_proto,
+    } 
+  }
+}
+
+impl<MC : MyDHTConf> SToRef<ReadService<MC>> for ReadServiceSend<MC> where
+  MC::LocalServiceSpawn : Send,
+  MC::LocalServiceChannelIn : Send,
+  <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send : Send,
+  <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Send : Send,
+  MainLoopSendIn<MC> : Send,
+  ApiSendIn<MC> : Send,
+  ApiWeakHandle<MC> : Send,
+  GlobalSendIn<MC> : Send,
+  GlobalWeakHandle<MC> : Send,
+  WriteSendIn<MC> : Send,
+  WriteWeakHandle<MC> : Send,
+  {
+  #[inline]
+  fn to_ref(self) -> ReadService<MC> {
+    let ReadServiceSend {
+      stream, is_auth, enc,
+      from,
+      with,
+      peermgmt, token, prio, shad_msg, 
+      local_spawner, local_channel_in, read_dest_proto, api_dest_proto,
+    } = self;
+    ReadService {
+      stream, is_auth, enc,
+      from : from.to_ref(),
+      with : with.map(|w|w.to_ref()),
+      peermgmt, token, prio, shad_msg, 
+      local_sp : None,
+      local_spawner, local_channel_in, read_dest_proto, api_dest_proto,
+    } 
+  }
+}
+
 
 impl<MC : MyDHTConf> ReadService<MC> {
   pub fn new(
@@ -403,6 +490,35 @@ impl<MC : MyDHTConf> Clone for ReadDest<MC> {
       }
     }
 }
+
+impl<MC : MyDHTConf> SRef for ReadDest<MC> where
+  <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send : Send,
+  MainLoopSendIn<MC> : Send,
+  GlobalSendIn<MC> : Send,
+  GlobalWeakHandle<MC> : Send,
+  WriteSendIn<MC> : Send,
+  WriteWeakHandle<MC> : Send,
+  {
+  type Send = ReadDest<MC>;
+  fn get_sendable(self) -> Self::Send {
+    self
+  }
+}
+
+impl<MC : MyDHTConf> SToRef<ReadDest<MC>> for ReadDest<MC> where
+  <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send : Send,
+  MainLoopSendIn<MC> : Send,
+  GlobalSendIn<MC> : Send,
+  GlobalWeakHandle<MC> : Send,
+  WriteSendIn<MC> : Send,
+  WriteWeakHandle<MC> : Send,
+  {
+  fn to_ref(self) -> ReadDest<MC> {
+    self
+  }
+}
+
+
 impl<MC : MyDHTConf> SpawnSend<ReadReply<MC>> for ReadDest<MC> {
   const CAN_SEND : bool = true;
   fn send(&mut self, r : ReadReply<MC>) -> Result<()> {

@@ -61,7 +61,7 @@ use peer::{
   Peer,
 };
 use procs::api::{
-  ApiSendIn,
+  DHTIn,
 };
 use self::mydht_slab::slab::{
   Slab,
@@ -261,7 +261,7 @@ fn peerconnect_scenario2 (queryconf : &QueryConf, knownratio : usize, contexts :
   let mut rng = thread_rng();
   let mut ix_context = 0;
   let mut me = None;
-  let mut procs : Vec<ApiSendIn<TestConf<PeerTest,TransportTest,Json,TestingRules,SimpleRules>>> = contexts.into_iter().map(|mut context|{
+  let mut procs : Vec<DHTIn<TestConf<PeerTest,TransportTest,Json,TestingRules,SimpleRules>>> = contexts.into_iter().map(|mut context|{
     info!("node : {:?}", context.me);
 
     if me == None {
@@ -357,7 +357,7 @@ fn simpeer2hopget () {
 }
 
 fn finddistantpeer2<P : Peer, T : Transport<Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>> + Clone>
-   (mut peers : Vec<(P, ApiSendIn<TestConf<P,T,E,TestingRules,SimpleRules>>)>, nbpeer : usize, qm : QueryMode, prio : QueryPriority, _map : &[&[usize]], find : bool, rules : SimpleRules)
+   (mut peers : Vec<(P, DHTIn<TestConf<P,T,E,TestingRules,SimpleRules>>)>, nbpeer : usize, qm : QueryMode, prio : QueryPriority, _map : &[&[usize]], find : bool, rules : SimpleRules)
   where  <P as KeyVal>::Key : Hash {
     let queryconf = QueryConf {
       mode : qm.clone(), 
@@ -682,10 +682,13 @@ where <P as KeyVal>::Key : Hash
   fn do_peer_query_forward_with_discover(&self) -> bool {
     self.do_peer_query_forward_with_discover
   }
-  
-  fn init_peer_kvstore_query_cache(&mut self) -> Result<Self::PeerStoreQueryCache> {
-    // non random id
-    Ok(SimpleCacheQuery::new(false))
+  fn init_peer_kvstore_query_cache(&mut self) -> Result<Box<Fn() -> Result<Self::PeerStoreQueryCache> + Send>> {
+    Ok(Box::new(
+      ||{
+        // non random id
+        Ok(SimpleCacheQuery::new(false))
+      }
+    ))
   }
   fn init_peerstore_channel_in(&mut self) -> Result<Self::PeerStoreServiceChannelIn> {
     Ok(MpscChannel)
@@ -775,9 +778,10 @@ where <P as KeyVal>::Key : Hash
       // for testing purpose we do it this way)
       me : self.init_ref_peer()?,
       init_store : self.init_peer_kvstore()?,
+      init_cache : self.init_peer_kvstore_query_cache()?,
       store : None,
       dht_rules : self.init_dhtrules_proto()?,
-      query_cache : self.init_peer_kvstore_query_cache()?,
+      query_cache : None,
       discover : self.do_peer_query_forward_with_discover(),
       _ph : PhantomData,
     })
@@ -840,11 +844,11 @@ fn confinitpeers1(me : PeerTest, others : Vec<PeerTest>, transport : TransportTe
 /// queried : in fact with  hashmap kvstore default implementation only a ratio of 2/3 peer will be
 /// queried by call to subset on peer connect discovery thus it is bad for test with single route.
 fn initpeers2<P : Peer, T : Transport<Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>> + Clone> (nodes : Vec<P>, transports : Vec<T>, map : &[&[usize]], meths : TestingRules, rules : DhtRules, enc : E, sim : Option<u64>) 
-  -> Vec<(P, ApiSendIn< TestConf<P,T,E,TestingRules,SimpleRules>  >)> 
+  -> Vec<(P, DHTIn< TestConf<P,T,E,TestingRules,SimpleRules>  >)> 
   where  <P as KeyVal>::Key : Hash 
   {
   let mut i = 0;// TODO redesign with zip of map and nodes iter
-  let mut result : Vec<(P, ApiSendIn<TestConf<P,T,E,TestingRules,SimpleRules>>, Vec<P>)> = transports.into_iter().map(|t|{
+  let mut result : Vec<(P, DHTIn<TestConf<P,T,E,TestingRules,SimpleRules>>, Vec<P>)> = transports.into_iter().map(|t|{
     let n = nodes.get(i).unwrap();
     info!("node : {:?}", n);
     println!("{:?}",map[i]);
@@ -896,7 +900,7 @@ fn initpeers2<P : Peer, T : Transport<Address = <P as Peer>::Address>,E : MsgEnc
 // Yet default to one second
 static DEF_SIM : Option<u64> = Some(2000);
 
-fn initpeers_test2 (nbpeer : usize, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u64>) -> Vec<(PeerTest, ApiSendIn<TestConf<PeerTest,TransportTest,Json,TestingRules,SimpleRules>>)> {
+fn initpeers_test2 (nbpeer : usize, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u64>) -> Vec<(PeerTest, DHTIn<TestConf<PeerTest,TransportTest,Json,TestingRules,SimpleRules>>)> {
   let transports = TransportTest::create_transport(nbpeer,true,true);
   let mut nodes = Vec::new();
   for i in 0 .. nbpeer {

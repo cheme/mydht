@@ -462,9 +462,10 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     let peerstore_service = KVStoreService {
       me : me.clone(),
       init_store : conf.init_peer_kvstore()?,
+      init_cache : conf.init_peer_kvstore_query_cache()?,
       store : None,
       dht_rules : conf.init_dhtrules_proto()?,
-      query_cache : conf.init_peer_kvstore_query_cache()?,
+      query_cache : None,
       discover : conf.do_peer_query_forward_with_discover(),
       _ph : PhantomData,
     };

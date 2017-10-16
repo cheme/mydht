@@ -4,7 +4,7 @@
 
 extern crate mydht_tcp;
 use procs::api::{
-  ApiSendIn,
+  DHTIn,
 };
 
 use msgenc::json::Json;
@@ -37,7 +37,7 @@ use num::traits::ToPrimitive;
 
 
 fn initpeers_tcp2 (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : TestingRules, rules : DhtRules, sim : Option<u64>)
-  -> Vec<(Node, ApiSendIn<TestConf<Node,Tcp,Json,TestingRules,SimpleRules>>)> {
+  -> Vec<(Node, DHTIn<TestConf<Node,Tcp,Json,TestingRules,SimpleRules>>)> {
   let mut nodes = Vec::new();
   let mut transports = Vec::new();
 

@@ -188,8 +188,6 @@ pub trait WriteTransportStream : Send + Write + 'static + Registerable {
 
 pub trait ReadTransportStream : Send + Read + 'static + Registerable {
 
-
-
   /// should end read loop
   fn disconnect(&mut self) -> IoResult<()>;
 

@@ -24,8 +24,9 @@ macro_rules! static_buff {
 */
 
 
+
 #[macro_export]
-macro_rules! sref_send_clone(($ty:ident) => (
+macro_rules! sref_self(($ty:ident) => (
 
   impl SRef for $ty {
     type Send = $ty;
