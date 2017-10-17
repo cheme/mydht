@@ -14,26 +14,28 @@ Final goal was at the time to implement web of trust application upon this techn
 
 
 At the time I was less aware of asynch transport and design my lib upon standard rust api only :
-        - a peer abstraction (related to transport for listening address obviously)
-        - a keyval abstraction for content to be share (peer being obviously a keyval)
-        - the transport trait was similar to tcp synch, but some very odd design let me run it on udp with dirty tricks (reader containing the udp frame and read thread running from start on every one). I also put some attempt to use mio (asynch transport) but using this design it had very less advantages and I dropped when the coroutine crate I used at the time becames deprecated.
-                The important point here is that we got a read stream and a write stream and that both does not need to be spawn at the same time : we allow unidirectionnal transport resulting in one socket to send to peer two and one other socket to receive from peer two, but also using the same socket depending on transport implementation : therefore we dissociate sending and receiving process (also true in new design).
-        - the encoding/decoding of Key Value was using Rust standard serialize which I switch to serde with my refacto. It allows many type of exchange (mainly use to test with json and binary (bincode crate)).
-        - authentication scheme was broken (udp implementation was allowed by it) : with only two messages called ping and pong leading to a potential replay attack (new scheme run with ping - pong - pong).
-        - rules were overly complicated and ill designed (it stay true but limited to kvstore service now)
-        - some shadowing mechanism where implemented (refacto was done to use my 'readwrite-comp' lib which was totally inspired by this) allowing some forms of encryption over transport.
-        - keyval and peer storage trait with cache trait and query cache trait, quite a mess by looking back, still have to redesign that
-        - Route trait to decide which peers to query.
+- a peer abstraction (related to transport for listening address obviously)
+- a keyval abstraction for content to be share (peer being obviously a keyval)
+- the transport trait was similar to tcp synch, but some very odd design let me run it on udp with dirty tricks (reader containing the udp frame and read thread running from start on every one). I also put some attempt to use mio (asynch transport) but using this design it had very less advantages and I dropped when the coroutine crate I used at the time becames deprecated.
+The main point here is that we got a read stream and a write stream and that both does not need to be spawn at the same time : we allow unidirectionnal transport resulting in one socket to send to peer two and one other socket to receive from peer two, but also using the same socket depending on transport implementation : therefore we dissociate sending and receiving process (also true in new design).
+- the encoding/decoding of Key Value was using Rust standard serialize which I switch to serde with my refacto. It allows many type of exchange (mainly use to test with json and binary (bincode crate)).
+- authentication scheme was broken (udp implementation was allowed by it) : with only two messages called ping and pong leading to a potential replay attack (new scheme run with ping - pong - pong).
+- rules were overly complicated and ill designed (it stay true but limited to kvstore service now)
+- some shadowing mechanism where implemented (refacto was done to use my 'readwrite-comp' lib which was totally inspired by this) allowing some forms of encryption over transport.
+- keyval and peer storage trait with cache trait and query cache trait, quite a mess by looking back, still have to redesign that
+- Route trait to decide which peers to query.
 
 
 
 The schema bellow gives an idea of the running threads :
 
+![previousdesign](./procs1.png)
+
+Missing from schema are a few single thread like Key/Value storage, or Peer storage (in routing table).
 
 Communication between thread used standard Mpsc, with Arc over peer and KeyVal, the sender being group in a 'RunningProcess' clonable struct it was pretty flexible and basically every thread could send message to every thread except the read and write threads which were driven by transport for the first and message proxied by peer management thread for the second.
 
-All thread running a single static function call (with a lot of parameter and generic type (generic type were group in few single generic trait by using associated trait later but it still look prety bad)).
-
+All thread where implemented as a single static function call (with a lot of parameter and generic type (generic type were group in few single generic trait by using associated trait later but it still look prety bad)).
 
 Quickly it felt bad to open so many system thread and I put some dirty 'ClientMode' and 'ServerMode' enum (and their associated handle) to run in a new thread or in a batch of thread or in the same thread.
 Client and Server function call became fastly unintelligible (what I thought when rereading the project), and it even lead to change of 'Transport' trait by introducing a complicated 'start' function using a closure over the server thread called on reception of new connection.
@@ -43,9 +45,9 @@ Client and Server function call became fastly unintelligible (what I thought whe
 
 # New design
 
-Being totally annoyed (it is a library and I do not want to make those choice definitive), by use of thread everywhere ClientMode and ServerMode were added, but looking back at it, it is close to unmaintanable and only there for Server and Client process.
+Being totally annoyed by use of thread everywhere (it is a library and I do not want to make those choice definitive), ClientMode and ServerMode were added. Looking back at it, it is close to unmaintanable and only there for Server and Client process.
 
-So this redesign follows a few goals :
+So I got back at mydht with a few simple goals :
         - dependency upgrade : serde usage being the most obvious (all dependency were upgrade but a lot of subcrate are broken now)
         - actual usage of asynch transport
         - usage of future lib to simplify the thread model
@@ -58,20 +60,158 @@ So started with transport trait redesign, I quickly felt uneasy as before : I sh
 The point at first was to stop running those previous procs functions.
 Next it quickly lead to a service based approach (model has change quite a bit from the start but seems ok now (except the dissiciation of channel and service leading to very verbose things)). At end, it look similar to what remember of erlang OTP.
 
+## Service traits
+
+  * Service
+
+```
+pub trait Service {
+  type CommandIn;
+  type CommandOut;
+  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut>;
+}
+
+```
+  CommandIn and CommadOut are receive from or send into channels.
 
   * Spawner
 
-  * Blockin spawn
+```
+pub trait Spawner<
+  S : Service,
+  D : SpawnSend<<S as Service>::CommandOut>,
+  R : SpawnRecv<<S as Service>::CommandIn>> {
+  type Handle : SpawnHandle<S,D,R>;
+  type Yield : SpawnerYield;
+  fn spawn (
+    &mut self,
+    service : S,
+    spawn_out : D,
+    Option<<S as Service>::CommandIn>,
+    rec : R,
+    nb_loop : usize // infinite if 0
+  ) -> Result<Self::Handle>;
+}
+
+```
+Basically a way to call a service for a certain number of iteration, each iteration being the reception of a command from input channel the service call and the sending of the service result in the output channel.
+
+  * Channel
+
+```
+pub trait SpawnChannel<Command> {
+  type WeakSend : SpawnSend<Command> + Clone;
+  type Send : SpawnSend<Command> + Clone;
+  type Recv : SpawnRecv<Command>;
+  fn new(&mut self) -> Result<(Self::Send,Self::Recv)>;
+  fn get_weak_send(&Self::Send) -> Option<Self::WeakSend>;
+}
+```
+with spawn send and spawn receive similar to an mpsc channel (a const boolean indicate if a channel can send but I should remove it).
+```
+pub trait SpawnSend<Command> : Sized {
+  const CAN_SEND : bool;
+  fn send(&mut self, Command) -> Result<()>;
+}
+pub trait SpawnRecv<Command> : Sized {
+  fn recv(&mut self) -> Result<Option<Command>>;
+}
+```
+
+  * Yield
+
+Yield is the spawn associatied type that is called when getting a new message from the input channel if empty, but can also be directly call from service.
+```
+pub trait SpawnerYield {
+  fn spawn_yield(&mut self) -> YieldReturn;
+}
+```
+An example of direct call from service is when Read transport stream being asynch return a WouldBlock error : then we suspend.
+
+Suspend can result in two behavior :
+
+- YieldReturn::Return : the state is stored in service and we exit from execution (will be restore later from handle)
+- YieldReturn::Loop : the Yield and spawn lead to a context switch and Unyield will pursue exection at this point so in this case we only need to redo the command which leads to suspend.
+
 
   * Handle
 
   Yes it feels bad, I wanted to get rid of those Client and Server Handle and have associated Service Handle now... At least this is reusable and not as specific to a context as before.
 
+```
+pub trait SpawnHandle<Service,Sen,Recv> : SpawnUnyield {
+  type WeakHandle : SpawnUnyield + Clone;
+
+  fn unwrap_state(self) -> Result<(Service,Sen,Recv,Result<()>)>;
+  fn get_weak_handle(&self) -> Option<Self::WeakHandle>;
+}
+```
+The handle let us get the service state (when service is finished) to restart service or manage unprocessed command.
+A weak handle allows sharing a bit of this handle but is not mandatory (use 'NoHandle' as associated type and return None if such an implementation is impossible or bad).
+The handle is also 'SpawnUnyield' letting us unyield suspend service and also check if service is still running.
+```
+pub trait SpawnUnyield {
+  fn is_finished(&mut self) -> bool;
+  fn unyield(&mut self) -> Result<()>;
+}
+
+```
   * Synch object
 
   In my previous implementation, having done a few haskell, I tend to confuse a reference with an immutable object and force the Sync trait at many place (on peer and keyval at least) by considering those value to be read only (they are and a change in Peer address should be propagated to all process (currently it looks more robust on this point)).
 
-  In this design we do not anymore use explicit keyval but as global service with messages and no such restriction as previously.
+  Here the main issue is local spawner (when we spawn without new thread) does not require those main object to be send : there for we use Ref<P> and SRef traits.
+
+```
+pub trait Ref<T> : SRef + Borrow<T> {
+  fn new(t : T) -> Self;
+}
+```
+
+Those Ref will mainly be Arc ('ArcRef') when running other multiple thread and Rc ('RcRef') with copy in between thread when running with less threaded configs or small contents (for such 'CloneRef' can be use).
+
+Currently it is only applied to the very central Peer object.
+
+```
+pub trait SRef : Sized {
+  type Send : SToRef<Self>;
+  fn get_sendable(self) -> Self::Send;
+}
+pub trait SToRef<T : SRef> : Send + Sized {
+  fn to_ref(self) -> T;
+}
+```
+Basically SRef is similar to Into<Send> but with a single associated type and a way back.
+
+
+## Consequence on design
+
+  This service abstraction makes it even more clear that MyDHT is not a DHT, and when with previous design we had to crete some strange key for executing some strange store action in some strange keyval storage it was almost obvious that we could replace key by query amd keyVal by reply.
+  Therefore this time we do not anymore use an explicit keyvalStore but a global service with messages. Code from previous design is in the KVStoreService which when use as GlobalService is almost the same as previous storage of KeyVal, this service implementation is not in an external crates because it is the default peer storage/exchange implementation.
+
+A simple schema (without Synch transport related trait (may be describe in a future post)) would be :
+
+![previousdesign](./procs1.png)
+
+Every box uses a service with configurable spawner and channels.
+
+All is route by MainLoop which contains the peer cache and the Mio Loop for asynch event registration (MainLoop command also registered on it) : MainLoop does not actually suspend and in code we can see that its channels are plugged a bit differently due to its central role.
+This central bottleneck can be greatly relieved by establishing other optional channels, yet this is the core routing (optional channels if closed due to restarted service or channel/spawner implementation not allowing it are removed and default routing through mainloop is used), and can proxy almost any message.
+
+HandleSend can optionally (depending on spawn and channel choice) allow communicating directly with others service : currently a few are used
+        - api from local and global and peerstore
+        - write from read service (corresponding, only when write service is spawn first(the other scenario need to be implemented but it require to change ReadDest content probably by stoping read service and restarting it after))
+        - write from local : same as read (readdest is cloned into localdest)
+        - global from local
+
+
+
+---------------------
+
+
+The point of this post is to give a taste of how service are configured within mydht new design by adapting a test appli to run in a single thread.
+
+All change describe are on the trait implementation of MyDHTConf for 'TestLocalConf' (to create an application this big trait must be implemented, basically it contains the associated type of every component and the initialisation function for them).
 
 # configuring thread
 
@@ -275,23 +415,54 @@ Doing it for read is way more interesting (infinite service with really recurrin
 But run as smouthly.
 
 
+### a blocking service
 
-### a restartable service
+Already seen before, macro 'localproxyglobal' used in test is an example of an local service call that does not yield (Blocker spawner), with a single iteration and no channel.
+The service is spawn at each time like a function call (optional command is set) and never suspend.
+```
+#[macro_export]
+macro_rules! localproxyglobal(() => (
+  type GlobalServiceCommand = Self::LocalServiceCommand;
+  type GlobalServiceReply  = Self::LocalServiceReply;
+  type LocalService = DefLocalService<Self>;
+  const LOCAL_SERVICE_NB_ITER : usize = 1;
+  type LocalServiceSpawn = Blocker;
+  type LocalServiceChannelIn = NoChannel;
+  #[inline]
+  fn init_local_spawner(&mut self) -> Result<Self::LocalServiceSpawn> {
+    Ok(Blocker)
+  }
+  #[inline]
+  fn init_local_channel_in(&mut self) -> Result<Self::LocalServiceChannelIn> {
+    Ok(NoChannel)
+  }
+  #[inline]
+  fn init_local_service(me : Self::PeerRef, with : Option<Self::PeerRef>) -> Result<Self::LocalService> {
+    Ok(DefLocalService{
+      from : me,
+      with : with,
+    })
+  }
+));
+```
 
-At the time, I've been a bit lazy on writing restart service code, truth is I am not really convinced by its usefulness (the number of iteration criterion is not really good, some time limit may be better).
+For this kind of configuration, the service must always be call with a command as input, the service must be able to restart when its handle indicates that the service is finished 
 
+At the time, I've been a bit lazy on writing restart service code, truth is I am not really convinced by its usefulness (the number of iteration criterion is not really good, some time limit may be better). But it is done in the difficult case (local service spawning from a read service spawning from mainloop service initiated from mydhtconf).
 
 
 Conclusion
 ==========
 
+There is still 3 threads (global service, peerstore service and the mainloop), two being the same use case as Api service (single service from mainloop) and the last required to test on multiple peers without having to change the test method.
 
 SRef seems interesting, yet it absolutely requires some macro derivability, it is an ok complement to sendable.
 I consider removing all 'Clone' dependant implementing and keeping only the 'SRef' one when both are present : then maybe changing service base type to allways use SRef variants (Clone variants becoming useless). Obviously ArcRef and CloneRef SRef implemetation replacing the previous use case (for all thread we only need the config that was describe for running RcRef over threads).
 Yet if putting Service in its own crate Clone implementation are still interesting to avoid using SRef.
 
-This seems also pretty bad with this SRef abstraction : https://github.com/rust-lang/rust/issues/42763 but I have yet to check it (other abstractions should be checked latter).
-
+This seems also pretty bad with this SRef abstraction : https://github.com/rust-lang/rust/issues/42763 and almost all spawner but I think it needs to be checked.
 
 Another possibility for simplier service traits could be to have a single function for unyielding and sending message : put Channel into SpawnUnyield.
+
+Generaly channels implementations require a limit in their buffers, especially for service such as 'Write' where the message are consumed after authentication but can be send before. That is not an issue as the trait can already return errors.
 

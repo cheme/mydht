@@ -46,14 +46,12 @@ macro_rules! sref_self_mc{($ty:ident) => (
 /// Local service will simply proxy to Global service
 #[macro_export]
 macro_rules! localproxyglobal(() => (
-
-  type GlobalServiceCommand = Self::LocalServiceCommand; // def
-  type GlobalServiceReply  = Self::LocalServiceReply; // def
-  type LocalService = DefLocalService<Self>; // def
-  const LOCAL_SERVICE_NB_ITER : usize = 1; // def
-  type LocalServiceSpawn = Blocker; // def
-  type LocalServiceChannelIn = NoChannel; // def
-
+  type GlobalServiceCommand = Self::LocalServiceCommand;
+  type GlobalServiceReply  = Self::LocalServiceReply;
+  type LocalService = DefLocalService<Self>;
+  const LOCAL_SERVICE_NB_ITER : usize = 1;
+  type LocalServiceSpawn = Blocker;
+  type LocalServiceChannelIn = NoChannel;
   #[inline]
   fn init_local_spawner(&mut self) -> Result<Self::LocalServiceSpawn> {
     Ok(Blocker)
@@ -67,7 +65,7 @@ macro_rules! localproxyglobal(() => (
     Ok(DefLocalService{
       from : me,
       with : with,
-      })
+    })
   }
 ));
 
