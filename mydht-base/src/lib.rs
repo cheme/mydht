@@ -1,5 +1,6 @@
 
 #![feature(box_patterns)]
+#![feature(refcell_replace_swap)]
 
 #[macro_use] extern crate log;
 #[macro_use] extern crate serde_derive;

@@ -961,11 +961,11 @@ impl<S : Service + ServiceRestartable, D : SpawnSend<<S as Service>::CommandOut>
 
 /// TODO move in its own crate or under feature in mydht : coroutine dependency in mydht-base is
 /// bad
-pub struct Coroutine<'a>(PhantomData<&'a()>);
+pub struct Coroutine;
 /// common send/recv for coroutine local usage (not Send, but clone)
 pub type LocalRc<C> = Rc<RefCell<VecDeque<C>>>;
 /// not type alias as will move from this crate
-pub struct CoroutHandle<S,D,R>(Rc<Option<(S,D,R,Result<()>)>>,CoRHandle);
+pub struct CoroutHandle<S,D,R>(Rc<RefCell<Option<(S,D,R,Result<()>)>>>,CoRHandle);
 //pub struct CoroutYield<'a>(&'a mut CoroutineC);
 
 /*impl<'a> SpawnerYield for CoroutYield<'a> {
@@ -1012,12 +1012,8 @@ impl<S,D,R> SpawnHandle<S,D,R> for CoroutHandle<S,D,R> {
   type WeakHandle = NoWeakHandle;
   #[inline]
   fn unwrap_state(self) -> Result<(S,D,R,Result<()>)> {
-    let s = match Rc::try_unwrap(self.0) {
-      Ok(s) => s,
-      Err(_) => return Err(Error("Rc not accessible, might have read an unfinished corouthandle".to_string(), ErrorKind::Bug, None)),
-    };
-    match s {
-      Some(r) => Ok(r),
+    match self.0.replace(None) {
+      Some(s) => Ok(s),
       None => Err(Error("Read an unfinished corouthandle".to_string(), ErrorKind::Bug, None)),
     }
   }
@@ -1053,8 +1049,8 @@ impl<C> SpawnRecv<C> for LocalRc<C> {
 }
 
 
-impl<'a,S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOut>,R : 'static + SpawnRecv<S::CommandIn>> 
-  Spawner<S,D,R> for Coroutine<'a> {
+impl<S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOut>,R : 'static + SpawnRecv<S::CommandIn>> 
+  Spawner<S,D,R> for Coroutine {
   type Handle = CoroutHandle<S,D,R>;
   type Yield = CoroutineC;
   //type Yield = CoroutYield<'a>;
@@ -1067,7 +1063,7 @@ impl<'a,S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOu
     mut nb_loop : usize
   ) -> Result<Self::Handle> {
 
-    let rcs = Rc::new(None);
+    let rcs = Rc::new(RefCell::new(None));
     let rcs2 = rcs.clone();
     let co_handle = CoroutineC::spawn(move |corout,_|{
       move || -> Result<()> {
@@ -1075,13 +1071,16 @@ impl<'a,S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOu
         let mut rcs = rcs;
         let mut yiel = corout;
         spawn_loop!(service,spawn_out,ocin,recv,nb_loop,yiel,err,Err(Error("Coroutine spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
-        let dest = Rc::get_mut(&mut rcs).unwrap();
-        replace(dest,Some((service,spawn_out,recv,err)));
+        rcs.replace(Some((service,spawn_out,recv,err)));
+        //replace(dest,Some((service,spawn_out,recv,err)));
         Ok(())
       }().unwrap();
       0
     });
-    return Ok(CoroutHandle(rcs2,co_handle));
+    let mut handle = CoroutHandle(rcs2,co_handle); 
+    // start it
+    handle.unyield()?;
+    return Ok(handle);
   }
 }
 

@@ -228,6 +228,54 @@ Thinking about this conf for api, it seems quite suitable : similar to having th
 
 ### a non statefull service
 
+This looks nice for most service but for some service, state could not be restore on unyield. That is the case for read or write service, this is related to the fact that reading is streamed inside of the serializer : we cannot save the state of the serializer/deserializer as its trait does not allow it.
+For reference Read service get message with the MsgEnc method :
+```
+  fn decode_msg_from<R : Read>(&self, &mut R) -> MDHTResult<M>;
+```
+And not directly by reading with an exposed single buffer ('dedocde_msg_from' uses a composition of Reader, notably for shadowing/ciphering of bytes), in this case it would be easy to put the Read stream in a service field and state will be save.
+The problem is that our Read stream is a composition of Synch oriented read traits and the lower level transport read is not : therefore when the lower level transport Read return a WouldBlock error indicating that we should yield the CompExt should be implemented in a way the reading could restart (still doable).
+Another issue is that the serializer (probably a serde backend) used or the implementation of MsgEnc would require to be resumable on a WouldBlock error (not the case at the moment I think or at least for the majority of implementation).
+
+Therefore, the strategy for yeilding on Asynch Read/Write is to use a CompExt layer that will catch WouldBlock Error and Yield (see reference to yield it bellow struct) on it at the lower level (no support of statefull suspend with YieldReturn::Return).
+CompExt used are 
+```
+pub struct ReadYield<'a,R : 'a + Read,Y : 'a + SpawnerYield> (pub &'a mut R,pub &'a mut Y);
+```
+and 
+```
+pub struct WriteYield<'a,W : 'a + Write, Y : 'a + SpawnerYield> (pub &'a mut W, pub &'a mut Y);
+```
+For threaded spawn, like a thread pool or ThreadPark, the thread simply park (block on a condvar) and resume later through its yield handle resume (unlock condvar).
+For local spawn, we need to use a CoRoutine : with CoRoutine spawner (using coroutine crate), that way the coroutine state does include all inner states (even possible Serde backend implementation) and be managed at WriteYield/ReadYield level.
+
+Lets adapt write service.
+```
+  //type WriteChannelIn = MpscChannelRef;
+  type WriteChannelIn = LocalRcChannel;
+  //type WriteSpawn = ThreadParkRef;
+  type WriteSpawn = CoRoutine;
+```
+Note that with a synch write, write service could suspend (as it yield only on the input channel which is done out of service call), blocking write for many transport is not a major issue if not threaded (read is totally).
+Also note that keeping an MpscChannelRef (or a MpscChannel if using ArcRef<Peer>) could still make sense because it will give the possibillity to send message directly to write service through its weak send and handle (but it would require that CoRoutine implement a WeakHandle (which is currently not the case (it would require to run a shared mutex over the handle and would be a different usecase))).
+
+Another thing is that the number of iteration should be put to unlimited or a higher count to avoid new coroutine on every call.
+```
+  //const SEND_NB_ITER : usize = 1;
+  const SEND_NB_ITER : usize = 0;
+```
+
+
+Doing it for read is way more interesting (infinite service with really recurring suspend on Read transport stream)  :
+```
+  type ReadChannelIn = LocalRcChannel;
+  type ReadSpawn = Coroutine;
+```
+
+But run as smouthly.
+
+
+
 ### a restartable service
 
 At the time, I've been a bit lazy on writing restart service code, truth is I am not really convinced by its usefulness (the number of iteration criterion is not really good, some time limit may be better).

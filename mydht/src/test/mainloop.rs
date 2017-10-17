@@ -114,7 +114,7 @@ use service::{
 
   Blocker,
   RestartOrError,
- // Coroutine,
+  Coroutine,
  // RestartSameThread,
  // ThreadBlock,
   ThreadPark,
@@ -678,7 +678,7 @@ impl MyDHTConf for TestLocalConf {
 
   const LOOP_NAME : &'static str = "Conf test spawner local";
   const EVENTS_SIZE : usize = 1024;
-  const SEND_NB_ITER : usize = 1;
+  const SEND_NB_ITER : usize = 10;
   type Route = TestRoute<Self>;
   type MainloopSpawn = ThreadParkRef;
   type MainLoopChannelIn = MpscChannelRef;
@@ -694,11 +694,11 @@ impl MyDHTConf for TestLocalConf {
   type PeerCache = HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
   type ChallengeCache = HashMap<Vec<u8>,ChallengeEntry<Self>>;
   type PeerMgmtChannelIn = MpscChannelRef;
-  type ReadChannelIn = MpscChannelRef;
-  type ReadSpawn = ThreadParkRef;
+  type ReadChannelIn = LocalRcChannel;
+  type ReadSpawn = Coroutine;
   type WriteDest = NoSend;
-  type WriteChannelIn = MpscChannelRef;
-  type WriteSpawn = ThreadParkRef;
+  type WriteChannelIn = LocalRcChannel;
+  type WriteSpawn = Coroutine;
   type ProtoMsg = TestMessage<Self>;
   type LocalServiceCommand = TestCommand<Self>;
   type LocalServiceReply = TestReply;
@@ -772,12 +772,11 @@ impl MyDHTConf for TestLocalConf {
     Ok(MpscChannelRef)
   }
   fn init_read_spawner(&mut self) -> Result<Self::ReadSpawn> {
-    Ok(ThreadParkRef)
+    Ok(Coroutine)
     //Ok(Blocker)
   }
   fn init_write_spawner(&mut self) -> Result<Self::WriteSpawn> {
-    Ok(ThreadParkRef)
-    //Ok(Blocker)
+    Ok(Coroutine)
   }
   fn init_global_spawner(&mut self) -> Result<Self::GlobalServiceSpawn> {
     Ok(ThreadParkRef)
@@ -787,10 +786,10 @@ impl MyDHTConf for TestLocalConf {
     Ok(NoSend)
   }
   fn init_read_channel_in(&mut self) -> Result<Self::ReadChannelIn> {
-    Ok(MpscChannelRef)
+    Ok(LocalRcChannel)
   }
   fn init_write_channel_in(&mut self) -> Result<Self::WriteChannelIn> {
-    Ok(MpscChannelRef)
+    Ok(LocalRcChannel)
   }
   fn init_peermgmt_channel_in(&mut self) -> Result<Self::PeerMgmtChannelIn> {
     Ok(MpscChannelRef)

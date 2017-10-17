@@ -383,7 +383,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
               } else {
                 let service = MC::init_local_service(self.from.clone(),self.with.clone())?;
                 let (send,recv) = self.local_channel_in.new()?;
-                let sender = LocalDest{
+                let sender = LocalDest {
                   read : self.read_dest_proto.clone(),
                   api : self.api_dest_proto.clone(),
                 };
