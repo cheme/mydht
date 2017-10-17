@@ -64,19 +64,18 @@ Next it quickly lead to a service based approach (model has change quite a bit f
 
   * Service
 
-```
+```rust
 pub trait Service {
   type CommandIn;
   type CommandOut;
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut>;
 }
-
 ```
   CommandIn and CommadOut are receive from or send into channels.
 
   * Spawner
 
-```
+```rust
 pub trait Spawner<
   S : Service,
   D : SpawnSend<<S as Service>::CommandOut>,
@@ -92,13 +91,12 @@ pub trait Spawner<
     nb_loop : usize // infinite if 0
   ) -> Result<Self::Handle>;
 }
-
 ```
 Basically a way to call a service for a certain number of iteration, each iteration being the reception of a command from input channel the service call and the sending of the service result in the output channel.
 
   * Channel
 
-```
+```rust
 pub trait SpawnChannel<Command> {
   type WeakSend : SpawnSend<Command> + Clone;
   type Send : SpawnSend<Command> + Clone;
@@ -108,7 +106,7 @@ pub trait SpawnChannel<Command> {
 }
 ```
 with spawn send and spawn receive similar to an mpsc channel (a const boolean indicate if a channel can send but I should remove it).
-```
+```rust
 pub trait SpawnSend<Command> : Sized {
   const CAN_SEND : bool;
   fn send(&mut self, Command) -> Result<()>;
@@ -121,7 +119,7 @@ pub trait SpawnRecv<Command> : Sized {
   * Yield
 
 Yield is the spawn associatied type that is called when getting a new message from the input channel if empty, but can also be directly call from service.
-```
+```rust
 pub trait SpawnerYield {
   fn spawn_yield(&mut self) -> YieldReturn;
 }
@@ -138,7 +136,7 @@ Suspend can result in two behavior :
 
   Yes it feels bad, I wanted to get rid of those Client and Server Handle and have associated Service Handle now... At least this is reusable and not as specific to a context as before.
 
-```
+```rust
 pub trait SpawnHandle<Service,Sen,Recv> : SpawnUnyield {
   type WeakHandle : SpawnUnyield + Clone;
 
@@ -149,7 +147,7 @@ pub trait SpawnHandle<Service,Sen,Recv> : SpawnUnyield {
 The handle let us get the service state (when service is finished) to restart service or manage unprocessed command.
 A weak handle allows sharing a bit of this handle but is not mandatory (use 'NoHandle' as associated type and return None if such an implementation is impossible or bad).
 The handle is also 'SpawnUnyield' letting us unyield suspend service and also check if service is still running.
-```
+```rust
 pub trait SpawnUnyield {
   fn is_finished(&mut self) -> bool;
   fn unyield(&mut self) -> Result<()>;
@@ -162,7 +160,7 @@ pub trait SpawnUnyield {
 
   Here the main issue is local spawner (when we spawn without new thread) does not require those main object to be send : there for we use Ref<P> and SRef traits.
 
-```
+```rust
 pub trait Ref<T> : SRef + Borrow<T> {
   fn new(t : T) -> Self;
 }
@@ -172,7 +170,7 @@ Those Ref will mainly be Arc ('ArcRef') when running other multiple thread and R
 
 Currently it is only applied to the very central Peer object.
 
-```
+```rust
 pub trait SRef : Sized {
   type Send : SToRef<Self>;
   fn get_sendable(self) -> Self::Send;
@@ -251,7 +249,7 @@ At this point we could change all threaded spawner, but their is the use case wh
 
 So the solution will be copying the Rc to the new thread, that is what SRef implemnetation of RcRef does : give a sendable type for Rc<Peer> (simply cloning Peer) and then in the spawn thread put back this to a RcRef (putting it back may not be suitable but RcRef<Peer> is the only kind of peer define in the conf and transmit to service commands).
 This sending of SRef could not be achieve with MpscChannel but another Channel implementation is doing it (cloning/unwraping on write and putting back to Ref on recv) : 'MpscChannelRef'
-```
+```rust
 pub struct MpscChannelRef;
 pub struct MpscSenderRef<C : SRef>(MpscSender<C::Send>);
 pub struct MpscReceiverRef<C : SRef>(MpscReceiver<C::Send>);
@@ -304,7 +302,7 @@ Api is a non mandatory (a MyDHT boolean constant is use to switch result to Main
 
 There is the marker trait 'ServiceRestartable' for this kind of service, it means that when Yielding/suspending we simply end the service and put it state in the handle. When yielding back the handle simply restart the service from its state.
 
-```
+```rust
 impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> ServiceRestartable for Api<MC,QC> { }
 ```
 
@@ -337,16 +335,16 @@ and
 Compile and run and it's nice.
 
 Still, we did not change the channel, we still use 
-```
+```rust
   type ApiServiceChannelIn = MpscChannelRef;
 ```
 Useless, our api service is in same thread as main loop, we just need something to send command locally using LocalRcChannel spawning Rc<RefCell<VecDeque<C>>> channel.
-```
+```rust
   //type ApiServiceChannelIn = MpscChannelRef;
   type ApiServiceChannelIn = LocalRcChannel;
 ```
 and 
-```
+```rust
   fn init_api_channel_in(&mut self) -> Result<Self::ApiServiceChannelIn> {
 //    Ok(MpscChannelRef)
     Ok(LocalRcChannel)
@@ -356,7 +354,7 @@ and
 In fact an unsafe single value buffer should be fine as currently we unyield on each send of command that is not mandatory so we would keep it with the VecDeque (optimizing this way is still possible but low value in our case). Ideally NoChannel should be use but it requires to change unyield function to allow an optional command (currently this could be good as we systematically unyield on each send).
 
 Those local handle do not have WeakHandle, this illustrate the way message passing will switch : without handle the other services (eg 'GlobalDest' containing optional api HandleSend) will send ApiCommand to MainLoop which will proxy it, with a WeakHande like for MpscChannel, the other service can send directly (cf optional weakhandle for spawn handle).
-```
+```rust
 pub struct GlobalDest<MC : MyDHTConf> {
   pub mainloop : MainLoopSendIn<MC>,
   pub api : Option<ApiHandleSend<MC>>,
@@ -370,7 +368,7 @@ Thinking about this conf for api, it seems quite suitable : similar to having th
 
 This looks nice for most service but for some service, state could not be restore on unyield. That is the case for read or write service, this is related to the fact that reading is streamed inside of the serializer : we cannot save the state of the serializer/deserializer as its trait does not allow it.
 For reference Read service get message with the MsgEnc method :
-```
+```rust
   fn decode_msg_from<R : Read>(&self, &mut R) -> MDHTResult<M>;
 ```
 And not directly by reading with an exposed single buffer ('dedocde_msg_from' uses a composition of Reader, notably for shadowing/ciphering of bytes), in this case it would be easy to put the Read stream in a service field and state will be save.
@@ -379,18 +377,18 @@ Another issue is that the serializer (probably a serde backend) used or the impl
 
 Therefore, the strategy for yeilding on Asynch Read/Write is to use a CompExt layer that will catch WouldBlock Error and Yield (see reference to yield it bellow struct) on it at the lower level (no support of statefull suspend with YieldReturn::Return).
 CompExt used are 
-```
+```rust
 pub struct ReadYield<'a,R : 'a + Read,Y : 'a + SpawnerYield> (pub &'a mut R,pub &'a mut Y);
 ```
 and 
-```
+```rust
 pub struct WriteYield<'a,W : 'a + Write, Y : 'a + SpawnerYield> (pub &'a mut W, pub &'a mut Y);
 ```
 For threaded spawn, like a thread pool or ThreadPark, the thread simply park (block on a condvar) and resume later through its yield handle resume (unlock condvar).
 For local spawn, we need to use a CoRoutine : with CoRoutine spawner (using coroutine crate), that way the coroutine state does include all inner states (even possible Serde backend implementation) and be managed at WriteYield/ReadYield level.
 
 Lets adapt write service.
-```
+```rust
   //type WriteChannelIn = MpscChannelRef;
   type WriteChannelIn = LocalRcChannel;
   //type WriteSpawn = ThreadParkRef;
@@ -400,14 +398,14 @@ Note that with a synch write, write service could suspend (as it yield only on t
 Also note that keeping an MpscChannelRef (or a MpscChannel if using ArcRef<Peer>) could still make sense because it will give the possibillity to send message directly to write service through its weak send and handle (but it would require that CoRoutine implement a WeakHandle (which is currently not the case (it would require to run a shared mutex over the handle and would be a different usecase))).
 
 Another thing is that the number of iteration should be put to unlimited or a higher count to avoid new coroutine on every call.
-```
+```rust
   //const SEND_NB_ITER : usize = 1;
   const SEND_NB_ITER : usize = 0;
 ```
 
 
 Doing it for read is way more interesting (infinite service with really recurring suspend on Read transport stream)  :
-```
+```rust
   type ReadChannelIn = LocalRcChannel;
   type ReadSpawn = Coroutine;
 ```
@@ -419,7 +417,7 @@ But run as smouthly.
 
 Already seen before, macro 'localproxyglobal' used in test is an example of an local service call that does not yield (Blocker spawner), with a single iteration and no channel.
 The service is spawn at each time like a function call (optional command is set) and never suspend.
-```
+```rust
 #[macro_export]
 macro_rules! localproxyglobal(() => (
   type GlobalServiceCommand = Self::LocalServiceCommand;
