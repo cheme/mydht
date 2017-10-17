@@ -50,6 +50,7 @@ use super::{
   send_with_handle,
   ShadowAuthType,
   MainLoopRecvIn,
+  WriteHandleSend,
   PeerRefSend,
 };
 use std::marker::PhantomData;
@@ -167,13 +168,6 @@ macro_rules! register_state_w {($self:ident,$pollopt:expr,$rs:ident,$wb:expr,$os
   }
 }}
 
-
-pub type WriteHandleSend<MC : MyDHTConf> = HandleSend<<MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::Send,
-  <<
-    MC::WriteSpawn as Spawner<WriteService<MC>,MC::WriteDest,<MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::Recv>>::Handle as 
-    SpawnHandle<WriteService<MC>,MC::WriteDest,<MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::Recv>
-    >::WeakHandle
-    >;
 
 const LISTENER : Token = Token(0);
 const LOOP_COMMAND : Token = Token(1);
@@ -440,12 +434,20 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
     let global_service = conf.init_global_service()?;
     // TODO use a true dest with mainloop, api weak as dest
-    let api_gdest = api_handle.get_weak_handle().map(|wh|HandleSend(api_send.clone(),wh));
+    let api_gdest = api_handle.get_weak_handle().map(|wh|{
+      MC::ApiServiceChannelIn::get_weak_send(&api_send).map(|aps|
+        HandleSend(aps,wh)
+      )
+    }).unwrap_or(None);
     let global_dest = GlobalDest {
       mainloop : mlsend.clone(),
       api : api_gdest,
     };
-    let api_gdest_peer = api_handle.get_weak_handle().map(|wh|HandleSend(api_send.clone(),wh));
+    let api_gdest_peer = api_handle.get_weak_handle().map(|wh|{
+      MC::ApiServiceChannelIn::get_weak_send(&api_send).map(|aps|
+        HandleSend(aps,wh)
+      )
+    }).unwrap_or(None);
     let global_dest_peer = GlobalDest {
       mainloop : mlsend.clone(),
       api : api_gdest_peer,
@@ -1127,7 +1129,11 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     let ow = self.slab_cache.get(wtoken);
     if let Some(ca) = ow {
       if let SlabEntryState::WriteSpawned((ref write_handle,ref write_s_in)) = ca.state {
-        write_handle.get_weak_handle().map(|wh|HandleSend(write_s_in.clone(),wh))
+        write_handle.get_weak_handle().map(|wh|{
+          MC::WriteChannelIn::get_weak_send(&write_s_in).map(|aps|
+            HandleSend(aps,wh)
+          )
+        }).unwrap_or(None)
       } else {None}
     } else {None}
   }
@@ -1146,8 +1152,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
 //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
 //(self.mainloop_send).send((MainLoopCommand::Start))?;
-   let gl = match self.global_handle.get_weak_handle() {
-      Some(h) => Some(HandleSend(self.global_send.clone(),h)),
+    let gl = match self.global_handle.get_weak_handle() {
+      Some(wh) => 
+        MC::GlobalServiceChannelIn::get_weak_send(&self.global_send).map(|aps| HandleSend(aps,wh)),
       None => None,
     };
 
@@ -1170,7 +1177,8 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         };
         let (read_s_in,read_r_in) = self.read_channel_in.new()?;
         let ah = match self.api_handle.get_weak_handle() {
-          Some(h) => Some(HandleSend(self.api_send.clone(),h)),
+          Some(wh) => 
+            MC::ApiServiceChannelIn::get_weak_send(&self.api_send).map(|aps|HandleSend(aps,wh)),
           None => None,
         };
 

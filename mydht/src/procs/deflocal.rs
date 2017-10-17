@@ -34,7 +34,7 @@ use super::{
   MCCommand,
   MCReply,
   MainLoopSendIn,
-  ApiSendIn,
+  ApiWeakSend,
   ApiWeakHandle,
 };
 use super::storeprop::{
@@ -221,7 +221,7 @@ impl<MC : MyDHTConf> SToRef<GlobalDest<MC>> for  GlobalDest<MC> {
 
 impl<MC : MyDHTConf> SRef for GlobalDest<MC> where
   MainLoopSendIn<MC> : Send,
-  ApiSendIn<MC> : Send,
+  ApiWeakSend<MC> : Send,
   ApiWeakHandle<MC> : Send,
   {
   type Send = GlobalDest<MC>;
@@ -233,7 +233,7 @@ impl<MC : MyDHTConf> SRef for GlobalDest<MC> where
 
 impl<MC : MyDHTConf> SToRef<GlobalDest<MC>> for GlobalDest<MC> where
   MainLoopSendIn<MC> : Send,
-  ApiSendIn<MC> : Send,
+  ApiWeakSend<MC> : Send,
   ApiWeakHandle<MC> : Send,
   {
   #[inline]

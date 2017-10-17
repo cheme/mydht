@@ -9,7 +9,6 @@ use super::peermgmt::{
 };
 use super::mainloop::{
   MainLoopCommand,
-  WriteHandleSend,
 };
 use super::client2::{
   WriteCommand,
@@ -43,14 +42,15 @@ use super::{
   GlobalHandleSend,
   ApiHandleSend,
   MainLoopSendIn,
-  ApiSendIn,
+  ApiWeakSend,
   ApiWeakHandle,
-  GlobalSendIn,
+  GlobalWeakSend,
   GlobalWeakHandle,
   LocalHandle,
   LocalSendIn,
-  WriteSendIn,
+  WriteWeakSend,
   WriteWeakHandle,
+  WriteHandleSend,
 };
 use peer::Peer;
 use keyval::{
@@ -118,11 +118,11 @@ impl<MC : MyDHTConf> SRef for ReadService<MC> where
   <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send : Send,
   <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Send : Send,
   MainLoopSendIn<MC> : Send,
-  ApiSendIn<MC> : Send,
+  ApiWeakSend<MC> : Send,
   ApiWeakHandle<MC> : Send,
-  GlobalSendIn<MC> : Send,
+  GlobalWeakSend<MC> : Send,
   GlobalWeakHandle<MC> : Send,
-  WriteSendIn<MC> : Send,
+  WriteWeakSend<MC> : Send,
   WriteWeakHandle<MC> : Send,
   {
   type Send = ReadServiceSend<MC>;
@@ -152,11 +152,11 @@ impl<MC : MyDHTConf> SToRef<ReadService<MC>> for ReadServiceSend<MC> where
   <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send : Send,
   <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Send : Send,
   MainLoopSendIn<MC> : Send,
-  ApiSendIn<MC> : Send,
+  ApiWeakSend<MC> : Send,
   ApiWeakHandle<MC> : Send,
-  GlobalSendIn<MC> : Send,
+  GlobalWeakSend<MC> : Send,
   GlobalWeakHandle<MC> : Send,
-  WriteSendIn<MC> : Send,
+  WriteWeakSend<MC> : Send,
   WriteWeakHandle<MC> : Send,
   {
   #[inline]
@@ -494,9 +494,9 @@ impl<MC : MyDHTConf> Clone for ReadDest<MC> {
 impl<MC : MyDHTConf> SRef for ReadDest<MC> where
   <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send : Send,
   MainLoopSendIn<MC> : Send,
-  GlobalSendIn<MC> : Send,
+  GlobalWeakSend<MC> : Send,
   GlobalWeakHandle<MC> : Send,
-  WriteSendIn<MC> : Send,
+  WriteWeakSend<MC> : Send,
   WriteWeakHandle<MC> : Send,
   {
   type Send = ReadDest<MC>;
@@ -508,9 +508,9 @@ impl<MC : MyDHTConf> SRef for ReadDest<MC> where
 impl<MC : MyDHTConf> SToRef<ReadDest<MC>> for ReadDest<MC> where
   <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send : Send,
   MainLoopSendIn<MC> : Send,
-  GlobalSendIn<MC> : Send,
+  GlobalWeakSend<MC> : Send,
   GlobalWeakHandle<MC> : Send,
-  WriteSendIn<MC> : Send,
+  WriteWeakSend<MC> : Send,
   WriteWeakHandle<MC> : Send,
   {
   fn to_ref(self) -> ReadDest<MC> {

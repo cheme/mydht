@@ -60,7 +60,7 @@ use service::{
 };
 use super::{
   MainLoopSendIn,
-  ApiSendIn,
+  ApiWeakSend,
   ApiWeakHandle,
   FWConf,
   MyDHTConf,
@@ -81,7 +81,8 @@ use utils::{
 //pub struct KVStoreServiceMD<MC : MyDHTConf,V,S,I,QC> (pub KVStoreService<MC::Peer,MC::PeerRef,V,S,I,MC::DHTRules,QC>);
 
 /// kvstore service inner implementation TODO add local cache like original mydhtimpl (already
-/// Ref<KeyVal> usage (looks odd without a cache)
+/// Ref<KeyVal> usage (looks odd without a cache).
+/// Warning, current SRef implementation does not keep cache in handle of SRef kind service
 pub struct KVStoreService<P,RP,V,RV,S,DR,QC> {
 //pub struct KVStoreService<V : KeyVal, S : KVStore<V>> {
   /// Fn to init store, is expected to be called only once (so returning error at second call
@@ -97,7 +98,11 @@ pub struct KVStoreService<P,RP,V,RV,S,DR,QC> {
   pub _ph : PhantomData<(P,V,RV)>,
 }
 
-/// Warn store and query cache are dropped and rebuild at each restart (and cache need probable a costy copy)
+/// Warn store and query cache are dropped and rebuild at each restart (and cache need probable a costy copy).
+/// Consequence is that the service which use a spawner requiring this struct will need to run
+/// indefinitely (nb iter at 0) otherwhise some query will be lost.
+/// unless cache is make Send (by generalizing SRef and storing its send variant) or making cache
+/// SRef (costy).
 pub struct KVStoreServiceRef<RP : SRef,S,DR,QC> {
   pub me : <RP as SRef>::Send,
   pub init_store : Box<Fn() -> Result<S> + Send>,
@@ -852,7 +857,7 @@ pub struct OptPeerGlobalDest<MC : MyDHTConf> (pub GlobalDest<MC>);
 
 impl<MC : MyDHTConf> SRef for OptPeerGlobalDest<MC> where
   MainLoopSendIn<MC> : Send,
-  ApiSendIn<MC> : Send,
+  ApiWeakSend<MC> : Send,
   ApiWeakHandle<MC> : Send,
   {
   type Send = OptPeerGlobalDest<MC>;
@@ -864,7 +869,7 @@ impl<MC : MyDHTConf> SRef for OptPeerGlobalDest<MC> where
 
 impl<MC : MyDHTConf> SToRef<OptPeerGlobalDest<MC>> for OptPeerGlobalDest<MC> where
   MainLoopSendIn<MC> : Send,
-  ApiSendIn<MC> : Send,
+  ApiWeakSend<MC> : Send,
   ApiWeakHandle<MC> : Send,
   {
   #[inline]

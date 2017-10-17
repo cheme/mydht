@@ -846,14 +846,16 @@ pub type LocalHandle<MC : MyDHTConf> = <MC::LocalServiceSpawn as Spawner<MC::Loc
 pub type GlobalSendIn<MC : MyDHTConf> = <MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Send;
 pub type GlobalRecvIn<MC : MyDHTConf> = <MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Recv;
 pub type GlobalHandle<MC : MyDHTConf> = <MC::GlobalServiceSpawn as Spawner<MC::GlobalService,GlobalDest<MC>,GlobalRecvIn<MC>>>::Handle;
+pub type GlobalWeakSend<MC : MyDHTConf> = <MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::WeakSend;
 pub type GlobalWeakHandle<MC : MyDHTConf> = <GlobalHandle<MC> as SpawnHandle<MC::GlobalService,GlobalDest<MC>, GlobalRecvIn<MC>>>::WeakHandle;
-pub type GlobalHandleSend<MC : MyDHTConf> = HandleSend<GlobalSendIn<MC>,GlobalWeakHandle<MC>>;
+pub type GlobalHandleSend<MC : MyDHTConf> = HandleSend<GlobalWeakSend<MC>,GlobalWeakHandle<MC>>;
 
 pub type ApiSendIn<MC : MyDHTConf> = <MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Send;
 pub type ApiRecvIn<MC : MyDHTConf> = <MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Recv;
 pub type ApiHandle<MC : MyDHTConf> = <MC::ApiServiceSpawn as Spawner<MC::ApiService,ApiDest<MC>,ApiRecvIn<MC>>>::Handle;
 pub type ApiWeakHandle<MC : MyDHTConf> = <ApiHandle<MC> as SpawnHandle<MC::ApiService,ApiDest<MC>,ApiRecvIn<MC>>>::WeakHandle;
-pub type ApiHandleSend<MC : MyDHTConf> = HandleSend<ApiSendIn<MC>,ApiWeakHandle<MC>>;
+pub type ApiWeakSend<MC: MyDHTConf> = <MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::WeakSend;
+pub type ApiHandleSend<MC : MyDHTConf> = HandleSend<ApiWeakSend<MC>,ApiWeakHandle<MC>>;
 
 
 
@@ -861,6 +863,9 @@ pub type WriteSendIn<MC : MyDHTConf> = <MC::WriteChannelIn as SpawnChannel<Write
 pub type WriteRecvIn<MC : MyDHTConf> = <MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::Recv;
 pub type WriteHandle<MC : MyDHTConf> = <MC::WriteSpawn as Spawner<WriteService<MC>,MC::WriteDest,WriteRecvIn<MC>>>::Handle;
 pub type WriteWeakHandle<MC : MyDHTConf> = <WriteHandle<MC> as SpawnHandle<WriteService<MC>,MC::WriteDest,WriteRecvIn<MC>>>::WeakHandle;
+pub type WriteWeakSend<MC : MyDHTConf> = <MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::WeakSend;
+pub type WriteHandleSend<MC : MyDHTConf> = HandleSend<WriteWeakSend<MC>,WriteWeakHandle<MC>>;
+
 
 pub type PeerStoreHandle<MC : MyDHTConf> = <MC::PeerStoreServiceSpawn as 
 Spawner<

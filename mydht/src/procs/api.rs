@@ -53,6 +53,7 @@ use super::deflocal::{
 
 use service::{
   Service,
+  ServiceRestartable,
   SpawnSend,
   SpawnChannel,
   SpawnerYield,
@@ -72,6 +73,8 @@ use std::marker::PhantomData;
 /// An implementation of api service using a kvcache as storage and with a max duration
 /// No clean cache is currently call : TODO merge with QueryCache (same thing)
 pub struct Api<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>>(pub QC,pub Duration,pub usize,pub PhantomData<MC>);
+
+
 
 impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service for Api<MC,QC> {
   type CommandIn = ApiCommand<MC>;
@@ -153,6 +156,8 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
     })
   }
 }
+
+impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> ServiceRestartable for Api<MC,QC> { }
 
 impl<MC : MyDHTConf, QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> SRef for Api<MC,QC> where
   QC : Send,

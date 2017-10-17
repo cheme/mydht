@@ -260,9 +260,12 @@ pub trait Spawner<
 
 /// Send/Recv service Builder
 pub trait SpawnChannel<Command> {
+  type WeakSend : SpawnSend<Command> + Clone;
   type Send : SpawnSend<Command> + Clone;
   type Recv : SpawnRecv<Command>;
   fn new(&mut self) -> Result<(Self::Send,Self::Recv)>;
+  // SRef trait on send could be use but SToRef is useless : unneeded here
+  fn get_weak_send(&Self::Send) -> Option<Self::WeakSend>;
 }
 
 /// send command to spawn, this is a blocking send currently : should evolve to non blocking.
@@ -272,6 +275,7 @@ pub trait SpawnSend<Command> : Sized {
   /// mut on self is currently not needed by impl
   fn send(&mut self, Command) -> Result<()>;
 }
+
 /// send command to spawn, it is non blocking (None returned by recv on not ready) : cf macro
 /// spawn_loop or others implementation
 pub trait SpawnRecv<Command> : Sized {
@@ -453,11 +457,15 @@ impl<C : SRef> SToRef<MpscReceiverRef<C>> for MpscReceiverToRef<C::Send> {
 
 
 impl<C : SRef> SpawnChannel<C> for MpscChannelRef {
+  type WeakSend = MpscSenderRef<C>;
   type Send = MpscSenderRef<C>;
   type Recv = MpscReceiverRef<C>;
   fn new(&mut self) -> Result<(Self::Send,Self::Recv)> {
     let (s,r) = mpsc_channel();
     Ok((MpscSenderRef(s),MpscReceiverRef(r)))
+  }
+  fn get_weak_send(s : &Self::Send) -> Option<Self::WeakSend> {
+    Some(s.clone())
   }
 }
 
@@ -466,6 +474,7 @@ impl<C : SRef> SpawnChannel<C> for MpscChannelRef {
 pub struct MpscChannel;
 
 impl<C> SpawnChannel<C> for MpscChannel {
+  type WeakSend = MpscSender<C>;
   type Send = MpscSender<C>;
   type Recv = MpscReceiver<C>;
   /// new use a struct as input to allow construction over a MyDht for a Peer :
@@ -480,7 +489,11 @@ impl<C> SpawnChannel<C> for MpscChannel {
     let chan = mpsc_channel();
     Ok(chan)
   }
+  fn get_weak_send(s : &Self::Send) -> Option<Self::WeakSend> {
+    Some(s.clone())
+  }
 }
+
 /// channel register on mio poll in service (service constrains Registrable on 
 /// This allows running mio loop as service, note that the mio loop is reading this channel, not
 /// the spawner loop (it can for commands like stop or restart yet it is not the current usecase
@@ -488,6 +501,7 @@ impl<C> SpawnChannel<C> for MpscChannel {
 pub struct MioChannel<CH>(pub CH);
 
 impl<C,CH : SpawnChannel<C>> SpawnChannel<C> for MioChannel<CH> {
+  type WeakSend = MioSend<CH::WeakSend>;
   type Send = MioSend<CH::Send>;
   type Recv = MioRecv<CH::Recv>;
   fn new(&mut self) -> Result<(Self::Send,Self::Recv)> {
@@ -501,7 +515,15 @@ impl<C,CH : SpawnChannel<C>> SpawnChannel<C> for MioChannel<CH> {
       reg : reg,
     }))
   }
+  fn get_weak_send(s : &Self::Send) -> Option<Self::WeakSend> {
+    <CH as SpawnChannel<C>>::get_weak_send(&s.mpsc).map(|ms|
+    MioSend {
+      mpsc : ms,
+      set_ready : s.set_ready.clone(),
+    })
+  }
 }
+
 #[derive(Clone)]
 pub struct NoWeakHandle;
 impl SpawnUnyield for NoWeakHandle {
@@ -558,6 +580,8 @@ pub trait SpawnerYield {
   /// For parrallel spawner (threading), it is ok to skip yield once in case of possible racy unyield
   /// (unyield may not be racy : unyield on spawnchannel instead of asynch stream or others), see
   /// threadpark implementation
+  /// At the time no SpawnerYield return both variant of YieldReturn and it could be a constant
+  /// (use of both mode is spawner is not very likely but possible).
   fn spawn_yield(&mut self) -> YieldReturn;
 }
 
@@ -616,12 +640,16 @@ impl<C : SRef, SR : SRef> SpawnRecv<C> for DefaultRecvRef<C,SR> where
 pub struct DefaultRecvChannel<C,CH>(pub CH,pub C);
 
 impl<C : Clone, CH : SpawnChannel<C>> SpawnChannel<C> for DefaultRecvChannel<C,CH> {
+  type WeakSend = CH::WeakSend;
   type Send = CH::Send;
   type Recv = DefaultRecv<C,CH::Recv>;
 
   fn new(&mut self) -> Result<(Self::Send,Self::Recv)> {
     let (s,r) = self.0.new()?;
     Ok((s,DefaultRecv(r,self.1.clone())))
+  }
+  fn get_weak_send(s : &Self::Send) -> Option<Self::WeakSend> {
+    <CH as SpawnChannel<C>>::get_weak_send(s)
   }
 }
 #[derive(Clone,Debug)]
@@ -680,10 +708,14 @@ impl<S : Service,
 }
 
 impl<C> SpawnChannel<C> for NoChannel {
+  type WeakSend = NoSend;
   type Send = NoSend;
   type Recv = NoRecv;
   fn new(&mut self) -> Result<(Self::Send,Self::Recv)> {
     Ok((NoSend,NoRecv))
+  }
+  fn get_weak_send(_ : &Self::Send) -> Option<Self::WeakSend> {
+    None
   }
 }
 impl<C> SpawnRecv<C> for NoRecv {
@@ -998,12 +1030,14 @@ impl<S,D,R> SpawnHandle<S,D,R> for CoroutHandle<S,D,R> {
 pub struct LocalRcChannel;
 
 impl<C> SpawnChannel<C> for LocalRcChannel {
+  type WeakSend = NoSend;
   type Send = LocalRc<C>;
   type Recv = LocalRc<C>;
   fn new(&mut self) -> Result<(Self::Send,Self::Recv)> {
     let lr = Rc::new(RefCell::new(VecDeque::new()));
     Ok((lr.clone(),lr))
   }
+  fn get_weak_send(_ : &Self::Send) -> Option<Self::WeakSend> { None }
 }
 impl<C> SpawnSend<C> for LocalRc<C> {
   const CAN_SEND : bool = true;

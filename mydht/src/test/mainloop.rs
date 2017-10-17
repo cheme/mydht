@@ -106,14 +106,14 @@ use service::{
   MpscChannel,
   MpscChannelRef,
   //NoRecv,
- // LocalRcChannel,
+  LocalRcChannel,
   SpawnerYield,
  // LocalRc,
  // MpscSender,
   NoSend,
 
   Blocker,
- // RestartOrError,
+  RestartOrError,
  // Coroutine,
  // RestartSameThread,
  // ThreadBlock,
@@ -615,7 +615,6 @@ impl MyDHTConf for TestAllThConf {
     Ok(MpscChannel)
   }
   fn init_write_channel_in(&mut self) -> Result<Self::WriteChannelIn> {
-//      Ok(LocalRcChannel)
     Ok(MpscChannel)
   }
   fn init_peermgmt_channel_in(&mut self) -> Result<Self::PeerMgmtChannelIn> {
@@ -709,8 +708,8 @@ impl MyDHTConf for TestLocalConf {
   type GlobalServiceChannelIn = MpscChannelRef;
   type ApiReturn = OneResult<(Vec<ApiResultSend<Self>>,usize,usize)>;
   type ApiService = Api<Self,HashMap<ApiQueryId,(OneResult<(Vec<ApiResultSend<Self>>,usize,usize)>,Instant)>>;
-  type ApiServiceSpawn = ThreadParkRef;
-  type ApiServiceChannelIn = MpscChannelRef;
+  type ApiServiceSpawn = RestartOrError;
+  type ApiServiceChannelIn = LocalRcChannel;
   type PeerStoreQueryCache = SimpleCacheQuery<Self::Peer,Self::PeerRef,Self::PeerRef,HashMapQuery<Self::Peer,Self::PeerRef,Self::PeerRef>>;
   type PeerStoreServiceSpawn = ThreadParkRef;
   type PeerStoreServiceChannelIn = MpscChannelRef;
@@ -745,8 +744,6 @@ impl MyDHTConf for TestLocalConf {
   fn init_peerstore_spawner(&mut self) -> Result<Self::PeerStoreServiceSpawn> {
     Ok(ThreadParkRef)
   }
-//impl<P : Peer, V : KeyVal, RP : Ref<P>> SimpleCacheQuery<P,V,RP,HashMapQuery<P,V,RP>> {
-// QueryCache<Self::Peer,Self::PeerRef,Self::PeerRef>;
   fn init_ref_peer(&mut self) -> Result<Self::PeerRef> {
      let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), self.1 as u16);
      let val = Node {nodeid: self.0.clone(), address : SerSocketAddr(addr)};
@@ -793,7 +790,6 @@ impl MyDHTConf for TestLocalConf {
     Ok(MpscChannelRef)
   }
   fn init_write_channel_in(&mut self) -> Result<Self::WriteChannelIn> {
-//      Ok(LocalRcChannel)
     Ok(MpscChannelRef)
   }
   fn init_peermgmt_channel_in(&mut self) -> Result<Self::PeerMgmtChannelIn> {
@@ -834,10 +830,10 @@ impl MyDHTConf for TestLocalConf {
   }
 
   fn init_api_channel_in(&mut self) -> Result<Self::ApiServiceChannelIn> {
-    Ok(MpscChannelRef)
+    Ok(LocalRcChannel)
   }
   fn init_api_spawner(&mut self) -> Result<Self::ApiServiceSpawn> {
-    Ok(ThreadParkRef)
+    Ok(RestartOrError)
   }
   fn init_synch_listener_spawn(&mut self) -> Result<Self::SynchListenerSpawn> {
     Ok(NoSpawn)

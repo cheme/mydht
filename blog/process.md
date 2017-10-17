@@ -82,6 +82,8 @@ Globally 'ThreadPark' spawner is used everywhere with an Mpsc channel and using 
 'test_connect_local' will try to run as much as possible over a single thread, though implementing MyDHTConf trait for 'TestLocalConf'.
 So I copy implementation with threads and will adapt.
 
+## STRef and usage of non Sync reference
+
 First thing no need to use Arc if we run locally, therefor we will use Rc through RcRef (implements SRef and Ref<P>).
 
 ```rust
@@ -139,13 +141,109 @@ So the ThreadPark spawn need to use a Send command and similarily to what we did
 
 In fact all Send requirement are more or less replaced by SRef (Service, and its receiver and sender), some diffuculties occured with some service member for instance query cache of kvstore which could not be easily use as sendable when it contains Rc : in this case it was simply not send in the variant and initiated at service start similarily to kvstore storage (boxed initializer).
 
-After changin to ThreadParkRef it compiles and test run.
+Similarily, returning result 'ApiResult' is intended to contain the ArcRef, we will therefore use another kind of return resulting which will return the SRef::Send called 'ApiResultRef' for consistency. The more we advance in implementation the more it looks like SRef usage globally should be an idea.
+
+At the time we only do it for Ref<Peer> as it is the most commonly use SRef in MyDHT, but custom Global and Local service message are intended to contains such Ref and another Ref should be added in MyDHT, the challenge byte vec for authentication (could be a short post idea) : the point being we do not have any idea of the length of this challenge (it is related to application implementation and undefined at library level).
+
+After changin to ThreadParkRef it compiles and test run. 'test_connect_all_local' is configured for all threads but running with Rc<Peer> instead of Arc<Peer>, see https://github.com/cheme/mydht/blob/bd098eadba760f2aaa496dfc96f6c3a9e22293de/mydht/src/test/mainloop.rs at line 676
 
 In fact I did cheat on order of errors, first is Spawner then Channel, but it was simplier explaining in this order.
 
 So what did we do, just change MyDHT usage of Arc to use of Rc but staying in a highly multithreaded environment. 
 
+
+## Removing some threads
+
+
 Next step will be easiest : changing some service to run in the same thread as the main loop service. Please note that this is only possible if the transport is asynchronous, for synch transport there is a lot of thread restriction and trick that I may describe in a future post.
 
+### a statefull service
 
-Similarily, returning result 'ApiResult' is intended to contain the ArcRef, we will therefore use another kind of return resulting which will return the SRef::Send called 'ApiResultRef' for consistency. The more we advance in implementation the more it looks like SRef usage globally should be an idea.
+Api is a single service to store Api query (query required a unique id) and return reply in 'ApiReturn' abstraction struct. Currently there is no suitable ApiReturn implementation (an old synch struct is used), in the future with various api design (for C as single blocking function, for Rust as single blocking function, for rust as Future, not ipc as MainLoopChannelOut seems enough for this case...).
+Api is a non mandatory (a MyDHT boolean constant is use to switch result to MainLoopChannelOut if Api Query management is not needed or if the management is done externally and we just listen on the channel) service and it does not suspend (yield) on anything except its receiving message queue : it is easy to see that suspending is statefull.
+
+There is the marker trait 'ServiceRestartable' for this kind of service, it means that when Yielding/suspending we simply end the service and put it state in the handle. When yielding back the handle simply restart the service from its state.
+
+```
+impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> ServiceRestartable for Api<MC,QC> { }
+```
+
+It does not means that we can restart the service after it is finished (all iteration consumed or ended with command).
+
+An implementation of local spawn with a suspend/restart strategy is 'RestartOrError' :
+
+```rust
+impl<S : Service + ServiceRestartable, D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<S::CommandIn>> Spawner<S,D,R> for RestartOrError {
+  type Handle = RestartSameThread<S,D,Self,R>;
+  type Yield = NoYield;
+``` 
+
+Its handle is 'RestartSameThread', an enum containing the handle state (ended or yield, running is not possible as we are on a single thread : it should for a threaded restartable implementation) and its service state (service struct and its channels plus iteration counter), interesting point it also contain the spawner for restart (in our case our 0 length 'RestartOrError').
+
+Its yield is a dummy 'NoYield' simply returning 'YieldReturn::Return' so that the spawner just prepare for return/suspend (fill handle with state) and exit.
+
+So we simply change the following lines :
+```rust 
+  // type ApiServiceSpawn = ThreadParkRef;
+  type ApiServiceSpawn = RestartOrError;
+```
+and 
+```rust 
+  fn init_api_spawner(&mut self) -> Result<Self::ApiServiceSpawn> {
+    //Ok(ThreadParkRef)
+    Ok(RestartOrError)
+  }
+```
+Compile and run and it's nice.
+
+Still, we did not change the channel, we still use 
+```
+  type ApiServiceChannelIn = MpscChannelRef;
+```
+Useless, our api service is in same thread as main loop, we just need something to send command locally using LocalRcChannel spawning Rc<RefCell<VecDeque<C>>> channel.
+```
+  //type ApiServiceChannelIn = MpscChannelRef;
+  type ApiServiceChannelIn = LocalRcChannel;
+```
+and 
+```
+  fn init_api_channel_in(&mut self) -> Result<Self::ApiServiceChannelIn> {
+//    Ok(MpscChannelRef)
+    Ok(LocalRcChannel)
+  }
+```
+
+In fact an unsafe single value buffer should be fine as currently we unyield on each send of command that is not mandatory so we would keep it with the VecDeque (optimizing this way is still possible but low value in our case). Ideally NoChannel should be use but it requires to change unyield function to allow an optional command (currently this could be good as we systematically unyield on each send).
+
+Those local handle do not have WeakHandle, this illustrate the way message passing will switch : without handle the other services (eg 'GlobalDest' containing optional api HandleSend) will send ApiCommand to MainLoop which will proxy it, with a WeakHande like for MpscChannel, the other service can send directly (cf optional weakhandle for spawn handle).
+```
+pub struct GlobalDest<MC : MyDHTConf> {
+  pub mainloop : MainLoopSendIn<MC>,
+  pub api : Option<ApiHandleSend<MC>>,
+}
+```
+
+Thinking about this conf for api, it seems quite suitable : similar to having the query cache in the mainloop and calling a looping function on it. Probably currently bad for perf (inlining everything is theorically ok as the returning passing of service through the handle seems bad otherwhise yet cache implementation is probably already on heap, same for message waiting in channel). Another thing bad is the use of a channel (a simple vecdeque here) for passing command : to be closest to a function call we can simply use a 'Blocker' spawner with an single iteration limit, but it requires that the code to respawn the service is written (not the case right now for api) : use of 'localproxyglobal' macro in our test is an example.
+
+
+### a non statefull service
+
+### a restartable service
+
+At the time, I've been a bit lazy on writing restart service code, truth is I am not really convinced by its usefulness (the number of iteration criterion is not really good, some time limit may be better).
+
+
+
+Conclusion
+==========
+
+
+SRef seems interesting, yet it absolutely requires some macro derivability, it is an ok complement to sendable.
+I consider removing all 'Clone' dependant implementing and keeping only the 'SRef' one when both are present : then maybe changing service base type to allways use SRef variants (Clone variants becoming useless). Obviously ArcRef and CloneRef SRef implemetation replacing the previous use case (for all thread we only need the config that was describe for running RcRef over threads).
+Yet if putting Service in its own crate Clone implementation are still interesting to avoid using SRef.
+
+This seems also pretty bad with this SRef abstraction : https://github.com/rust-lang/rust/issues/42763 but I have yet to check it (other abstractions should be checked latter).
+
+
+Another possibility for simplier service traits could be to have a single function for unyielding and sending message : put Channel into SpawnUnyield.
+
