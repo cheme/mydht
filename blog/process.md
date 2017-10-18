@@ -1,5 +1,4 @@
-
-
+# MyDHT Refactoring And Threading
 
 Lastly I got some time in my hand (ended my previous job and looking to more low level programming), and took it to refactor some pretty terrible old project of mine.
 
@@ -332,6 +331,8 @@ and
     Ok(RestartOrError)
   }
 ```
+We can see that initialisation is using MyDhtConf as mutable reference, this allow more complex spawner usage (for instance if we want to run into a threadpool the initialized pool reference may be include in mydhtconf struct and used), in the example from this post it will not be use.
+
 Compile and run and it's nice.
 
 Still, we did not change the channel, we still use 
@@ -463,4 +464,5 @@ This seems also pretty bad with this SRef abstraction : https://github.com/rust-
 Another possibility for simplier service traits could be to have a single function for unyielding and sending message : put Channel into SpawnUnyield.
 
 Generaly channels implementations require a limit in their buffers, especially for service such as 'Write' where the message are consumed after authentication but can be send before. That is not an issue as the trait can already return errors.
+
 
