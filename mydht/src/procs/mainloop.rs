@@ -52,6 +52,8 @@ use super::{
   MainLoopRecvIn,
   WriteHandleSend,
   PeerRefSend,
+  PeerStatusListener,
+  PeerStatusCommand,
 };
 use std::marker::PhantomData;
 use std::mem::replace;
@@ -593,12 +595,17 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       // TODO check if read is finished and remove if finished
       p_entry.get_write_token()
     } else { None };
+    if <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::DO_LISTEN {
+      let listen_global = <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::build_command(PeerStatusCommand::PeerOnline(pr.clone(),pp.clone()));
+      send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,GlobalCommand(None,listen_global),"Panic sending to peer online to global service");
+    }
     self.peer_cache.add_val_c(pk, PeerCacheEntry {
       peer : pr.clone(),
       read : owread,
       write : owtok,
       prio : pp,
     });
+
     let update_peer = KVStoreCommand::StoreLocally(pr,0,None);
     // peer_service update
     send_with_handle_panic!(&mut self.peerstore_send,&mut self.peerstore_handle,GlobalCommand(None,update_peer),"Panic sending to peerstore TODO consider restart (init of peerstore is a fn)");

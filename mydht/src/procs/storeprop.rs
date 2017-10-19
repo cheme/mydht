@@ -67,6 +67,8 @@ use super::{
   OptFrom,
   ApiQueriable,
   ApiRepliable,
+  PeerStatusListener,
+  PeerStatusCommand,
   MCCommand,
 };
 use std::marker::PhantomData;
@@ -486,6 +488,14 @@ impl<P : Peer, PR, V : KeyVal, VR> ApiQueriable for KVStoreCommand<P,PR,V,VR> {
       KVStoreCommand::Store(..) => None,
       KVStoreCommand::NotFound(..) => None,
     }
+  }
+}
+
+impl<P : Peer,PR,V : KeyVal,VR> PeerStatusListener<PR> for KVStoreCommand<P, PR, V, VR> {
+  const DO_LISTEN : bool = false;
+  #[inline]
+  fn build_command(_ : PeerStatusCommand<PR>) -> Self {
+    unreachable!()
   }
 }
 

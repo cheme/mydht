@@ -45,6 +45,8 @@ use procs::{
   MCCommand,
   MCReply,
   MCReplySend,
+  PeerStatusListener,
+  PeerStatusCommand,
 };
 use procs::api::{
   Api,
@@ -294,6 +296,13 @@ impl ApiRepliable for TestReply {
   }
 }
 
+impl<MC : MyDHTConf> PeerStatusListener<MC::PeerRef> for TestCommand<MC> {
+  const DO_LISTEN : bool = false;
+  #[inline]
+  fn build_command(_ : PeerStatusCommand<MC::PeerRef>) -> Self {
+    unreachable!()
+  }
+}
 
 pub struct TestRoute<MC : MyDHTConf>(PhantomData<MC>);
 

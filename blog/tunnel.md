@@ -283,6 +283,10 @@ impl<P : MPeer,RP : Borrow<P>> TPeer for RP {
   * use of a service spawn from transport : a tunnel transport over another transport : bad as peer exchange is done with this transport.
 
 * in the global service : best but means that the mydht is specific to tunnel (an inner service can be use and/or sending receiving from outside), plus in mydht global service can easily send query to peerstore or mainloop (especially using a subset on peerstore : probably need to create a second variant of subset being more random : currently subset is a mix of random and not random depending on implementation , which broke a lot of tests).
+        Still having to keep a local cache of connected peer in global service is painfull and racy (only the cache in mainloop is fine). 'RouteProvider' should be merge with the mainloop peer cache implementation, and use a synchronized connected peer cache (threading seems necessary).
+
+
+
 
 ## with error mgmt
 

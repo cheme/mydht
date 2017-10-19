@@ -1,4 +1,8 @@
-use peer::{PeerMgmtMeths};
+use peer::{
+  Peer,
+  PeerPriority,
+  PeerMgmtMeths,
+};
 
 use rules::DHTRules;
 use procs::synch_transport::{
@@ -38,7 +42,6 @@ use keyval::{
 };
 use query::cache::QueryCache;
 //use self::mesgs::{PeerMgmtMessage,PeerMgmtInitMessage,KVStoreMgmtMessage,QueryMgmtMessage,ClientMessage,ClientMessageIx};
-use peer::Peer;
 use self::deflocal::{
   LocalReply,
   GlobalCommand,
@@ -640,7 +643,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// LocalServiceCommand
   /// Need clone to be forward to multiple peers
   /// Opt into store of peer command to route those command if global command allows it
-  type GlobalServiceCommand : ApiQueriable
+  type GlobalServiceCommand : ApiQueriable + PeerStatusListener<Self::PeerRef>
   //  + OptFrom<KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>>
     + Clone;// = GlobalCommand<Self>;
   type GlobalServiceReply : ApiRepliable
@@ -837,6 +840,51 @@ pub struct FWConf {
   /// do we run discovering if not enough peers
   pub discover : bool,
 }
+
+
+/// trait for message allowing synchronisation with online peer
+/// Main use case is global service listening to peer updates (peer online and peer offline mainly)
+pub trait PeerStatusListener<P> : Sized {
+  const DO_LISTEN : bool;
+  /// if return false it means that no status update should be send
+  /// Should use unreachable if DO_LISTEN is false
+  fn build_command(PeerStatusCommand<P>) -> Self;
+}
+
+#[derive(Clone)]
+pub enum PeerStatusCommand<P> {
+  PeerOnline(P,PeerPriority),
+  PeerOffline(P,PeerPriority),
+}
+pub enum PeerStatusCommandSend<P : SRef> {
+  PeerOnline(P::Send,PeerPriority),
+  PeerOffline(P::Send,PeerPriority),
+}
+
+
+impl<P : SRef> SRef for PeerStatusCommand<P> {
+  type Send = PeerStatusCommandSend<P>;
+  fn get_sendable(self) -> Self::Send {
+    match self {
+      PeerStatusCommand::PeerOnline(p,pp) =>
+        PeerStatusCommandSend::PeerOnline(p.get_sendable(),pp),
+      PeerStatusCommand::PeerOffline(p,pp) =>
+        PeerStatusCommandSend::PeerOffline(p.get_sendable(),pp),
+    }
+  }
+}
+
+impl<P : SRef> SToRef<PeerStatusCommand<P>> for PeerStatusCommandSend<P> {
+  fn to_ref(self) -> PeerStatusCommand<P> {
+    match self {
+      PeerStatusCommandSend::PeerOnline(p,pp) =>
+        PeerStatusCommand::PeerOnline(p.to_ref(),pp),
+      PeerStatusCommandSend::PeerOffline(p,pp) =>
+        PeerStatusCommand::PeerOffline(p.to_ref(),pp),
+    }
+  }
+}
+
 
 pub type LocalRecvIn<MC : MyDHTConf> = <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Recv;
 pub type LocalSendIn<MC : MyDHTConf> = <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Send;
