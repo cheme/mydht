@@ -101,9 +101,10 @@ pub use self::mainloop::{
   MDHTState,
   MyDHT,
 };
-use self::server2::{
+pub use self::server2::{
   ReadService,
   ReadCommand,
+  ReadReply,
   ReadDest,
 };
 use self::client2::{
@@ -247,13 +248,12 @@ impl<MC : MyDHTConf> Service for MyDHTService<MC> {
 
 pub type RWSlabEntry<MC : MyDHTConf> = SlabEntry<
   MC::Transport,
-  SpawnerRefsDefRecv<ReadService<MC>,ReadCommand, ReadDest<MC>, MC::ReadChannelIn, MC::ReadSpawn>,
-  SpawnerRefs<WriteService<MC>,WriteCommand<MC>,MC::WriteDest,MC::WriteChannelIn,MC::WriteSpawn>,
-  (<MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::Send,<MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::Recv,bool),
+  (ReadHandle<MC>,ReadSendIn<MC>),
+  (WriteHandle<MC>,WriteSendIn<MC>),
+  (WriteSendIn<MC>,WriteRecvIn<MC>,bool),
   MC::PeerRef>;
 
-type SpawnerRefs<S : Service,COM, D,CI : SpawnChannel<COM>,SP : Spawner<S,D,CI::Recv>> = (SP::Handle,CI::Send); 
-type SpawnerRefsDefRecv<S : Service,COM,D, CI : SpawnChannel<COM>, RS : Spawner<S,D,DefaultRecv<COM,CI::Recv>>> = (RS::Handle,CI::Send);
+//type SpawnerRefsDefRecv<S : Service,COM,D, CI : SpawnChannel<COM>, RS : Spawner<S,D,DefaultRecv<COM,CI::Recv>>> = (RS::Handle,CI::Send);
 //type SpawnerRefsRead2<S : Service,D, CI : SpawnChannel<ReadCommand>, RS : Spawner<S,D,DefaultRecv<ReadCommand,CI::Recv>>> = (RS::Handle,CI::Send);
 
 /*pub trait Spawner<
@@ -539,7 +539,7 @@ impl<MC : MyDHTConf> SToRef<MCReply<MC>> for MCReplySend<MC>
 
 pub type PeerRefSend<MC:MyDHTConf> = <MC::PeerRef as SRef>::Send;
 //pub type BorRef<
-pub trait MyDHTConf : 'static + Send + Sized 
+pub trait MyDHTConf : 'static + Send + Sized
 {
 //  where <Self::PeerRef as Ref<Self::Peer>>::Send : Borrow<Self::Peer> {
 
@@ -915,6 +915,10 @@ pub type WriteWeakSend<MC : MyDHTConf> = <MC::WriteChannelIn as SpawnChannel<Wri
 pub type WriteHandleSend<MC : MyDHTConf> = HandleSend<WriteWeakSend<MC>,WriteWeakHandle<MC>>;
 
 
+pub type ReadSendIn<MC : MyDHTConf> = <MC::ReadChannelIn as SpawnChannel<ReadCommand>>::Send;
+pub type ReadRecvIn<MC : MyDHTConf> = <MC::ReadChannelIn as SpawnChannel<ReadCommand>>::Recv;
+pub type ReadHandle<MC : MyDHTConf> = <MC::ReadSpawn as Spawner<ReadService<MC>,ReadDest<MC>,DefaultRecv<ReadCommand,ReadRecvIn<MC>>>>::Handle;
+//type SpawnerRefsDefRecv<S : Service,COM,D, CI : SpawnChannel<COM>, RS : Spawner<S,D,DefaultRecv<COM,CI::Recv>>> = (RS::Handle,CI::Send);
 pub type PeerStoreHandle<MC : MyDHTConf> = <MC::PeerStoreServiceSpawn as 
 Spawner<
     KVStoreService<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef,MC::PeerKVStore,MC::DHTRules,MC::PeerStoreQueryCache>,

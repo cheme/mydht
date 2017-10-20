@@ -10,7 +10,12 @@ extern crate readwrite_comp;
 
 // reexport from base
 pub use mydht_base::utils::*;
-
+pub use mydht_base::transport::SerSocketAddr;
+// TODO move
+pub use procs::{
+  OptFrom,
+  OptInto,
+};
 use self::readwrite_comp::{
   ExtRead,
   ExtWrite,

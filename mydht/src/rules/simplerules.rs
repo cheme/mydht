@@ -22,6 +22,7 @@ impl SimpleRules {
     SimpleRules((), dr)
   }
 }
+
 // TODO redesign nbhop nbquery depending on prio put higher prio on big num
 #[derive(Debug,Clone,Deserialize,Serialize)]
 pub struct DhtRules {
@@ -41,6 +42,29 @@ pub struct DhtRules {
   pub not_found_reply : bool,
   // TODO further params : clientmode, heavy...
 }
+pub const DHTRULES_DEFAULT : DhtRules = DhtRules {
+  randqueryid : false,
+  // nbhop = prio * fact
+  nbhopfact : 1,
+  // nbquery is 1 + query * fact
+  nbqueryfact : 1.0, 
+  //query lifetime second
+  lifetime : 15,
+  // increment of lifetime per priority inc
+  lifetimeinc : 2,
+  cleaninterval : None, // in seconds if needed
+  cacheduration : None, // cache in seconds
+  cacheproxied : false, // do you cache proxied result
+  storelocal : true, // is result stored locally
+  storeproxied : None, // store only if less than nbhop
+  heavyaccept : false,
+  clientmode : ClientMode::ThreadedOne,
+  // TODO client mode param + testing for local tcp and mult tcp in max 2 thread and in pool 2
+  // thread
+  tunnellength : 3,
+  not_found_reply : true,
+};
+
 
 impl DHTRulesIf for SimpleRules {
 

@@ -5,7 +5,9 @@ extern crate mydht_slab;
 
 use std::borrow::Borrow;
 use mydhtresult::Result;
-use rules::DHTRules;
+use rules::{
+  DHTRules,
+};
 use transport::Transport;
 use procs::{
   PeerCacheEntry,
@@ -72,6 +74,7 @@ use std::hash::Hash;
 use simplecache::SimpleCache;
 use self::mydht_inefficientmap::inefficientmap::InefficientmapBase2;
 use rules::simplerules::{
+  DHTRULES_DEFAULT,
   SimpleRules,
   DhtRules,
 };
@@ -142,29 +145,6 @@ mod diag_udp;
 mod mainloop;
 pub use mydht_basetest::local_transport::*;
 pub use mydht_basetest::transport::*;
-const DHTRULES_DEFAULT : DhtRules = DhtRules {
-  randqueryid : false,
-  // nbhop = prio * fact
-  nbhopfact : 1,
-  // nbquery is 1 + query * fact
-  nbqueryfact : 1.0, 
-  //query lifetime second
-  lifetime : 15,
-  // increment of lifetime per priority inc
-  lifetimeinc : 2,
-  cleaninterval : None, // in seconds if needed
-  cacheduration : None, // cache in seconds
-  cacheproxied : false, // do you cache proxied result
-  storelocal : true, // is result stored locally
-  storeproxied : None, // store only if less than nbhop
-  heavyaccept : false,
-  clientmode : ClientMode::ThreadedOne,
-  // TODO client mode param + testing for local tcp and mult tcp in max 2 thread and in pool 2
-  // thread
-  tunnellength : 3,
-  not_found_reply : true,
-};
-
 
 #[cfg(feature="with-extra-test")]
 #[test]

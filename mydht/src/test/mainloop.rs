@@ -127,7 +127,6 @@ use service::{
  // CpuPool,
  // CpuPoolFuture,
 };
-use super::DHTRULES_DEFAULT;
 /*use mydht_basetest::transport::{
   LocalAdd,
 };
@@ -151,6 +150,7 @@ use simplecache::SimpleCache;
 use std::marker::PhantomData;
 use rules::simplerules::{
   SimpleRules,
+  DHTRULES_DEFAULT,
 };
 
 /// test service message

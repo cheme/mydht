@@ -6,8 +6,17 @@ authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
 
 [dependencies.tunnel]
-#path = "../../tunnel/"
-git = "https://github.com/cheme/tunnel.git"
+path = "../../tunnel/"
+#git = "https://github.com/cheme/tunnel.git"
 features = ["mydht-impl"]
 
 
+[dependencies]
+mydht = { path = "../mydht" }
+mydht-slab = { path = "../mydht-slab" }
+serde = { version = "~1.0.10", features = ["rc"]}
+
+[dev-dependencies]
+serde_derive = "~1.0.10"
+mydht-basetest = { path = "../mydht-basetest" }
+mydht-tcp-loop = { path = "../mydht-tcp-loop" }

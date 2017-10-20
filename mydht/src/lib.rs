@@ -95,22 +95,22 @@ macro_rules! nolocal(() => (
 ));
 
 
-mod kvcache{
+pub mod kvcache{
 pub use mydht_base::kvcache::*;
 }
-mod keyval{
+pub mod keyval{
 pub use mydht_base::keyval::*;
 }
-mod simplecache{
+pub mod simplecache{
 pub use mydht_base::simplecache::*;
 }
-mod kvstore{
+pub mod kvstore{
 pub use mydht_base::kvstore::*;
 }
-mod mydhtresult{
+pub mod mydhtresult{
 pub use mydht_base::mydhtresult::*;
 }
-mod service{
+pub mod service{
 pub use mydht_base::service::*;
 }
 
@@ -124,7 +124,7 @@ mod node{
 
 
 
-mod peer;
+pub mod peer;
 mod procs;
 mod query;
 mod transport;
@@ -134,9 +134,32 @@ pub mod rules;
 //pub mod wot;
 #[cfg(test)]
 mod test;
-pub use procs::{ApiCommand,Api,MyDHTConf,PeerCacheRouteBase};
-pub use procs::deflocal::DefLocalService;
-pub use procs::MyDHT;
+pub use procs::deflocal::{
+  DefLocalService,
+  GlobalCommand,
+  GlobalReply,
+  LocalReply,
+};
+pub use procs::{
+  MyDHT,
+  ApiCommand,
+  Api,
+  MyDHTConf,
+  PeerCacheRouteBase,
+  PeerCacheEntry,
+  PeerStatusCommand,
+  PeerStatusListener,
+  FWConf,
+  MCReply,
+  MCCommand,
+  ShadowAuthType,
+  ReadReply,
+  MainLoopCommand,
+  RWSlabEntry,
+  ChallengeEntry,
+  Route,
+};
+pub use procs::api;
 // reexport
 pub use peer::{PeerPriority,PeerState};
 pub use query::{QueryConf,QueryPriority,QueryMode,LastSentConf};
@@ -146,6 +169,8 @@ pub use mydht_base::kvstore::{StoragePriority};
 pub use mydht_base::keyval::{Attachment,SettableAttachment};
 // TODO move msgenc to mod dhtimpl
 pub use msgenc::json::{Json};
+pub use msgenc::ProtoMessage;
+pub use msgenc::send_variant::ProtoMessage as ProtoMessageSend;
 //pub use msgenc::bencode::{Bencode};
 //pub use msgenc::bincode::{Bincode};
 //pub use msgenc::bencode::{Bencode_bt_dht};
@@ -163,7 +188,11 @@ pub mod dhtimpl {
   //pub use wot::ecdsapeer::ECDSAPeer;
 
 //  pub use wot::trustedpeer::PeerSign;
-  pub use mydht_base::kvcache::{NoCache};
+  pub use mydht_base::kvcache::{
+    NoCache,
+    Cache,
+    SlabCache,
+  };
   pub use query::simplecache::{SimpleCacheQuery};
   pub use simplecache::{SimpleCache};
   //pub use route::inefficientmap::{Inefficientmap};
@@ -172,7 +201,7 @@ pub mod dhtimpl {
 //  pub use wot::truststore::{WotKV,WotK,WotStore};
 //  pub use wot::classictrust::{TrustRules,ClassicWotTrust};
 
-  pub use rules::simplerules::{DhtRules,SimpleRules};
+  pub use rules::simplerules::{DhtRules,SimpleRules,DHTRULES_DEFAULT};
 
 }
 pub mod queryif{
