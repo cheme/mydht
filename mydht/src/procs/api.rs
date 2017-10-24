@@ -528,7 +528,9 @@ pub trait ApiQueriable {
   fn set_api_reply(&mut self, ApiQueryId);
   fn get_api_reply(&self) -> Option<ApiQueryId>;
 }
-/// TODO check if trait is used and remove if not
+/// TODO check if trait is used and remove if not + probably could be replace by apiqueriable as if
+/// needed we need to check if is_api_reply as it can be send directly to reply channel or to an
+/// api service which does not use query id (if unordered is fine)
 pub trait ApiRepliable {
   fn get_api_reply(&self) -> Option<ApiQueryId>;
 }

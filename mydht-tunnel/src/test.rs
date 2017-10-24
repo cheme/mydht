@@ -164,7 +164,14 @@ impl ApiQueriable for TestMessage {
     }
   }
 }
-impl<PR> ApiRepliable for TestReply<PR> {
+impl<PR> ApiQueriable for TestReply<PR> {
+  #[inline]
+  fn is_api_reply(&self) -> bool {
+    match self.1 {
+      TestMessage::TouchQ(..) => true,
+      _ => false,
+    }
+  }
   #[inline]
   fn get_api_reply(&self) -> Option<ApiQueryId> {
     match self.1 {
@@ -172,28 +179,38 @@ impl<PR> ApiRepliable for TestReply<PR> {
       _ => None,
     }
   }
+  #[inline]
+  fn set_api_reply(&mut self, aid : ApiQueryId) {
+    match self.1 {
+      TestMessage::TouchQ(ref mut qid) => *qid = aid.0,
+      _ => (),
+    }
+  }
+
 }
-/*
+
 /// TODO use a inner to global dest for inner service
-impl<P : Peer,PR,GSC,GSR> OptInto<GlobalReply<P,PR,GSC,GSR>> for TestReply<PR> {
+impl OptInto<GlobalTunnelReply<TunnelConf>> for TestReply<<TunnelConf as MyDHTTunnelConf>::PeerRef> {
   fn can_into(&self) -> bool {
     true
   }
-  fn opt_into(self) -> Option<GlobalReply<P,PR,GSC,GSR>> {
-    let (dest, m) = match self {
-      (Some(dest),ms,false) => (Some(vec![dest]),ms),
-      (None,ms,false) => (None,ms),
-      // warn need mapping to tunnile message
-      (_,ms,true) => return Some(GlobalReply::Api(ms)),
-    };
-    Some(GlobalReply::Forward(dest,None,FWConf {
+
+  fn opt_into(self) -> Option<GlobalTunnelReply<TunnelConf>> {
+    match self {
+      TestReply(Some(dest),ms,false) => Some(GlobalTunnelReply::SendCommandTo(dest,ms)),
+//        (Some(vec![dest]),ms),
+      TestReply(None,ms,false) => unreachable!(),
+      //(None,ms),
+      TestReply(_,ms,true) => Some(GlobalTunnelReply::Api(TestReply(None,ms,true))),
+    }
+ /*   Some(GlobalReply::Forward(dest,None,FWConf {
           nb_for : 1,
           discover : false,
     }, m))
- 
+*/ 
   }
 
-}*/
+}
   /*  
 /// TODO use a inner to local dest for inner service
 impl<MC : MyDHTTunnelConf> OptInto<LocalReply<MyDHTTunnelConfType<MC>>> for TestReply<<MC as MyDHTConf>::PeerRef> {
@@ -303,6 +320,11 @@ impl MyDHTTunnelConf for TunnelConf {
       address : self.1.clone(),
     }))
   }
+
+  fn init_inner_service(&mut self) -> Result<Self::InnerService> {
+    Ok(TestService(0, ArcRef::new(self.4.clone())))
+  }
+
   fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>> {
     let dest = self.3.clone();
     Ok(Box::new(
@@ -372,7 +394,7 @@ fn test_ping_pong() {
   let o_res = replace_wait_one_result(&o_res,(Vec::new(),0,999)).unwrap();
   assert!(o_res.0.len() == 1);
   for v in o_res.0.iter() {
-    assert!(if let &ApiResult::ServiceReply(MCReply::Global(GlobalTunnelReply::Inner(TestReply(_,TestMessage::TouchR(_),_)))) = v {true} else {false});
+    assert!(if let &ApiResult::ServiceReply(MCReply::Global(GlobalTunnelReply::Api(TestReply(_,TestMessage::TouchR(_),_)))) = v {true} else {false});
   }
 
   // no service to check connection, currently only for testing and debugging : sleep

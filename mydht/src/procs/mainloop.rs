@@ -2,6 +2,10 @@
 //! method.
 //! Usage of mydht library requires to create a struct implementing the MyDHTConf trait, by linking with suitable inner trait implementation and their requires component.
 use std::clone::Clone;
+use std::time::{
+  Instant,
+  Duration,
+};
 use std::collections::VecDeque;
 use mydht_base::route2::GetPeerRef;
 use std::borrow::Borrow;
@@ -86,6 +90,8 @@ use peer::{
 use kvcache::{
   SlabCache,
   Cache,
+  KVCache,
+  RandCache,
 };
 use keyval::KeyVal;
 use transport::{
@@ -193,6 +199,8 @@ pub enum MainLoopSubCommand<P : Peer> {
 pub enum MainLoopCommand<MC : MyDHTConf> {
   Start,
   SubCommand(MainLoopSubCommand<MC::Peer>),
+
+  PoolSize(usize),
   TryConnect(<MC::Transport as Transport>::Address,Option<ApiQueryId>),
 //  ForwardServiceLocal(MC::LocalServiceCommand,usize),
   ForwardService(Option<Vec<MC::PeerRef>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,FWConf,MCCommand<MC>),
@@ -221,6 +229,7 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
   /// Synch transport conn result
   ConnectedW(usize,<MC::Transport as Transport>::WriteStream, Option<<MC::Transport as Transport>::ReadStream>),
   FailConnect(usize),
+
 }
 /// Send variant (to use when inner ref are not Sendable)
 pub enum MainLoopCommandSend<MC : MyDHTConf>
@@ -230,6 +239,7 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
        MC::LocalServiceReply : SRef {
   Start,
   SubCommand(MainLoopSubCommand<MC::Peer>),
+  PoolSize(usize),
   TryConnect(<MC::Transport as Transport>::Address,Option<ApiQueryId>),
 //  ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
   ForwardService(Option<Vec<PeerRefSend<MC>>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,FWConf,<MCCommand<MC> as SRef>::Send),
@@ -262,6 +272,7 @@ impl<MC : MyDHTConf> Clone for MainLoopCommand<MC>
     match *self {
       MainLoopCommand::Start => MainLoopCommand::Start,
       MainLoopCommand::SubCommand(ref sc) => MainLoopCommand::SubCommand(sc.clone()),
+      MainLoopCommand::PoolSize(a) => MainLoopCommand::PoolSize(a),
       MainLoopCommand::TryConnect(ref a,ref aid) => MainLoopCommand::TryConnect(a.clone(),aid.clone()),
 //      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommand::ForwardServiceLocal(gc.clone(),nb),
       MainLoopCommand::ForwardService(ref ovp,ref okad,ref nb_for,ref c) => MainLoopCommand::ForwardService(ovp.clone(),okad.clone(),nb_for.clone(),c.clone()),
@@ -294,6 +305,7 @@ impl<MC : MyDHTConf> SRef for MainLoopCommand<MC>
     match self {
       MainLoopCommand::Start => MainLoopCommandSend::Start,
       MainLoopCommand::SubCommand(sc) => MainLoopCommandSend::SubCommand(sc),
+      MainLoopCommand::PoolSize(a) => MainLoopCommandSend::PoolSize(a),
       MainLoopCommand::TryConnect(a,aid) => MainLoopCommandSend::TryConnect(a,aid),
 //      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommandSend::ForwardServiceLocal(gc.get_sendable(),nb),
       MainLoopCommand::ForwardService(ovp,okad,nb_for,c) => MainLoopCommandSend::ForwardService({
@@ -328,6 +340,7 @@ impl<MC : MyDHTConf> SToRef<MainLoopCommand<MC>> for MainLoopCommandSend<MC>
     match self {
       MainLoopCommandSend::Start => MainLoopCommand::Start,
       MainLoopCommandSend::SubCommand(sc) => MainLoopCommand::SubCommand(sc),
+      MainLoopCommandSend::PoolSize(a) => MainLoopCommand::PoolSize(a),
       MainLoopCommandSend::TryConnect(a,aid) => MainLoopCommand::TryConnect(a,aid),
 //      MainLoopCommandSend::ForwardServiceLocal(a,nb) => MainLoopCommand::ForwardServiceLocal(a.to_ref(),nb),
       MainLoopCommandSend::ForwardService(ovp,okad,nb_for,c) => MainLoopCommand::ForwardService({
@@ -384,6 +397,10 @@ pub struct MDHTState<MC : MyDHTConf> {
   peerstore_handle : PeerStoreHandle<MC>,
 
   discover_wait_route : VecDeque<(MCCommand<MC>,usize,usize)>,
+
+  peer_pool_maintain : usize,
+  peer_last_query : Instant,
+  //peer_pool_wait : Vec<(usize,usize,fn(Vec<MC::PeerRef>) -> MainLoopCommand<MC>)>,
 
 
   synch_connect_ix : usize,
@@ -503,6 +520,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       peerstore_send : peerstore_send,
       peerstore_handle : peerstore_handle,
       discover_wait_route : VecDeque::new(),
+      peer_pool_maintain : MC::PEER_POOL_INIT_SIZE,
+      peer_last_query : Instant::now() - Duration::from_millis(MC::PEER_POOL_DELAY_MS),
+      //peer_pool_wait : Vec::new(),
       synch_connect_ix : 0,
       synch_connect_handle_send : Vec::with_capacity(MC::NB_SYNCH_CONNECT),
       synch_connect_channel_in : conf.init_synch_connect_channel_in()?,
@@ -630,6 +650,17 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       MainLoopCommand::Start => {
         // do nothing it has start if the function was called
       },
+      MainLoopCommand::PoolSize(min_no_repeat) => {
+        if self.peer_pool_maintain < min_no_repeat {
+          self.peer_pool_maintain = min_no_repeat;
+        }
+/*        if self.peer_cache.len_c() < min_no_repeat {
+          self.peer_pool_wait.push((min_no_repeat,nb_tot,on_res));
+        } else {
+          let peers = self.peer_cache.exact_rand(min_no_repeat,nb_tot)?.into_iter().map(|pc|pc.peer).collect();
+          self.call_inner_loop(on_res(peers),mlsend,async_yield)?;
+        }*/
+      },
       MainLoopCommand::SubCommand(sc) => {
         match sc {
           MainLoopSubCommand::TryConnect(key,add) => {
@@ -642,9 +673,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
           MainLoopSubCommand::Discover(lkad) => {
             debug!("Discover fwd to : {:?}", lkad.len());
+            let mut nb_send = 0;
             if let Some((command, nb_for, rem_call)) = self.discover_wait_route.pop_back() {
 
-              let mut nb_send = 0;
 
               assert!(nb_for >= lkad.len());
               for ka in lkad {
@@ -670,6 +701,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                     self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
                     nb_send += 1;
                   }
+                }
+                if nb_send == nb_for {
+                  break;
                 }
               }
               if nb_send < nb_for && rem_call > 0 {
@@ -1027,6 +1061,16 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
     self.call_inner_loop(req,mlsend,async_yield)?;
     loop {
+      // some bad connection pool management (should use a registered timer for next try)
+      if self.peer_cache.len_c() < self.peer_pool_maintain {
+        let now = Instant::now();
+        if self.peer_last_query > now {
+          let nb_disco = (self.peer_pool_maintain - self.peer_cache.len_c()) as f64 * (1.0 + MC::PEER_EXTRA_POOL_RATIO);
+          let kvscom = MainLoopCommand::PeerStore(GlobalCommand(None,KVStoreCommand::Subset(nb_disco as usize, peer_discover)));
+          self.call_inner_loop(kvscom,mlsend,async_yield)?;
+        }
+        self.peer_last_query = Instant::now() + Duration::from_millis(MC::PEER_POOL_DELAY_MS);
+      }
       self.poll.poll(events, None)?;
       for event in events.iter() {
         match event.token() {
@@ -1304,8 +1348,8 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 }
 
 
-
-pub struct PeerCacheEntry<RP> {
+#[derive(Clone)]
+pub struct PeerCacheEntry<RP : Clone> {
   /// ref peer
   peer : RP,
   ///  if not initialized CACHE_NO_STREAM, if needed in sub process could switch to arc atomicusize
@@ -1315,12 +1359,12 @@ pub struct PeerCacheEntry<RP> {
   /// peer priority
   prio : PeerPriority,
 }
-impl<P,RP : Ref<P>> GetPeerRef<P,RP> for PeerCacheEntry<RP> {
+impl<P,RP : Ref<P> + Clone> GetPeerRef<P,RP> for PeerCacheEntry<RP> {
   fn get_peer_ref(&self) -> (&P,&PeerPriority,Option<usize>) {
     (self.peer.borrow(),&self.prio,self.write.clone())
   }
 }
-impl<P> PeerCacheEntry<P> {
+impl<P : Clone> PeerCacheEntry<P> {
   pub fn get_read_token(&self) -> Option<usize> {
     self.read.clone()
 /*    let v = self.read.get();

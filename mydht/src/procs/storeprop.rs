@@ -940,6 +940,7 @@ pub fn peer_discover<P : Peer,PR>(v : Vec<P>) -> GlobalReply<P,PR,KVStoreCommand
 }
 
 
+
 /*pub fn peer_discover<MC : MyDHTConf>(v : Vec<MC::Peer>) -> GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>> {
   GlobalReply::ForwardMainLoop(MainLoopSubCommand::TryConnect(p.get_key(),p.get_address().clone()))).collect();
 }*/

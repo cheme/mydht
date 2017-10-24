@@ -6,8 +6,8 @@ authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
 
 [dependencies.tunnel]
-path = "../../tunnel/"
-#git = "https://github.com/cheme/tunnel.git"
+#path = "../../tunnel/"
+git = "https://github.com/cheme/tunnel.git"
 features = ["mydht-impl"]
 
 

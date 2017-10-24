@@ -4,8 +4,14 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::hash::Hash;
-use mydhtresult::Result;
+use mydhtresult::{
+  Result,
+  Error,
+  ErrorKind,
+};
+use std::cmp::min;
 use rand::thread_rng;
+use rand::OsRng;
 use rand::Rng;
 use bit_vec::BitVec;
 
@@ -23,6 +29,7 @@ pub trait Cache<K, V> {
     self.get_val_c(k).is_some()
   }
 
+  fn len_c (& self) -> usize;
   /// Remove value
   fn remove_val_c(& mut self, &K) -> Option<V>;
 }
@@ -34,6 +41,53 @@ pub trait SlabCache<E> {
   fn get(&self, k : usize) -> Option<&E>;
   fn get_mut(&mut self, k : usize) -> Option<&mut E>;
   fn has(&self, k : usize) -> bool;
+}
+pub trait RandCache<K, V : Clone> : KVCache<K, V> {
+  /// default impl, pretty inefficient, please use specialized implementation when needed
+  /// (currently this is use for tunnel creation in mydht-tunnel crate).
+  /// Here a big array is use each time, this should be stored in the cache implementation and not
+  /// instantiated each time. Same with osrng.
+  fn exact_rand(&mut self, min_no_repeat : usize, nb_tot : usize) -> Result<Vec<V>> {
+    let c_len = self.len_c();
+    if c_len < min_no_repeat {
+      return Err(Error("Unchecked call to cache exact_rand, insufficient value".to_string(), ErrorKind::Bug, None));
+    }
+    let nb_ret = min(nb_tot,c_len);
+    let mult_nb_ret = (nb_ret / min_no_repeat) * min_no_repeat;
+    let mut positions : Vec<usize> = vec![0;mult_nb_ret];
+    let mut positions2 : Vec<usize> = (0..c_len).collect();
+    let mut result : Vec<Option<V>> = Vec::with_capacity(mult_nb_ret);
+    for _ in 0..mult_nb_ret {
+      result.push(None);
+    }
+    let mut rng = OsRng::new().unwrap();
+    let mut tot_nb_done = 0;
+    while tot_nb_done < mult_nb_ret {
+      let mut nb_done = 0;
+      while nb_done < min_no_repeat {
+        let end = c_len - nb_done;
+        let pos = rng.next_u64() as usize % end;
+        positions[tot_nb_done] = positions2[pos];
+        positions2[pos] = positions2[end - 1];
+        positions2[end - 1] = positions[tot_nb_done];
+        nb_done += 1;
+        tot_nb_done += 1;
+      }
+    }
+    // so costy
+    self.strict_fold_c((&mut result,&positions,0), |(result, positions,i), (_,v)|{
+      for j in 0..mult_nb_ret {
+        if positions[j] == i {
+          result[j] = Some((*v).clone());
+        }
+      }
+      (result, positions, i + 1)
+    });
+ 
+    Ok(result.into_iter().map(|v|v.unwrap()).collect())
+
+  }
+
 }
 
 /// cache base trait to use in storage (transient or persistant) relative implementations
@@ -57,7 +111,6 @@ pub trait KVCache<K, V> : Sized + Cache<K,V> {
     self.fold_c(Ok(()),|err,kv|{if err.is_ok() {f(kv)} else {err}})
   }
 
-  fn len_c (& self) -> usize;
   fn len_where_c<F> (& self, f : &F) -> usize where F : Fn(&V) -> bool {
     self.fold_c(0, |nb, (_,v)|{
       if f(v) {
@@ -76,6 +129,10 @@ pub trait KVCache<K, V> : Sized + Cache<K,V> {
   fn distrib_ratio(&self) -> (usize,usize) {
     (2,3)
   }
+
+
+
+
   /// Return n random value from cache (should be used in routes using cache).
   ///
   /// Implementation should take care on returning less result if ratio of content in cache and
@@ -200,6 +257,10 @@ fn inner_cache_bv_rand<'a,K, V, C : KVCache<K,V>, F : Fn(&V) -> bool> (c : &'a C
 pub struct NoCache<K,V>(PhantomData<(K,V)>);
 
 impl<K,V> Cache<K,V> for NoCache<K,V> {
+  fn len_c (& self) -> usize {
+    0
+  }
+
   //type I = ();
   fn add_val_c(& mut self, _ : K, _ : V) {
     ()
@@ -225,9 +286,6 @@ impl<K,V> KVCache<K,V> for NoCache<K,V> {
   fn fold_c<'a, B, F>(&'a self, init: B, _ : F) -> B where F: FnMut(B, (&'a K, &'a V)) -> B, K : 'a, V : 'a {
     init
   }
-  fn len_c (& self) -> usize {
-    0
-  }
 /*  fn it_next<'b>(_ : &'b mut Self::I) -> Option<(&'b K,&'b V)> {
     None
   }*/
@@ -235,6 +293,8 @@ impl<K,V> KVCache<K,V> for NoCache<K,V> {
     NoCache(PhantomData)
   }
 }
+
+impl<K,V : Clone> RandCache<K,V> for NoCache<K,V> { }
 impl<K: Hash + Eq, V> Cache<K,V> for HashMap<K,V> {
   fn add_val_c(& mut self, key : K, val : V) {
     self.insert(key, val);
@@ -255,8 +315,12 @@ impl<K: Hash + Eq, V> Cache<K,V> for HashMap<K,V> {
   fn remove_val_c(& mut self, key : &K) -> Option<V> {
     self.remove(key)
   }
+  fn len_c (& self) -> usize {
+    self.len()
+  }
 
 }
+
 impl<K: Hash + Eq, V> KVCache<K,V> for HashMap<K,V> {
   fn new() -> Self {
     HashMap::new()
@@ -268,10 +332,6 @@ impl<K: Hash + Eq, V> KVCache<K,V> for HashMap<K,V> {
     } else {
       Ok(false)
     }
-  }
-
-  fn len_c (& self) -> usize {
-    self.len()
   }
 
   fn strict_fold_c<'a, B, F>(&'a self, init: B, f: F) -> B where F: Fn(B, (&'a K, &'a V)) -> B, K : 'a, V : 'a {
@@ -296,6 +356,8 @@ impl<K: Hash + Eq, V> KVCache<K,V> for HashMap<K,V> {
   }
 
 }
+
+impl<K: Hash + Eq, V : Clone> RandCache<K,V> for HashMap<K,V> { }
 
 #[test]
 /// test of default random
@@ -327,5 +389,29 @@ fn test_rand_generic () {
   m.insert(9,true);
   assert!(1 == m.next_random_values(1,filter).len());
   assert!(6 == m.next_random_values(8,filter).len());
+}
+#[test]
+/// test of exact random
+fn test_exact_rand () {
+  let mut m : HashMap<usize, usize> = HashMap::new();
+  assert!(m.exact_rand(1,1).is_err());
+  m.insert(1,1);
+  assert!(1 == m.exact_rand(1,1000).unwrap().len());
+  m.insert(2,2);
+  assert!(2 == m.exact_rand(1,2).unwrap().len());
+  assert!(2 == m.exact_rand(2,2).unwrap().len());
+  m.insert(3,11);
+  m.insert(4,12);
+  assert!(2 == m.exact_rand(2,3).unwrap().len());
+  assert!(4 == m.exact_rand(2,4).unwrap().len());
+  assert!(4 == m.exact_rand(4,5).unwrap().len());
+  let r = m.exact_rand(4,5).unwrap();
+  for i in 1..5 {
+    for j in 1..5 {
+      if i != j {
+        assert!(m.get(&i).unwrap().clone() != *m.get(&j).unwrap());
+      }
+    }
+  }
 }
 

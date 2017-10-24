@@ -13,9 +13,11 @@ use mydht_base::keyval::KeyVal;
 //use mydht_base::keyval::{Attachment,SettableAttachment};
 use mydht_base::kvcache::{
   Cache,
+  KVCache,
+  RandCache,
 };
 use std::marker::PhantomData;
-use mydht_base::mydhtresult::Result as MydhtResult;
+use mydht_base::mydhtresult::Result;
 
 use std::borrow::Borrow;
 use mydht_base::route2::{
@@ -94,7 +96,7 @@ InefficientmapBase2<P,RP,GP,C> {
 
 impl<P : Peer,RP : Borrow<P>,GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Key,GP>>
   RouteBase2<P,RP,GP> for InefficientmapBase2<P,RP,GP,C> {
-  fn route_base<MSG : RouteBaseMessage<P>>(&mut self, nb : usize, mut m : MSG, _ : RouteMsgType) -> MydhtResult<(MSG,Vec<usize>)> {
+  fn route_base<MSG : RouteBaseMessage<P>>(&mut self, nb : usize, mut m : MSG, _ : RouteMsgType) -> Result<(MSG,Vec<usize>)> {
     let closest = {
       let filter = m.get_filter_mut();
       self.get_closest(nb,filter)
@@ -135,7 +137,34 @@ impl<P : Peer,RP : Borrow<P>,GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Key
     }
     self.peers.remove_val_c(k)
   }
+  fn len_c (&self) -> usize {
+    self.peers.len_c()
+  }
+
 }
 
+/*
+impl<P : Peer,RP : Borrow<P>,GP : GetPeerRef<P,RP> + Clone, C : RandCache<<P as KeyVal>::Key,GP>>
+  KVCache<<P as KeyVal>::Key,GP> for InefficientmapBase2<P,RP,GP,C> {
 
+  fn update_val_c<F>(& mut self, k : &<P as KeyVal>::Key, f : F) -> Result<bool> where F : FnOnce(& mut GP) -> Result<()> {
+    self.peers.update_val_c(k,f)
+  }
+ 
+  fn strict_fold_c<'a, B, F>(&'a self, init: B, f: F) -> B where F: Fn(B, (&'a <P as KeyVal>::Key, &'a GP)) -> B, <P as KeyVal>::Key : 'a, GP : 'a {
+    self.peers.strict_fold_c(init,f)
+  }
 
+  fn fold_c<'a, B, F>(&'a self, init: B, f: F) -> B where F: FnMut(B, (&'a <P as KeyVal>::Key, &'a GP)) -> B, <P as KeyVal>::Key : 'a, GP : 'a {
+    self.peers.fold_c(init,f)
+  }
+
+  fn new() -> Self {
+    InefficientmapBase2::new(C::new())
+  }
+
+}
+
+impl<P : Peer,RP : Borrow<P>,GP : GetPeerRef<P,RP> + Clone, C : RandCache<<P as KeyVal>::Key,GP>>
+  RandCache<<P as KeyVal>::Key,GP> for InefficientmapBase2<P,RP,GP,C> { }
+*/

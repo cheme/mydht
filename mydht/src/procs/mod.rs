@@ -66,6 +66,8 @@ use transport::{
 use kvcache::{
   SlabCache,
   Cache,
+  KVCache,
+  RandCache,
 };
 use self::peermgmt::{
   PeerMgmtCommand,
@@ -564,6 +566,18 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// number of time we can call for new peer on kvstore, this is not a fine discover mechanism,
   /// some between peer query could be added in the future
   const MAX_NB_DISCOVER_CALL : usize = 2;
+
+
+  /// size of suitable pool for connected peer
+  const PEER_POOL_INIT_SIZE : usize = 0;
+
+  /// delay between pool connect query in milliseconds - default to 5 seconds
+  const PEER_POOL_DELAY_MS : u64 = 5000;
+  /// number of extra connection to try when building pool (pool building is done at pool init size
+  /// which makes it very unprobable to be reach the first time : to gain time we can increase this
+  /// number by adding the number of queried connect times this ratio to nb new connect to get).
+  const PEER_EXTRA_POOL_RATIO : f64 = 0.1;
+
   /// Spawner for main loop
   type MainloopSpawn : Spawner<
     MyDHTService<Self>,
