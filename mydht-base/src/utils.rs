@@ -101,7 +101,7 @@ impl<'de,T : Deserialize<'de>, R : Ref<T>> Deserialize<'de> for SerRef<T,R> {
 
 /// Arc is used to share peer or key val between threads
 /// useless if no threads in spawners.
-#[derive(Clone,Eq,PartialEq)]
+#[derive(Clone,Eq,PartialEq,Debug)]
 pub struct ArcRef<T>(Arc<T>);
 
 impl<T> Borrow<T> for ArcRef<T> {

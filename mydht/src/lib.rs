@@ -155,6 +155,7 @@ pub use procs::{
   ShadowAuthType,
   ReadReply,
   MainLoopCommand,
+  MainLoopSubCommand,
   RWSlabEntry,
   ChallengeEntry,
   Route,

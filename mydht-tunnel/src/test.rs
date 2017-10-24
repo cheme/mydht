@@ -1,5 +1,53 @@
-
 extern crate mydht_tcp_loop;
+extern crate sized_windows_lim;
+extern crate mydht_basetest;
+use tunnel::info::error::{
+  MultipleErrorInfo,
+  MultipleErrorMode,
+};
+use tunnel::info::multi::{
+  MultipleReplyMode,
+};
+
+use tunnel::{
+  SymProvider,
+};
+use readwrite_comp::{
+  ExtWrite,
+  ExtRead,
+  MultiRExt,
+};
+use std::io::{
+  Write,
+  Read,
+  Result as IoResult,
+};
+use self::mydht_basetest::shadow::{
+  ShadowTest,
+  ShadowModeTest,
+};
+use mydht::transportif::{
+  Transport,
+};
+
+use super::{
+  SSWCache,
+};
+use self::sized_windows_lim::{
+  SizedWindowsParams,
+  SizedWindows,
+};
+use tunnel::full::{
+  Full,
+  FullW,
+  GenTunnelTraits,
+  TunnelCachedWriterExt,
+  ErrorWriter,
+};
+
+
+
+
 use mydht::kvstoreif::{
   KVCache,
   KVStore,
@@ -312,6 +360,17 @@ impl MyDHTTunnelConf for TunnelConf {
   type Route = TestRoute<MyDHTTunnelConfType<Self>>;
   type PeerKVStore = SimpleCache<Self::Peer,HashMap<<Self::Peer as KeyVal>::Key,Self::Peer>>;
 
+  type LimiterW = SizedWindows<TestSizedWindows>;
+  type LimiterR = SizedWindows<TestSizedWindows>;
+
+  type SSW = SWrite;
+  type SSR = SRead;
+  type SP = SProv;
+
+  type CacheSSW = HashMap<Vec<u8>,SSWCache<Self>>;
+  type CacheSSR = HashMap<Vec<u8>,MultiRExt<Self::SSR>>;
+  type CacheErW = HashMap<Vec<u8>,(ErrorWriter,<Self::Transport as Transport>::Address)>;
+  type CacheErR = HashMap<Vec<u8>,Vec<MultipleErrorInfo>>;
 // peer name, listener port, is_multiplexed, node in kvstore, and dest for query
 //pub struct TunnelConf(pub String, pub SerSocketAddr, pub bool, pub Vec<Node>, pub Node);
   fn init_ref_peer(&mut self) -> Result<Self::PeerRef> {
@@ -382,7 +441,13 @@ fn test_ping_pong() {
   let mut sends : Vec<_> = peers.iter().enumerate().map(|(i,p)| {
     let mut stpeers = peers.clone();
     stpeers.remove(i);
-    let conf = MyDHTTunnelConfType(TunnelConf(p.nodeid.clone(), p.address.clone(), true,stpeers,peers[peers.len()-1].clone())); 
+    let conf = MyDHTTunnelConfType {
+      conf : TunnelConf(p.nodeid.clone(), p.address.clone(), true,stpeers,peers[peers.len()-1].clone()),
+      me : ArcRef::new(peers[0].clone()),
+
+      reply_mode : MultipleReplyMode::RouteReply,
+      error_mode : MultipleErrorMode::NoHandling,
+    };
     let send = conf.start_loop().unwrap().0;
     send
   }).collect();
@@ -448,3 +513,76 @@ impl Route<MyDHTTunnelConfType<TunnelConf>> for TestRoute<MyDHTTunnelConfType<Tu
     Ok((c,res))
   }
 }
+
+
+
+#[derive(Clone)]
+pub struct TestSizedWindows;
+
+impl SizedWindowsParams for TestSizedWindows {
+//    const INIT_SIZE : usize = 45;
+    const INIT_SIZE : usize = 15;
+    const GROWTH_RATIO : Option<(usize,usize)> = Some((3,2));
+    const WRITE_SIZE : bool = true;
+    const SECURE_PAD : bool = false;
+}
+
+
+#[derive(Clone)]
+pub struct SProv (ShadowTest);
+#[derive(Clone)]
+pub struct SRead (ShadowTest);
+#[derive(Clone)]
+pub struct SWrite (ShadowTest);
+impl ExtWrite for SWrite {
+  #[inline]
+  fn write_header<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
+    self.0.write_header(w)
+  }
+  #[inline]
+  fn write_into<W : Write>(&mut self, w : &mut W, cont : &[u8]) -> IoResult<usize> {
+    self.0.write_into(w,cont)
+  }
+  #[inline]
+  fn flush_into<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
+    self.0.flush_into(w)
+  }
+  #[inline]
+  fn write_end<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
+    self.0.write_end(w)
+  }
+}
+impl ExtRead for SRead {
+  fn read_header<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
+    self.0.read_header(r)
+  }
+  #[inline]
+  fn read_from<R : Read>(&mut self, r : &mut R, buf : &mut[u8]) -> IoResult<usize> {
+    self.0.read_from(r,buf)
+  }
+  #[inline]
+  fn read_end<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
+    self.0.read_end(r)
+  }
+}
+
+impl SymProvider<SWrite,SRead> for SProv {
+  fn new_sym_key (&mut self) -> Vec<u8> {
+    ShadowTest::shadow_simkey()
+  }
+  // TODO peerkey at 0??
+  fn new_sym_writer (&mut self, v : Vec<u8>) -> SWrite {
+    let mut st = self.0.clone();
+    st.0 = 0;
+    st.1 = v[0];
+    SWrite(st)
+  }
+  // TODO peerkey at 0??
+  fn new_sym_reader (&mut self, v : Vec<u8>) -> SRead {
+    let mut st = self.0.clone();
+    st.0 = 0;
+    st.1 = v[0];
+    SRead(st)
+  }
+}
+

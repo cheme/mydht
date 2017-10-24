@@ -6,8 +6,11 @@ dependencies = [
  "mydht-basetest 0.0.1",
  "mydht-slab 0.0.1",
  "mydht-tcp-loop 0.0.1",
+ "rand 0.3.17 (registry+https://github.com/rust-lang/crates.io-index)",
+ "readwrite-comp 0.0.1 (git+https://github.com/cheme/readwrite-comp.git)",
  "serde 1.0.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_derive 1.0.15 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sized_windows_lim 0.0.1 (git+https://github.com/cheme/readwrite-comp.git)",
  "tunnel 0.0.1",
 ]
 
@@ -274,30 +277,6 @@ dependencies = [
 [[package]]
 name = "mydht-base"
 version = "0.0.1"
-source = "git+https://github.com/cheme/mydht.git#f78bf59d0c3a7aec018921ff24563fe6b601adf2"
-dependencies = [
- "bincode 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "bit-vec 0.4.1 (git+https://github.com/cheme/bit-vec.git)",
- "byteorder 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "coroutine 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "futures 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)",
- "futures-cpupool 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)",
- "log 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "mio 0.6.10 (registry+https://github.com/rust-lang/crates.io-index)",
- "num 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
- "parking_lot 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "rand 0.3.17 (registry+https://github.com/rust-lang/crates.io-index)",
- "readwrite-comp 0.0.1 (git+https://github.com/cheme/readwrite-comp.git)",
- "rust-crypto 0.2.36 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde 1.0.15 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde_derive 1.0.15 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde_json 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)",
- "time 0.1.38 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "mydht-base"
-version = "0.0.1"
 dependencies = [
  "bincode 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "bit-vec 0.4.1 (git+https://github.com/cheme/bit-vec.git)",
@@ -524,6 +503,15 @@ version = "0.0.1"
 source = "git+https://github.com/cheme/readwrite-comp.git#011ca5c0f6e57c69225bb1db28117fd4ed1b1767"
 
 [[package]]
+name = "readwrite-comp-test"
+version = "0.0.1"
+source = "git+https://github.com/cheme/readwrite-comp.git#011ca5c0f6e57c69225bb1db28117fd4ed1b1767"
+dependencies = [
+ "rand 0.3.17 (registry+https://github.com/rust-lang/crates.io-index)",
+ "readwrite-comp 0.0.1 (git+https://github.com/cheme/readwrite-comp.git)",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.1.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -598,6 +586,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sized_windows_lim"
+version = "0.0.1"
+source = "git+https://github.com/cheme/readwrite-comp.git#011ca5c0f6e57c69225bb1db28117fd4ed1b1767"
+dependencies = [
+ "byteorder 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rand 0.3.17 (registry+https://github.com/rust-lang/crates.io-index)",
+ "readwrite-comp 0.0.1 (git+https://github.com/cheme/readwrite-comp.git)",
+ "readwrite-comp-test 0.0.1 (git+https://github.com/cheme/readwrite-comp.git)",
+]
+
+[[package]]
 name = "slab"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -661,7 +660,6 @@ version = "0.0.1"
 dependencies = [
  "bincode 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "mydht-base 0.0.1 (git+https://github.com/cheme/mydht.git)",
  "rand 0.3.17 (registry+https://github.com/rust-lang/crates.io-index)",
  "readwrite-comp 0.0.1 (git+https://github.com/cheme/readwrite-comp.git)",
  "serde 1.0.15 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -758,7 +756,6 @@ dependencies = [
 "checksum memchr 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "1dbccc0e46f1ea47b9f17e6d67c5a96bd27030519c519c9c91327e31275a47b4"
 "checksum mio 0.6.10 (registry+https://github.com/rust-lang/crates.io-index)" = "dbd91d3bfbceb13897065e97b2ef177a09a438cb33612b2d371bf568819a9313"
 "checksum miow 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "8c1f2f3b1cf331de6896aabf6e9d55dca90356cc9960cca7eaaf408a355ae919"
-"checksum mydht-base 0.0.1 (git+https://github.com/cheme/mydht.git)" = "<none>"
 "checksum net2 0.2.31 (registry+https://github.com/rust-lang/crates.io-index)" = "3a80f842784ef6c9a958b68b7516bc7e35883c614004dd94959a4dca1b716c09"
 "checksum num 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)" = "a311b77ebdc5dd4cf6449d81e4135d9f0e3b153839ac90e648a8ef538f923525"
 "checksum num-bigint 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)" = "8fd0f8dbb4c0960998958a796281d88c16fbe68d87b1baa6f31e2979e81fd0bd"
@@ -777,6 +774,7 @@ dependencies = [
 "checksum quote 0.3.15 (registry+https://github.com/rust-lang/crates.io-index)" = "7a6e920b65c65f10b2ae65c831a81a073a89edd28c7cce89475bff467ab4167a"
 "checksum rand 0.3.17 (registry+https://github.com/rust-lang/crates.io-index)" = "61efcbcd9fa8d8fbb07c84e34a8af18a1ff177b449689ad38a6e9457ecc7b2ae"
 "checksum readwrite-comp 0.0.1 (git+https://github.com/cheme/readwrite-comp.git)" = "<none>"
+"checksum readwrite-comp-test 0.0.1 (git+https://github.com/cheme/readwrite-comp.git)" = "<none>"
 "checksum redox_syscall 0.1.31 (registry+https://github.com/rust-lang/crates.io-index)" = "8dde11f18c108289bef24469638a04dce49da56084f2d50618b226e47eb04509"
 "checksum regex 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "1731164734096285ec2a5ec7fea5248ae2f5485b3feeb0115af4fda2183b2d1b"
 "checksum regex-syntax 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ad890a5eef7953f55427c50575c680c42841653abd2b028b68cd223d157f62db"
@@ -786,6 +784,7 @@ dependencies = [
 "checksum serde_derive 1.0.15 (registry+https://github.com/rust-lang/crates.io-index)" = "1afcaae083fd1c46952a315062326bc9957f182358eb7da03b57ef1c688f7aa9"
 "checksum serde_derive_internals 0.16.0 (registry+https://github.com/rust-lang/crates.io-index)" = "bd381f6d01a6616cdba8530492d453b7761b456ba974e98768a18cad2cd76f58"
 "checksum serde_json 1.0.4 (registry+https://github.com/rust-lang/crates.io-index)" = "ee28c1d94a7745259b767ca9e5b95d55bafbd3205ca3acb978cad84a6ed6bc62"
+"checksum sized_windows_lim 0.0.1 (git+https://github.com/cheme/readwrite-comp.git)" = "<none>"
 "checksum slab 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "17b4fcaed89ab08ef143da37bc52adbcc04d4a69014f4c1208d6b51f0c47bc23"
 "checksum slab 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "fdeff4cd9ecff59ec7e3744cbca73dfe5ac35c2aedb2cfba8a1c715a18912e9d"
 "checksum smallvec 0.4.4 (registry+https://github.com/rust-lang/crates.io-index)" = "ee4f357e8cd37bf8822e1b964e96fd39e2cb5a0424f8aaa284ccaccc2162411c"

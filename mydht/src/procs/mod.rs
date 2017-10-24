@@ -99,6 +99,7 @@ use service::{
 
 pub use self::mainloop::{
   MainLoopCommand,
+  MainLoopSubCommand,
   //PeerCacheEntry,
   MDHTState,
   MyDHT,

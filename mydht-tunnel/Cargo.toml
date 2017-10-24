@@ -6,17 +6,22 @@ authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
 
 [dependencies.tunnel]
-#path = "../../tunnel/"
-git = "https://github.com/cheme/tunnel.git"
-features = ["mydht-impl"]
+path = "../../tunnel/"
+#git = "https://github.com/cheme/tunnel.git"
 
 
 [dependencies]
 mydht = { path = "../mydht" }
 mydht-slab = { path = "../mydht-slab" }
 serde = { version = "~1.0.10", features = ["rc"]}
+readwrite-comp = { git = "https://github.com/cheme/readwrite-comp.git" }
+rand = "~0.3.11"
 
 [dev-dependencies]
 serde_derive = "~1.0.10"
 mydht-basetest = { path = "../mydht-basetest" }
 mydht-tcp-loop = { path = "../mydht-tcp-loop" }
+sized_windows_lim = { git = "https://github.com/cheme/readwrite-comp.git" }
+
+
+

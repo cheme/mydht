@@ -1,11 +1,39 @@
 extern crate tunnel;
 extern crate mydht;
 extern crate serde;
+extern crate rand;
 extern crate mydht_slab;
+extern crate readwrite_comp;
 
+use tunnel::info::error::{
+  MultipleErrorInfo,
+  MultipleErrorMode,
+};
+use tunnel::info::multi::{
+  MultipleReplyMode,
+};
+use readwrite_comp::{
+  ExtWrite,
+  ExtRead,
+  MultiRExt,
+};
+use tunnel::{
+  TunnelNoRep,
+};
 use tunnel::full::{
   Full,
+  FullW,
   GenTunnelTraits,
+  TunnelCachedWriterExt,
+  ErrorWriter,
+};
+
+use tunnel::nope::{
+  Nope,
+};
+
+use tunnel::{
+  SymProvider,
 };
 use std::collections::VecDeque;
 use mydht_slab::slab::{
@@ -83,6 +111,7 @@ use mydht::{
   MCReply,
   MCCommand,
   MainLoopCommand,
+  MainLoopSubCommand,
   ShadowAuthType,
   ProtoMessage,
   ProtoMessageSend,
@@ -125,6 +154,36 @@ use mydht::service::{
 mod test;
 
 mod tunnelconf;
+use tunnelconf::{
+  TunnelTraits,
+};
+
+#[derive(Clone,Debug)]
+pub struct TunPeer<P,RP>(RP,PhantomData<P>);
+
+impl<P,RP> TunPeer<P,RP> {
+  #[inline]
+  fn new(rp : RP) -> Self {
+    TunPeer(rp,PhantomData)
+  }
+}
+impl<P : Peer, RP : Ref<P> + Clone + Debug> TPeer for TunPeer<P,RP> {
+  type Address = P::Address;
+  type ShadRead = P::ShadowRAuth;
+  type ShadWrite = P::ShadowWAuth;
+
+  fn get_address(&self) -> &Self::Address {
+    self.0.borrow().get_address()
+  }
+  fn new_shadw(&self) -> Self::ShadWrite {
+    self.0.borrow().get_shadower_w_auth()
+  }
+  fn new_shadr(&self) -> Self::ShadRead {
+    self.0.borrow().get_shadower_r_auth()
+  }
+
+}
+
 
 /// lightened mydht conf for tunnel
 /// At this time we put a minimum, but it may include more (especially optionnal service like api),
@@ -135,7 +194,7 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
   // constraint for hash type
   type PeerKey : Hash + Serialize + DeserializeOwned + Debug + Eq + Clone + 'static + Send + Sync;
   type Peer : Peer<Key = Self::PeerKey,Address = <Self::Transport as Transport>::Address>;
-  type PeerRef : Ref<Self::Peer> + Serialize + DeserializeOwned + Clone 
+  type PeerRef : Ref<Self::Peer> + Serialize + DeserializeOwned + Clone + Debug
     // This send trait should be remove if spawner moved to this level
     + Send;
   type PeerMgmtMeths : PeerMgmtMeths<Self::Peer>;
@@ -171,6 +230,27 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
     // This send trait should be remove if spawner moved to this level
     + Send;
 
+
+  type LimiterW : ExtWrite + Clone + Send;
+  type LimiterR : ExtRead + Clone + Send;
+
+  type SSW : ExtWrite + Send;
+  type SSR : ExtRead + Send;
+  type SP : SymProvider<Self::SSW,Self::SSR> + Send;
+
+
+  type CacheSSW : Cache<Vec<u8>,SSWCache<Self>>
+    + Send;
+  type CacheSSR : Cache<Vec<u8>,MultiRExt<Self::SSR>>
+    + Send;
+
+  type CacheErW : Cache<Vec<u8>,(ErrorWriter,<Self::Transport as Transport>::Address)>
+    + Send;
+  type CacheErR : Cache<Vec<u8>,Vec<MultipleErrorInfo>>
+    + Send;
+
+  //type GenTunnelTraits : GenTunnelTraits + Send;
+
   fn init_ref_peer(&mut self) -> Result<Self::PeerRef>;
   fn init_transport(&mut self) -> Result<Self::Transport>;
   fn init_inner_service(&mut self) -> Result<Self::InnerService>;
@@ -183,6 +263,9 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
   fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>>;
  
 }
+
+//type SSWCache<MC : MyDHTTunnelConf> = (TunnelCachedWriterExt<MC::SSW,MC::LimiterW>,<TunPeer<MC::Peer,MC::PeerRef> as TPeer>::Address);
+type SSWCache<MC : MyDHTTunnelConf> = (TunnelCachedWriterExt<MC::SSW,MC::LimiterW>,<MC::Transport as Transport>::Address);
 pub struct MyDHTTunnel<MC : MyDHTTunnelConf> {
   me : MC::PeerRef,
 }
@@ -259,7 +342,29 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
   }
 }
 
-pub struct MyDHTTunnelConfType<MC : MyDHTTunnelConf>(pub MC);
+pub struct MyDHTTunnelConfType<MC : MyDHTTunnelConf>{
+  conf: MC, 
+  me : MC::PeerRef,
+
+  reply_mode : MultipleReplyMode,
+  error_mode : MultipleErrorMode,
+ //reply_mode : MultipleReplyMode::RouteReply,
+ //error_mode : MultipleErrorMode::NoHandling,
+}
+
+impl<MC : MyDHTTunnelConf> MyDHTTunnelConfType<MC> {
+  pub fn new(mut conf : MC, reply_mode : MultipleReplyMode, error_mode : MultipleErrorMode) -> Result<Self> {
+    let me = conf.init_ref_peer()?;
+    Ok(MyDHTTunnelConfType {
+      conf,
+      me,
+      reply_mode,
+      error_mode,
+    })
+  }
+}
+
+    
 pub enum LocalTunnelCommand<MC : MyDHTTunnelConf> {
   Inner(MC::InnerCommand),
 }
@@ -292,7 +397,7 @@ impl<MC : MyDHTTunnelConf> Service for LocalTunnelService<MC> {
 pub struct GlobalTunnelService<MC : MyDHTTunnelConf> {
   pub inner : MC::InnerService,
   pub to_send : VecDeque<(MC::PeerRef,MC::InnerCommand)>,
-//  pub tunnel : Full<>
+  pub tunnel : Full<TunnelTraits<MC>>,
 }
 
 impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
@@ -300,6 +405,22 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
   type CommandOut = GlobalReply<MC::Peer,MC::PeerRef,GlobalTunnelCommand<MC>,GlobalTunnelReply<MC>>;
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
     Ok(match req {
+      GlobalCommand(_,GlobalTunnelCommand::NewOnline(pr)) => {
+        self.tunnel.route_prov.add_online(TunPeer::new(pr));
+        if self.to_send.len() > 0 && self.tunnel.route_prov.enough_peer() {
+          // send all cached
+          while let Some((dest, inner_command)) = self.to_send.pop_front() {
+            let route_writer = self.tunnel.new_writer(&TunPeer::new(dest));
+            panic!("TODO sedn protr mess");
+          }
+        }
+
+        GlobalReply::NoRep
+      },
+      GlobalCommand(_,GlobalTunnelCommand::Offline(pr)) => {
+        self.tunnel.route_prov.rem_online(TunPeer::new(pr));
+        GlobalReply::NoRep
+      },
       GlobalCommand(owith,GlobalTunnelCommand::Inner(inner_command)) => {
         // no service spawn for now
         let rep = self.inner.call(GlobalCommand(owith,inner_command),async_yield)?;
@@ -310,17 +431,16 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
             } else {
               GlobalReply::NoRep
             }
-          }
+          },
           Some(GlobalTunnelReply::SendCommandTo(dest, inner_command)) => {
-            let block_missing_rand_peer = self.tunnel.route_prov.route_len();
-            if block_missing_rand_peer {
-              self.to_send.push_back((dest,inner_command));
-            } else {
-              let route_writer = self.tunnel.new_writer(&dest);
+            if self.tunnel.route_prov.enough_peer() {
+              let route_writer = self.tunnel.new_writer(&TunPeer::new(dest));
               panic!("TODO sedn protr mess");
+            } else {
+              self.to_send.push_back((dest,inner_command));
             }
-            return GlobalReply::MainLoop(MainLoopCommand::PoolSize(self.tunnel.route_prov.route_len()));
-          }
+            GlobalReply::MainLoop(MainLoopSubCommand::PoolSize(self.tunnel.route_prov.route_len()))
+          },
 
           None => GlobalReply::NoRep,
         }
@@ -427,7 +547,7 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> where
   type SynchConnectSpawn = NoSpawn;
 
   fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>> {
-    self.0.init_peer_kvstore()
+    self.conf.init_peer_kvstore()
   }
   fn do_peer_query_forward_with_discover(&self) -> bool {
     false
@@ -449,7 +569,7 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> where
 //impl<P : Peer, V : KeyVal, RP : Ref<P>> SimpleCacheQuery<P,V,RP,HashMapQuery<P,V,RP>> {
 // QueryCache<Self::Peer,Self::PeerRef,Self::PeerRef>;
   fn init_ref_peer(&mut self) -> Result<Self::PeerRef> {
-    self.0.init_ref_peer()
+    Ok(self.me.clone())
   }
   fn get_main_spawner(&mut self) -> Result<Self::MainloopSpawn> {
     //Ok(Blocker)
@@ -460,10 +580,10 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> where
     Ok(Slab::new())
   }
   fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache> {
-    self.0.init_main_loop_peer_cache()
+    self.conf.init_main_loop_peer_cache()
   }
   fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache> {
-    self.0.init_main_loop_challenge_cache()
+    self.conf.init_main_loop_challenge_cache()
   }
   fn init_main_loop_channel_in(&mut self) -> Result<Self::MainLoopChannelIn> {
     Ok(MpscChannel)
@@ -503,25 +623,44 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> where
 
   fn init_enc_proto(&mut self) -> Result<Self::MsgEnc> {
     Ok(TunnelWriterReader{
-      inner_enc : self.0.init_enc_proto()?
+      inner_enc : self.conf.init_enc_proto()?
     })
   }
 
   fn init_transport(&mut self) -> Result<Self::Transport> {
-    self.0.init_transport()
+    self.conf.init_transport()
   }
   fn init_peermgmt_proto(&mut self) -> Result<Self::PeerMgmtMeths> {
-    self.0.init_peermgmt_proto()
+    self.conf.init_peermgmt_proto()
   }
   fn init_dhtrules_proto(&mut self) -> Result<Self::DHTRules> {
-    self.0.init_dhtrules_proto()
+    self.conf.init_dhtrules_proto()
   }
 
   fn init_global_service(&mut self) -> Result<Self::GlobalService> {
-    Ok(GlobalTunnelService {
-      inner : self.0.init_inner_service()?,
+    panic!("TODO");
+/*    Ok(GlobalTunnelService {
+      inner : self.conf.init_inner_service()?,
       to_send : VecDeque::new(),
-    })
+      tunnel : Full {
+        me : TunPeer::new(self.me.clone()),
+
+        reply_mode : self.reply_mode.clone(),
+        error_mode : self.error_mode.clone(),
+        cache : cache,
+        //  pub sym_prov : TT::SP,
+        route_prov : route_prov,
+        reply_prov : rip,
+        sym_prov : SProv(ShadowTest(0,0,ShadowModeTest::SimpleShift)),
+        error_prov : MulErrorProvider::new(error_mode.clone()).unwrap(),
+        rng : OsRng::new().unwrap(),
+        limiter_proto_w : SizedWindows::new(TestSizedWindows),
+        limiter_proto_r : SizedWindows::new(TestSizedWindows),
+        tunrep : tunnel_reply,
+        reply_once_buf_size : 256,
+        _p : PhantomData,
+      },
+    })*/
   }
   fn init_local_service(me : Self::PeerRef, owith : Option<Self::PeerRef>) -> Result<Self::LocalService> {
     unimplemented!()
@@ -533,7 +672,7 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> where
   }
 
   fn init_route(&mut self) -> Result<Self::Route> {
-    self.0.init_route()
+    self.conf.init_route()
   }
 
   fn init_api_service(&mut self) -> Result<Self::ApiService> {
