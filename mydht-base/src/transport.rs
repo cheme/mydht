@@ -94,7 +94,7 @@ impl Deref for SerSocketAddr {
 
 
 /// serializable socket address
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub struct SerSocketAddr(pub SocketAddr);
 
 

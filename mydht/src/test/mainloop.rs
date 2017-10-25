@@ -4,6 +4,9 @@
 extern crate mydht_tcp_loop;
 extern crate mydht_slab;
 use kvstore::StoragePriority;
+use transport::{
+  Transport,
+};
 use query::{
   //Query,
  // QReply,
@@ -88,6 +91,7 @@ use procs::{
 };
 use procs::{
   PeerCacheEntry,
+  AddressCacheEntry,
   ChallengeEntry,
 };
 use procs::deflocal::{
@@ -508,6 +512,7 @@ impl MyDHTConf for TestAllThConf {
   type DHTRules = Arc<SimpleRules>;
   type Slab = Slab<RWSlabEntry<Self>>;
   type PeerCache = HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
+  type AddressCache = HashMap<<Self::Transport as Transport>::Address,AddressCacheEntry>;
   type ChallengeCache = HashMap<Vec<u8>,ChallengeEntry<Self>>;
   type PeerMgmtChannelIn = MpscChannel;
   type ReadChannelIn = MpscChannel;
@@ -596,6 +601,10 @@ impl MyDHTConf for TestAllThConf {
   fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache> {
     Ok(HashMap::new())
   }
+  fn init_main_loop_address_cache(&mut self) -> Result<Self::AddressCache> {
+    Ok(HashMap::new())
+  }
+
   fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache> {
     Ok(HashMap::new())
   }
@@ -701,6 +710,7 @@ impl MyDHTConf for TestLocalConf {
   type DHTRules = Arc<SimpleRules>;
   type Slab = Slab<RWSlabEntry<Self>>;
   type PeerCache = HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
+  type AddressCache = HashMap<<Self::Transport as Transport>::Address,AddressCacheEntry>;
   type ChallengeCache = HashMap<Vec<u8>,ChallengeEntry<Self>>;
   type PeerMgmtChannelIn = MpscChannelRef;
   type ReadChannelIn = LocalRcChannel;
@@ -770,6 +780,10 @@ impl MyDHTConf for TestLocalConf {
   fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache> {
     Ok(HashMap::new())
   }
+  fn init_main_loop_address_cache(&mut self) -> Result<Self::AddressCache> {
+    Ok(HashMap::new())
+  }
+ 
   fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache> {
     Ok(HashMap::new())
   }

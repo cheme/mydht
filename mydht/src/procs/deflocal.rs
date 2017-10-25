@@ -84,8 +84,8 @@ pub enum GlobalReply<MC : MyDHTConf> {
 }*/
 pub enum GlobalReply<P : Peer,PR,GSC,GSR> {
   /// forward command to list of peers or/and to nb peers from route
-  Forward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,FWConf,GSC),
-  PeerForward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,FWConf,KVStoreCommand<P,PR,P,PR>),
+  Forward(Option<Vec<PR>>,Option<Vec<(Option<<P as KeyVal>::Key>,Option<<P as Peer>::Address>)>>,FWConf,GSC),
+  PeerForward(Option<Vec<PR>>,Option<Vec<(Option<<P as KeyVal>::Key>,Option<<P as Peer>::Address>)>>,FWConf,KVStoreCommand<P,PR,P,PR>),
   /// reply to api
   Api(GSR),
   PeerApi(KVStoreReply<PR>),

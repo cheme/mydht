@@ -158,6 +158,7 @@ mod synch_transport;
 // reexport
 pub use self::mainloop::{
   PeerCacheEntry,
+  AddressCacheEntry,
 };
 pub use self::api::{
   ApiCommand,
@@ -607,8 +608,11 @@ pub trait MyDHTConf : 'static + Send + Sized
   type DHTRules : DHTRules + Clone;
   /// loop slab implementation
   type Slab : SlabCache<RWSlabEntry<Self>>;
-  /// local cache for peer
+  /// local cache for peer connected
   type PeerCache : Cache<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
+  /// local cache for address under connection or to use as replacement for peer cache when NoAuth
+  /// mode
+  type AddressCache : Cache<<Self::Transport as Transport>::Address,AddressCacheEntry>;
   /// local cache for auth challenges
   type ChallengeCache : Cache<Vec<u8>,ChallengeEntry<Self>>;
   
@@ -794,6 +798,7 @@ pub trait MyDHTConf : 'static + Send + Sized
 
   /// Peer cache initialization
   fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache>;
+  fn init_main_loop_address_cache(&mut self) -> Result<Self::AddressCache>;
   fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache>;
 
   /// Main loop channel input builder

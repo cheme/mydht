@@ -11,6 +11,7 @@ use rules::{
 use transport::Transport;
 use procs::{
   PeerCacheEntry,
+  AddressCacheEntry,
   ChallengeEntry,
 };
 
@@ -338,7 +339,9 @@ fn simpeer2hopget () {
 
 fn finddistantpeer2<P : Peer, T : Transport<Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>> + Clone>
    (mut peers : Vec<(P, DHTIn<TestConf<P,T,E,TestingRules,SimpleRules>>)>, nbpeer : usize, qm : QueryMode, prio : QueryPriority, _map : &[&[usize]], find : bool, rules : SimpleRules)
-  where  <P as KeyVal>::Key : Hash {
+  where  <P as KeyVal>::Key : Hash,
+         <P as Peer>::Address : Hash,
+{
     let queryconf = QueryConf {
       mode : qm.clone(), 
 //      chunk : QueryChunk::None, 
@@ -585,7 +588,9 @@ impl<
   PM : PeerMgmtMeths<P>,
   DR : DHTRules + Clone,
   > MyDHTConf for TestConf<P,T,ENC,PM,DR> 
-where <P as KeyVal>::Key : Hash
+where <P as KeyVal>::Key : Hash,
+      <P as Peer>::Address : Hash,
+
 {
   const SEND_NB_ITER : usize = 10;
 
@@ -603,6 +608,7 @@ where <P as KeyVal>::Key : Hash
 
   type PeerCache = InefficientmapBase2<Self::Peer, Self::PeerRef, PeerCacheEntry<Self::PeerRef>,
     HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>>;
+  type AddressCache = HashMap<<Self::Transport as Transport>::Address,AddressCacheEntry>;
   type ChallengeCache = HashMap<Vec<u8>,ChallengeEntry<Self>>;
   type PeerMgmtChannelIn = MpscChannel;
   type ReadChannelIn = MpscChannel;
@@ -693,6 +699,10 @@ where <P as KeyVal>::Key : Hash
   fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache> {
     Ok(InefficientmapBase2::new(HashMap::new()))
   }
+  fn init_main_loop_address_cache(&mut self) -> Result<Self::AddressCache> {
+    Ok(HashMap::new())
+  }
+ 
   fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache> {
     Ok(HashMap::new())
   }
@@ -825,7 +835,8 @@ fn confinitpeers1(me : PeerTest, others : Vec<PeerTest>, transport : TransportTe
 /// queried by call to subset on peer connect discovery thus it is bad for test with single route.
 fn initpeers2<P : Peer, T : Transport<Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>> + Clone> (nodes : Vec<P>, transports : Vec<T>, map : &[&[usize]], meths : TestingRules, rules : DhtRules, enc : E, sim : Option<u64>) 
   -> Vec<(P, DHTIn< TestConf<P,T,E,TestingRules,SimpleRules>  >)> 
-  where  <P as KeyVal>::Key : Hash 
+  where  <P as KeyVal>::Key : Hash,
+         <P as Peer>::Address : Hash,
   {
   let mut i = 0;// TODO redesign with zip of map and nodes iter
   let mut result : Vec<(P, DHTIn<TestConf<P,T,E,TestingRules,SimpleRules>>, Vec<P>)> = transports.into_iter().map(|t|{

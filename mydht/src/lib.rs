@@ -220,7 +220,7 @@ pub mod kvstoreif{
   pub use mydht_base::kvstore::{KVStore, KVStoreRel};
 }
 pub mod transportif{
-  pub use transport::{Transport,TransportStream};
+  pub use transport::{Transport,TransportStream,Address};
 }
 pub mod msgencif{
   pub use msgenc::{MsgEnc};

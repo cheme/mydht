@@ -203,7 +203,7 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
 
   TryConnect(<MC::Transport as Transport>::Address,Option<ApiQueryId>),
 //  ForwardServiceLocal(MC::LocalServiceCommand,usize),
-  ForwardService(Option<Vec<MC::PeerRef>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,FWConf,MCCommand<MC>),
+  ForwardService(Option<Vec<MC::PeerRef>>,Option<Vec<(Option<<MC::Peer as KeyVal>::Key>,Option<<MC::Peer as Peer>::Address>)>>,FWConf,MCCommand<MC>),
   /// usize is only for mccommand type local to set the number of local to target
   ForwardApi(MCCommand<MC>,usize,MC::ApiReturn),
   /// received peer store command from peer : almost named ProxyPeerStore but it does a local peer
@@ -241,7 +241,7 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
   SubCommand(MainLoopSubCommand<MC::Peer>),
   TryConnect(<MC::Transport as Transport>::Address,Option<ApiQueryId>),
 //  ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
-  ForwardService(Option<Vec<PeerRefSend<MC>>>,Option<Vec<(<MC::Peer as KeyVal>::Key,<MC::Peer as Peer>::Address)>>,FWConf,<MCCommand<MC> as SRef>::Send),
+  ForwardService(Option<Vec<PeerRefSend<MC>>>,Option<Vec<(Option<<MC::Peer as KeyVal>::Key>,Option<<MC::Peer as Peer>::Address>)>>,FWConf,<MCCommand<MC> as SRef>::Send),
   ForwardApi(<MCCommand<MC> as SRef>::Send,usize,MC::ApiReturn),
   PeerStore(GlobalCommandSend<PeerRefSend<MC>,KVStoreCommandSend<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>),
   /// reject stream for this token and Address
@@ -368,6 +368,7 @@ pub struct MDHTState<MC : MyDHTConf> {
   route : MC::Route,
   slab_cache : MC::Slab,
   peer_cache : MC::PeerCache,
+  address_cache : MC::AddressCache,
   challenge_cache : MC::ChallengeCache,
   events : Option<Events>,
   poll : Poll,
@@ -496,6 +497,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       route : route,
       slab_cache : conf.init_main_loop_slab_cache()?,
       peer_cache : conf.init_main_loop_peer_cache()?,
+      address_cache : conf.init_main_loop_address_cache()?,
       challenge_cache : conf.init_main_loop_challenge_cache()?,
       events : None,
       poll : poll,
@@ -545,6 +547,12 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         self.slab_cache.get_mut(write_token).map(|r|r.os = Some(read_token));
         Ok(Some(read_token))
       }).unwrap_or(Ok(None))?;
+
+      self.address_cache.add_val_c(dest_address.clone(),AddressCacheEntry {
+        read : ort,
+        write : write_token,
+      });
+
       Ok((write_token,ort))
     } else {
       let (s,r) = self.write_channel_in.new()?;
@@ -556,6 +564,10 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           peer : None,
         }
       );
+      self.address_cache.add_val_c(dest_address.clone(),AddressCacheEntry {
+        read : None,
+        write : connect_token,
+      });
       let do_spawn = if self.synch_connect_ix == self.synch_connect_handle_send.len() {
         if self.synch_connect_handle_send.len() < MC::NB_SYNCH_CONNECT {
           true
@@ -678,11 +690,15 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                 // do not use connected peer (some may be accepted in between but it is view as
                 // harmless)
                 if !self.peer_cache.has_val_c(&ka.0) {
-                  let (write_token,ort) = self.connect_with(&ka.1)?;
+                  let ocache = self.address_cache.get_val_c(&ka.1).map(|acache|(acache.write,acache.read));
+                  let (need_ping,(write_token,ort)) = if let Some(c) = ocache {
+                    (false,c)
+                  } else {
+                    (true,self.connect_with(&ka.1)?)
+                  };
 
-                  if MC::AUTH_MODE == ShadowAuthType::NoAuth {
+                  if MC::AUTH_MODE == ShadowAuthType::NoAuth || need_ping == false {
                     // no auth to do
-                    panic!("TODO add a peer build from address to peer cache");
                     self.write_stream_send(write_token,WriteCommand::Service(command.clone()), <MC>::init_write_spawner_out()?, None)?;
                     nb_send += 1;
                   } else {
@@ -767,19 +783,25 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         match okad {
           Some(kad) => {
             for ka in kad.iter() {
-              let do_connect = match self.peer_cache.get_val_c(&ka.0) {
+              let do_connect = ka.0.as_ref().map(|key|match self.peer_cache.get_val_c(key) {
                 Some(p) if p.write.is_some() => {
                   ws_res.push(p.write.unwrap());
                   false
                 },
                 _ => fwconf.discover,
-              };
-              if do_connect {
-                let (write_token,ort) = self.connect_with(&ka.1)?;
+              }).unwrap_or(fwconf.discover);
 
-                if MC::AUTH_MODE == ShadowAuthType::NoAuth {
+              if do_connect && ka.1.is_some() {
+                let ocache = self.address_cache.get_val_c(ka.1.as_ref().unwrap()).map(|acache|(acache.write,acache.read));
+                let (need_ping,(write_token,ort)) = if let Some(c) = ocache {
+                  (false,c)
+                } else {
+                  (true,self.connect_with(ka.1.as_ref().unwrap())?)
+                };
+
+
+                if MC::AUTH_MODE == ShadowAuthType::NoAuth || !need_ping {
                   // no auth to do
-                  panic!("TODO add a peer build from address to peer cache");
                   ws_res.push(write_token);
                 } else {
                   let chal = self.peermgmt_proto.challenge(self.me.borrow());
@@ -884,12 +906,15 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         }
       },
       MainLoopCommand::TryConnect(dest_address,oapi) => {
-        let (write_token,ort) = self.connect_with(&dest_address)?;
+        let ocache = self.address_cache.get_val_c(&dest_address).map(|acache|(acache.write,acache.read));
+        let (need_ping,(write_token,ort)) = if let Some(c) = ocache {
+          (false,c)
+        } else {
+          (true,self.connect_with(&dest_address)?)
+        };
 
-
-        if MC::AUTH_MODE == ShadowAuthType::NoAuth {
-          // no auth to do
-          panic!("TODO add a peer build from address to peer cache");
+        if MC::AUTH_MODE == ShadowAuthType::NoAuth || !need_ping {
+          // no auth to do cache addresse done in connect_with
         } else {
           let chal = self.peermgmt_proto.challenge(self.me.borrow());
           self.challenge_cache.add_val_c(chal.clone(),ChallengeEntry {
@@ -909,6 +934,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         let wtok = match owtok {
           Some(Some(tok)) => tok,
           Some(None) => {
+            // do not use address cache : if already connecting we cannot use it as in different
+            // auth state (first ping and here we received ping to send first pong : dest expect a
+            // second pong).
             let (write_token,ort) = self.connect_with(pr.borrow().get_address())?;
             assert!(ort.is_none()); // TODO change to a warning log (might mean half multiplex transport)
             write_token
@@ -1288,6 +1316,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               let write_handle = self.write_spawn.spawn(write_service, write_out.clone(), ocin, write_r_in, MC::SEND_NB_ITER)?;
               let state = SlabEntryState::WriteSpawned((write_handle,write_s_in));
               replace(e,state);
+              if MC::AUTH_MODE == ShadowAuthType::NoAuth {
+                panic!("cache connected peer here");
+              }
               None
             } else {unreachable!()}
           },
@@ -1344,6 +1375,11 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 }
 
 
+#[derive(Clone)]
+pub struct AddressCacheEntry {
+  read : Option<usize>,
+  write : usize,
+}
 #[derive(Clone)]
 pub struct PeerCacheEntry<RP : Clone> {
   /// ref peer

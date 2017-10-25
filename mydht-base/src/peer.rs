@@ -22,8 +22,8 @@ pub trait Peer : KeyVal + 'static {
   /// the address with the listener port, not the port use by the stream : thus it is publish on
   /// handshake
   type Address : Address;
-  type ShadowWAuth : ExtWrite;
-  type ShadowRAuth : ExtRead;
+  type ShadowWAuth : ExtWrite + Send;
+  type ShadowRAuth : ExtRead + Send;
   type ShadowWMsg : ExtWrite + Send;
   type ShadowRMsg : ExtRead + Send;
   fn get_address (&self) -> &Self::Address;

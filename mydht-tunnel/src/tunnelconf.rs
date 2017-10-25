@@ -62,25 +62,52 @@ use mydht::kvcache::{
   Cache,
 };
 
+use std::collections::HashMap;
 
 /// route provider
 pub struct Rp<RP> {
-  pub me : RP,
+  me : RP,
   /// connected peers
-  pub peers : Vec<RP>,
+  peers : Vec<RP>,
   /// lifetime relatid temp
-  pub dests : RP,
-  pub positions : Vec<usize>,
-  pub positions_res : Vec<usize>,
+  dests : RP,
+  positions : Vec<usize>,
+  positions_res : Vec<usize>,
   /// route length : static (tunnel api is minimal could change from this static one)
-  pub routelength : usize,
+  routelength : usize,
   /// to test route as variable length, a random bias can be use : + or - this (0 for full static
   /// length)
-  pub routebias : usize,
-  pub rng : OsRng,
+  routebias : usize,
+  rng : OsRng,
+}
+impl<RP : Clone> Rp<RP> {
+  pub fn new(me : RP,routelength : usize, routebias : usize) -> Result<Self> {
+    Ok(Rp {
+      me : me.clone(),
+      peers : Vec::new(),
+      dests : me,
+      positions : Vec::with_capacity((routelength + routebias)), 
+      positions_res : vec![0;routelength + routebias],
+      routelength : routelength,
+      routebias : routebias,
+      rng : OsRng::new()?,
+    })
+  }
+
+  pub fn change_route_length(&mut self, l : usize,b : usize) {
+    assert!(l >= b);
+    self.routelength = l;
+    self.routebias = b;
+    let pl = self.positions_res.len();
+    if pl < (self.routelength + self.routebias) {
+      for _ in 0..(self.routelength + self.routebias - pl) {
+        self.positions_res.push(0)
+      }
+    }
+  }
 }
 
-use std::collections::HashMap;
+
 
 pub struct ReplyTraits<MC : MyDHTTunnelConf>(PhantomData<MC>);
 pub struct TunnelTraits<MC : MyDHTTunnelConf>(PhantomData<MC>);
@@ -138,15 +165,15 @@ impl<MC : MyDHTTunnelConf> TunnelCache<SSWCache<MC>,MultiRExt<MC::SSR>>
   }
 }
 
-impl<MC : MyDHTTunnelConf> TunnelCacheErr<(ErrorWriter,<MC::Transport as Transport>::Address), MultipleErrorInfo> 
+impl<MC : MyDHTTunnelConf> TunnelCacheErr<(ErrorWriter,MC::TransportAddress), MultipleErrorInfo> 
 //impl<MC : MyDHTTunnelConf> TunnelCacheErr<(ErrorWriter,<TunPeer<MC::Peer,MC::PeerRef> as Peer>::Address), MultipleErrorInfo> 
  for CachedInfoManager<MC> {
-  fn put_errw_tunnel(&mut self, k : Vec<u8>, v : (ErrorWriter,<MC::Transport as Transport>::Address)) -> Result<()> {
+  fn put_errw_tunnel(&mut self, k : Vec<u8>, v : (ErrorWriter,MC::TransportAddress)) -> Result<()> {
     self.cache_erw.add_val_c(k,v);
     Ok(())
   }
 
-  fn get_errw_tunnel(&mut self, k : &Vec<u8>) -> Result<&mut (ErrorWriter,<MC::Transport as Transport>::Address)> {
+  fn get_errw_tunnel(&mut self, k : &Vec<u8>) -> Result<&mut (ErrorWriter,MC::TransportAddress)> {
     self.cache_erw.get_val_mut_c(k).map(|v|Ok(v)).unwrap_or(Err(IoError::new(IoErrorKind::Other, "")))
   }
   fn has_errw_tunnel(&mut self, k : &Vec<u8>) -> bool {
@@ -206,7 +233,7 @@ impl<MC : MyDHTTunnelConf> GenTunnelTraits for TunnelTraits<MC> {
   type LR = MC::LimiterR;
   type RP = Rp<TunPeer<MC::Peer,MC::PeerRef>>;
   type TNR = Full<ReplyTraits<MC>>;
-  type RW = FullW<MultipleReplyInfo<<Self::P as Peer>::Address>, MultipleErrorInfo,Self::P, Self::LW,Nope>;
+  type RW = FullW<MultipleReplyInfo<MC::TransportAddress>, MultipleErrorInfo,Self::P, Self::LW,Nope>;
   type REP = ReplyInfoProvider<
 //    SizedWindows<TestSizedWindows>,
 //    Full<ReplyTraits<P>>,
@@ -232,11 +259,17 @@ impl<P : MPeer,PR : Ref<P> + Clone + Debug> Rp<TunPeer<P,PR>> {
     self.routelength + self.routebias
   }
   pub fn add_online(&mut self, v : TunPeer<P,PR>) {
+    let pl = self.positions.len();
+    self.positions.push(pl);
     self.peers.push(v)
   }
   pub fn rem_online(&mut self, v : TunPeer<P,PR>) {
     if let Some(ix) = self.peers.iter().position(|tp|tp.get_address() == v.get_address()) {
       self.peers.swap_remove(ix);
+      let last = self.peers.len(); // not - 1 (just been removed it)
+      if let Some(ixp) = self.positions.iter().position(|i|*i == last) {
+        self.positions.swap_remove(ixp);
+      }
     }
   }
   fn exact_rand(&mut self, sending : bool, other : &TunPeer<P,PR>) -> Vec<&TunPeer<P,PR>> {
@@ -251,7 +284,8 @@ impl<P : MPeer,PR : Ref<P> + Clone + Debug> Rp<TunPeer<P,PR>> {
       self.routelength
     };
     let c_len = self.peers.len();
-    assert!(c_len < min_no_repeat);
+    // Warn this assert is not enough if other is into connected peers
+    assert!(c_len <= min_no_repeat,"{},{}",c_len,min_no_repeat);
     /*if c_len < min_no_repeat {
       return Err(IoError::new(IoErrorKind::Other, "Unchecked call to cache exact_rand, insufficient value"));
     }*/

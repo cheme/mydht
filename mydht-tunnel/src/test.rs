@@ -216,21 +216,21 @@ impl<PR> ApiQueriable for TestReply<PR> {
   #[inline]
   fn is_api_reply(&self) -> bool {
     match self.1 {
-      TestMessage::TouchQ(..) => true,
+      TestMessage::TouchR(..) => true,
       _ => false,
     }
   }
   #[inline]
   fn get_api_reply(&self) -> Option<ApiQueryId> {
     match self.1 {
-      TestMessage::TouchQ(ref qid) =>  Some(ApiQueryId(*qid)),
+      TestMessage::TouchR(ref qid) =>  Some(ApiQueryId(*qid)),
       _ => None,
     }
   }
   #[inline]
   fn set_api_reply(&mut self, aid : ApiQueryId) {
     match self.1 {
-      TestMessage::TouchQ(ref mut qid) => *qid = aid.0,
+      TestMessage::TouchR(ref mut qid) => *qid = aid.0,
       _ => (),
     }
   }
@@ -344,6 +344,11 @@ impl Service for TestService<TunnelConf> {
 }
 
 impl MyDHTTunnelConf for TunnelConf {
+
+  /// when testing value should be change as this is direct connect
+  const INIT_ROUTE_LENGTH : usize = 0;
+  /// when testing value should be change
+  const INIT_ROUTE_BIAS : usize = 0;
   type PeerKey = <Self::Peer as KeyVal>::Key;
   type Peer = Node;
   type PeerRef = ArcRef<Node>;
@@ -351,6 +356,7 @@ impl MyDHTTunnelConf for TunnelConf {
   type InnerReply = TestReply<Self::PeerRef>;
   type InnerService = TestService<Self>;
   type Transport = Tcp;
+  type TransportAddress = SerSocketAddr;
   type MsgEnc = Json;
   type PeerMgmtMeths = TestingRules;
   type DHTRules = Arc<SimpleRules>;
@@ -423,7 +429,27 @@ impl MyDHTTunnelConf for TunnelConf {
   fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache> {
     Ok(HashMap::new())
   }
-
+  fn init_cache_ssw(&mut self) -> Result<Self::CacheSSW> {
+    Ok(HashMap::new())
+  }
+  fn init_cache_ssr(&mut self) -> Result<Self::CacheSSR> {
+    Ok(HashMap::new())
+  }
+  fn init_cache_err(&mut self) -> Result<Self::CacheErR> {
+    Ok(HashMap::new())
+  }
+  fn init_cache_erw(&mut self) -> Result<Self::CacheErW> {
+    Ok(HashMap::new())
+  }
+  fn init_shadow_provider(&mut self) -> Result<Self::SP> {
+    Ok(SProv(ShadowTest(0,0,ShadowModeTest::SimpleShift)))
+  }
+  fn init_limiter_w(&mut self) -> Result<Self::LimiterW> {
+    Ok(SizedWindows::new(TestSizedWindows))
+  }
+  fn init_limiter_r(&mut self) -> Result<Self::LimiterR> {
+    Ok(SizedWindows::new(TestSizedWindows))
+  }
 }
 
 
@@ -447,6 +473,9 @@ fn test_ping_pong() {
 
       reply_mode : MultipleReplyMode::RouteReply,
       error_mode : MultipleErrorMode::NoHandling,
+      route_len : Some(nb_hop - 2),
+      route_bias : Some(0),
+
     };
     let send = conf.start_loop().unwrap().0;
     send
@@ -456,7 +485,7 @@ fn test_ping_pong() {
     TestMessage::TouchQ(0)
   ),o_res.clone());
   sends[0].send(touchq).unwrap();
-  let o_res = replace_wait_one_result(&o_res,(Vec::new(),0,999)).unwrap();
+  let o_res = replace_wait_one_result(&o_res,(Vec::new(),0,0)).unwrap();
   assert!(o_res.0.len() == 1);
   for v in o_res.0.iter() {
     assert!(if let &ApiResult::ServiceReply(MCReply::Global(GlobalTunnelReply::Api(TestReply(_,TestMessage::TouchR(_),_)))) = v {true} else {false});

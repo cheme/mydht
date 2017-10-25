@@ -223,13 +223,13 @@ pub enum QueryModeMsg<P : Peer> {
 /// Query mode utilities
 impl<R : Peer> QueryModeMsg<R> {
   /// return true if need to forward to peer command origin
-  pub fn fwd_dests<PR : Ref<R> + Clone> (self, owith : &Option<PR>) -> (Option<Vec<PR>>,Option<Vec<(<R as KeyVal>::Key,<R as Peer>::Address)>>,QueryID) {
+  pub fn fwd_dests<PR : Ref<R> + Clone> (self, owith : &Option<PR>) -> (Option<Vec<PR>>,Option<Vec<(Option<<R as KeyVal>::Key>,Option<<R as Peer>::Address>)>>,QueryID) {
     match self {
       QueryModeMsg::AProxy(qid) | QueryModeMsg::AMix(_,qid) => {
         let d = owith.as_ref().map(|pr|vec![pr.clone()]);
         (d,None,qid)
       },
-      QueryModeMsg::Asynch(k,a,qid) => (None,Some(vec![(k,a)]),qid),
+      QueryModeMsg::Asynch(k,a,qid) => (None,Some(vec![(Some(k),Some(a))]),qid),
     }
   }
   pub fn do_store_on_forward (&self) -> bool {

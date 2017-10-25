@@ -5,12 +5,18 @@ extern crate rand;
 extern crate mydht_slab;
 extern crate readwrite_comp;
 
+use std::borrow::Borrow;
+use rand::OsRng;
 use tunnel::info::error::{
   MultipleErrorInfo,
   MultipleErrorMode,
+  MulErrorProvider,
+  NoErrorProvider,
 };
 use tunnel::info::multi::{
   MultipleReplyMode,
+  MultipleReplyInfo,
+  ReplyInfoProvider,
 };
 use readwrite_comp::{
   ExtWrite,
@@ -30,6 +36,7 @@ use tunnel::full::{
 
 use tunnel::nope::{
   Nope,
+  TunnelNope,
 };
 
 use tunnel::{
@@ -87,6 +94,7 @@ use mydht::utils::{
 };
 use mydht::transportif::{
   Transport,
+  Address,
 };
 use mydht::{
   MyDHTConf,
@@ -156,6 +164,9 @@ mod test;
 mod tunnelconf;
 use tunnelconf::{
   TunnelTraits,
+  ReplyTraits,
+  CachedInfoManager,
+  Rp,
 };
 
 #[derive(Clone,Debug)]
@@ -190,7 +201,12 @@ impl<P : Peer, RP : Ref<P> + Clone + Debug> TPeer for TunPeer<P,RP> {
 /// this makes it force Send conf (not SRef) and force Slab implementation (some chan and handle in
 /// it) : TODO when stable move all associated types ??
 pub trait MyDHTTunnelConf : 'static + Send + Sized {
-  type Transport : Transport;
+  const REPLY_ONCE_BUF_SIZE : usize = 256;
+  const TUN_CACHE_KEY_LENGTH : usize = 128;
+  const INIT_ROUTE_LENGTH : usize;
+  const INIT_ROUTE_BIAS : usize;
+  type TransportAddress : Address + Hash;
+  type Transport : Transport<Address = Self::TransportAddress>;
   // constraint for hash type
   type PeerKey : Hash + Serialize + DeserializeOwned + Debug + Eq + Clone + 'static + Send + Sync;
   type Peer : Peer<Key = Self::PeerKey,Address = <Self::Transport as Transport>::Address>;
@@ -244,7 +260,7 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
   type CacheSSR : Cache<Vec<u8>,MultiRExt<Self::SSR>>
     + Send;
 
-  type CacheErW : Cache<Vec<u8>,(ErrorWriter,<Self::Transport as Transport>::Address)>
+  type CacheErW : Cache<Vec<u8>,(ErrorWriter,Self::TransportAddress)>
     + Send;
   type CacheErR : Cache<Vec<u8>,Vec<MultipleErrorInfo>>
     + Send;
@@ -261,11 +277,18 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
   fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache>;
   fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache>;
   fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>>;
- 
+  fn init_cache_ssw(&mut self) -> Result<Self::CacheSSW>;
+  fn init_cache_ssr(&mut self) -> Result<Self::CacheSSR>;
+  fn init_cache_err(&mut self) -> Result<Self::CacheErR>;
+  fn init_cache_erw(&mut self) -> Result<Self::CacheErW>;
+  fn init_shadow_provider(&mut self) -> Result<Self::SP>;
+  fn init_limiter_w(&mut self) -> Result<Self::LimiterW>;
+  fn init_limiter_r(&mut self) -> Result<Self::LimiterR>;
+
 }
 
 //type SSWCache<MC : MyDHTTunnelConf> = (TunnelCachedWriterExt<MC::SSW,MC::LimiterW>,<TunPeer<MC::Peer,MC::PeerRef> as TPeer>::Address);
-type SSWCache<MC : MyDHTTunnelConf> = (TunnelCachedWriterExt<MC::SSW,MC::LimiterW>,<MC::Transport as Transport>::Address);
+type SSWCache<MC : MyDHTTunnelConf> = (TunnelCachedWriterExt<MC::SSW,MC::LimiterW>,MC::TransportAddress);
 pub struct MyDHTTunnel<MC : MyDHTTunnelConf> {
   me : MC::PeerRef,
 }
@@ -321,10 +344,10 @@ impl<MC : MyDHTTunnelConf> Clone for TunnelWriterReader<MC> {
 impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriterReader<MC> {
   fn encode_into<'a,W : Write> (&self, w : &mut W, m : &ProtoMessageSend<'a,MC::Peer>) -> Result<()>
     where <MC::Peer as Peer>::Address : 'a {
-      self.inner_enc.encode_into(w,m)
+    self.inner_enc.encode_into(w,m)
   }
   fn decode_from<R : Read>(&self, r : &mut R) -> Result<ProtoMessage<MC::Peer>> {
-      self.inner_enc.decode_from(r)
+    self.inner_enc.decode_from(r)
   }
 
   fn encode_msg_into<'a,W : Write> (&self, w : &mut W, mesg : &TunnelMessaging<MC>) -> Result<()> {
@@ -348,18 +371,22 @@ pub struct MyDHTTunnelConfType<MC : MyDHTTunnelConf>{
 
   reply_mode : MultipleReplyMode,
   error_mode : MultipleErrorMode,
+  route_len : Option<usize>,
+  route_bias : Option<usize>,
  //reply_mode : MultipleReplyMode::RouteReply,
  //error_mode : MultipleErrorMode::NoHandling,
 }
 
 impl<MC : MyDHTTunnelConf> MyDHTTunnelConfType<MC> {
-  pub fn new(mut conf : MC, reply_mode : MultipleReplyMode, error_mode : MultipleErrorMode) -> Result<Self> {
+  pub fn new(mut conf : MC, reply_mode : MultipleReplyMode, error_mode : MultipleErrorMode,route_len : Option<usize>,route_bias : Option<usize>) -> Result<Self> {
     let me = conf.init_ref_peer()?;
     Ok(MyDHTTunnelConfType {
       conf,
       me,
       reply_mode,
       error_mode,
+      route_len,
+      route_bias,
     })
   }
 }
@@ -376,7 +403,12 @@ pub enum GlobalTunnelCommand<MC : MyDHTTunnelConf> {
   Inner(MC::InnerCommand),
   NewOnline(MC::PeerRef),
   Offline(MC::PeerRef),
+  TunnelSendOnce(FullWTConf<MC>,MC::InnerCommand),
 }
+
+type FullWTConf<MC : MyDHTTunnelConf> = FullW<MultipleReplyInfo<MC::TransportAddress>,MultipleErrorInfo,TunPeer<MC::Peer,MC::PeerRef>, MC::LimiterW,
+  FullW<MultipleReplyInfo<MC::TransportAddress>, MultipleErrorInfo,TunPeer<MC::Peer,MC::PeerRef>, MC::LimiterW,Nope>>; 
+
 pub enum GlobalTunnelReply<MC : MyDHTTunnelConf> {
   /// inner service return a result for api
   Api(MC::InnerReply),
@@ -398,6 +430,7 @@ pub struct GlobalTunnelService<MC : MyDHTTunnelConf> {
   pub inner : MC::InnerService,
   pub to_send : VecDeque<(MC::PeerRef,MC::InnerCommand)>,
   pub tunnel : Full<TunnelTraits<MC>>,
+  pub address_key : HashMap<MC::TransportAddress,MC::PeerKey>,
 }
 
 impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
@@ -405,7 +438,11 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
   type CommandOut = GlobalReply<MC::Peer,MC::PeerRef,GlobalTunnelCommand<MC>,GlobalTunnelReply<MC>>;
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
     Ok(match req {
+      GlobalCommand(_,GlobalTunnelCommand::TunnelSendOnce(tun_w,i_com)) => {
+        unreachable!()
+      },
       GlobalCommand(_,GlobalTunnelCommand::NewOnline(pr)) => {
+        self.address_key.insert(pr.borrow().get_address().clone(),pr.borrow().get_key());
         self.tunnel.route_prov.add_online(TunPeer::new(pr));
         if self.to_send.len() > 0 && self.tunnel.route_prov.enough_peer() {
           // send all cached
@@ -418,6 +455,7 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
         GlobalReply::NoRep
       },
       GlobalCommand(_,GlobalTunnelCommand::Offline(pr)) => {
+        self.address_key.remove(pr.borrow().get_address());
         self.tunnel.route_prov.rem_online(TunPeer::new(pr));
         GlobalReply::NoRep
       },
@@ -434,12 +472,17 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
           },
           Some(GlobalTunnelReply::SendCommandTo(dest, inner_command)) => {
             if self.tunnel.route_prov.enough_peer() {
-              let route_writer = self.tunnel.new_writer(&TunPeer::new(dest));
-              panic!("TODO sedn protr mess");
+              let (tunn_we,dest_add) = self.tunnel.new_writer(&TunPeer::new(dest));
+              let dest_k = self.address_key.get(&dest_add).map(|k|k.clone());
+              let command : GlobalTunnelCommand<MC> = GlobalTunnelCommand::TunnelSendOnce(tunn_we,inner_command);
+              GlobalReply::Forward(None,Some(vec![(dest_k,Some(dest_add))]), FWConf {
+                nb_for : 0,
+                discover : true,
+              }, command)
             } else {
               self.to_send.push_back((dest,inner_command));
+              GlobalReply::MainLoop(MainLoopSubCommand::PoolSize(self.tunnel.route_prov.route_len()))
             }
-            GlobalReply::MainLoop(MainLoopSubCommand::PoolSize(self.tunnel.route_prov.route_len()))
           },
 
           None => GlobalReply::NoRep,
@@ -482,8 +525,7 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
 /// implement MyDHTConf for MDHTTunnelConf
 /// TODO lot should be parameterized in TunnelConf but for now we hardcode as much as possible
 /// similarily no SRef or Ref at the time (message containing reader and other
-impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> where 
-{
+impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
   /// test without auth first TODO some
   /// testing with, but the tunnel itself do a kind of auth (with possible replay attack)
   const AUTH_MODE : ShadowAuthType = ShadowAuthType::NoAuth;
@@ -638,29 +680,67 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> where
   }
 
   fn init_global_service(&mut self) -> Result<Self::GlobalService> {
-    panic!("TODO");
-/*    Ok(GlobalTunnelService {
+    let me = TunPeer::new(self.me.clone());
+    let rl = self.route_len.unwrap_or(MC::INIT_ROUTE_LENGTH);
+    let rb = self.route_bias.unwrap_or(MC::INIT_ROUTE_BIAS);
+
+    let tunnel_reply : Full<ReplyTraits<_>> = Full {
+        me : me.clone(),
+        reply_mode : MultipleReplyMode::RouteReply,
+        error_mode : MultipleErrorMode::NoHandling,
+        cache : Nope,
+        route_prov : Nope,
+        reply_prov : ReplyInfoProvider {
+          mode : MultipleReplyMode::RouteReply,
+          symprov : self.conf.init_shadow_provider()?,
+          _p : PhantomData,
+        },
+        sym_prov : self.conf.init_shadow_provider()?,
+        error_prov : NoErrorProvider,
+        rng : OsRng::new()?,
+        limiter_proto_w : self.conf.init_limiter_w()?,
+        limiter_proto_r : self.conf.init_limiter_r()?,
+        tunrep : TunnelNope::new(),
+        reply_once_buf_size : MC::REPLY_ONCE_BUF_SIZE,
+        _p : PhantomData,
+    };
+
+    Ok(GlobalTunnelService {
+      address_key : HashMap::new(),
       inner : self.conf.init_inner_service()?,
       to_send : VecDeque::new(),
       tunnel : Full {
-        me : TunPeer::new(self.me.clone()),
+        me : me.clone(),
 
         reply_mode : self.reply_mode.clone(),
         error_mode : self.error_mode.clone(),
-        cache : cache,
+        cache : CachedInfoManager {
+          cache_ssw : self.conf.init_cache_ssw()?,
+          cache_ssr : self.conf.init_cache_ssr()?,
+          cache_erw : self.conf.init_cache_erw()?,
+          cache_err : self.conf.init_cache_err()?,
+          keylength : MC::TUN_CACHE_KEY_LENGTH,
+          rng : OsRng::new()?,
+          _ph : PhantomData,
+        },
         //  pub sym_prov : TT::SP,
-        route_prov : route_prov,
-        reply_prov : rip,
-        sym_prov : SProv(ShadowTest(0,0,ShadowModeTest::SimpleShift)),
-        error_prov : MulErrorProvider::new(error_mode.clone()).unwrap(),
-        rng : OsRng::new().unwrap(),
-        limiter_proto_w : SizedWindows::new(TestSizedWindows),
-        limiter_proto_r : SizedWindows::new(TestSizedWindows),
+        route_prov : Rp::new(me.clone(),rl,rb)?,
+        reply_prov : ReplyInfoProvider {
+          mode : self.reply_mode.clone(),
+          symprov : self.conf.init_shadow_provider()?,
+          _p : PhantomData,
+        },
+        sym_prov : self.conf.init_shadow_provider()?,
+
+        error_prov : MulErrorProvider::new(self.error_mode.clone()).unwrap(),
+        rng : OsRng::new()?,
+        limiter_proto_w : self.conf.init_limiter_w()?,
+        limiter_proto_r : self.conf.init_limiter_r()?,
         tunrep : tunnel_reply,
-        reply_once_buf_size : 256,
+        reply_once_buf_size : MC::REPLY_ONCE_BUF_SIZE,
         _p : PhantomData,
       },
-    })*/
+    })
   }
   fn init_local_service(me : Self::PeerRef, owith : Option<Self::PeerRef>) -> Result<Self::LocalService> {
     unimplemented!()
@@ -771,6 +851,7 @@ impl<MC : MyDHTTunnelConf> ApiQueriable for GlobalTunnelCommand<MC> {
       GlobalTunnelCommand::Inner(ref inn_c) => inn_c.is_api_reply(),
       GlobalTunnelCommand::NewOnline(..) => false,
       GlobalTunnelCommand::Offline(..) => false,
+      GlobalTunnelCommand::TunnelSendOnce(_,ref i_com) => i_com.is_api_reply(),
     }
   }
   fn set_api_reply(&mut self, i : ApiQueryId) {
@@ -778,6 +859,7 @@ impl<MC : MyDHTTunnelConf> ApiQueriable for GlobalTunnelCommand<MC> {
       GlobalTunnelCommand::Inner(ref mut inn_c) => inn_c.set_api_reply(i),
       GlobalTunnelCommand::NewOnline(..) => (),
       GlobalTunnelCommand::Offline(..) => (),
+      GlobalTunnelCommand::TunnelSendOnce(_,ref mut i_com) => i_com.set_api_reply(i),
     }
   }
   fn get_api_reply(&self) -> Option<ApiQueryId> {
@@ -785,6 +867,7 @@ impl<MC : MyDHTTunnelConf> ApiQueriable for GlobalTunnelCommand<MC> {
       GlobalTunnelCommand::Inner(ref inn_c) => inn_c.get_api_reply(),
       GlobalTunnelCommand::NewOnline(..) => None,
       GlobalTunnelCommand::Offline(..) => None,
+      GlobalTunnelCommand::TunnelSendOnce(_,ref i_com) => i_com.get_api_reply(),
     }
   }
 }
@@ -796,6 +879,7 @@ impl<MC : MyDHTTunnelConf> Clone for GlobalTunnelCommand<MC> {
       GlobalTunnelCommand::Inner(ref inn_c) => GlobalTunnelCommand::Inner(inn_c.clone()),
       GlobalTunnelCommand::NewOnline(ref rp) => GlobalTunnelCommand::NewOnline(rp.clone()),
       GlobalTunnelCommand::Offline(ref rp) => GlobalTunnelCommand::Offline(rp.clone()),
+      GlobalTunnelCommand::TunnelSendOnce(ref tw,ref i_com) => unreachable!(),
     }
   }
 }
