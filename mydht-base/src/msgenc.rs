@@ -21,24 +21,27 @@ use self::send_variant::ProtoMessage as ProtoMessageSend;
 
 /// Trait for message encoding between peers.
 /// It use bytes which will be used by transport.
+///
+/// Message is use as mutable reference to allow complex construction (for instance with a single
+/// use tunnel encoder)
 /// TODO split in read/write and make mut??
 /// TODO why sync
 pub trait MsgEnc<P : Peer,M> : Send + Sync + 'static + Clone {
   //fn encode<P : Peer, V : KeyVal>(&self, &ProtoMessage<P,V>) -> Option<Vec<u8>>;
   
   /// encode
-  fn encode_into<'a,W : Write> (&self, w : &mut W, mesg : &ProtoMessageSend<'a,P>) -> MDHTResult<()>
+  fn encode_into<'a,W : Write> (&mut self, w : &mut W, mesg : &ProtoMessageSend<'a,P>) -> MDHTResult<()>
 where <P as Peer>::Address : 'a;
-  fn decode_from<R : Read>(&self, &mut R) -> MDHTResult<ProtoMessage<P>>;
+  fn decode_from<R : Read>(&mut self, &mut R) -> MDHTResult<ProtoMessage<P>>;
 
-  fn encode_msg_into<'a,W : Write> (&self, w : &mut W, mesg : &M) -> MDHTResult<()>;
+  fn encode_msg_into<'a,W : Write> (&mut self, w : &mut W, mesg : &mut M) -> MDHTResult<()>;
 
-  fn attach_into<W : Write> (&self, &mut W, &Attachment) -> MDHTResult<()>;
+  fn attach_into<W : Write> (&mut self, &mut W, &Attachment) -> MDHTResult<()>;
 //  fn decode<P : Peer, V : KeyVal>(&self, &[u8]) -> Option<ProtoMessage<P,V>>;
   /// decode
-  fn decode_msg_from<R : Read>(&self, &mut R) -> MDHTResult<M>;
+  fn decode_msg_from<R : Read>(&mut self, &mut R) -> MDHTResult<M>;
   /// error if attachment more than a treshold (0 if no limit).
-  fn attach_from<R : Read>(&self, &mut R, usize) -> MDHTResult<Attachment>;
+  fn attach_from<R : Read>(&mut self, &mut R, usize) -> MDHTResult<Attachment>;
 }
 
 

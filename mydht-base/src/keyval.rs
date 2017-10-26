@@ -66,6 +66,7 @@ impl<K : Serialize + DeserializeOwned + fmt::Debug + Eq + Clone + 'static + Send
 pub trait GettableAttachments {
   /// TODO switch to iter
   fn get_attachments(&self) -> Vec<&Attachment>;
+  fn get_nb_attachments(&self) -> usize;
 
 }
 /// KeyVal is the basis for DHT content, a value with key.

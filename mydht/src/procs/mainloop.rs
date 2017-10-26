@@ -1317,7 +1317,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               let state = SlabEntryState::WriteSpawned((write_handle,write_s_in));
               replace(e,state);
               if MC::AUTH_MODE == ShadowAuthType::NoAuth {
-                panic!("cache connected peer here");
+                debug!("cache non auth connected");
               }
               None
             } else {unreachable!()}

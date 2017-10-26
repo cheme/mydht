@@ -51,33 +51,33 @@ impl<P : Peer, M : Serialize + DeserializeOwned> MsgEnc<P,M> for Bincode {
     bincode::decode(buff).ok()
   }*/
 
-  fn encode_into<'a,W : Write> (&self, w : &mut W, mesg : &ProtoMessageSend<'a,P>) -> MDHTResult<()>
+  fn encode_into<'a,W : Write> (&mut self, w : &mut W, mesg : &ProtoMessageSend<'a,P>) -> MDHTResult<()>
 where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a {
   
      tryfor!(BinErr,bincode::serialize_into(w, mesg, Infinite));
      Ok(())
   }
-  fn encode_msg_into<W : Write> (&self, w : &mut W, mesg : &M) -> MDHTResult<()> {
+  fn encode_msg_into<W : Write> (&mut self, w : &mut W, mesg : &mut M) -> MDHTResult<()> {
      tryfor!(BinErr,bincode::serialize_into(w, mesg, Infinite));
      Ok(())
   }
 
 
-  fn attach_into<W : Write> (&self, w : &mut W, a : &Attachment) -> MDHTResult<()> {
+  fn attach_into<W : Write> (&mut self, w : &mut W, a : &Attachment) -> MDHTResult<()> {
 //    try!(w.write_all(&[if a.is_some(){1}else{0}]));
     write_attachment(w,a)
   }
 
-  fn decode_from<R : Read>(&self, r : &mut R) -> MDHTResult<ProtoMessage<P>> {
+  fn decode_from<R : Read>(&mut self, r : &mut R) -> MDHTResult<ProtoMessage<P>> {
     Ok(tryfor!(BinErr,bincode::deserialize_from(r, Infinite)))
   }
-  fn decode_msg_from<R : Read>(&self, r : &mut R) -> MDHTResult<M> {
+  fn decode_msg_from<R : Read>(&mut self, r : &mut R) -> MDHTResult<M> {
     Ok(tryfor!(BinErr,bincode::deserialize_from(r, Infinite)))
   }
 
 
-  fn attach_from<R : Read>(&self, r : &mut R, mlen : usize) -> MDHTResult<Attachment> {
+  fn attach_from<R : Read>(&mut self, r : &mut R, mlen : usize) -> MDHTResult<Attachment> {
 /*    let mut buf = [0];
     try!(r.read(&mut buf));
     match buf[0] {

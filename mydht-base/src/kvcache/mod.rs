@@ -405,7 +405,7 @@ fn test_exact_rand () {
   assert!(2 == m.exact_rand(2,3).unwrap().len());
   assert!(4 == m.exact_rand(2,4).unwrap().len());
   assert!(4 == m.exact_rand(4,5).unwrap().len());
-  let r = m.exact_rand(4,5).unwrap();
+  let _r = m.exact_rand(4,5).unwrap();
   for i in 1..5 {
     for j in 1..5 {
       if i != j {

@@ -51,7 +51,7 @@ unsafe impl Send for Json {
 
 impl<P : Peer, M : Serialize + DeserializeOwned> MsgEnc<P,M> for Json {
 
-  fn encode_into<'a, W : Write> (&self, w : &mut W, mesg : &ProtoMessageSend<'a,P>) -> MDHTResult<()> 
+  fn encode_into<'a, W : Write> (&mut self, w : &mut W, mesg : &ProtoMessageSend<'a,P>) -> MDHTResult<()> 
 where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a {
  
@@ -60,7 +60,7 @@ where <P as Peer>::Address : 'a,
       w.write_all(&bytes[..])
     })).map_err(|e|e.into())
   }
-  fn encode_msg_into<'a, W : Write> (&self, w : &mut W, mesg : &M) -> MDHTResult<()> {
+  fn encode_msg_into<'a, W : Write> (&mut self, w : &mut W, mesg : &mut M) -> MDHTResult<()> {
  
     tryfor!(JSonErr,json::to_vec(mesg).map(|bytes|{
       try!(w.write_u64::<LittleEndian>(bytes.len().to_u64().unwrap()));
@@ -71,11 +71,11 @@ where <P as Peer>::Address : 'a,
 
   /// attach into will simply add bytes afterward json cont (no hex or base64 costly enc otherwhise
   /// it would be into message)
-  fn attach_into<W : Write> (&self, w : &mut W, a : &Attachment) -> MDHTResult<()> {
+  fn attach_into<W : Write> (&mut self, w : &mut W, a : &Attachment) -> MDHTResult<()> {
     write_attachment(w,a)
   }
 
-  fn decode_msg_from<R : Read>(&self, r : &mut R) -> MDHTResult<M> {
+  fn decode_msg_from<R : Read>(&mut self, r : &mut R) -> MDHTResult<M> {
     let len = try!(r.read_u64::<LittleEndian>()) as usize;
     // TODO max len : easy overflow here
     if len > MAX_BUFF {
@@ -88,7 +88,7 @@ where <P as Peer>::Address : 'a,
   }
 
 
-  fn decode_from<R : Read>(&self, r : &mut R) -> MDHTResult<ProtoMessage<P>> {
+  fn decode_from<R : Read>(&mut self, r : &mut R) -> MDHTResult<ProtoMessage<P>> {
     let len = try!(r.read_u64::<LittleEndian>()) as usize;
     // TODO max len : easy overflow here
     if len > MAX_BUFF {
@@ -100,7 +100,7 @@ where <P as Peer>::Address : 'a,
     Ok(tryfor!(JSonErr,json::from_slice(&mut vbuf[..])))
   }
 
-  fn attach_from<R : Read>(&self, r : &mut R, mlen : usize) -> MDHTResult<Attachment> {
+  fn attach_from<R : Read>(&mut self, r : &mut R, mlen : usize) -> MDHTResult<Attachment> {
     read_attachment(r,mlen)
   }
 

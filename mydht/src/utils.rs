@@ -106,18 +106,18 @@ pub fn random_bytes(size : usize) -> Vec<u8> {
 }
 
 
-pub fn receive_msg<P : Peer, M, T : Read, E : MsgEnc<P,M>, S : ExtRead>(t : &mut T, e : &E, s : &mut S) -> MDHTResult<ProtoMessage<P>> {
+pub fn receive_msg<P : Peer, M, T : Read, E : MsgEnc<P,M>, S : ExtRead>(t : &mut T, e : &mut E, s : &mut S) -> MDHTResult<ProtoMessage<P>> {
   let mut cr = CompExtRInner(t,s);
   let m = e.decode_from(&mut cr)?;
   Ok(m)
 }
-pub fn receive_msg_msg<P : Peer, M, T : Read, E : MsgEnc<P,M>, S : ExtRead>(t : &mut T, e : &E, s : &mut S) -> MDHTResult<M> {
+pub fn receive_msg_msg<P : Peer, M, T : Read, E : MsgEnc<P,M>, S : ExtRead>(t : &mut T, e : &mut E, s : &mut S) -> MDHTResult<M> {
   let mut cr = CompExtRInner(t,s);
   let m = e.decode_msg_from(&mut cr)?;
   Ok(m)
 }
 
-pub fn receive_att<P : Peer, M, T : Read, E : MsgEnc<P,M>, S : ExtRead>(t : &mut T, e : &E, s : &mut S, sl : usize) -> MDHTResult<Attachment> {
+pub fn receive_att<P : Peer, M, T : Read, E : MsgEnc<P,M>, S : ExtRead>(t : &mut T, e : &mut E, s : &mut S, sl : usize) -> MDHTResult<Attachment> {
   let mut cr = CompExtRInner(t,s);
   let oa = e.attach_from(&mut cr,sl)?;
   Ok(oa)
@@ -148,19 +148,19 @@ pub fn shad_write_end<T : Write, S : ExtWrite>(s : &mut S, t : &mut T) -> MDHTRe
   s.write_end(t)?;
   Ok(())
 }
-pub fn send_msg<P : Peer, M, T : Write, E : MsgEnc<P,M>, S : ExtWrite>(m : &ProtoMessageSend<P>, t : &mut T, e : &E, s : &mut S) -> MDHTResult<()> {
+pub fn send_msg<P : Peer, M, T : Write, E : MsgEnc<P,M>, S : ExtWrite>(m : &ProtoMessageSend<P>, t : &mut T, e : &mut E, s : &mut S) -> MDHTResult<()> {
   let mut cw = CompExtWInner(t,s);
   e.encode_into(&mut cw,m)?;
   Ok(())
 }
-pub fn send_msg_msg<P : Peer, M, T : Write, E : MsgEnc<P,M>, S : ExtWrite>(m : &M, t : &mut T, e : &E, s : &mut S) -> MDHTResult<()> {
+pub fn send_msg_msg<P : Peer, M, T : Write, E : MsgEnc<P,M>, S : ExtWrite>(m : &mut M, t : &mut T, e : &mut E, s : &mut S) -> MDHTResult<()> {
 
   let mut cw = CompExtWInner(t,s);
   e.encode_msg_into(&mut cw,m)?;
   Ok(())
 }
 
-pub fn send_att<P : Peer, M, T : Write, E : MsgEnc<P,M>, S : ExtWrite>(att : &Attachment, t : &mut T, e : &E, s : &mut S) -> MDHTResult<()> {
+pub fn send_att<P : Peer, M, T : Write, E : MsgEnc<P,M>, S : ExtWrite>(att : &Attachment, t : &mut T, e : &mut E, s : &mut S) -> MDHTResult<()> {
   let mut cw = CompExtWInner(t,s);
   e.attach_into(&mut cw,att)
 }

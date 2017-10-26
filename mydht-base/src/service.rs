@@ -1068,7 +1068,7 @@ impl<S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOut>,
     let co_handle = CoroutineC::spawn(move |corout,_|{
       move || -> Result<()> {
         let mut err = Ok(());
-        let mut rcs = rcs;
+        let rcs = rcs;
         let mut yiel = corout;
         spawn_loop!(service,spawn_out,ocin,recv,nb_loop,yiel,err,Err(Error("Coroutine spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
         rcs.replace(Some((service,spawn_out,recv,err)));

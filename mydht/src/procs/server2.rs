@@ -245,14 +245,14 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
           shad_read_header(&mut shad, &mut stream)?;
           // read in single pass
           // TODO specialize ping pong messages with MaxSize. - 
-          let msg : ProtoMessage<MC::Peer> = receive_msg(&mut stream, &self.enc, &mut shad)?;
+          let msg : ProtoMessage<MC::Peer> = receive_msg(&mut stream, &mut self.enc, &mut shad)?;
 
           match msg {
             ProtoMessage::PING(mut p, chal, sig) => {
               // attachment probably useless but if it is possible...
               let atsize = p.attachment_expected_size();
               if atsize > 0 {
-                let att = receive_att(&mut stream, &self.enc, &mut shad, atsize)?;
+                let att = receive_att(&mut stream, &mut self.enc, &mut shad, atsize)?;
                 p.set_attachment(&att);
               }
               shad_read_end(&mut shad, &mut stream)?;
@@ -285,7 +285,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
 
               let atsize = withpeer.attachment_expected_size();
               if atsize > 0 {
-                let att = receive_att(&mut stream, &self.enc, &mut shad, atsize)?;
+                let att = receive_att(&mut stream, &mut self.enc, &mut shad, atsize)?;
                 withpeer.set_attachment(&att);
               }
               shad_read_end(&mut shad, &mut stream)?;
@@ -351,12 +351,12 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
             self.shad_msg = Some(shad);
           }
           let shad = self.shad_msg.as_mut().unwrap();
-          let mut pmess : MC::ProtoMsg = receive_msg_msg(&mut stream, &self.enc, shad)?;
+          let mut pmess : MC::ProtoMsg = receive_msg_msg(&mut stream, &mut self.enc, shad)?;
           let atts_s = pmess.attachment_expected_sizes();
           if atts_s.len() > 0 {
             let mut atts = Vec::with_capacity(atts_s.len());
             for atsize in atts_s {
-              let att = receive_att(&mut stream, &self.enc, shad, atsize)?;
+              let att = receive_att(&mut stream, &mut self.enc, shad, atsize)?;
               atts.push(att);
             }
             pmess.set_attachments(&atts[..]);

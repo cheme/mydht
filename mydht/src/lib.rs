@@ -147,6 +147,7 @@ pub use procs::{
   MyDHTConf,
   PeerCacheRouteBase,
   PeerCacheEntry,
+  AddressCacheEntry,
   PeerStatusCommand,
   PeerStatusListener,
   FWConf,

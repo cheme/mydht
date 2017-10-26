@@ -132,6 +132,7 @@ use mydht::{
   LocalReply,
   FWConf,
   PeerCacheEntry,
+  AddressCacheEntry,
   ChallengeEntry,
   ReadReply,
   MainLoopCommand,
@@ -178,7 +179,7 @@ impl SToRef<TestMessage> for TestMessage {
   }
 }
 
-
+/*
 impl OptInto<TestMessage> for TestMessage {
   fn can_into(&self) -> bool {
     true
@@ -187,7 +188,7 @@ impl OptInto<TestMessage> for TestMessage {
     Some(self)
   }
 }
-
+*/
 impl ApiQueriable for TestMessage {
   #[inline]
   fn is_api_reply(&self) -> bool {
@@ -280,6 +281,15 @@ impl<MC : MyDHTTunnelConf> OptInto<LocalReply<MyDHTTunnelConfType<MC>>> for Test
 }
 */
 
+impl OptFrom<TestMessage> for TestMessage {
+  fn can_from(_ : &TestMessage) -> bool {
+    true
+  }
+  fn opt_from(m : TestMessage) -> Option<Self> {
+    Some(m)
+  }
+}
+// TODO delete?
 impl<MC : MyDHTTunnelConf> OptFrom<MCCommand<MyDHTTunnelConfType<MC>>> for TestMessage {
   fn can_from(m : &MCCommand<MyDHTTunnelConfType<MC>>) -> bool {
     match *m {
@@ -295,6 +305,7 @@ impl<MC : MyDHTTunnelConf> OptFrom<MCCommand<MyDHTTunnelConfType<MC>>> for TestM
     }
   }
 }
+// TODO delete?
 impl<MC : MyDHTTunnelConf> Into<MCCommand<MyDHTTunnelConfType<MC>>> for TestMessage {
   fn into(self) -> MCCommand<MyDHTTunnelConfType<MC>> {
     match self {
@@ -362,6 +373,7 @@ impl MyDHTTunnelConf for TunnelConf {
   type DHTRules = Arc<SimpleRules>;
   type ProtoMsg = TestMessage;
   type PeerCache = HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
+  type AddressCache = HashMap<<Self::Peer as Peer>::Address,AddressCacheEntry>;
   type ChallengeCache = HashMap<Vec<u8>,ChallengeEntry<MyDHTTunnelConfType<Self>>>;
   type Route = TestRoute<MyDHTTunnelConfType<Self>>;
   type PeerKVStore = SimpleCache<Self::Peer,HashMap<<Self::Peer as KeyVal>::Key,Self::Peer>>;
@@ -424,6 +436,9 @@ impl MyDHTTunnelConf for TunnelConf {
   }
 
   fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache> {
+    Ok(HashMap::new())
+  }
+  fn init_main_loop_address_cache(&mut self) -> Result<Self::AddressCache> {
     Ok(HashMap::new())
   }
   fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache> {

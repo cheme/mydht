@@ -200,6 +200,9 @@ pub enum KVStoreProtoMsgWithPeer<P : Peer, RP : Ref<P> + Serialize + Deserialize
 }
 impl<P : Peer, RP : Ref<P> + Serialize + DeserializeOwned + Clone, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned + Clone>
     GettableAttachments for KVStoreProtoMsgWithPeer<P,RP,V,R> {
+  fn get_nb_attachments(&self) -> usize {
+    0
+  }
   fn get_attachments(&self) -> Vec<&Attachment> {
     Vec::new()
   }

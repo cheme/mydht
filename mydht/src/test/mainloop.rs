@@ -178,6 +178,9 @@ pub enum TestMessageSend<'a,P : Peer> {
 }
 */
 impl<MC : MyDHTConf> GettableAttachments for TestMessage<MC> {
+  fn get_nb_attachments(&self) -> usize {
+    0
+  }
   fn get_attachments(&self) -> Vec<&Attachment> {
     Vec::new()
   }

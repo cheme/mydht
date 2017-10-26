@@ -5,6 +5,7 @@ extern crate rand;
 extern crate mydht_slab;
 extern crate readwrite_comp;
 
+use std::mem::replace;
 use std::borrow::Borrow;
 use rand::OsRng;
 use tunnel::info::error::{
@@ -22,6 +23,7 @@ use readwrite_comp::{
   ExtWrite,
   ExtRead,
   MultiRExt,
+  CompExtWInner,
 };
 use tunnel::{
   TunnelNoRep,
@@ -124,6 +126,7 @@ use mydht::{
   ProtoMessage,
   ProtoMessageSend,
   PeerCacheEntry,
+  AddressCacheEntry,
   RWSlabEntry,
   ChallengeEntry,
 };
@@ -234,12 +237,14 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
     // This send trait should be remove if spawner moved to this level
     + Send;
 
-  type ProtoMsg : Into<MCCommand<MyDHTTunnelConfType<Self>>> + SettableAttachments + GettableAttachments + OptFrom<MCCommand<MyDHTTunnelConfType<Self>>>;
+  type ProtoMsg : Into<MCCommand<MyDHTTunnelConfType<Self>>> + SettableAttachments + GettableAttachments
+    + OptFrom<Self::InnerCommand>;
   type MsgEnc : MsgEnc<Self::Peer, Self::ProtoMsg> + Clone;
 
 //  type SlabEntry;
 //  type Slab : SlabCache<Self::SlabEntry>;
   type PeerCache : Cache<Self::PeerKey,PeerCacheEntry<Self::PeerRef>>;
+  type AddressCache : Cache<Self::TransportAddress,AddressCacheEntry>;
   type ChallengeCache : Cache<Vec<u8>,ChallengeEntry<MyDHTTunnelConfType<Self>>>;
   type Route : Route<MyDHTTunnelConfType<Self>>;
   type PeerKVStore : KVStore<Self::Peer>
@@ -275,6 +280,7 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
   fn init_enc_proto(&mut self) -> Result<Self::MsgEnc>;
   fn init_route(&mut self) -> Result<Self::Route>;
   fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache>;
+  fn init_main_loop_address_cache(&mut self) -> Result<Self::AddressCache>;
   fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache>;
   fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>>;
   fn init_cache_ssw(&mut self) -> Result<Self::CacheSSW>;
@@ -296,7 +302,7 @@ pub struct MyDHTTunnel<MC : MyDHTTunnelConf> {
 /// type to send message
 pub enum TunnelMessaging<MC : MyDHTTunnelConf> {
   /// send query with tunnelwriter
-  SendQuery(MC::ProtoMsg),
+  TunnelSendOnce(Option<FullWTConf<MC>>,MC::ProtoMsg),
   /// proxy from reader
   ProxyFromReader,
   /// reply based on borrow reader content
@@ -312,15 +318,23 @@ impl<MC : MyDHTTunnelConf> OptFrom<MCCommand<MyDHTTunnelConfType<MC>>> for Tunne
   fn opt_from(m : MCCommand<MyDHTTunnelConfType<MC>>) -> Option<Self> {
     match m {
       MCCommand::Local(..) => unimplemented!(), 
-      MCCommand::Global(..) =>  unimplemented!(),
+      MCCommand::Global(gl_tunnel_command) => match gl_tunnel_command {
+        GlobalTunnelCommand::TunnelSendOnce(tunn_w, inner) => inner.opt_into().map(|inner_proto|
+          TunnelMessaging::TunnelSendOnce(tunn_w, inner_proto)),
+        GlobalTunnelCommand::Inner(..)
+          | GlobalTunnelCommand::NewOnline(..)
+          | GlobalTunnelCommand::Offline(..)
+          => None, 
+      },
       MCCommand::PeerStore(..) | MCCommand::TryConnect(..) => None,
     }
   }
 }
+
 impl<MC : MyDHTTunnelConf> Into<MCCommand<MyDHTTunnelConfType<MC>>> for TunnelMessaging<MC> {
   fn into(self) -> MCCommand<MyDHTTunnelConfType<MC>> {
     match self {
-      TunnelMessaging::SendQuery(inner_pmes) => unimplemented!(),
+      TunnelMessaging::TunnelSendOnce(tunn_w,inner_pmes) => unreachable!(),
       TunnelMessaging::ReplyFromReader(inner_pmes) => unimplemented!(),
       ProxyFromReader => unimplemented!(),
     }
@@ -331,6 +345,8 @@ impl<MC : MyDHTTunnelConf> Into<MCCommand<MyDHTTunnelConfType<MC>>> for TunnelMe
 /// a special msg enc dec using tunnel primitive (tunnelw tunnelr in protomessage)
 pub struct TunnelWriterReader<MC : MyDHTTunnelConf> {
   pub inner_enc : MC::MsgEnc,
+  pub current_writer : Option<FullWTConf<MC>>,
+  pub nb_attach_rem : usize,
 }
 
 impl<MC : MyDHTTunnelConf> Clone for TunnelWriterReader<MC> {
@@ -351,11 +367,45 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
   }
 
   fn encode_msg_into<'a,W : Write> (&self, w : &mut W, mesg : &TunnelMessaging<MC>) -> Result<()> {
+    match *mesg {
+      TunnelMessaging::TunnelSendOnce(Some(ref mut tunn_we), ref proto_m) => {
+        let nb_att = proto_m.get_nb_attachments();
+        tunn_we.write_header(w)?;
+        {
+          let mut tunn_w = CompExtWInner::new(w, tunn_w);
+          self.inner_enc.encode_msg_into(&mut tunn_w,proto_m)?;
+        }
+        self.current_writer = None;
+        if nb_att > 0 {
+          self.nb_attach_rem = nb_att;
+          replace(&mut self.current_writer, tunn_w);
+        } else {
+          tunn_we.flush_into(w)?;
+          tunn_we.write_end(w)?;
+        }
+      },
+      TunnelMessaging::TunnelSendOnce(None, _) => unreachable!(),
+      TunnelMessaging::ProxyFromReader => unimplemented!(),
+      TunnelMessaging::ReplyFromReader(..) => unimplemented!(),
+    }
     unimplemented!()
   }
 
   fn attach_into<W : Write> (&self, w : &mut W, att : &Attachment) -> Result<()> {
-    unimplemented!()
+    // attachment require storing tunn_w in MsgEnc and flushing/writing end somehow
+    // (probably by storing nb attach when encode and write end at last one 
+    // or at end of encode if none)
+    let tunn_we = self.current_writer.as_mut().unwrap();
+    {
+      let mut tunn_w = CompExtWInner::new(w, tunn_we);
+      self.inner_enc.attach_into(w, att);
+    }
+    self.nb_attach_rem -= 1;
+    if self.nb_attach_rem == 0 {
+      self.current_writer = None;
+      tunn_we.flush_into(w)?;
+      tunn_we.write_end(w)?;
+    }
   }
   fn decode_msg_from<R : Read>(&self, r : &mut R) -> Result<TunnelMessaging<MC>> {
     unimplemented!()
@@ -406,6 +456,7 @@ pub enum GlobalTunnelCommand<MC : MyDHTTunnelConf> {
   TunnelSendOnce(FullWTConf<MC>,MC::InnerCommand),
 }
 
+// TODO box it !!!!!!!!! (better yet full of heap struct (vec))
 type FullWTConf<MC : MyDHTTunnelConf> = FullW<MultipleReplyInfo<MC::TransportAddress>,MultipleErrorInfo,TunPeer<MC::Peer,MC::PeerRef>, MC::LimiterW,
   FullW<MultipleReplyInfo<MC::TransportAddress>, MultipleErrorInfo,TunPeer<MC::Peer,MC::PeerRef>, MC::LimiterW,Nope>>; 
 
@@ -547,6 +598,7 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
   //type Slab = MC::Slab;
   type Slab = Slab<RWSlabEntry<Self>>;
   type PeerCache = MC::PeerCache;
+  type AddressCache = MC::AddressCache;
   type ChallengeCache = MC::ChallengeCache;
 
   type PeerMgmtChannelIn = MpscChannel;
@@ -623,6 +675,9 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
   }
   fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache> {
     self.conf.init_main_loop_peer_cache()
+  }
+  fn init_main_loop_address_cache(&mut self) -> Result<Self::AddressCache> {
+    self.conf.init_main_loop_address_cache()
   }
   fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache> {
     self.conf.init_main_loop_challenge_cache()
@@ -780,7 +835,7 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
 impl<MC : MyDHTTunnelConf> GettableAttachments for TunnelMessaging<MC> {
   fn get_attachments(&self) -> Vec<&Attachment> {
     match *self {
-      TunnelMessaging::SendQuery(ref inner_pmes)
+      TunnelMessaging::TunnelSendOnce(_,ref inner_pmes)
       | TunnelMessaging::ReplyFromReader(ref inner_pmes) 
         => inner_pmes.get_attachments(),
       TunnelMessaging::ProxyFromReader => Vec::new(),
@@ -791,7 +846,7 @@ impl<MC : MyDHTTunnelConf> GettableAttachments for TunnelMessaging<MC> {
 impl<MC : MyDHTTunnelConf> SettableAttachments for TunnelMessaging<MC> {
   fn attachment_expected_sizes(&self) -> Vec<usize> {
     match *self {
-      TunnelMessaging::SendQuery(ref inner_pmes)
+      TunnelMessaging::TunnelSendOnce(_,ref inner_pmes)
       |  TunnelMessaging::ReplyFromReader(ref inner_pmes) 
         => inner_pmes.attachment_expected_sizes(),
       TunnelMessaging::ProxyFromReader => Vec::new(),
@@ -799,7 +854,7 @@ impl<MC : MyDHTTunnelConf> SettableAttachments for TunnelMessaging<MC> {
   }
   fn set_attachments(& mut self, at : &[Attachment]) -> bool {
     match *self {
-      TunnelMessaging::SendQuery(ref mut  inner_pmes)
+      TunnelMessaging::TunnelSendOnce(_,ref mut  inner_pmes)
       |  TunnelMessaging::ReplyFromReader(ref mut inner_pmes) 
         => inner_pmes.set_attachments(at),
       TunnelMessaging::ProxyFromReader => at.len() == 0,

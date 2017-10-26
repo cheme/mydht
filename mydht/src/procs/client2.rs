@@ -170,9 +170,9 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
         let mut shad = get_shad_auth::<MC>(&self.from,&self.with);
         shad_write_header(&mut shad, &mut stream)?;
 
-        send_msg(&pmess, &mut stream, &self.enc, &mut shad)?;
+        send_msg(&pmess, &mut stream, &mut self.enc, &mut shad)?;
         if let Some(ref att) = self.from.borrow().get_attachment() {
-          send_att(att, &mut stream, &self.enc, &mut shad)?;
+          send_att(att, &mut stream, &mut self.enc, &mut shad)?;
         }
 
         shad_write_end(&mut shad, &mut stream)?;
@@ -188,9 +188,9 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
         let mut shad = get_shad_auth::<MC>(&self.from,&self.with);
         shad_write_header(&mut shad, &mut stream)?;
 
-        send_msg(&pmess, &mut stream, &self.enc, &mut shad)?;
+        send_msg(&pmess, &mut stream, &mut self.enc, &mut shad)?;
         if let Some(ref att) = self.from.borrow().get_attachment() {
-          send_att(att, &mut stream, &self.enc, &mut shad)?;
+          send_att(att, &mut stream, &mut self.enc, &mut shad)?;
         }
 
         shad_write_end(&mut shad, &mut stream)?;
@@ -239,8 +239,8 @@ impl<MC : MyDHTConf> WriteService<MC> {
 
       let mut shad = self.shad_msg.as_mut().unwrap();
 
-      let pmess = command.opt_into().unwrap();
-      send_msg_msg(&pmess, &mut stream, &self.enc, &mut shad)?;
+      let mut pmess = command.opt_into().unwrap();
+      send_msg_msg(&mut pmess, &mut stream, &mut self.enc, &mut shad)?;
 /*      let mut cursor = Cursor::new(Vec::new());
       send_msg_msg(&pmess, &mut cursor, &self.enc, &mut shad)?;
       let v = cursor.into_inner();
@@ -248,8 +248,10 @@ impl<MC : MyDHTConf> WriteService<MC> {
       println!("writing  : {:?}",&v[..]);
       stream.write_all(&v[..]);*/
 
-      for att in pmess.get_attachments() {
-        send_att(att, &mut stream, &self.enc, &mut shad)?;
+      if pmess.get_nb_attachments() > 0 {
+        for att in pmess.get_attachments() {
+          send_att(att, &mut stream, &mut self.enc, &mut shad)?;
+        }
       }
     }
 

@@ -11,7 +11,7 @@ use shadow::{
 use peer::PeerTest;
 use transport::LocalAdd;
 
-pub fn test_peer_enc<ME : MsgEnc<PeerTest,PeerTest>> (e : ME) {
+pub fn test_peer_enc<ME : MsgEnc<PeerTest,PeerTest>> (mut e : ME) {
    let to_p = PeerTest {
     nodeid: "toid".to_string(),
     address : LocalAdd(1),
