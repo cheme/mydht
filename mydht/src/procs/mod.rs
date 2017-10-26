@@ -50,6 +50,7 @@ use self::deflocal::{
   GlobalDest,
 };
 use utils::{
+  Proto,
   SRef,
   SToRef,
 };
@@ -596,7 +597,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// low level transport
   type Transport : Transport;
   /// Message encoding
-  type MsgEnc : MsgEnc<Self::Peer, Self::ProtoMsg> + Clone;
+  type MsgEnc : MsgEnc<Self::Peer, Self::ProtoMsg> + Proto;
   /// Peer struct (with key and address)
   type Peer : Peer<Address = <Self::Transport as Transport>::Address>;
   /// most of the time Arc, if not much threading or smal peer description, RcCloneOnSend can be use, or AllwaysCopy

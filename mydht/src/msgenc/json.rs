@@ -30,7 +30,7 @@ use byteorder::{
   WriteBytesExt,
 };
 use num::traits::ToPrimitive;
-
+use utils::Proto;
 
 /// standard usage of rust serialize with json over proto messages no intemediatory type all content
 /// is used : full encoding
@@ -41,6 +41,12 @@ use num::traits::ToPrimitive;
 #[derive(Debug,Clone)]
 pub struct Json;
 
+impl Proto for Json {
+  #[inline]
+  fn get_new(&self) -> Self {
+    Json
+  }
+}
 /// a technical limit to protomessage length TODO make it dynamic ( strored in Json struct)
 const MAX_BUFF : usize = 10000000; // use for attachment send/receive -- 21888 seems to be maxsize
 

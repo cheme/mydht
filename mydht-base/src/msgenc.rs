@@ -16,6 +16,7 @@ use std::io::{Seek,SeekFrom};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use num::traits::ToPrimitive;
 use utils;
+use utils::Proto;
 use self::send_variant::ProtoMessage as ProtoMessageSend;
 
 
@@ -26,7 +27,7 @@ use self::send_variant::ProtoMessage as ProtoMessageSend;
 /// use tunnel encoder)
 /// TODO split in read/write and make mut??
 /// TODO why sync
-pub trait MsgEnc<P : Peer,M> : Send + 'static + Clone {
+pub trait MsgEnc<P : Peer,M> : Send + 'static + Proto {
   //fn encode<P : Peer, V : KeyVal>(&self, &ProtoMessage<P,V>) -> Option<Vec<u8>>;
   
   /// encode

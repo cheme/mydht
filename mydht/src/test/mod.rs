@@ -749,7 +749,7 @@ where <P as KeyVal>::Key : Hash,
 
 
   fn init_enc_proto(&mut self) -> Result<Self::MsgEnc> {
-    Ok(self.msg_enc.clone())
+    Ok(self.msg_enc.get_new())
   }
 
   fn init_transport(&mut self) -> Result<Self::Transport> {
@@ -833,7 +833,7 @@ fn confinitpeers1(me : PeerTest, others : Vec<PeerTest>, transport : TransportTe
 /// Sim is not to be used in similar case as before : there is no guaranties all peers will be
 /// queried : in fact with  hashmap kvstore default implementation only a ratio of 2/3 peer will be
 /// queried by call to subset on peer connect discovery thus it is bad for test with single route.
-fn initpeers2<P : Peer, T : Transport<Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>> + Clone> (nodes : Vec<P>, transports : Vec<T>, map : &[&[usize]], meths : TestingRules, rules : DhtRules, enc : E, sim : Option<u64>) 
+fn initpeers2<P : Peer, T : Transport<Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>>> (nodes : Vec<P>, transports : Vec<T>, map : &[&[usize]], meths : TestingRules, rules : DhtRules, enc : E, sim : Option<u64>) 
   -> Vec<(P, DHTIn< TestConf<P,T,E,TestingRules,SimpleRules>  >)> 
   where  <P as KeyVal>::Key : Hash,
          <P as Peer>::Address : Hash,
@@ -849,7 +849,7 @@ fn initpeers2<P : Peer, T : Transport<Address = <P as Peer>::Address>,E : MsgEnc
       me : n.clone(),
       others : Some(bpeers.clone()),
       transport : Some(t), 
-      msg_enc : enc.clone(),
+      msg_enc : enc.get_new(),
       peer_mgmt : meths.clone(),
       rules : SimpleRules::new(rules.clone()),
       do_peer_query_forward_with_discover : false,

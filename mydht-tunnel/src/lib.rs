@@ -92,6 +92,7 @@ use tunnel::Peer as TPeer;
 use mydht::peer::Peer;
 use mydht::utils::{
   Ref,
+  Proto,
   OneResult,
 };
 use mydht::transportif::{
@@ -239,7 +240,7 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
 
   type ProtoMsg : Into<MCCommand<MyDHTTunnelConfType<Self>>> + SettableAttachments + GettableAttachments
     + OptFrom<Self::InnerCommand>;
-  type MsgEnc : MsgEnc<Self::Peer, Self::ProtoMsg> + Clone;
+  type MsgEnc : MsgEnc<Self::Peer, Self::ProtoMsg>;
 
 //  type SlabEntry;
 //  type Slab : SlabCache<Self::SlabEntry>;
@@ -320,7 +321,7 @@ impl<MC : MyDHTTunnelConf> OptFrom<MCCommand<MyDHTTunnelConfType<MC>>> for Tunne
       MCCommand::Local(..) => unimplemented!(), 
       MCCommand::Global(gl_tunnel_command) => match gl_tunnel_command {
         GlobalTunnelCommand::TunnelSendOnce(tunn_w, inner) => inner.opt_into().map(|inner_proto|
-          TunnelMessaging::TunnelSendOnce(tunn_w, inner_proto)),
+          TunnelMessaging::TunnelSendOnce(Some(tunn_w), inner_proto)),
         GlobalTunnelCommand::Inner(..)
           | GlobalTunnelCommand::NewOnline(..)
           | GlobalTunnelCommand::Offline(..)
@@ -349,68 +350,72 @@ pub struct TunnelWriterReader<MC : MyDHTTunnelConf> {
   pub nb_attach_rem : usize,
 }
 
-impl<MC : MyDHTTunnelConf> Clone for TunnelWriterReader<MC> {
-  fn clone(&self) -> Self {
+impl<MC : MyDHTTunnelConf> Proto for TunnelWriterReader<MC> {
+  fn get_new(&self) -> Self {
     TunnelWriterReader{
-      inner_enc : self.inner_enc.clone(),
+      inner_enc : self.inner_enc.get_new(),
+      current_writer : None,
+      nb_attach_rem : 0,
     }
   }
 }
 
 impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriterReader<MC> {
-  fn encode_into<'a,W : Write> (&self, w : &mut W, m : &ProtoMessageSend<'a,MC::Peer>) -> Result<()>
+  fn encode_into<'a,W : Write> (&mut self, w : &mut W, m : &ProtoMessageSend<'a,MC::Peer>) -> Result<()>
     where <MC::Peer as Peer>::Address : 'a {
     self.inner_enc.encode_into(w,m)
   }
-  fn decode_from<R : Read>(&self, r : &mut R) -> Result<ProtoMessage<MC::Peer>> {
+  fn decode_from<R : Read>(&mut self, r : &mut R) -> Result<ProtoMessage<MC::Peer>> {
     self.inner_enc.decode_from(r)
   }
 
-  fn encode_msg_into<'a,W : Write> (&self, w : &mut W, mesg : &TunnelMessaging<MC>) -> Result<()> {
+  fn encode_msg_into<'a,W : Write> (&mut self, w : &mut W, mesg : &mut TunnelMessaging<MC>) -> Result<()> {
     match *mesg {
-      TunnelMessaging::TunnelSendOnce(Some(ref mut tunn_we), ref proto_m) => {
+      TunnelMessaging::TunnelSendOnce(None, _) => unreachable!(),
+      TunnelMessaging::TunnelSendOnce(ref mut o_tunn_we, ref mut proto_m) => {
         let nb_att = proto_m.get_nb_attachments();
-        tunn_we.write_header(w)?;
         {
-          let mut tunn_w = CompExtWInner::new(w, tunn_we);
+          let tunn_we = o_tunn_we.as_mut().unwrap();
+          tunn_we.write_header(w)?;
+          let mut tunn_w = CompExtWInner(w, tunn_we);
           self.inner_enc.encode_msg_into(&mut tunn_w,proto_m)?;
         }
         self.current_writer = None;
         if nb_att > 0 {
           self.nb_attach_rem = nb_att;
-          replace(&mut self.current_writer, tunn_we);
+          self.current_writer = replace(o_tunn_we, None);
         } else {
+          let tunn_we = o_tunn_we.as_mut().unwrap();
           tunn_we.flush_into(w)?;
           tunn_we.write_end(w)?;
         }
       },
-      TunnelMessaging::TunnelSendOnce(None, _) => unreachable!(),
       TunnelMessaging::ProxyFromReader => unimplemented!(),
       TunnelMessaging::ReplyFromReader(..) => unimplemented!(),
     }
-    unimplemented!()
+    Ok(())
   }
 
-  fn attach_into<W : Write> (&self, w : &mut W, att : &Attachment) -> Result<()> {
+  fn attach_into<W : Write> (&mut self, w : &mut W, att : &Attachment) -> Result<()> {
     // attachment require storing tunn_w in MsgEnc and flushing/writing end somehow
     // (probably by storing nb attach when encode and write end at last one 
     // or at end of encode if none)
     let tunn_we = self.current_writer.as_mut().unwrap();
     {
-      let mut tunn_w = CompExtWInner::new(w, tunn_we);
-      self.inner_enc.attach_into(w, att);
+      let mut tunn_w = CompExtWInner(w, tunn_we);
+      self.inner_enc.attach_into(&mut tunn_w, att);
     }
     self.nb_attach_rem -= 1;
     if self.nb_attach_rem == 0 {
-      self.current_writer = None;
       tunn_we.flush_into(w)?;
       tunn_we.write_end(w)?;
     }
+    Ok(())
   }
-  fn decode_msg_from<R : Read>(&self, r : &mut R) -> Result<TunnelMessaging<MC>> {
+  fn decode_msg_from<R : Read>(&mut self, r : &mut R) -> Result<TunnelMessaging<MC>> {
     unimplemented!()
   }
-  fn attach_from<R : Read>(&self, r : &mut R, max_size : usize) -> Result<Attachment> {
+  fn attach_from<R : Read>(&mut self, r : &mut R, max_size : usize) -> Result<Attachment> {
     unimplemented!()
   }
 }
@@ -720,7 +725,9 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
 
   fn init_enc_proto(&mut self) -> Result<Self::MsgEnc> {
     Ok(TunnelWriterReader{
-      inner_enc : self.conf.init_enc_proto()?
+      inner_enc : self.conf.init_enc_proto()?,
+      current_writer : None,
+      nb_attach_rem : 0,
     })
   }
 
@@ -833,6 +840,15 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
 }
 
 impl<MC : MyDHTTunnelConf> GettableAttachments for TunnelMessaging<MC> {
+  fn get_nb_attachments(&self) -> usize {
+    match *self {
+      TunnelMessaging::TunnelSendOnce(_,ref inner_pmes)
+      | TunnelMessaging::ReplyFromReader(ref inner_pmes) 
+        => inner_pmes.get_nb_attachments(),
+      TunnelMessaging::ProxyFromReader => 0,
+    }
+
+  }
   fn get_attachments(&self) -> Vec<&Attachment> {
     match *self {
       TunnelMessaging::TunnelSendOnce(_,ref inner_pmes)

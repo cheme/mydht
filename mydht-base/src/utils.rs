@@ -45,6 +45,13 @@ use std::borrow::Borrow;
 pub static NULL_TIMESPEC : Timespec = Timespec{ sec : 0, nsec : 0};
 
 
+/// another object can be instantiated from this one.
+/// Similar to clone except that the object do not require to got all match field (only be similar
+/// to what it would be at initialization : inner state do not requires to be clone).
+pub trait Proto {
+  fn get_new(&self) -> Self;
+}
+
 /// Type with an associated type being Send and which is possible to switch to its original type
 /// Copy of content may be involved in the precess.
 pub trait SRef : Sized {

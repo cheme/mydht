@@ -153,6 +153,9 @@ pub enum TestMessage {
 /// if last bool is true it is api (should be better design as enum)
 pub struct TestReply<PR>(pub Option<PR>,pub TestMessage,pub bool);
 impl GettableAttachments for TestMessage {
+  fn get_nb_attachments(&self) -> usize {
+    0
+  }
   fn get_attachments(&self) -> Vec<&Attachment> {
     Vec::new()
   }

@@ -101,6 +101,7 @@ use transport::{
   Registerable,
 };
 use utils::{
+  Proto,
   Ref,
   SRef,
   SToRef,
@@ -1264,7 +1265,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             self.me.clone(),
             with,
             //with.map(|w|w.get_sendable()),
-            self.enc_proto.clone(),
+            self.enc_proto.get_new(),
             self.peermgmt_proto.clone(),
             self.local_spawn_proto.clone(),
             self.local_channel_in_proto.clone(),
@@ -1312,7 +1313,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               };
               // dest is unknown TODO check if still relevant with other use case (read side we allow
               // dest peer as rs could result from a connection with an identified peer)
-              let write_service = WriteService::new(write_token,ws,self.me.clone(),with, self.enc_proto.clone(),self.peermgmt_proto.clone());
+              let write_service = WriteService::new(write_token,ws,self.me.clone(),with, self.enc_proto.get_new(),self.peermgmt_proto.clone());
               let write_handle = self.write_spawn.spawn(write_service, write_out.clone(), ocin, write_r_in, MC::SEND_NB_ITER)?;
               let state = SlabEntryState::WriteSpawned((write_handle,write_s_in));
               replace(e,state);

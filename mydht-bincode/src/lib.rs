@@ -8,6 +8,7 @@ use serde::{Serialize};
 use serde::de::{DeserializeOwned};
 //use rustc_serialize::{Serialize,Decodable};
 use mydht_base::msgenc::MsgEnc;
+use mydht_base::utils::Proto;
 use mydht_base::keyval::{KeyVal,Attachment};
 use mydht_base::peer::{Peer};
 use mydht_base::msgenc::ProtoMessage;
@@ -37,7 +38,12 @@ impl From<BinErr> for Error {
 // full bencode impl
 #[derive(Debug,Clone)]
 pub struct Bincode;
-
+impl Proto for Bincode {
+  #[inline]
+  fn get_new(&self) -> Self {
+    Bincode
+  }
+}
 impl<P : Peer, M : Serialize + DeserializeOwned> MsgEnc<P,M> for Bincode {
 
 /*  fn encode<P : Peer, V : KeyVal> (&self, mesg : &ProtoMessage<P,V>) -> Option<Vec<u8>>{
