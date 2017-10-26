@@ -5,6 +5,7 @@ extern crate rand;
 extern crate mydht_slab;
 extern crate readwrite_comp;
 
+use std::io::Cursor;
 use std::mem::replace;
 use std::borrow::Borrow;
 use rand::OsRng;
@@ -24,12 +25,16 @@ use readwrite_comp::{
   ExtRead,
   MultiRExt,
   CompExtWInner,
+  CompExtRInner,
 };
 use tunnel::{
   TunnelNoRep,
+  TunnelReaderNoRep,
+  TunnelReadProv,
 };
 use tunnel::full::{
   Full,
+  FullReadProv,
   FullW,
   GenTunnelTraits,
   TunnelCachedWriterExt,
@@ -258,7 +263,7 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
 
   type SSW : ExtWrite + Send;
   type SSR : ExtRead + Send;
-  type SP : SymProvider<Self::SSW,Self::SSR> + Send;
+  type SP : SymProvider<Self::SSW,Self::SSR> + Clone + Send;
 
 
   type CacheSSW : Cache<Vec<u8>,SSWCache<Self>>
@@ -348,6 +353,7 @@ pub struct TunnelWriterReader<MC : MyDHTTunnelConf> {
   pub inner_enc : MC::MsgEnc,
   pub current_writer : Option<FullWTConf<MC>>,
   pub nb_attach_rem : usize,
+  pub t_readprov : FullReadProv<TunnelTraits<MC>>,
 }
 
 impl<MC : MyDHTTunnelConf> Proto for TunnelWriterReader<MC> {
@@ -356,6 +362,7 @@ impl<MC : MyDHTTunnelConf> Proto for TunnelWriterReader<MC> {
       inner_enc : self.inner_enc.get_new(),
       current_writer : None,
       nb_attach_rem : 0,
+      t_readprov : self.t_readprov.new_tunnel_read_prov(),
     }
   }
 }
@@ -403,7 +410,7 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
     let tunn_we = self.current_writer.as_mut().unwrap();
     {
       let mut tunn_w = CompExtWInner(w, tunn_we);
-      self.inner_enc.attach_into(&mut tunn_w, att);
+      self.inner_enc.attach_into(&mut tunn_w, att)?;
     }
     self.nb_attach_rem -= 1;
     if self.nb_attach_rem == 0 {
@@ -413,7 +420,32 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
     Ok(())
   }
   fn decode_msg_from<R : Read>(&mut self, r : &mut R) -> Result<TunnelMessaging<MC>> {
-    unimplemented!()
+
+    let mut tunn_re = self.t_readprov.new_reader();
+    tunn_re.read_header(r)?;
+    if tunn_re.is_dest().unwrap() {
+      match self.t_readprov.new_dest_reader(tunn_re, r)? {
+        Some(mut dest_reader) => {
+          dest_reader.read_header(r)?;
+          let proto_m = {
+            let mut tunn_r = CompExtRInner(r, &mut dest_reader);
+            self.inner_enc.decode_msg_from(&mut tunn_r)?;
+          };
+          unimplemented!();
+        },
+        None => {
+          // Send reader to global as for proxy
+          unimplemented!()
+        },
+      }
+ 
+      unimplemented!()
+    } else if tunn_re.is_err().unwrap() {
+      unimplemented!()
+    } else {
+      // proxy
+      unimplemented!()
+    }
   }
   fn attach_from<R : Read>(&mut self, r : &mut R, max_size : usize) -> Result<Attachment> {
     unimplemented!()
@@ -426,8 +458,10 @@ pub struct MyDHTTunnelConfType<MC : MyDHTTunnelConf>{
 
   reply_mode : MultipleReplyMode,
   error_mode : MultipleErrorMode,
-  route_len : Option<usize>,
-  route_bias : Option<usize>,
+  route_len : usize,
+  route_bias : usize,
+  tunnel : Option<Full<TunnelTraits<MC>>>,
+  tunnel_r : FullReadProv<TunnelTraits<MC>>,
  //reply_mode : MultipleReplyMode::RouteReply,
  //error_mode : MultipleErrorMode::NoHandling,
 }
@@ -435,6 +469,64 @@ pub struct MyDHTTunnelConfType<MC : MyDHTTunnelConf>{
 impl<MC : MyDHTTunnelConf> MyDHTTunnelConfType<MC> {
   pub fn new(mut conf : MC, reply_mode : MultipleReplyMode, error_mode : MultipleErrorMode,route_len : Option<usize>,route_bias : Option<usize>) -> Result<Self> {
     let me = conf.init_ref_peer()?;
+
+    let route_len = route_len.unwrap_or(MC::INIT_ROUTE_LENGTH);
+    let route_bias = route_bias.unwrap_or(MC::INIT_ROUTE_BIAS);
+    let tme = TunPeer::new(me.clone());
+    let tunnel_reply : Full<ReplyTraits<_>> = Full {
+        me : tme.clone(),
+        reply_mode : MultipleReplyMode::RouteReply,
+        error_mode : MultipleErrorMode::NoHandling,
+        cache : Nope,
+        route_prov : Nope,
+        reply_prov : ReplyInfoProvider {
+          mode : MultipleReplyMode::RouteReply,
+          symprov : conf.init_shadow_provider()?,
+          _p : PhantomData,
+        },
+        sym_prov : conf.init_shadow_provider()?,
+        error_prov : NoErrorProvider,
+        rng : OsRng::new()?,
+        limiter_proto_w : conf.init_limiter_w()?,
+        limiter_proto_r : conf.init_limiter_r()?,
+        tunrep : TunnelNope::new(),
+        reply_once_buf_size : MC::REPLY_ONCE_BUF_SIZE,
+        _p : PhantomData,
+    };
+
+
+    let tunnel = Full {
+        me : tme.clone(),
+
+        reply_mode : reply_mode.clone(),
+        error_mode : error_mode.clone(),
+        cache : CachedInfoManager {
+          cache_ssw : conf.init_cache_ssw()?,
+          cache_ssr : conf.init_cache_ssr()?,
+          cache_erw : conf.init_cache_erw()?,
+          cache_err : conf.init_cache_err()?,
+          keylength : MC::TUN_CACHE_KEY_LENGTH,
+          rng : OsRng::new()?,
+          _ph : PhantomData,
+        },
+        //  pub sym_prov : TT::SP,
+        route_prov : Rp::new(tme.clone(),route_len,route_bias)?,
+        reply_prov : ReplyInfoProvider {
+          mode : reply_mode.clone(),
+          symprov : conf.init_shadow_provider()?,
+          _p : PhantomData,
+        },
+        sym_prov : conf.init_shadow_provider()?,
+
+        error_prov : MulErrorProvider::new(error_mode.clone()).unwrap(),
+        rng : OsRng::new()?,
+        limiter_proto_w : conf.init_limiter_w()?,
+        limiter_proto_r : conf.init_limiter_r()?,
+        tunrep : tunnel_reply,
+        reply_once_buf_size : MC::REPLY_ONCE_BUF_SIZE,
+        _p : PhantomData,
+      };
+    let tunnel_r = tunnel.new_tunnel_read_prov();
     Ok(MyDHTTunnelConfType {
       conf,
       me,
@@ -442,6 +534,8 @@ impl<MC : MyDHTTunnelConf> MyDHTTunnelConfType<MC> {
       error_mode,
       route_len,
       route_bias,
+      tunnel : Some(tunnel),
+      tunnel_r,
     })
   }
 }
@@ -728,6 +822,7 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
       inner_enc : self.conf.init_enc_proto()?,
       current_writer : None,
       nb_attach_rem : 0,
+      t_readprov : self.tunnel_r.new_tunnel_read_prov(),
     })
   }
 
@@ -742,7 +837,7 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
   }
 
   fn init_global_service(&mut self) -> Result<Self::GlobalService> {
-    let me = TunPeer::new(self.me.clone());
+/*    let me = TunPeer::new(self.me.clone());
     let rl = self.route_len.unwrap_or(MC::INIT_ROUTE_LENGTH);
     let rb = self.route_bias.unwrap_or(MC::INIT_ROUTE_BIAS);
 
@@ -766,42 +861,14 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
         reply_once_buf_size : MC::REPLY_ONCE_BUF_SIZE,
         _p : PhantomData,
     };
-
+*/
+    // warn support only one instantiation of global service
+    let tunnel = replace(&mut self.tunnel,None).unwrap();
     Ok(GlobalTunnelService {
       address_key : HashMap::new(),
       inner : self.conf.init_inner_service()?,
       to_send : VecDeque::new(),
-      tunnel : Full {
-        me : me.clone(),
-
-        reply_mode : self.reply_mode.clone(),
-        error_mode : self.error_mode.clone(),
-        cache : CachedInfoManager {
-          cache_ssw : self.conf.init_cache_ssw()?,
-          cache_ssr : self.conf.init_cache_ssr()?,
-          cache_erw : self.conf.init_cache_erw()?,
-          cache_err : self.conf.init_cache_err()?,
-          keylength : MC::TUN_CACHE_KEY_LENGTH,
-          rng : OsRng::new()?,
-          _ph : PhantomData,
-        },
-        //  pub sym_prov : TT::SP,
-        route_prov : Rp::new(me.clone(),rl,rb)?,
-        reply_prov : ReplyInfoProvider {
-          mode : self.reply_mode.clone(),
-          symprov : self.conf.init_shadow_provider()?,
-          _p : PhantomData,
-        },
-        sym_prov : self.conf.init_shadow_provider()?,
-
-        error_prov : MulErrorProvider::new(self.error_mode.clone()).unwrap(),
-        rng : OsRng::new()?,
-        limiter_proto_w : self.conf.init_limiter_w()?,
-        limiter_proto_r : self.conf.init_limiter_r()?,
-        tunrep : tunnel_reply,
-        reply_once_buf_size : MC::REPLY_ONCE_BUF_SIZE,
-        _p : PhantomData,
-      },
+      tunnel,
     })
   }
   fn init_local_service(me : Self::PeerRef, owith : Option<Self::PeerRef>) -> Result<Self::LocalService> {

@@ -476,6 +476,8 @@ impl MyDHTTunnelConf for TunnelConf {
 fn test_ping_pong() {
   let start_port = 45330;
   let nb_hop = 2;
+  let mode = MultipleReplyMode::Route;
+  let err_mode = MultipleErrorMode::NoHandling;
   let mut peers : Vec<Node> = Vec::with_capacity(nb_hop);
   for i in 0..nb_hop {
     let addr = sa4(Ipv4Addr::new(127,0,0,1), (start_port + i) as u16);
@@ -485,16 +487,15 @@ fn test_ping_pong() {
   let mut sends : Vec<_> = peers.iter().enumerate().map(|(i,p)| {
     let mut stpeers = peers.clone();
     stpeers.remove(i);
-    let conf = MyDHTTunnelConfType {
-      conf : TunnelConf(p.nodeid.clone(), p.address.clone(), true,stpeers,peers[peers.len()-1].clone()),
-      me : ArcRef::new(peers[0].clone()),
-
-      reply_mode : MultipleReplyMode::RouteReply,
-      error_mode : MultipleErrorMode::NoHandling,
-      route_len : Some(nb_hop - 2),
-      route_bias : Some(0),
-
-    };
+    let conf = MyDHTTunnelConfType::new(
+      TunnelConf(p.nodeid.clone(), p.address.clone(), true,stpeers,peers[peers.len()-1].clone()),
+      mode.clone(),
+      err_mode.clone(),
+      // route len
+      Some(nb_hop - 2),
+      // route bias
+      Some(0),
+    ).unwrap();
     let send = conf.start_loop().unwrap().0;
     send
   }).collect();

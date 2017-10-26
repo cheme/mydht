@@ -93,6 +93,9 @@ impl<'a,R : Read,Y : SpawnerYield> Read for ReadYield<'a,R,Y> {
     loop {
       match self.0.read(buf) {
         Ok(r) => {
+          if r == 0 {
+            continue;
+          }
           return Ok(r)
         },
         Err(e) => if let IoErrorKind::WouldBlock = e.kind() {
@@ -112,11 +115,11 @@ impl<'a,R : Read,Y : SpawnerYield> Read for ReadYield<'a,R,Y> {
     while !buf.is_empty() {
       match self.read(buf) {
         Ok(0) => {
-          match self.1.spawn_yield() {
+          /*match self.1.spawn_yield() {
             YieldReturn::Return => return Err(IoError::new(IoErrorKind::WouldBlock,
          "from read_exact")),
             YieldReturn::Loop => (), 
-          }
+          }*/
         },
         Ok(n) => { let tmp = buf; buf = &mut tmp[n..]; }
         Err(ref e) if e.kind() == IoErrorKind::Interrupted => { }

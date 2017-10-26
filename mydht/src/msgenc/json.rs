@@ -88,7 +88,7 @@ where <P as Peer>::Address : 'a,
       return Err(Error(format!("Oversized protomessage, max length in bytes was {:?}", MAX_BUFF), ErrorKind::SerializingError, None));
     };
     let mut vbuf = vec![0; len];
-    try!(r.read(&mut vbuf[..]));
+    try!(r.read_exact(&mut vbuf[..]));
     // TODO this is likely break at the first utf8 char : test it
     Ok(tryfor!(JSonErr,json::from_slice(&mut vbuf[..])))
   }
@@ -101,7 +101,7 @@ where <P as Peer>::Address : 'a,
       return Err(Error(format!("Oversized protomessage, max length in bytes was {:?}", MAX_BUFF), ErrorKind::SerializingError, None));
     };
     let mut vbuf = vec![0; len];
-    try!(r.read(&mut vbuf[..]));
+    try!(r.read_exact(&mut vbuf[..]));
     // TODO this is likely break at the first utf8 char : test it
     Ok(tryfor!(JSonErr,json::from_slice(&mut vbuf[..])))
   }
