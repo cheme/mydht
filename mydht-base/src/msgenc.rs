@@ -26,7 +26,7 @@ use self::send_variant::ProtoMessage as ProtoMessageSend;
 /// use tunnel encoder)
 /// TODO split in read/write and make mut??
 /// TODO why sync
-pub trait MsgEnc<P : Peer,M> : Send + Sync + 'static + Clone {
+pub trait MsgEnc<P : Peer,M> : Send + 'static + Clone {
   //fn encode<P : Peer, V : KeyVal>(&self, &ProtoMessage<P,V>) -> Option<Vec<u8>>;
   
   /// encode

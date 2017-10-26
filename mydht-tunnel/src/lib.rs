@@ -372,13 +372,13 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
         let nb_att = proto_m.get_nb_attachments();
         tunn_we.write_header(w)?;
         {
-          let mut tunn_w = CompExtWInner::new(w, tunn_w);
+          let mut tunn_w = CompExtWInner::new(w, tunn_we);
           self.inner_enc.encode_msg_into(&mut tunn_w,proto_m)?;
         }
         self.current_writer = None;
         if nb_att > 0 {
           self.nb_attach_rem = nb_att;
-          replace(&mut self.current_writer, tunn_w);
+          replace(&mut self.current_writer, tunn_we);
         } else {
           tunn_we.flush_into(w)?;
           tunn_we.write_end(w)?;
