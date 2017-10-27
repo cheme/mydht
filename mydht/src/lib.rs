@@ -48,6 +48,7 @@ macro_rules! sref_self_mc{($ty:ident) => (
 macro_rules! localproxyglobal(() => (
   type GlobalServiceCommand = Self::LocalServiceCommand;
   type GlobalServiceReply  = Self::LocalServiceReply;
+  type LocalServiceProto = ();
   type LocalService = DefLocalService<Self>;
   const LOCAL_SERVICE_NB_ITER : usize = 1;
   type LocalServiceSpawn = Blocker;
@@ -61,11 +62,15 @@ macro_rules! localproxyglobal(() => (
     Ok(NoChannel)
   }
   #[inline]
-  fn init_local_service(me : Self::PeerRef, with : Option<Self::PeerRef>) -> Result<Self::LocalService> {
+  fn init_local_service(_proto : Self::LocalServiceProto, me : Self::PeerRef, with : Option<Self::PeerRef>, _read_tok : usize) -> Result<Self::LocalService> {
     Ok(DefLocalService{
       from : me,
       with : with,
     })
+  }
+  #[inline]
+  fn init_local_service_proto(&mut self) -> Result<Self::LocalServiceProto> {
+    Ok(())
   }
 ));
 
@@ -75,6 +80,7 @@ macro_rules! nolocal(() => (
   const LOCAL_SERVICE_NB_ITER : usize = 1;// = 1;
   type LocalServiceCommand = NoCommandReply;
   type LocalServiceReply = NoCommandReply;
+  type LocalServiceProto = ();
   type LocalService = NoService<Self::LocalServiceCommand,LocalReply<Self>>;
   type LocalServiceSpawn = NoSpawn;
   type LocalServiceChannelIn = NoChannel;
@@ -88,8 +94,12 @@ macro_rules! nolocal(() => (
     Ok(NoChannel)
   }
   #[inline]
-  fn init_local_service(_ : Self::PeerRef, _ : Option<Self::PeerRef>) -> Result<Self::LocalService> {
+  fn init_local_service(_proto : Self::LocalServiceProto, me : Self::PeerRef, with : Option<Self::PeerRef>, _read_tok : usize) -> Result<Self::LocalService> {
     Ok(NoService::new())
+  }
+  #[inline]
+  fn init_local_service_proto(&mut self) -> Result<Self::LocalServiceProto> {
+    Ok(())
   }
 
 ));

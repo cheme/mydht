@@ -369,6 +369,7 @@ impl MyDHTTunnelConf for TunnelConf {
   type InnerCommand = TestMessage;
   type InnerReply = TestReply<Self::PeerRef>;
   type InnerService = TestService<Self>;
+  type InnerServiceProto = Self::PeerRef;
   type Transport = Tcp;
   type TransportAddress = SerSocketAddr;
   type MsgEnc = Json;
@@ -401,8 +402,11 @@ impl MyDHTTunnelConf for TunnelConf {
     }))
   }
 
-  fn init_inner_service(&mut self) -> Result<Self::InnerService> {
-    Ok(TestService(0, ArcRef::new(self.4.clone())))
+  fn init_inner_service_proto(&mut self) -> Result<Self::InnerServiceProto> {
+    Ok(ArcRef::new(self.4.clone()))
+  }
+  fn init_inner_service(dest : Self::InnerServiceProto, _me : Self::PeerRef) -> Result<Self::InnerService> {
+    Ok(TestService(0, dest.clone()))
   }
 
   fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>> {

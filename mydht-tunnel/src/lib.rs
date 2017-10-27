@@ -31,14 +31,18 @@ use tunnel::{
   TunnelNoRep,
   TunnelReaderNoRep,
   TunnelReadProv,
+  TunnelNoRepReadProv,
 };
 use tunnel::full::{
   Full,
   FullReadProv,
   FullW,
+  FullR,
+  DestFull,
   GenTunnelTraits,
   TunnelCachedWriterExt,
   ErrorWriter,
+  ReplyWriter,
 };
 
 use tunnel::nope::{
@@ -235,6 +239,7 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
   // TODO change those by custom dest !!!+ OptInto<
 //    GlobalReply<Self::Peer,Self::PeerRef,Self::InnerCommand,Self::InnerReply>
  //   > + OptInto<LocalReply<MyDHTTunnelConfType<Self>>>;
+  type InnerServiceProto : Clone + Send;
   type InnerService : Service<
     // global command use almost useless (run non auth)
     CommandIn = GlobalCommand<Self::PeerRef,Self::InnerCommand>,
@@ -243,8 +248,11 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
     // This send trait should be remove if spawner moved to this level
     + Send;
 
+  /// TODO unclear we do not need that much convs TODO when stable test without
   type ProtoMsg : Into<MCCommand<MyDHTTunnelConfType<Self>>> + SettableAttachments + GettableAttachments
-    + OptFrom<Self::InnerCommand>;
+    + OptFrom<Self::InnerCommand>
+    + Into<Self::InnerCommand>
+    ;
   type MsgEnc : MsgEnc<Self::Peer, Self::ProtoMsg>;
 
 //  type SlabEntry;
@@ -280,7 +288,8 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
 
   fn init_ref_peer(&mut self) -> Result<Self::PeerRef>;
   fn init_transport(&mut self) -> Result<Self::Transport>;
-  fn init_inner_service(&mut self) -> Result<Self::InnerService>;
+  fn init_inner_service(Self::InnerServiceProto, Self::PeerRef) -> Result<Self::InnerService>;
+  fn init_inner_service_proto(&mut self) -> Result<Self::InnerServiceProto>;
   fn init_peermgmt_proto(&mut self) -> Result<Self::PeerMgmtMeths>;
   fn init_dhtrules_proto(&mut self) -> Result<Self::DHTRules>;
   fn init_enc_proto(&mut self) -> Result<Self::MsgEnc>;
@@ -304,15 +313,32 @@ type SSWCache<MC : MyDHTTunnelConf> = (TunnelCachedWriterExt<MC::SSW,MC::Limiter
 pub struct MyDHTTunnel<MC : MyDHTTunnelConf> {
   me : MC::PeerRef,
 }
+pub enum ReadMsgState<MC : MyDHTTunnelConf> {
+  /// no reply : simply use in service and drop service reply
+  NoReply,
+  /// use in service then directly forward to write with read addition
+  /// Will get read token from local
+  ReplyDirectInit(ReplyWriterTConf<MC>,MC::TransportAddress),
+
+  /// use in service then send reply directly with the writer
+  ReplyDirectNoInit(ReplyWriterTConf<MC>,MC::TransportAddress),
+  /// reply requires state read from global
+  /// Will get read token from local
+  ReplyToGlobalWithRead(DestFullRTConf<MC>),
+}
 
 /// type to send message
 pub enum TunnelMessaging<MC : MyDHTTunnelConf> {
   /// send query with tunnelwriter
   TunnelSendOnce(Option<FullWTConf<MC>>,MC::ProtoMsg),
   /// proxy from reader
-  ProxyFromReader,
+  /// Will get read token from local
+  ProxyFromReader(FullRTConf<MC>),
+  /// read from reader to global (need global state)
+  /// Will get read token from local
+  ReadToGlobal(FullRTConf<MC>),
   /// reply based on borrow reader content
-  ReplyFromReader(MC::ProtoMsg),
+  ReplyFromReader(MC::ProtoMsg,ReadMsgState<MC>),
 }
 impl<MC : MyDHTTunnelConf> OptFrom<MCCommand<MyDHTTunnelConfType<MC>>> for TunnelMessaging<MC> {
   fn can_from(m : &MCCommand<MyDHTTunnelConfType<MC>>) -> bool {
@@ -330,6 +356,7 @@ impl<MC : MyDHTTunnelConf> OptFrom<MCCommand<MyDHTTunnelConfType<MC>>> for Tunne
         GlobalTunnelCommand::Inner(..)
           | GlobalTunnelCommand::NewOnline(..)
           | GlobalTunnelCommand::Offline(..)
+          | GlobalTunnelCommand::DestReplyFromGlobal(..)
           => None, 
       },
       MCCommand::PeerStore(..) | MCCommand::TryConnect(..) => None,
@@ -341,8 +368,22 @@ impl<MC : MyDHTTunnelConf> Into<MCCommand<MyDHTTunnelConfType<MC>>> for TunnelMe
   fn into(self) -> MCCommand<MyDHTTunnelConfType<MC>> {
     match self {
       TunnelMessaging::TunnelSendOnce(tunn_w,inner_pmes) => unreachable!(),
-      TunnelMessaging::ReplyFromReader(inner_pmes) => unimplemented!(),
-      ProxyFromReader => unimplemented!(),
+      TunnelMessaging::ReplyFromReader(inner_pmes,st) => {
+        let inner_command : MC::InnerCommand = inner_pmes.into(); 
+        MCCommand::Local(LocalTunnelCommand::LocalFromRead(inner_command,st))
+        /*match st {
+          ReadMsgState::NoReply => unimplemented!(),
+          ReadMsgState::ReplyDirectInit(rwc,tadd) => MCCommand::Local(
+            LocalTunnelCommand::ReplyDirectInit(inner_command,destfullread) 
+          ),
+          ReadMsgState::ReplyDirectNoInit(rwc,tadd) => unimplemented!(),
+          ReadMsgState::ReplyToGlobalWithRead(destfullread) => MCCommand::Local(
+            LocalTunnelCommand::DestReplyFromGlobal(inner_command,destfullread) 
+          ),
+        }*/
+      },
+      TunnelMessaging::ProxyFromReader(tun_r) => unimplemented!(),
+      TunnelMessaging::ReadToGlobal(tun_r) => unimplemented!(),
     }
   }
 }
@@ -352,7 +393,9 @@ impl<MC : MyDHTTunnelConf> Into<MCCommand<MyDHTTunnelConfType<MC>>> for TunnelMe
 pub struct TunnelWriterReader<MC : MyDHTTunnelConf> {
   pub inner_enc : MC::MsgEnc,
   pub current_writer : Option<FullWTConf<MC>>,
+  pub current_reader : Option<DestFullRTConf<MC>>,
   pub nb_attach_rem : usize,
+  pub do_finalize_read : bool,
   pub t_readprov : FullReadProv<TunnelTraits<MC>>,
 }
 
@@ -361,7 +404,9 @@ impl<MC : MyDHTTunnelConf> Proto for TunnelWriterReader<MC> {
     TunnelWriterReader{
       inner_enc : self.inner_enc.get_new(),
       current_writer : None,
+      current_reader : None,
       nb_attach_rem : 0,
+      do_finalize_read : false,
       t_readprov : self.t_readprov.new_tunnel_read_prov(),
     }
   }
@@ -397,8 +442,9 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
           tunn_we.write_end(w)?;
         }
       },
-      TunnelMessaging::ProxyFromReader => unimplemented!(),
+      TunnelMessaging::ProxyFromReader(..) => unimplemented!(),
       TunnelMessaging::ReplyFromReader(..) => unimplemented!(),
+      TunnelMessaging::ReadToGlobal(..) => unimplemented!(),
     }
     Ok(())
   }
@@ -422,33 +468,90 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
   fn decode_msg_from<R : Read>(&mut self, r : &mut R) -> Result<TunnelMessaging<MC>> {
 
     let mut tunn_re = self.t_readprov.new_reader();
+    self.do_finalize_read = false;
     tunn_re.read_header(r)?;
     if tunn_re.is_dest().unwrap() {
+      if self.t_readprov.can_dest_reader(&tunn_re) {
       match self.t_readprov.new_dest_reader(tunn_re, r)? {
         Some(mut dest_reader) => {
           dest_reader.read_header(r)?;
           let proto_m = {
             let mut tunn_r = CompExtRInner(r, &mut dest_reader);
-            self.inner_enc.decode_msg_from(&mut tunn_r)?;
+            self.inner_enc.decode_msg_from(&mut tunn_r)?
           };
-          unimplemented!();
+          self.nb_attach_rem = proto_m.attachment_expected_sizes().len();
+          let (do_reply,need_init,owr) = self.t_readprov.new_reply_writer(&mut dest_reader, r)?;
+          if !do_reply || !need_init {
+            if self.nb_attach_rem > 0 {
+              self.do_finalize_read = true;
+            } else {
+              dest_reader.read_end(r)?;
+            }
+          }
+          let message : TunnelMessaging<MC> = if !do_reply {
+            if self.nb_attach_rem > 0 {
+              self.current_reader = Some(dest_reader);
+            }
+            TunnelMessaging::ReplyFromReader(proto_m, ReadMsgState::NoReply)
+          } else if let Some((reply_w,dest)) = owr {
+            if self.nb_attach_rem > 0 {
+              self.current_reader = Some(dest_reader);
+            }
+
+            if need_init {
+              // send to write with read (run inner service in local)
+              TunnelMessaging::ReplyFromReader(proto_m, ReadMsgState::ReplyDirectInit(reply_w,dest))
+            } else {
+              // send to write without read (run inner service in local)
+              TunnelMessaging::ReplyFromReader(proto_m, ReadMsgState::ReplyDirectNoInit(reply_w,dest))
+            }
+          } else {
+            if self.nb_attach_rem > 0 {
+              // at the time Tunnel impl do not use this mode so we simply panic now (currently if
+              // we need to go on global we do not need init because we would use cache)
+              panic!("No attachment support in this configuration : requires a api redesign (dest_reader in message but require for attachments)"); 
+            }
+            // send to global service as it requires cache + if owr.1 is true send read else
+            // no send read
+            TunnelMessaging::ReplyFromReader(proto_m, ReadMsgState::ReplyToGlobalWithRead(dest_reader))
+          };
+          Ok(message)
         },
         None => {
-          // Send reader to global as for proxy
-          unimplemented!()
+          // bug, the call to can dest reader should exclude this
+          unreachable!();
+                
         },
       }
- 
-      unimplemented!()
+      } else {
+        self.nb_attach_rem = 0;
+        // Send reader to global as for proxy : requires cache TODO do not remember reading
+        // attachement in global
+        Ok(TunnelMessaging::ReadToGlobal(tunn_re))
+      }
+
     } else if tunn_re.is_err().unwrap() {
       unimplemented!()
     } else {
       // proxy
-      unimplemented!()
+      Ok(TunnelMessaging::ProxyFromReader(tunn_re))
     }
   }
   fn attach_from<R : Read>(&mut self, r : &mut R, max_size : usize) -> Result<Attachment> {
-    unimplemented!()
+    if let Some(dest_reader) = self.current_reader.as_mut() {
+      let att = {
+        let mut tunn_r = CompExtRInner(r, dest_reader);
+        self.inner_enc.attach_from(&mut tunn_r, max_size)?
+      };
+
+      if self.do_finalize_read {
+        dest_reader.read_end(r)?;
+      }
+      Ok(att)
+    } else {
+      // true only in context of read service (read msg then immediatly read attachment)
+      unreachable!()
+    }
   }
 }
 
@@ -462,6 +565,7 @@ pub struct MyDHTTunnelConfType<MC : MyDHTTunnelConf>{
   route_bias : usize,
   tunnel : Option<Full<TunnelTraits<MC>>>,
   tunnel_r : FullReadProv<TunnelTraits<MC>>,
+  inner_service_proto : MC::InnerServiceProto,
  //reply_mode : MultipleReplyMode::RouteReply,
  //error_mode : MultipleErrorMode::NoHandling,
 }
@@ -527,6 +631,7 @@ impl<MC : MyDHTTunnelConf> MyDHTTunnelConfType<MC> {
         _p : PhantomData,
       };
     let tunnel_r = tunnel.new_tunnel_read_prov();
+    let i_service_proto = conf.init_inner_service_proto()?;
     Ok(MyDHTTunnelConfType {
       conf,
       me,
@@ -536,28 +641,41 @@ impl<MC : MyDHTTunnelConf> MyDHTTunnelConfType<MC> {
       route_bias,
       tunnel : Some(tunnel),
       tunnel_r,
+      inner_service_proto : i_service_proto,
     })
   }
 }
 
-    
 pub enum LocalTunnelCommand<MC : MyDHTTunnelConf> {
+  /// TODO unused ?? remove!!!
   Inner(MC::InnerCommand),
+  /// message has been read, need to forward to global with read (insert token)
+  LocalFromRead(MC::InnerCommand,ReadMsgState<MC>),
 }
 pub enum LocalTunnelReply<MC : MyDHTTunnelConf> {
   Inner(MC::InnerReply),
 // TODO  DestFromReader(MC::InnerCommand),
 }
+
+pub type MovableRead<MC : MyDHTTunnelConf> = (<MC::Transport as Transport>::ReadStream, <MC::Peer as Peer>::ShadowRMsg);
 pub enum GlobalTunnelCommand<MC : MyDHTTunnelConf> {
   Inner(MC::InnerCommand),
   NewOnline(MC::PeerRef),
   Offline(MC::PeerRef),
   TunnelSendOnce(FullWTConf<MC>,MC::InnerCommand),
+  /// message has been read, reply need to be instantiated from global (withread)
+  DestReplyFromGlobal(MC::InnerCommand,DestFullRTConf<MC>,usize,Option<MovableRead<MC>>),
 }
 
 // TODO box it !!!!!!!!! (better yet full of heap struct (vec))
 type FullWTConf<MC : MyDHTTunnelConf> = FullW<MultipleReplyInfo<MC::TransportAddress>,MultipleErrorInfo,TunPeer<MC::Peer,MC::PeerRef>, MC::LimiterW,
   FullW<MultipleReplyInfo<MC::TransportAddress>, MultipleErrorInfo,TunPeer<MC::Peer,MC::PeerRef>, MC::LimiterW,Nope>>; 
+
+
+type FullRTConf<MC : MyDHTTunnelConf> = FullR<MultipleReplyInfo<MC::TransportAddress>, MultipleErrorInfo, TunPeer<MC::Peer,MC::PeerRef>, MC::LimiterR>;
+type DestFullRTConf<MC : MyDHTTunnelConf> = DestFull<FullRTConf<MC>,MC::SSR, MC::LimiterR>;
+
+type ReplyWriterTConf<MC : MyDHTTunnelConf> = ReplyWriter<MC::LimiterW,MC::SSW>; 
 
 pub enum GlobalTunnelReply<MC : MyDHTTunnelConf> {
   /// inner service return a result for api
@@ -565,6 +683,9 @@ pub enum GlobalTunnelReply<MC : MyDHTTunnelConf> {
   SendCommandTo(MC::PeerRef,MC::InnerCommand),
 }
 pub struct LocalTunnelService<MC : MyDHTTunnelConf> {
+  pub me : MC::PeerRef,
+  pub with : Option<MC::PeerRef>,
+  pub read_token : usize,
   pub inner : MC::InnerService,
 }
 
@@ -588,6 +709,9 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
   type CommandOut = GlobalReply<MC::Peer,MC::PeerRef,GlobalTunnelCommand<MC>,GlobalTunnelReply<MC>>;
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
     Ok(match req {
+      GlobalCommand(_,GlobalTunnelCommand::DestReplyFromGlobal(inner_command,dest_full_read,read_old_token,o_read)) => {
+        unimplemented!()
+      },
       GlobalCommand(_,GlobalTunnelCommand::TunnelSendOnce(tun_w,i_com)) => {
         unreachable!()
       },
@@ -710,6 +834,7 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
 
   type LocalServiceCommand = LocalTunnelCommand<MC>;
   type LocalServiceReply = LocalTunnelReply<MC>;
+  type LocalServiceProto = MC::InnerServiceProto;
   type LocalService = LocalTunnelService<MC>;
   const LOCAL_SERVICE_NB_ITER : usize = 1;
   type LocalServiceSpawn = Blocker;
@@ -821,7 +946,9 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
     Ok(TunnelWriterReader{
       inner_enc : self.conf.init_enc_proto()?,
       current_writer : None,
+      current_reader : None,
       nb_attach_rem : 0,
+      do_finalize_read : false,
       t_readprov : self.tunnel_r.new_tunnel_read_prov(),
     })
   }
@@ -866,13 +993,22 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
     let tunnel = replace(&mut self.tunnel,None).unwrap();
     Ok(GlobalTunnelService {
       address_key : HashMap::new(),
-      inner : self.conf.init_inner_service()?,
+      inner : MC::init_inner_service(self.inner_service_proto.clone(), self.me.clone())?,
       to_send : VecDeque::new(),
       tunnel,
     })
   }
-  fn init_local_service(me : Self::PeerRef, owith : Option<Self::PeerRef>) -> Result<Self::LocalService> {
-    unimplemented!()
+  fn init_local_service_proto(&mut self) -> Result<Self::LocalServiceProto> {
+    Ok(self.inner_service_proto.clone())
+  }
+
+  fn init_local_service(proto : MC::InnerServiceProto, me : Self::PeerRef, with : Option<Self::PeerRef>, read_token : usize) -> Result<Self::LocalService> {
+    Ok(LocalTunnelService {
+      me : me.clone(),
+      with,
+      read_token,
+      inner : MC::init_inner_service(proto,me)?,
+    })
   }
 
 
@@ -910,18 +1046,22 @@ impl<MC : MyDHTTunnelConf> GettableAttachments for TunnelMessaging<MC> {
   fn get_nb_attachments(&self) -> usize {
     match *self {
       TunnelMessaging::TunnelSendOnce(_,ref inner_pmes)
-      | TunnelMessaging::ReplyFromReader(ref inner_pmes) 
+      | TunnelMessaging::ReplyFromReader(ref inner_pmes,_) 
         => inner_pmes.get_nb_attachments(),
-      TunnelMessaging::ProxyFromReader => 0,
+      TunnelMessaging::ProxyFromReader(..)
+      | TunnelMessaging::ReadToGlobal(..)
+        => 0,
     }
 
   }
   fn get_attachments(&self) -> Vec<&Attachment> {
     match *self {
       TunnelMessaging::TunnelSendOnce(_,ref inner_pmes)
-      | TunnelMessaging::ReplyFromReader(ref inner_pmes) 
+      | TunnelMessaging::ReplyFromReader(ref inner_pmes,_) 
         => inner_pmes.get_attachments(),
-      TunnelMessaging::ProxyFromReader => Vec::new(),
+      TunnelMessaging::ProxyFromReader(..)
+      | TunnelMessaging::ReadToGlobal(..)
+        => Vec::new(),
     }
   }
 }
@@ -930,17 +1070,21 @@ impl<MC : MyDHTTunnelConf> SettableAttachments for TunnelMessaging<MC> {
   fn attachment_expected_sizes(&self) -> Vec<usize> {
     match *self {
       TunnelMessaging::TunnelSendOnce(_,ref inner_pmes)
-      |  TunnelMessaging::ReplyFromReader(ref inner_pmes) 
+      |  TunnelMessaging::ReplyFromReader(ref inner_pmes,_) 
         => inner_pmes.attachment_expected_sizes(),
-      TunnelMessaging::ProxyFromReader => Vec::new(),
+      TunnelMessaging::ProxyFromReader(..)
+      | TunnelMessaging::ReadToGlobal(..)
+        => Vec::new(),
     }
   }
   fn set_attachments(& mut self, at : &[Attachment]) -> bool {
     match *self {
       TunnelMessaging::TunnelSendOnce(_,ref mut  inner_pmes)
-      |  TunnelMessaging::ReplyFromReader(ref mut inner_pmes) 
+      |  TunnelMessaging::ReplyFromReader(ref mut inner_pmes,_) 
         => inner_pmes.set_attachments(at),
-      TunnelMessaging::ProxyFromReader => at.len() == 0,
+      TunnelMessaging::ProxyFromReader(..) 
+      | TunnelMessaging::ReadToGlobal(..)
+        => at.len() == 0,
     }
   }
 }
@@ -951,16 +1095,19 @@ impl<MC : MyDHTTunnelConf> SettableAttachments for TunnelMessaging<MC> {
 impl<MC : MyDHTTunnelConf> ApiQueriable for LocalTunnelCommand<MC> {
   fn is_api_reply(&self) -> bool {
     match *self {
+      LocalTunnelCommand::LocalFromRead(ref inn_c,_) |
       LocalTunnelCommand::Inner(ref inn_c) => inn_c.is_api_reply(),
     }
   }
   fn set_api_reply(&mut self, i : ApiQueryId) {
     match *self {
+      LocalTunnelCommand::LocalFromRead(ref mut inn_c,_) |
       LocalTunnelCommand::Inner(ref mut inn_c) => inn_c.set_api_reply(i),
     }
   }
   fn get_api_reply(&self) -> Option<ApiQueryId> {
     match *self {
+      LocalTunnelCommand::LocalFromRead(ref inn_c,_) |
       LocalTunnelCommand::Inner(ref inn_c) => inn_c.get_api_reply(),
     }
   }
@@ -970,6 +1117,7 @@ impl<MC : MyDHTTunnelConf> ApiQueriable for LocalTunnelCommand<MC> {
 impl<MC : MyDHTTunnelConf> Clone for LocalTunnelCommand<MC> {
   fn clone(&self) -> Self {
     match *self {
+      LocalTunnelCommand::LocalFromRead(ref inn_c,_) |
       LocalTunnelCommand::Inner(ref inn_c) => LocalTunnelCommand::Inner(inn_c.clone()),
     }
   }
@@ -986,6 +1134,7 @@ impl<MC : MyDHTTunnelConf> ApiRepliable for LocalTunnelReply<MC> {
 impl<MC : MyDHTTunnelConf> ApiQueriable for GlobalTunnelCommand<MC> {
   fn is_api_reply(&self) -> bool {
     match *self {
+      GlobalTunnelCommand::DestReplyFromGlobal(ref inn_c,_,_,_) |
       GlobalTunnelCommand::Inner(ref inn_c) => inn_c.is_api_reply(),
       GlobalTunnelCommand::NewOnline(..) => false,
       GlobalTunnelCommand::Offline(..) => false,
@@ -994,6 +1143,7 @@ impl<MC : MyDHTTunnelConf> ApiQueriable for GlobalTunnelCommand<MC> {
   }
   fn set_api_reply(&mut self, i : ApiQueryId) {
     match *self {
+      GlobalTunnelCommand::DestReplyFromGlobal(ref mut inn_c,_,_,_) |
       GlobalTunnelCommand::Inner(ref mut inn_c) => inn_c.set_api_reply(i),
       GlobalTunnelCommand::NewOnline(..) => (),
       GlobalTunnelCommand::Offline(..) => (),
@@ -1002,6 +1152,7 @@ impl<MC : MyDHTTunnelConf> ApiQueriable for GlobalTunnelCommand<MC> {
   }
   fn get_api_reply(&self) -> Option<ApiQueryId> {
     match *self {
+      GlobalTunnelCommand::DestReplyFromGlobal(ref inn_c,_,_,_) |
       GlobalTunnelCommand::Inner(ref inn_c) => inn_c.get_api_reply(),
       GlobalTunnelCommand::NewOnline(..) => None,
       GlobalTunnelCommand::Offline(..) => None,
@@ -1014,6 +1165,7 @@ impl<MC : MyDHTTunnelConf> ApiQueriable for GlobalTunnelCommand<MC> {
 impl<MC : MyDHTTunnelConf> Clone for GlobalTunnelCommand<MC> {
   fn clone(&self) -> Self {
     match *self {
+      GlobalTunnelCommand::DestReplyFromGlobal(ref inn_c,_,_,_) => unreachable!(),
       GlobalTunnelCommand::Inner(ref inn_c) => GlobalTunnelCommand::Inner(inn_c.clone()),
       GlobalTunnelCommand::NewOnline(ref rp) => GlobalTunnelCommand::NewOnline(rp.clone()),
       GlobalTunnelCommand::Offline(ref rp) => GlobalTunnelCommand::Offline(rp.clone()),

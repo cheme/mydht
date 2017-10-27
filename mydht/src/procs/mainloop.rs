@@ -388,6 +388,7 @@ pub struct MDHTState<MC : MyDHTConf> {
   global_send : <MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Send,
   global_handle : GlobalHandle<MC>,
   local_spawn_proto : MC::LocalServiceSpawn,
+  local_service_proto : MC::LocalServiceProto,
   local_channel_in_proto : MC::LocalServiceChannelIn,
   api_send : <MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Send,
   api_handle : ApiHandle<MC>,
@@ -514,6 +515,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       global_handle : global_handle,
       local_channel_in_proto : local_channel_in,
       local_spawn_proto : local_spawn,
+      local_service_proto : conf.init_local_service_proto()?,
       api_handle : api_handle,
       api_send : api_send,
       peerstore_send : peerstore_send,
@@ -1271,6 +1273,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             self.local_channel_in_proto.clone(),
             read_out.clone(),
             ah,
+            self.local_service_proto.clone(),
             ), read_out, Some(ReadCommand::Run), read_r_in, 0)?;
         let state = SlabEntryState::ReadSpawned((read_handle,read_s_in));
         replace(&mut entry.state,state);

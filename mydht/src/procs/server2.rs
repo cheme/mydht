@@ -88,6 +88,7 @@ pub struct ReadService<MC : MyDHTConf> {
   prio : Option<PeerPriority>,
   shad_msg : Option<<MC::Peer as Peer>::ShadowRMsg>,
   local_sp : Option<(LocalSendIn<MC>, LocalHandle<MC>)>,
+  local_service_proto : MC::LocalServiceProto,
   local_spawner : MC::LocalServiceSpawn,
   local_channel_in : MC::LocalServiceChannelIn,
   read_dest_proto : ReadDest<MC>,
@@ -107,6 +108,7 @@ pub struct ReadServiceSend<MC : MyDHTConf> {
   prio : Option<PeerPriority>,
   shad_msg : Option<<MC::Peer as Peer>::ShadowRMsg>,
   local_spawner : MC::LocalServiceSpawn,
+  local_service_proto : MC::LocalServiceProto,
   local_channel_in : MC::LocalServiceChannelIn,
   read_dest_proto : ReadDest<MC>,
   api_dest_proto : Option<ApiHandleSend<MC>>,
@@ -135,6 +137,7 @@ impl<MC : MyDHTConf> SRef for ReadService<MC> where
       peermgmt, token, prio, shad_msg, 
       local_sp, 
       local_spawner, local_channel_in, read_dest_proto, api_dest_proto,
+      local_service_proto,
     } = self;
     ReadServiceSend {
       stream, is_auth, enc,
@@ -142,6 +145,7 @@ impl<MC : MyDHTConf> SRef for ReadService<MC> where
       with : with.map(|w|w.get_sendable()),
       peermgmt, token, prio, shad_msg, 
       local_spawner, local_channel_in, read_dest_proto, api_dest_proto,
+      local_service_proto,
     } 
   }
 }
@@ -167,6 +171,7 @@ impl<MC : MyDHTConf> SToRef<ReadService<MC>> for ReadServiceSend<MC> where
       with,
       peermgmt, token, prio, shad_msg, 
       local_spawner, local_channel_in, read_dest_proto, api_dest_proto,
+      local_service_proto,
     } = self;
     ReadService {
       stream, is_auth, enc,
@@ -175,6 +180,7 @@ impl<MC : MyDHTConf> SToRef<ReadService<MC>> for ReadServiceSend<MC> where
       peermgmt, token, prio, shad_msg, 
       local_sp : None,
       local_spawner, local_channel_in, read_dest_proto, api_dest_proto,
+      local_service_proto,
     } 
   }
 }
@@ -191,6 +197,7 @@ impl<MC : MyDHTConf> ReadService<MC> {
     local_channel_in : MC::LocalServiceChannelIn,
     read_dest_proto : ReadDest<MC>,
     api_dest_proto : Option<ApiHandleSend<MC>>,
+    local_service_proto : MC::LocalServiceProto,
     ) -> Self {
   //pub fn new(token :usize, rs : <MC::Transport as Transport>::ReadStream, me : PeerRefSend<MC>, with : Option<PeerRefSend<MC>>, enc : MC::MsgEnc, peermgmt : MC::PeerMgmtMeths) -> Self {
     let is_auth = if MC::AUTH_MODE == ShadowAuthType::NoAuth {
@@ -203,16 +210,17 @@ impl<MC : MyDHTConf> ReadService<MC> {
       is_auth : is_auth,
       enc : enc,
       from : me,
-      with : with,
-      peermgmt : peermgmt,
-      token : token,
+      with,
+      peermgmt,
+      token,
       prio : None,
       shad_msg : None,
       local_sp : None,
       local_spawner : local_spawn,
-      local_channel_in : local_channel_in,
-      read_dest_proto : read_dest_proto,
-      api_dest_proto : api_dest_proto,
+      local_channel_in,
+      read_dest_proto,
+      api_dest_proto,
+      local_service_proto,
     }
   }
 }
@@ -381,7 +389,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
                 // try send in
                 send_with_handle(send, local_handle, mess)?
               } else {
-                let service = MC::init_local_service(self.from.clone(),self.with.clone())?;
+                let service = MC::init_local_service(self.local_service_proto.clone(),self.from.clone(),self.with.clone(),self.token)?;
                 let (send,recv) = self.local_channel_in.new()?;
                 let sender = LocalDest {
                   read : self.read_dest_proto.clone(),
@@ -398,7 +406,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
                   let nlocal_handle = if res.is_err() {
                     // TODO log try restart ???
                     // reinit service, reuse receiver as may not be empty (do not change our send)
-                    let service = MC::init_local_service(self.from.clone(),self.with.clone())?;
+                    let service = MC::init_local_service(self.local_service_proto.clone(),self.from.clone(),self.with.clone(),self.token)?;
                     // TODO reinit channel and sender plus empty receiver in sender seems way better!!!
                     self.local_spawner.spawn(service, sender, Some(mess), receiver, MC::LOCAL_SERVICE_NB_ITER)?
                   } else {

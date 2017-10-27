@@ -670,6 +670,8 @@ pub trait MyDHTConf : 'static + Send + Sized
   //  + OptFrom<KVStoreReply<Self::PeerRef>> 
     ;// = GlobalCommand<Self>;
 
+  /// a proto for local service init
+  type LocalServiceProto : Clone + Send;
   // ref for protomsg : need to be compatible with spawners -> this has been disabled, ref will
   // need to be included in service command (which are
   // type LocalServiceCommandRef : Ref<Self::LocalServiceCommand>;
@@ -814,7 +816,8 @@ pub trait MyDHTConf : 'static + Send + Sized
   fn init_global_spawner(&mut self) -> Result<Self::GlobalServiceSpawn>;
   fn init_global_service(&mut self) -> Result<Self::GlobalService>;
 
-  fn init_local_service(Self::PeerRef, Option<Self::PeerRef>) -> Result<Self::LocalService>;
+  fn init_local_service_proto(&mut self) -> Result<Self::LocalServiceProto>;
+  fn init_local_service(Self::LocalServiceProto, Self::PeerRef, Option<Self::PeerRef>, _read_tok : usize) -> Result<Self::LocalService>;
   fn init_local_spawner(&mut self) -> Result<Self::LocalServiceSpawn>;
   fn init_local_channel_in(&mut self) -> Result<Self::LocalServiceChannelIn>;
   //fn init_read_spawner_out(<Self::MainLoopChannelIn as SpawnChannel<MainLoopCommand<Self>>>::Send, <Self::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<Self>>>::Send) -> Result<ReadDest<Self>>;
