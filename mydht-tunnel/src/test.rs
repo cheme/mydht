@@ -150,8 +150,8 @@ pub enum TestMessage {
   TouchR(usize),
 }
 
-/// if last bool is true it is api (should be better design as enum)
-pub struct TestReply<PR>(pub Option<PR>,pub TestMessage,pub bool);
+/// TODO check usage and use a simple touchr for api
+pub struct TestReply(pub TestMessage);
 impl GettableAttachments for TestMessage {
   fn get_nb_attachments(&self) -> usize {
     0
@@ -216,24 +216,24 @@ impl ApiQueriable for TestMessage {
     }
   }
 }
-impl<PR> ApiQueriable for TestReply<PR> {
+impl ApiQueriable for TestReply {
   #[inline]
   fn is_api_reply(&self) -> bool {
-    match self.1 {
+    match self.0 {
       TestMessage::TouchR(..) => true,
       _ => false,
     }
   }
   #[inline]
   fn get_api_reply(&self) -> Option<ApiQueryId> {
-    match self.1 {
+    match self.0 {
       TestMessage::TouchR(ref qid) =>  Some(ApiQueryId(*qid)),
       _ => None,
     }
   }
   #[inline]
   fn set_api_reply(&mut self, aid : ApiQueryId) {
-    match self.1 {
+    match self.0 {
       TestMessage::TouchR(ref mut qid) => *qid = aid.0,
       _ => (),
     }
@@ -241,28 +241,6 @@ impl<PR> ApiQueriable for TestReply<PR> {
 
 }
 
-/// TODO use a inner to global dest for inner service
-impl OptInto<GlobalTunnelReply<TunnelConf>> for TestReply<<TunnelConf as MyDHTTunnelConf>::PeerRef> {
-  fn can_into(&self) -> bool {
-    true
-  }
-
-  fn opt_into(self) -> Option<GlobalTunnelReply<TunnelConf>> {
-    match self {
-      TestReply(Some(dest),ms,false) => Some(GlobalTunnelReply::SendCommandTo(dest,ms)),
-//        (Some(vec![dest]),ms),
-      TestReply(None,ms,false) => unreachable!(),
-      //(None,ms),
-      TestReply(_,ms,true) => Some(GlobalTunnelReply::Api(TestReply(None,ms,true))),
-    }
- /*   Some(GlobalReply::Forward(dest,None,FWConf {
-          nb_for : 1,
-          discover : false,
-    }, m))
-*/ 
-  }
-
-}
   /*  
 /// TODO use a inner to local dest for inner service
 impl<MC : MyDHTTunnelConf> OptInto<LocalReply<MyDHTTunnelConfType<MC>>> for TestReply<<MC as MyDHTConf>::PeerRef> {
@@ -334,20 +312,24 @@ pub struct TunnelConf(pub String, pub SerSocketAddr, pub bool, pub Vec<Node>, pu
 
 impl Service for TestService<TunnelConf> {
   type CommandIn = GlobalCommand<<TunnelConf as MyDHTTunnelConf>::PeerRef,<TunnelConf as MyDHTTunnelConf>::InnerCommand>;
-  type CommandOut = TestReply<<TunnelConf as MyDHTTunnelConf>::PeerRef>;
+  type CommandOut = GlobalTunnelReply<TunnelConf>;
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut S) -> Result<Self::CommandOut> {
+ 
     match req {
       GlobalCommand::Distant(_, TestMessage::TouchQ(qid)) => {
-        Ok(TestReply(None,TestMessage::TouchR(qid),false))
+        Ok(GlobalTunnelReply::TryReplyFromReader(
+            TestMessage::TouchR(qid)))
       },
       GlobalCommand::Distant(_, TestMessage::TouchR(qid)) => {
         // api reply (last true)
-        Ok(TestReply(None,TestMessage::TouchR(qid),true))
+        Ok(GlobalTunnelReply::Api(
+          TestReply(TestMessage::TouchR(qid))))
       },
       GlobalCommand::Local(TestMessage::TouchQ(qid)) => {
         self.0 = qid;
         // proxy message
-        Ok(TestReply(Some(self.1.clone()),TestMessage::TouchQ(qid),false))
+        Ok(GlobalTunnelReply::SendCommandTo(
+          self.1.clone(),TestMessage::TouchQ(qid)))
 
       },
       GlobalCommand::Local(TestMessage::TouchR(qid)) => {
@@ -367,7 +349,7 @@ impl MyDHTTunnelConf for TunnelConf {
   type Peer = Node;
   type PeerRef = ArcRef<Node>;
   type InnerCommand = TestMessage;
-  type InnerReply = TestReply<Self::PeerRef>;
+  type InnerReply = TestReply;
   type InnerService = TestService<Self>;
   type InnerServiceProto = Self::PeerRef;
   type Transport = Tcp;
@@ -511,7 +493,7 @@ fn test_ping_pong() {
   let o_res = replace_wait_one_result(&o_res,(Vec::new(),0,0)).unwrap();
   assert!(o_res.0.len() == 1);
   for v in o_res.0.iter() {
-    assert!(if let &ApiResult::ServiceReply(MCReply::Global(GlobalTunnelReply::Api(TestReply(_,TestMessage::TouchR(_),_)))) = v {true} else {false});
+    assert!(if let &ApiResult::ServiceReply(MCReply::Global(GlobalTunnelReply::Api(TestReply(TestMessage::TouchR(_))))) = v {true} else {false});
   }
 
   // no service to check connection, currently only for testing and debugging : sleep

@@ -230,10 +230,10 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
   type DHTRules : DHTRules + Clone;
   type InnerCommand : ApiQueriable + PeerStatusListener<Self::PeerRef>
     // clone as include in both local and global (local constraint)
-     + Clone
+    + Clone
     // This send trait should be remove if spawner moved to this level
     + Send;
-  type InnerReply : ApiQueriable + OptInto<GlobalTunnelReply<Self>>
+  type InnerReply : ApiQueriable
     // This send trait should be remove if spawner moved to this level
     + Send;
   // TODO change those by custom dest !!!+ OptInto<
@@ -243,7 +243,7 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
   type InnerService : Service<
     // global command use almost useless (run non auth)
     CommandIn = GlobalCommand<Self::PeerRef,Self::InnerCommand>,
-    CommandOut = Self::InnerReply,
+    CommandOut = GlobalTunnelReply<Self>,
   >
     // This send trait should be remove if spawner moved to this level
     + Send;
@@ -681,6 +681,8 @@ pub enum GlobalTunnelReply<MC : MyDHTTunnelConf> {
   /// inner service return a result for api
   Api(MC::InnerReply),
   SendCommandTo(MC::PeerRef,MC::InnerCommand),
+  TryReplyFromReader(MC::InnerCommand),
+  NoRep,
 }
 pub struct LocalTunnelService<MC : MyDHTTunnelConf> {
   pub me : MC::PeerRef,
@@ -753,15 +755,19 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
         } else {
           self.inner.call(GlobalCommand::Distant(owith,inner_command),async_yield)?
         };
-        match rep.opt_into() {
-          Some(GlobalTunnelReply::Api(inner_reply)) => {
+        match rep {
+          GlobalTunnelReply::TryReplyFromReader(inner_reply) => {
+            // only for local
+            unreachable!()
+          },
+          GlobalTunnelReply::Api(inner_reply) => {
             if inner_reply.is_api_reply() {
               GlobalReply::Api(GlobalTunnelReply::Api(inner_reply))
             } else {
               GlobalReply::NoRep
             }
           },
-          Some(GlobalTunnelReply::SendCommandTo(dest, inner_command)) => {
+          GlobalTunnelReply::SendCommandTo(dest, inner_command) => {
             if self.tunnel.route_prov.enough_peer() {
               let (tunn_we,dest_add) = self.tunnel.new_writer(&TunPeer::new(dest));
               let dest_k = self.address_key.get(&dest_add).map(|k|k.clone());
@@ -776,7 +782,7 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
             }
           },
 
-          None => GlobalReply::NoRep,
+          GlobalTunnelReply::NoRep => GlobalReply::NoRep,
         }
 /*        match rep.get_api_reply() {
           Some(aid),r
@@ -1208,6 +1214,8 @@ impl<MC : MyDHTTunnelConf> ApiRepliable for GlobalTunnelReply<MC> {
     match *self {
       GlobalTunnelReply::Api(ref inn_c) => inn_c.get_api_reply(),
       GlobalTunnelReply::SendCommandTo(..) => None,
+      GlobalTunnelReply::TryReplyFromReader(..) => None,
+      GlobalTunnelReply::NoRep => None,
     }
   }
 }

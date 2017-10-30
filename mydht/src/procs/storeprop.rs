@@ -631,7 +631,7 @@ impl<
 
     let store = self.store.as_mut().unwrap();
     let query_cache = self.query_cache.as_mut().unwrap();
-    let (is_local,owith,req) = match req {
+    let (_is_local,owith,req) = match req {
       GlobalCommand::Local(r) => (true,None,r), 
       GlobalCommand::Distant(ow,r) => (false,ow,r), 
     };
