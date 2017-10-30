@@ -378,10 +378,10 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
               "#);
             },
             MCCommand::PeerStore(mess) => {
-              return Ok(ReadReply::MainLoop(MainLoopCommand::PeerStore(GlobalCommand(self.with.clone(),mess))));
+              return Ok(ReadReply::MainLoop(MainLoopCommand::PeerStore(GlobalCommand::Distant(self.with.clone(),mess))));
             },
             MCCommand::Global(mess) => {
-              return Ok(ReadReply::Global(GlobalCommand(self.with.clone(),mess)))
+              return Ok(ReadReply::Global(GlobalCommand::Distant(self.with.clone(),mess)))
             },
             MCCommand::Local(mess) => {
 

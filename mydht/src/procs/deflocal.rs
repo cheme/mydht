@@ -47,28 +47,56 @@ use super::server2::{
 use keyval::KeyVal;
 use peer::Peer;
 
-//pub struct GlobalCommand<MC : MyDHTConf>(pub Option<MC::PeerRef>, pub MC::GlobalServiceCommand);
 #[derive(Clone)]
-pub struct GlobalCommand<PR,GSC>(pub Option<PR>, pub GSC);
+pub enum GlobalCommand<PR,GSC> { 
+  // might be usefull to distinguish technical/internal local from api
+  Local(GSC),
+  Distant(Option<PR>, GSC),
+}
+impl<PR,GSC> GlobalCommand<PR,GSC> {
+  #[inline]
+  fn get_inner_command(&self) -> &GSC {
+    match *self {
+      GlobalCommand::Local(ref gsc) 
+        | GlobalCommand::Distant(_,ref gsc)
+        => gsc
+    }
+  }
+  #[inline]
+  fn get_inner_command_mut(&mut self) -> &mut GSC {
+    match *self {
+      GlobalCommand::Local(ref mut gsc) 
+        | GlobalCommand::Distant(_,ref mut gsc)
+        => gsc
+    }
+  }
 
-// TODO replace by standard GlobalCommand??
-pub struct GlobalCommandSend<PRS,GSCS>(pub Option<PRS>, pub GSCS);
+
+}
 //pub struct GlobalCommandSend<MC : MyDHTConf>(pub Option<<MC::PeerRef as Ref<MC::Peer>>::Send>, <MC::GlobalServiceCommand as SRef>::Send)
 //  where MC::GlobalServiceCommand : SRef;
 
 impl<PR : SRef, GSC : SRef> SRef for GlobalCommand<PR,GSC> 
    {
-  type Send = GlobalCommandSend<<PR as SRef>::Send, <GSC as SRef>::Send>;//: SToRef<Self>;
+  type Send = GlobalCommand<<PR as SRef>::Send, <GSC as SRef>::Send>;//: SToRef<Self>;
   fn get_sendable(self) -> Self::Send {
-    let GlobalCommand(opr,gsc) = self;
-    GlobalCommandSend(opr.map(|pr|pr.get_sendable()), gsc.get_sendable())
+    match self {
+      GlobalCommand::Local(gsc) => 
+        GlobalCommand::Local(gsc.get_sendable()),
+      GlobalCommand::Distant(opr,gsc) => 
+        GlobalCommand::Distant(opr.map(|pr|pr.get_sendable()), gsc.get_sendable()),
+    }
   }
 }
 
-impl<PR : SRef, GSC : SRef> SToRef<GlobalCommand<PR,GSC>> for GlobalCommandSend<<PR as SRef>::Send, <GSC as SRef>::Send> {
+impl<PR : SRef, GSC : SRef> SToRef<GlobalCommand<PR,GSC>> for GlobalCommand<<PR as SRef>::Send, <GSC as SRef>::Send> {
   fn to_ref(self) -> GlobalCommand<PR,GSC> {
-    let GlobalCommandSend(opr,gsc) = self;
-    GlobalCommand(opr.map(|pr|pr.to_ref()), gsc.to_ref())
+    match self {
+      GlobalCommand::Local(gsc) => 
+        GlobalCommand::Local(gsc.to_ref()),
+      GlobalCommand::Distant(opr,gsc) => 
+        GlobalCommand::Distant(opr.map(|pr|pr.to_ref()), gsc.to_ref()),
+    }
   }
 }
 
@@ -154,16 +182,16 @@ pub struct DefLocalService<MC : MyDHTConf> {
 impl<A,B : ApiQueriable> ApiQueriable for GlobalCommand<A,B> {
   #[inline]
   fn is_api_reply(&self) -> bool {
-    self.1.is_api_reply()
+    self.get_inner_command().is_api_reply()
   }
   #[inline]
   fn set_api_reply(&mut self, aid : ApiQueryId) {
-    self.1.set_api_reply(aid)
+    self.get_inner_command_mut().set_api_reply(aid)
   }
 
   #[inline]
   fn get_api_reply(&self) -> Option<ApiQueryId> {
-    self.1.get_api_reply()
+    self.get_inner_command().get_api_reply()
   }
 }
 /*
@@ -184,7 +212,7 @@ impl<MC : MyDHTConf> Service for DefLocalService<MC>
   type CommandOut = LocalReply<MC>;
   #[inline]
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _ : &mut S) -> Result<Self::CommandOut> {
-    Ok(LocalReply::Read(ReadReply::Global(GlobalCommand(self.with.clone(),req))))
+    Ok(LocalReply::Read(ReadReply::Global(GlobalCommand::Distant(self.with.clone(),req))))
   }
 }
 

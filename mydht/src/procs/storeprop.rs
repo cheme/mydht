@@ -6,6 +6,7 @@
 //! !!! TODO currently when forwarding, if no route for forward or failure to forward there is no
 //! adjustment of the query : need to include a function call back message on error to
 //! MainLoop::ForwardService command
+//! TODO non auth may refer to owith for replying : need variant using token
 use std::collections::VecDeque;
 use mydht_base::route2::RouteBaseMessage;
 use keyval::{
@@ -630,7 +631,10 @@ impl<
 
     let store = self.store.as_mut().unwrap();
     let query_cache = self.query_cache.as_mut().unwrap();
-    let GlobalCommand(owith,req) = req;
+    let (is_local,owith,req) = match req {
+      GlobalCommand::Local(r) => (true,None,r), 
+      GlobalCommand::Distant(ow,r) => (false,ow,r), 
+    };
     match req {
       KVStoreCommand::Start => (),
       KVStoreCommand::Subset(nb,f) => {

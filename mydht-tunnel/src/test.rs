@@ -337,20 +337,20 @@ impl Service for TestService<TunnelConf> {
   type CommandOut = TestReply<<TunnelConf as MyDHTTunnelConf>::PeerRef>;
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut S) -> Result<Self::CommandOut> {
     match req {
-      GlobalCommand(Some(_), TestMessage::TouchQ(qid)) => {
+      GlobalCommand::Distant(_, TestMessage::TouchQ(qid)) => {
         Ok(TestReply(None,TestMessage::TouchR(qid),false))
       },
-      GlobalCommand(Some(_), TestMessage::TouchR(qid)) => {
+      GlobalCommand::Distant(_, TestMessage::TouchR(qid)) => {
         // api reply (last true)
         Ok(TestReply(None,TestMessage::TouchR(qid),true))
       },
-      GlobalCommand(None, TestMessage::TouchQ(qid)) => {
+      GlobalCommand::Local(TestMessage::TouchQ(qid)) => {
         self.0 = qid;
         // proxy message
         Ok(TestReply(Some(self.1.clone()),TestMessage::TouchQ(qid),false))
 
       },
-      GlobalCommand(None, TestMessage::TouchR(qid)) => {
+      GlobalCommand::Local(TestMessage::TouchR(qid)) => {
         unreachable!()
       },
     }

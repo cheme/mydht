@@ -337,18 +337,26 @@ macro_rules! service_conf_test{($testconf:ident,$testtest:ident,$startport:expr,
     type CommandIn = GlobalCommand<<$testconf as MyDHTConf>::PeerRef,<$testconf as MyDHTConf>::GlobalServiceCommand>;
     type CommandOut = GlobalReply<<$testconf as MyDHTConf>::Peer,<$testconf as MyDHTConf>::PeerRef,<$testconf as MyDHTConf>::GlobalServiceCommand,<$testconf as MyDHTConf>::GlobalServiceReply>;
     fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut S) -> Result<Self::CommandOut> {
+
       match req {
-        GlobalCommand(_,TestCommand::_Ph(..)) => unreachable!(),
-        GlobalCommand(owith,TestCommand::Touch) => {
-          println!("TOUCH!!!{:?}",owith.is_some());
+        GlobalCommand::Local(TestCommand::_Ph(..))
+          | GlobalCommand::Distant(_,TestCommand::_Ph(..))
+          => unreachable!(),
+        GlobalCommand::Local(TestCommand::Touch) => {
+          println!("TOUCH local!!!");
           Ok(GlobalReply::NoRep)
         },
-        GlobalCommand(Some(p),TestCommand::TouchQ(id,_nb_for)) => {
+        GlobalCommand::Distant(owith,TestCommand::Touch) => {
+          println!("TOUCH dist!!!{:?}",owith.is_some());
+          Ok(GlobalReply::NoRep)
+        },
+        GlobalCommand::Distant(Some(p),TestCommand::TouchQ(id,_nb_for)) => {
           println!("TOUCHQ dist !!!{:?}",id);
           // no local storage
           Ok(GlobalReply::Forward(Some(vec![p]),None,FWConf{nb_for : 0, discover:false},TestCommand::TouchQR(id)))
         },
-        GlobalCommand(None,TestCommand::TouchQ(id,nb_for)) => {
+        GlobalCommand::Local(TestCommand::TouchQ(id,nb_for)) |
+        GlobalCommand::Distant(None,TestCommand::TouchQ(id,nb_for)) => {
           println!("TOUCHQ!!!{:?}",id);
           //Ok(GlobalReply(TestReply::TouchQ(id)))
           let mut res = Vec::with_capacity(1 + nb_for);
@@ -360,8 +368,12 @@ macro_rules! service_conf_test{($testconf:ident,$testtest:ident,$startport:expr,
           Ok(GlobalReply::Mult(res))
   //Forward(Option<Vec<MC::PeerRef>>,usize,MC::GlobalServiceCommand),
         },
-        GlobalCommand(owith,TestCommand::TouchQR(id)) => {
-          println!("TOUCHQR!!!{:?} , with {:?}",id,owith.is_some());
+        GlobalCommand::Local(TestCommand::TouchQR(id)) => {
+          println!("TOUCHQR local!!!{:?}",id);
+          Ok(GlobalReply::Api(TestReply::TouchQ(id)))
+        },
+        GlobalCommand::Distant(owith,TestCommand::TouchQR(id)) => {
+          println!("TOUCHQR distant!!!{:?} , with {:?}",id,owith.is_some());
           Ok(GlobalReply::Api(TestReply::TouchQ(id)))
         },
       }

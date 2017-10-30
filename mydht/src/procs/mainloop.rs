@@ -28,7 +28,6 @@ use procs::storeprop::{
 };
 use super::deflocal::{
   GlobalCommand,
-  GlobalCommandSend,
   GlobalDest,
 };
 
@@ -244,7 +243,7 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
 //  ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
   ForwardService(Option<Vec<PeerRefSend<MC>>>,Option<Vec<(Option<<MC::Peer as KeyVal>::Key>,Option<<MC::Peer as Peer>::Address>)>>,FWConf,<MCCommand<MC> as SRef>::Send),
   ForwardApi(<MCCommand<MC> as SRef>::Send,usize,MC::ApiReturn),
-  PeerStore(GlobalCommandSend<PeerRefSend<MC>,KVStoreCommandSend<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>),
+  PeerStore(GlobalCommand<PeerRefSend<MC>,KVStoreCommandSend<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>),
   /// reject stream for this token and Address
   RejectReadSpawn(usize),
   /// reject a peer (accept fail), usize are write stream token and read stream token
@@ -254,8 +253,8 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
   NewPeerChallenge(PeerRefSend<MC>,usize,Vec<u8>),
   NewPeerUncheckedChallenge(PeerRefSend<MC>,PeerPriority,usize,Vec<u8>,Option<Vec<u8>>),
   ProxyWrite(usize,WriteCommandSend<MC>),
-  ProxyGlobal(GlobalCommandSend<PeerRefSend<MC>,<MC::GlobalServiceCommand as SRef>::Send>),
-//  GlobalApi(GlobalCommandSend<PeerRefSend<MC>,<MC::GlobalServiceCommand as SRef>::Send>,MC::ApiReturn),
+  ProxyGlobal(GlobalCommand<PeerRefSend<MC>,<MC::GlobalServiceCommand as SRef>::Send>),
+//  GlobalApi(GlobalCommand<PeerRefSend<MC>,<MC::GlobalServiceCommand as SRef>::Send>,MC::ApiReturn),
   ProxyApiReply(<MCReply<MC> as SRef>::Send),
 //  ProxyApiGlobalReply(<MC::GlobalServiceReply as SRef>::Send),
   ConnectedR(<MC::Transport as Transport>::ReadStream, Option<<MC::Transport as Transport>::WriteStream>),
@@ -628,7 +627,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     } else { None };
     if <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::DO_LISTEN {
       let listen_global = <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::build_command(PeerStatusCommand::PeerOnline(pr.clone(),pp.clone()));
-      send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,GlobalCommand(None,listen_global),"Panic sending to peer online to global service");
+      send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,GlobalCommand::Local(listen_global),"Panic sending to peer online to global service");
     }
     self.peer_cache.add_val_c(pk, PeerCacheEntry {
       peer : pr.clone(),
@@ -639,7 +638,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
     let update_peer = KVStoreCommand::StoreLocally(pr,0,None);
     // peer_service update
-    send_with_handle_panic!(&mut self.peerstore_send,&mut self.peerstore_handle,GlobalCommand(None,update_peer),"Panic sending to peerstore TODO consider restart (init of peerstore is a fn)");
+    send_with_handle_panic!(&mut self.peerstore_send,&mut self.peerstore_handle,GlobalCommand::Local(update_peer),"Panic sending to peerstore TODO consider restart (init of peerstore is a fn)");
     // now that cache update remove can be done without race (considering send is ordered)
     if let Some(t) = o_slab_remove {
       debug!("slab cache remove due to double connect : {:?}",t);
@@ -724,7 +723,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               if nb_send < nb_for && rem_call > 0 {
                 let nb_disco = nb_for - nb_send;
                 self.discover_wait_route.push_front((command.clone(),nb_disco,rem_call - 1));
-                let kvscom = GlobalCommand(None,KVStoreCommand::Subset(nb_disco, peer_discover));
+                let kvscom = GlobalCommand::Local(KVStoreCommand::Subset(nb_disco, peer_discover));
                 send_with_handle_panic!(&mut self.peerstore_send,&mut self.peerstore_handle,kvscom,"Panic sending to peerstore");
               }
             }
@@ -840,7 +839,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             let nb_disco = nb_exp_for - nb_ok;
             // TODO a max size for the buffer and adjust if max
             self.discover_wait_route.push_front((sg.clone(),nb_disco,MC::MAX_NB_DISCOVER_CALL));
-            let kvscom = GlobalCommand(None,KVStoreCommand::Subset(nb_disco, peer_discover));
+            let kvscom = GlobalCommand::Local(KVStoreCommand::Subset(nb_disco, peer_discover));
             send_with_handle_panic!(&mut self.peerstore_send,&mut self.peerstore_handle,kvscom,"Panic sending to peerstore");
           } else {
             if let Some(qid) = sg.get_api_reply() {
@@ -897,10 +896,10 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               self.call_inner_loop(MainLoopCommand::ForwardService(None,None,FWConf{ nb_for : nb_for, discover : false },sc),mlsend,async_yield)?;
             },
             MCCommand::Global(sc) => {
-              self.call_inner_loop(MainLoopCommand::ProxyGlobal(GlobalCommand(None,sc)),mlsend,async_yield)?;
+              self.call_inner_loop(MainLoopCommand::ProxyGlobal(GlobalCommand::Local(sc)),mlsend,async_yield)?;
             },
             MCCommand::PeerStore(sc) => {
-              self.call_inner_loop(MainLoopCommand::PeerStore(GlobalCommand(None,sc)),mlsend,async_yield)?;
+              self.call_inner_loop(MainLoopCommand::PeerStore(GlobalCommand::Local(sc)),mlsend,async_yield)?;
             },
             MCCommand::TryConnect(ad,aid) => {
               self.call_inner_loop(MainLoopCommand::TryConnect(ad,aid),mlsend,async_yield)?;
@@ -1093,7 +1092,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         let now = Instant::now();
         if self.peer_last_query > now {
           let nb_disco = (self.peer_pool_maintain - self.peer_cache.len_c()) as f64 * (1.0 + MC::PEER_EXTRA_POOL_RATIO);
-          let kvscom = MainLoopCommand::PeerStore(GlobalCommand(None,KVStoreCommand::Subset(nb_disco as usize, peer_discover)));
+          let kvscom = MainLoopCommand::PeerStore(GlobalCommand::Local(KVStoreCommand::Subset(nb_disco as usize, peer_discover)));
           self.call_inner_loop(kvscom,mlsend,async_yield)?;
         }
         self.peer_last_query = Instant::now() + Duration::from_millis(MC::PEER_POOL_DELAY_MS);

@@ -693,7 +693,16 @@ impl<MC : MyDHTTunnelConf> Service for LocalTunnelService<MC> {
   type CommandIn = LocalTunnelCommand<MC>;
   type CommandOut = LocalReply<MyDHTTunnelConfType<MC>>;
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+    match req {
+      LocalTunnelCommand::Inner(cmd) => {
+        let rep = self.inner.call(GlobalCommand::Local(cmd),async_yield)?;
     unimplemented!()
+      },
+      LocalTunnelCommand::LocalFromRead(cmd,read_state) => {
+        let rep = self.inner.call(GlobalCommand::Distant(self.with.clone(),cmd),async_yield)?;
+    unimplemented!()
+      },
+    }
   }
 }
 
@@ -708,14 +717,18 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
   type CommandIn = GlobalCommand<MC::PeerRef,GlobalTunnelCommand<MC>>;
   type CommandOut = GlobalReply<MC::Peer,MC::PeerRef,GlobalTunnelCommand<MC>,GlobalTunnelReply<MC>>;
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+    let (is_local,owith,req) = match req {
+      GlobalCommand::Local(r) => (true,None,r), 
+      GlobalCommand::Distant(ow,r) => (false,ow,r), 
+    };
     Ok(match req {
-      GlobalCommand(_,GlobalTunnelCommand::DestReplyFromGlobal(inner_command,dest_full_read,read_old_token,o_read)) => {
+      GlobalTunnelCommand::DestReplyFromGlobal(inner_command,dest_full_read,read_old_token,o_read) => {
         unimplemented!()
       },
-      GlobalCommand(_,GlobalTunnelCommand::TunnelSendOnce(tun_w,i_com)) => {
+      GlobalTunnelCommand::TunnelSendOnce(tun_w,i_com) => {
         unreachable!()
       },
-      GlobalCommand(_,GlobalTunnelCommand::NewOnline(pr)) => {
+      GlobalTunnelCommand::NewOnline(pr) => {
         self.address_key.insert(pr.borrow().get_address().clone(),pr.borrow().get_key());
         self.tunnel.route_prov.add_online(TunPeer::new(pr));
         if self.to_send.len() > 0 && self.tunnel.route_prov.enough_peer() {
@@ -728,14 +741,18 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
 
         GlobalReply::NoRep
       },
-      GlobalCommand(_,GlobalTunnelCommand::Offline(pr)) => {
+      GlobalTunnelCommand::Offline(pr) => {
         self.address_key.remove(pr.borrow().get_address());
         self.tunnel.route_prov.rem_online(TunPeer::new(pr));
         GlobalReply::NoRep
       },
-      GlobalCommand(owith,GlobalTunnelCommand::Inner(inner_command)) => {
+      GlobalTunnelCommand::Inner(inner_command) => {
         // no service spawn for now
-        let rep = self.inner.call(GlobalCommand(owith,inner_command),async_yield)?;
+        let rep = if is_local {
+          self.inner.call(GlobalCommand::Local(inner_command),async_yield)?
+        } else {
+          self.inner.call(GlobalCommand::Distant(owith,inner_command),async_yield)?
+        };
         match rep.opt_into() {
           Some(GlobalTunnelReply::Api(inner_reply)) => {
             if inner_reply.is_api_reply() {

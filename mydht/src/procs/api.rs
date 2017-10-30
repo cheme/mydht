@@ -127,10 +127,10 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
           },
           MCCommand::Global(gsc) => {
 //            self.call_inner_loop(MainLoopCommand::ProxyGlobal(GlobalCommand(None,sc), async_yield)?;
-            ApiReply::ProxyMainloop(MainLoopCommand::ProxyGlobal(GlobalCommand(None,gsc)))
+            ApiReply::ProxyMainloop(MainLoopCommand::ProxyGlobal(GlobalCommand::Local(gsc)))
           },
           MCCommand::PeerStore(gsc) => {
-            ApiReply::ProxyMainloop(MainLoopCommand::PeerStore(GlobalCommand(None,gsc)))
+            ApiReply::ProxyMainloop(MainLoopCommand::PeerStore(GlobalCommand::Local(gsc)))
 //            self.call_inner_loop(MainLoopCommand::PeerStore(sc), async_yield)?;
           },
           MCCommand::TryConnect(ad,oaid) => {
@@ -290,7 +290,7 @@ impl<MC : MyDHTConf> ApiCommand<MC> {
  
 
   pub fn refresh_peer(nb : usize) -> ApiCommand<MC> {
-    let kvscom = GlobalCommand(None,KVStoreCommand::Subset(nb, peer_ping));
+    let kvscom = GlobalCommand::Local(KVStoreCommand::Subset(nb, peer_ping));
     ApiCommand::MainLoop(MainLoopCommand::PeerStore(kvscom))
   }
  
@@ -304,7 +304,7 @@ impl<MC : MyDHTConf> ApiCommand<MC> {
   }
  
   pub fn call_service(c : MC::GlobalServiceCommand) -> ApiCommand<MC> {
-    let cmd = MainLoopCommand::ProxyGlobal(GlobalCommand(None,c));
+    let cmd = MainLoopCommand::ProxyGlobal(GlobalCommand::Local(c));
     ApiCommand::MainLoop(cmd)
   }
  
