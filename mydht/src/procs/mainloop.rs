@@ -373,7 +373,7 @@ pub struct MDHTState<MC : MyDHTConf> {
   events : Option<Events>,
   poll : Poll,
   read_spawn : MC::ReadSpawn,
-  read_channel_in : DefaultRecvChannel<ReadCommand, MC::ReadChannelIn>,
+  read_channel_in : DefaultRecvChannel<ReadCommand<MC>, MC::ReadChannelIn>,
   write_spawn : MC::WriteSpawn,
   write_channel_in : MC::WriteChannelIn,
   peermgmt_channel_in : MC::PeerMgmtChannelIn,

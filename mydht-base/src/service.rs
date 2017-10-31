@@ -22,6 +22,7 @@ extern crate futures;
 extern crate mio;
 
 use utils::{
+  Proto,
   SRef,
   SToRef,
 };
@@ -601,12 +602,12 @@ pub enum YieldReturn {
 pub struct DefaultRecv<C,SR>(pub SR, pub C);
 pub struct DefaultRecvRef<C : SRef,SR : SRef>(DefaultRecv<<C as SRef>::Send, <SR as SRef>::Send>);
 
-impl<C : Clone, SR : SpawnRecv<C>> SpawnRecv<C> for DefaultRecv<C,SR> {
+impl<C : Proto, SR : SpawnRecv<C>> SpawnRecv<C> for DefaultRecv<C,SR> {
   #[inline]
   fn recv(&mut self) -> Result<Option<C>> {
     let r = self.0.recv();
     if let Ok(None) = r {
-      return Ok(Some(self.1.clone()))
+      return Ok(Some(self.1.get_new()))
     }
     r
   }
@@ -628,7 +629,7 @@ impl<C : SRef, SR : SRef> SToRef<DefaultRecv<C,SR>> for DefaultRecvRef<C,SR> {
   }
 }
 impl<C : SRef, SR : SRef> SpawnRecv<C> for DefaultRecvRef<C,SR> where 
-  <C as SRef>::Send : Clone,
+  <C as SRef>::Send : Proto,
   <SR as SRef>::Send : SpawnRecv<<C as SRef>::Send>,
   {
   #[inline]
@@ -642,14 +643,14 @@ impl<C : SRef, SR : SRef> SpawnRecv<C> for DefaultRecvRef<C,SR> where
 /// set a default value to receiver (spawn loop will therefore not yield on receiver
 pub struct DefaultRecvChannel<C,CH>(pub CH,pub C);
 
-impl<C : Clone, CH : SpawnChannel<C>> SpawnChannel<C> for DefaultRecvChannel<C,CH> {
+impl<C : Proto, CH : SpawnChannel<C>> SpawnChannel<C> for DefaultRecvChannel<C,CH> {
   type WeakSend = CH::WeakSend;
   type Send = CH::Send;
   type Recv = DefaultRecv<C,CH::Recv>;
 
   fn new(&mut self) -> Result<(Self::Send,Self::Recv)> {
     let (s,r) = self.0.new()?;
-    Ok((s,DefaultRecv(r,self.1.clone())))
+    Ok((s,DefaultRecv(r,self.1.get_new())))
   }
   fn get_weak_send(s : &Self::Send) -> Option<Self::WeakSend> {
     <CH as SpawnChannel<C>>::get_weak_send(s)

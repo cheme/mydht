@@ -20,12 +20,21 @@ use super::mainloop::{
 use super::{
   MainLoopSendIn,
 };
-
+use utils::{
+  Proto,
+};
 
 //------------sync listenner
 
 #[derive(Clone)]
 pub struct SynchConnListenerCommandIn;
+
+impl Proto for SynchConnListenerCommandIn {
+  #[inline]
+  fn get_new(&self) -> Self {
+    self.clone()
+  }
+}
 pub enum SynchConnListenerCommandOut<T : Transport> {
   Skip,
   Connected(<T as Transport>::ReadStream, Option<<T as Transport>::WriteStream>),

@@ -43,6 +43,7 @@ use utils::{
   replace_wait_one_result,
 };
 use procs::{
+  ReaderBorrowable,
   OptInto,
   OptFrom,
   MCCommand,
@@ -225,6 +226,7 @@ impl<MC : MyDHTConf> SToRef<TestCommand<MC>> for TestCommand<MC> {
   }
 }
 
+impl<MC : MyDHTConf> ReaderBorrowable<MC> for TestCommand<MC> { }
 
 #[derive(Clone)]
 pub enum TestReply {

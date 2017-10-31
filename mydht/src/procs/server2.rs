@@ -15,6 +15,7 @@ use super::client2::{
 };
 
 use utils::{
+  Proto,
   Ref,
   SRef,
   SToRef,
@@ -51,6 +52,7 @@ use super::{
   WriteWeakSend,
   WriteWeakHandle,
   WriteHandleSend,
+  ReaderBorrowable,
 };
 use peer::Peer;
 use keyval::{
@@ -61,6 +63,7 @@ use keyval::{
 use service::{
   send_with_handle,
   Service,
+  YieldReturn,
   Spawner,
   SpawnSend,
   SpawnSendWithHandle,
@@ -70,13 +73,15 @@ use service::{
   ReadYield,
 };
 use mydhtresult::{
+  Error,
+  ErrorKind,
   Result,
 };
 
 
 // TODO put in its own module
 pub struct ReadService<MC : MyDHTConf> {
-  stream : <MC::Transport as Transport>::ReadStream,
+  stream : Option<<MC::Transport as Transport>::ReadStream>,
   is_auth : bool,
   enc : MC::MsgEnc,
 //  from : PeerRefSend<MC>,
@@ -98,7 +103,7 @@ pub struct ReadService<MC : MyDHTConf> {
 
 /// Note that local handle is not send : cannot restart if state suspend
 pub struct ReadServiceSend<MC : MyDHTConf> {
-  stream : <MC::Transport as Transport>::ReadStream,
+  stream : Option<<MC::Transport as Transport>::ReadStream>,
   is_auth : bool,
   enc : MC::MsgEnc,
   from : <MC::PeerRef as SRef>::Send,
@@ -206,7 +211,7 @@ impl<MC : MyDHTConf> ReadService<MC> {
       false
     };
     ReadService {
-      stream : rs,
+      stream : Some(rs),
       is_auth : is_auth,
       enc : enc,
       from : me,
@@ -227,14 +232,32 @@ impl<MC : MyDHTConf> ReadService<MC> {
 
 
 impl<MC : MyDHTConf> Service for ReadService<MC> {
-  type CommandIn = ReadCommand;
+  type CommandIn = ReadCommand<MC>;
   type CommandOut = ReadReply<MC>;
 
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
-    let mut stream = ReadYield(&mut self.stream, async_yield);
-    match req {
-      ReadCommand::Run => {
-        if !self.is_auth {
+    if let ReadCommand::ReadBorrowReturn(st,osh) = req {
+      self.stream = Some(st);
+      self.shad_msg = osh;
+      return Ok(ReadReply::NoReply)
+    }
+    // TODO if command giving back a read stream : here
+    if self.stream.is_none() {
+      // borrowed stream
+      match async_yield.spawn_yield() {
+        YieldReturn::Return => return Err(Error("Would block".to_string(), ErrorKind::ExpectedError,None)),
+        YieldReturn::Loop => (), 
+      }
+      // go back to command call for a possible ReadBorrowReturn
+      return Ok(ReadReply::NoReply)
+    }
+    let opmess = {
+      let ust = self.stream.as_mut().unwrap();
+      let mut stream = ReadYield(ust, async_yield);
+      match req {
+        ReadCommand::ReadBorrowReturn(..) => unreachable!(),// done at call start
+        ReadCommand::Run => {
+          if !self.is_auth {
           let mut shad = match MC::AUTH_MODE {
             ShadowAuthType::NoAuth => {
               /*self.is_auth = true;
@@ -336,6 +359,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
 
             },
           }
+          None
 //pub fn receive_msg<P : Peer, V : KeyVal, T : Read, E : MsgEnc, S : ExtRead>(t : &mut T, e : &E, s : &mut S) -> MDHTResult<(ProtoMessage<P,V>, Option<Attachment>)> {
         } else {
 
@@ -369,57 +393,78 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
             }
             pmess.set_attachments(&atts[..]);
           }
+          Some(pmess)
+        }
+        }
+      }
+    };
+    if let Some(pmess) = opmess {
+      match pmess.into() {
+        MCCommand::TryConnect(_,_) => {
+          panic!(r#"Tryconnect command between peer required peer key (optional) and cache of under connection address,
+          plus a method to block/allow it, none of it is done at this time
+          //return Ok(ReadReply::MainLoop(MainLoopCommand::TryConnect(ad,None)));
+          "#);
+        },
+        MCCommand::PeerStore(mess) => {
+          return Ok(ReadReply::MainLoop(MainLoopCommand::PeerStore(GlobalCommand::Distant(self.with.clone(),mess))));
+        },
+        MCCommand::Global(mess) => {
+          return Ok(ReadReply::Global(GlobalCommand::Distant(self.with.clone(),mess)))
+        },
+        MCCommand::Local(mut mess) => {
 
-          match pmess.into() {
-            MCCommand::TryConnect(_,_) => {
-              panic!(r#"Tryconnect command between peer required peer key (optional) and cache of under connection address,
-              plus a method to block/allow it, none of it is done at this time
-              //return Ok(ReadReply::MainLoop(MainLoopCommand::TryConnect(ad,None)));
-              "#);
-            },
-            MCCommand::PeerStore(mess) => {
-              return Ok(ReadReply::MainLoop(MainLoopCommand::PeerStore(GlobalCommand::Distant(self.with.clone(),mess))));
-            },
-            MCCommand::Global(mess) => {
-              return Ok(ReadReply::Global(GlobalCommand::Distant(self.with.clone(),mess)))
-            },
-            MCCommand::Local(mess) => {
-
-              let s_replace = if let Some((ref mut send, ref mut local_handle)) = self.local_sp {
-                // try send in
-                send_with_handle(send, local_handle, mess)?
-              } else {
-                let service = MC::init_local_service(self.local_service_proto.clone(),self.from.clone(),self.with.clone(),self.token)?;
-                let (send,recv) = self.local_channel_in.new()?;
-                let sender = LocalDest {
-                  read : self.read_dest_proto.clone(),
-                  api : self.api_dest_proto.clone(),
-                };
-                let local_handle = self.local_spawner.spawn(service, sender, Some(mess), recv, MC::LOCAL_SERVICE_NB_ITER)?;
-                self.local_sp = Some((send,local_handle));
-                None
-              };
-              if let Some(mess) = s_replace {
-                let lh = replace(&mut self.local_sp, None);
-                if let Some((send, local_handle)) = lh {
-                  let (service, sender, receiver, res) = local_handle.unwrap_state()?;
-                  let nlocal_handle = if res.is_err() {
-                    // TODO log try restart ???
-                    // reinit service, reuse receiver as may not be empty (do not change our send)
-                    let service = MC::init_local_service(self.local_service_proto.clone(),self.from.clone(),self.with.clone(),self.token)?;
-                    // TODO reinit channel and sender plus empty receiver in sender seems way better!!!
-                    self.local_spawner.spawn(service, sender, Some(mess), receiver, MC::LOCAL_SERVICE_NB_ITER)?
-                  } else {
-                    // restart
-                    self.local_spawner.spawn(service, sender, Some(mess), receiver, MC::LOCAL_SERVICE_NB_ITER)?
-                  };
-                  replace(&mut self.local_sp, Some((send,nlocal_handle)));
-                }
-              }
-            },
+          let bre = mess.is_borrow_read_end();
+          if mess.is_borrow_read() {
+            // put read in msg plus slab ix
+            let shad = replace(&mut self.shad_msg,None).unwrap();
+            let stream = replace(&mut self.stream,None).unwrap();
+            mess.put_read(stream,shad,self.token);
           }
+          let mess = mess;
+          let s_replace = if let Some((ref mut send, ref mut local_handle)) = self.local_sp {
+            // try send in
+            send_with_handle(send, local_handle, mess)?
+          } else {
+            let service = MC::init_local_service(self.local_service_proto.clone(),self.from.clone(),self.with.clone(),self.token)?;
+            let (send,recv) = self.local_channel_in.new()?;
+            let sender = LocalDest {
+              read : self.read_dest_proto.clone(),
+              api : self.api_dest_proto.clone(),
+            };
+            let local_handle = self.local_spawner.spawn(service, sender, Some(mess), recv, MC::LOCAL_SERVICE_NB_ITER)?;
+            self.local_sp = Some((send,local_handle));
+            None
+          };
+          if let Some(mess) = s_replace {
+            let lh = replace(&mut self.local_sp, None);
+            if let Some((send, local_handle)) = lh {
+              let (service, sender, receiver, res) = local_handle.unwrap_state()?;
+              let nlocal_handle = if res.is_err() {
+                // TODO log try restart ???
+                // reinit service, reuse receiver as may not be empty (do not change our send)
+                let service = MC::init_local_service(self.local_service_proto.clone(),self.from.clone(),self.with.clone(),self.token)?;
+                // TODO reinit channel and sender plus empty receiver in sender seems way better!!!
+                self.local_spawner.spawn(service, sender, Some(mess), receiver, MC::LOCAL_SERVICE_NB_ITER)?
+              } else {
+                // restart
+                self.local_spawner.spawn(service, sender, Some(mess), receiver, MC::LOCAL_SERVICE_NB_ITER)?
+              };
+              replace(&mut self.local_sp, Some((send,nlocal_handle)));
+            }
+          };
+          if bre {
+            // do not keep read open : end it (with mainloop msg to rebind read slab ix to dest
+            // : a racy behavior here if read from local is already send and listen on and
+            // not rewired in main process : when rewiring in main process it must unyield dest
+            // !!)
+            // for now end with error
+            return Err(Error("End as borrow is not expected to be back".to_string(), ErrorKind::EndService,None));
+          }
+        },
+      }
 
-        };
+    }
         // for initial testing only TODO replace by deser
     /*    let mut buf = vec![0;4];
         let mut r = ReadYield(&mut self.stream, async_yield);
@@ -428,8 +473,6 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
         println!("{:?}",&buf[..]);
         assert!(&[1,2,3,4] == &buf[..]);
         buf[0]=9;*/
-      },
-    }
     Ok(ReadReply::NoReply)
   }
 }
@@ -438,28 +481,27 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
 /// TODO a command to send weakchannel of write : probably some issue with threading here as a once
 /// op : use of Box seems fine -> might be studier to end and restart with same state
 /// Currently the channel in is not even use (Run send as first command)
-#[derive(Clone)]
-pub enum ReadCommand {
+pub enum ReadCommand<MC : MyDHTConf> {
   Run,
+  ReadBorrowReturn(<MC::Transport as Transport>::ReadStream, Option<<MC::Peer as Peer>::ShadowRMsg>),
 }
 
-
-impl SRef for ReadCommand {
-  type Send = ReadCommand;
-  fn get_sendable(self) -> Self::Send {
-    match self {
-      ReadCommand::Run =>
-        ReadCommand::Run,
-    }
+impl<MC : MyDHTConf> Proto for ReadCommand<MC> {
+  fn get_new(&self) -> Self {
+    ReadCommand::Run
   }
 }
 
-impl SToRef<ReadCommand> for ReadCommand {
-  fn to_ref(self) -> ReadCommand {
-    match self {
-      ReadCommand::Run =>
-        ReadCommand::Run,
-    }
+impl<MC : MyDHTConf> SRef for ReadCommand<MC> {
+  type Send = ReadCommand<MC>;
+  fn get_sendable(self) -> Self::Send {
+    self
+  }
+}
+
+impl<MC : MyDHTConf> SToRef<ReadCommand<MC>> for ReadCommand<MC> {
+  fn to_ref(self) -> ReadCommand<MC> {
+      self
   }
 }
 

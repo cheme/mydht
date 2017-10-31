@@ -619,7 +619,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   
   /// Warning peermgmt service is not implemented, this is simply a placeholder
   type PeerMgmtChannelIn : SpawnChannel<PeerMgmtCommand<Self>>;
-  type ReadChannelIn : SpawnChannel<ReadCommand>;
+  type ReadChannelIn : SpawnChannel<ReadCommand<Self>>;
   //type ReadChannelIn : SpawnChannel<<Self::ReadService as Service>::CommandIn>;
 //  type ReadFrom : SpawnRecv<<Self::ReadService as Service>::CommandIn>;
   //type ReadDest : SpawnSend<<Self::ReadService as Service>::CommandOut>;
@@ -627,8 +627,8 @@ pub trait MyDHTConf : 'static + Send + Sized
   type ReadSpawn : Spawner<
     ReadService<Self>,
     ReadDest<Self>,
-    DefaultRecv<ReadCommand,
-      <Self::ReadChannelIn as SpawnChannel<ReadCommand>>::Recv>>;
+    DefaultRecv<ReadCommand<Self>,
+      <Self::ReadChannelIn as SpawnChannel<ReadCommand<Self>>>::Recv>>;
 
   /// TODO This is currently a dummy dest, a static WriteDest similar to ReadDest must be use instead
   /// Currently mainloop seems to be the only dest for technical message (Nothing clear yet)
@@ -654,7 +654,7 @@ pub trait MyDHTConf : 'static + Send + Sized
 //  type ProtoMsgSend<'a> : Into<Self::LocalServiceCommand> + SettableAttachments + GettableAttachments;
   /// global service command : by default it should be protoMsg, depending on spawner use, should
   /// be Send or SRef... Local command require clone (sent to multiple peer)
-  type LocalServiceCommand : ApiQueriable + Clone;
+  type LocalServiceCommand : ReaderBorrowable<Self> + ApiQueriable + Clone;
   /// OptInto proto for forwarding query to other peers TODO looks useless as service command for
   /// it -> TODO consider removal after impl
   type LocalServiceReply : ApiRepliable;
@@ -855,6 +855,18 @@ pub struct ChallengeEntry<MC : MyDHTConf> {
   pub api_qid : Option<ApiQueryId>,
 }
 
+/// trait use is pretty marginal (currently tunneling reader borrowing), so its implementation
+/// defaults to no borrow
+pub trait ReaderBorrowable<MC : MyDHTConf> {
+  #[inline]
+  fn is_borrow_read(&self) -> bool { false }
+  /// if not true the read service is kept otherwhise we error end it
+  #[inline]
+  fn is_borrow_read_end(&self) -> bool { true }
+  #[inline]
+  fn put_read(&mut self, _read : <MC::Transport as Transport>::ReadStream, _shad : <MC::Peer as Peer>::ShadowRMsg, _token : usize) {
+  }
+}
 
  
 #[derive(Clone,Debug)]
@@ -939,9 +951,9 @@ pub type WriteWeakSend<MC : MyDHTConf> = <MC::WriteChannelIn as SpawnChannel<Wri
 pub type WriteHandleSend<MC : MyDHTConf> = HandleSend<WriteWeakSend<MC>,WriteWeakHandle<MC>>;
 
 
-pub type ReadSendIn<MC : MyDHTConf> = <MC::ReadChannelIn as SpawnChannel<ReadCommand>>::Send;
-pub type ReadRecvIn<MC : MyDHTConf> = <MC::ReadChannelIn as SpawnChannel<ReadCommand>>::Recv;
-pub type ReadHandle<MC : MyDHTConf> = <MC::ReadSpawn as Spawner<ReadService<MC>,ReadDest<MC>,DefaultRecv<ReadCommand,ReadRecvIn<MC>>>>::Handle;
+pub type ReadSendIn<MC : MyDHTConf> = <MC::ReadChannelIn as SpawnChannel<ReadCommand<MC>>>::Send;
+pub type ReadRecvIn<MC : MyDHTConf> = <MC::ReadChannelIn as SpawnChannel<ReadCommand<MC>>>::Recv;
+pub type ReadHandle<MC : MyDHTConf> = <MC::ReadSpawn as Spawner<ReadService<MC>,ReadDest<MC>,DefaultRecv<ReadCommand<MC>,ReadRecvIn<MC>>>>::Handle;
 //type SpawnerRefsDefRecv<S : Service,COM,D, CI : SpawnChannel<COM>, RS : Spawner<S,D,DefaultRecv<COM,CI::Recv>>> = (RS::Handle,CI::Send);
 pub type PeerStoreHandle<MC : MyDHTConf> = <MC::PeerStoreServiceSpawn as 
 Spawner<

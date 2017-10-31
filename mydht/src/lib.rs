@@ -170,6 +170,7 @@ pub use procs::{
   RWSlabEntry,
   ChallengeEntry,
   Route,
+  ReaderBorrowable,
 };
 pub use procs::api;
 // reexport

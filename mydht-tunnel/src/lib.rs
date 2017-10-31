@@ -110,6 +110,7 @@ use mydht::transportif::{
 };
 use mydht::{
   MyDHTConf,
+  ReaderBorrowable,
   PeerStatusListener,
   PeerStatusCommand,
   HashMapQuery,
@@ -125,6 +126,7 @@ use mydht::api::{
 };
 use mydht::{
   GlobalCommand,
+  ReadReply,
   GlobalReply,
   LocalReply,
   FWConf,
@@ -313,18 +315,21 @@ type SSWCache<MC : MyDHTTunnelConf> = (TunnelCachedWriterExt<MC::SSW,MC::Limiter
 pub struct MyDHTTunnel<MC : MyDHTTunnelConf> {
   me : MC::PeerRef,
 }
+
+type ReadBorrowStream<MC : MyDHTTunnelConf> = (<MC::Transport as Transport>::ReadStream,<MC::Peer as Peer>::ShadowRMsg,usize);
+
 pub enum ReadMsgState<MC : MyDHTTunnelConf> {
   /// no reply : simply use in service and drop service reply
   NoReply,
   /// use in service then directly forward to write with read addition
   /// Will get read token from local
-  ReplyDirectInit(ReplyWriterTConf<MC>,MC::TransportAddress),
+  ReplyDirectInit(ReplyWriterTConf<MC>,MC::TransportAddress,Option<ReadBorrowStream<MC>>),
 
   /// use in service then send reply directly with the writer
   ReplyDirectNoInit(ReplyWriterTConf<MC>,MC::TransportAddress),
   /// reply requires state read from global
   /// Will get read token from local
-  ReplyToGlobalWithRead(DestFullRTConf<MC>),
+  ReplyToGlobalWithRead(DestFullRTConf<MC>,Option<ReadBorrowStream<MC>>),
 }
 
 /// type to send message
@@ -357,6 +362,7 @@ impl<MC : MyDHTTunnelConf> OptFrom<MCCommand<MyDHTTunnelConfType<MC>>> for Tunne
           | GlobalTunnelCommand::NewOnline(..)
           | GlobalTunnelCommand::Offline(..)
           | GlobalTunnelCommand::DestReplyFromGlobal(..)
+          | GlobalTunnelCommand::TransmitReply(..)
           => None, 
       },
       MCCommand::PeerStore(..) | MCCommand::TryConnect(..) => None,
@@ -500,7 +506,7 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
 
             if need_init {
               // send to write with read (run inner service in local)
-              TunnelMessaging::ReplyFromReader(proto_m, ReadMsgState::ReplyDirectInit(reply_w,dest))
+              TunnelMessaging::ReplyFromReader(proto_m, ReadMsgState::ReplyDirectInit(reply_w,dest,None))
             } else {
               // send to write without read (run inner service in local)
               TunnelMessaging::ReplyFromReader(proto_m, ReadMsgState::ReplyDirectNoInit(reply_w,dest))
@@ -513,7 +519,7 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
             }
             // send to global service as it requires cache + if owr.1 is true send read else
             // no send read
-            TunnelMessaging::ReplyFromReader(proto_m, ReadMsgState::ReplyToGlobalWithRead(dest_reader))
+            TunnelMessaging::ReplyFromReader(proto_m, ReadMsgState::ReplyToGlobalWithRead(dest_reader,None))
           };
           Ok(message)
         },
@@ -652,8 +658,45 @@ pub enum LocalTunnelCommand<MC : MyDHTTunnelConf> {
   /// message has been read, need to forward to global with read (insert token)
   LocalFromRead(MC::InnerCommand,ReadMsgState<MC>),
 }
+
+impl<MC : MyDHTTunnelConf> ReaderBorrowable<MyDHTTunnelConfType<MC>> for LocalTunnelCommand<MC> {
+  #[inline]
+  fn is_borrow_read(&self) -> bool {
+    match *self {
+      LocalTunnelCommand::Inner(..) => false,
+      LocalTunnelCommand::LocalFromRead(_,ReadMsgState::NoReply) => false,
+      LocalTunnelCommand::LocalFromRead(_,ReadMsgState::ReplyDirectInit(..)) => true,
+      LocalTunnelCommand::LocalFromRead(_,ReadMsgState::ReplyDirectNoInit(..)) => false,
+      LocalTunnelCommand::LocalFromRead(_,ReadMsgState::ReplyToGlobalWithRead(..)) => true,
+    }
+  }
+  #[inline]
+  fn is_borrow_read_end(&self) -> bool {
+    match *self {
+      LocalTunnelCommand::Inner(..) => false,
+      LocalTunnelCommand::LocalFromRead(_,ReadMsgState::NoReply) => true, // end for now as no mechanism to consume end of query (possible reply payload for instance)
+      LocalTunnelCommand::LocalFromRead(_,ReadMsgState::ReplyDirectInit(..)) => true,
+      LocalTunnelCommand::LocalFromRead(_,ReadMsgState::ReplyDirectNoInit(..)) => true, // same as NoReply case TODO some read callback in ReaderBorrowable trait
+      LocalTunnelCommand::LocalFromRead(_,ReadMsgState::ReplyToGlobalWithRead(..)) => true,
+    }
+  }
+  #[inline]
+  fn put_read(&mut self, read : <MC::Transport as Transport>::ReadStream, shad : <MC::Peer as Peer>::ShadowRMsg, token : usize) {
+    match *self {
+      LocalTunnelCommand::Inner(..) => (),
+      LocalTunnelCommand::LocalFromRead(_,ReadMsgState::NoReply) => (),
+      LocalTunnelCommand::LocalFromRead(_,ReadMsgState::ReplyDirectInit(_,_,ref mut ost)) 
+      | LocalTunnelCommand::LocalFromRead(_,ReadMsgState::ReplyToGlobalWithRead(_,ref mut ost))
+        => *ost = Some((read,shad,token)),
+      LocalTunnelCommand::LocalFromRead(_,ReadMsgState::ReplyDirectNoInit(..)) => (),
+    }
+  }
+
+}
 pub enum LocalTunnelReply<MC : MyDHTTunnelConf> {
+  /// TODO remove ??
   Inner(MC::InnerReply),
+  Api(MC::InnerReply),
 // TODO  DestFromReader(MC::InnerCommand),
 }
 
@@ -665,6 +708,7 @@ pub enum GlobalTunnelCommand<MC : MyDHTTunnelConf> {
   TunnelSendOnce(FullWTConf<MC>,MC::InnerCommand),
   /// message has been read, reply need to be instantiated from global (withread)
   DestReplyFromGlobal(MC::InnerCommand,DestFullRTConf<MC>,usize,Option<MovableRead<MC>>),
+  TransmitReply(ReadMsgState<MC>,MC::InnerCommand),
 }
 
 // TODO box it !!!!!!!!! (better yet full of heap struct (vec))
@@ -698,11 +742,75 @@ impl<MC : MyDHTTunnelConf> Service for LocalTunnelService<MC> {
     match req {
       LocalTunnelCommand::Inner(cmd) => {
         let rep = self.inner.call(GlobalCommand::Local(cmd),async_yield)?;
-    unimplemented!()
+        Ok(match rep {
+          GlobalTunnelReply::TryReplyFromReader(inner_reply) => {
+            // nope (inner command might be remove)
+            unreachable!()
+          },
+          GlobalTunnelReply::Api(inner_reply) => {
+            // from global
+            unreachable!()
+          },
+          GlobalTunnelReply::SendCommandTo(dest, inner_command) => {
+            // from global
+            unreachable!()
+          },
+          GlobalTunnelReply::NoRep => LocalReply::Read(ReadReply::NoReply),
+        })
+ 
       },
       LocalTunnelCommand::LocalFromRead(cmd,read_state) => {
         let rep = self.inner.call(GlobalCommand::Distant(self.with.clone(),cmd),async_yield)?;
-    unimplemented!()
+        Ok(match rep {
+          GlobalTunnelReply::TryReplyFromReader(inner_reply) => {
+
+            match read_state {
+/*              ReadMsgState::ReplyDirectInit(repconf,dest_add) => {
+                LocalReply::Read(ReadReply::Global(GlobalTunnelCommand::Reply(repconf,inner_reply))),
+              },
+              ReadMsgState::ReplyDirectNoInit(repconf,dest_add) => {
+                LocalReply::Read(ReadReply::Global(GlobalTunnelCommand::Reply(repconf,inner_reply))),
+              },
+              ReadMsgState::ReplyToGlobalWithRead(destrtconf) => {
+                LocalReply::Read(ReadReply::Global(GlobalTunnelCommand::TransmitReply(destrtconf,inner_reply))),
+              },*/
+              ReadMsgState::NoReply => {
+                // TODO log warning with slog use
+                println!("tunnel without reply, local tunnel service reply not send");
+                LocalReply::Read(ReadReply::NoReply)
+              },
+              _ => {
+                // TODO need a second command to mainloop to rewire read stream!! plus unyield on
+                // rewire as racy !!! -> bad design, read should not be call from global service
+                // (tunnel api should init without read with intermediatory type needing init from
+                // tunnel)
+                LocalReply::Read(ReadReply::Global(GlobalCommand::Distant(self.with.clone(),GlobalTunnelCommand::TransmitReply(read_state,inner_reply))))
+              },
+            }
+  //GlobalTunnelCommand::DestReplyFromGlobal(MC::InnerCommand,DestFullRTConf<MC>,usize,Option<MovableRead<MC>>),
+            //LocalReply::Read(ReadReply::Global(GlobalCommand::Distant(Some(dest.clone()),GlobalTunnelCommand::(inner_command))))
+          },
+          GlobalTunnelReply::Api(inner_reply) => {
+            // from global
+            if inner_reply.is_api_reply() {
+              LocalReply::Api(LocalTunnelReply::Api(inner_reply))
+            } else {
+              LocalReply::Read(ReadReply::NoReply)
+            }
+            // TODO end reading from read state in message (similar to send read)!! currently
+            // single message, issue with reuse : should be include in reuse strategy for transport
+            // stream (previous read_state in msgdec). TODO put a call back on stream close?
+            // warning do not do the reading elsewhere than readservice (mechanism for borrowing
+            // read stream is wrong here, or do it at reuse of stream which means putting the
+            // reader back in the msgenc)
+          },
+          GlobalTunnelReply::SendCommandTo(dest, inner_command) => {
+            // only for global call
+            unreachable!()
+          },
+          GlobalTunnelReply::NoRep => LocalReply::Read(ReadReply::NoReply),
+          // Same as api : todo read end of message (could have a reply payload)
+        })
       },
     }
   }
@@ -724,6 +832,9 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
       GlobalCommand::Distant(ow,r) => (false,ow,r), 
     };
     Ok(match req {
+      GlobalTunnelCommand::TransmitReply(..) => {
+        unimplemented!()
+      },
       GlobalTunnelCommand::DestReplyFromGlobal(inner_command,dest_full_read,read_old_token,o_read) => {
         unimplemented!()
       },
@@ -1150,6 +1261,7 @@ impl<MC : MyDHTTunnelConf> ApiRepliable for LocalTunnelReply<MC> {
   fn get_api_reply(&self) -> Option<ApiQueryId> {
     match *self {
       LocalTunnelReply::Inner(ref inn_c) => inn_c.get_api_reply(),
+      LocalTunnelReply::Api(ref inn_c) => inn_c.get_api_reply(),
     }
   }
 }
@@ -1159,8 +1271,10 @@ impl<MC : MyDHTTunnelConf> ApiQueriable for GlobalTunnelCommand<MC> {
     match *self {
       GlobalTunnelCommand::DestReplyFromGlobal(ref inn_c,_,_,_) |
       GlobalTunnelCommand::Inner(ref inn_c) => inn_c.is_api_reply(),
-      GlobalTunnelCommand::NewOnline(..) => false,
-      GlobalTunnelCommand::Offline(..) => false,
+      GlobalTunnelCommand::NewOnline(..)
+      | GlobalTunnelCommand::Offline(..)
+      | GlobalTunnelCommand::TransmitReply(..) 
+        => false,
       GlobalTunnelCommand::TunnelSendOnce(_,ref i_com) => i_com.is_api_reply(),
     }
   }
@@ -1170,6 +1284,7 @@ impl<MC : MyDHTTunnelConf> ApiQueriable for GlobalTunnelCommand<MC> {
       GlobalTunnelCommand::Inner(ref mut inn_c) => inn_c.set_api_reply(i),
       GlobalTunnelCommand::NewOnline(..) => (),
       GlobalTunnelCommand::Offline(..) => (),
+      GlobalTunnelCommand::TransmitReply(..) => (),
       GlobalTunnelCommand::TunnelSendOnce(_,ref mut i_com) => i_com.set_api_reply(i),
     }
   }
@@ -1179,6 +1294,7 @@ impl<MC : MyDHTTunnelConf> ApiQueriable for GlobalTunnelCommand<MC> {
       GlobalTunnelCommand::Inner(ref inn_c) => inn_c.get_api_reply(),
       GlobalTunnelCommand::NewOnline(..) => None,
       GlobalTunnelCommand::Offline(..) => None,
+      GlobalTunnelCommand::TransmitReply(..) => None,
       GlobalTunnelCommand::TunnelSendOnce(_,ref i_com) => i_com.get_api_reply(),
     }
   }
@@ -1189,6 +1305,7 @@ impl<MC : MyDHTTunnelConf> Clone for GlobalTunnelCommand<MC> {
   fn clone(&self) -> Self {
     match *self {
       GlobalTunnelCommand::DestReplyFromGlobal(ref inn_c,_,_,_) => unreachable!(),
+      GlobalTunnelCommand::TransmitReply(..) => unreachable!(),
       GlobalTunnelCommand::Inner(ref inn_c) => GlobalTunnelCommand::Inner(inn_c.clone()),
       GlobalTunnelCommand::NewOnline(ref rp) => GlobalTunnelCommand::NewOnline(rp.clone()),
       GlobalTunnelCommand::Offline(ref rp) => GlobalTunnelCommand::Offline(rp.clone()),

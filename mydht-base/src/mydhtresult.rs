@@ -168,6 +168,7 @@ pub enum ErrorKind {
   ChannelFinishedDest,
   Bug, // something that should algorithmically not happen
   ExternalLib,
+  EndService, // not at expected error level : we need another level for wouldblock error kind (currently expected is seen as wouldblock which is not what we expect for this error)
 }
 
 impl ErrorKind {

@@ -1,5 +1,9 @@
 //! types to disable service
 use mydht_base::route2::RouteBaseMessage;
+use super::{
+  ReaderBorrowable,
+  MyDHTConf,
+};
 use super::api::{
   ApiQueryId,
   ApiQueriable,
@@ -15,6 +19,8 @@ use std::collections::VecDeque;
 
 #[derive(Debug,Clone)]
 pub struct NoCommandReply;
+
+impl<MC : MyDHTConf> ReaderBorrowable<MC> for NoCommandReply { }
 
 impl ApiQueriable for NoCommandReply {
   #[inline]
