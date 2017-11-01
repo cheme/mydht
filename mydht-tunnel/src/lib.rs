@@ -975,7 +975,7 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
               let (tunn_we,dest_add) = self.tunnel.new_writer(&TunPeer::new(dest));
               let dest_k = self.address_key.get(&dest_add).map(|k|k.clone());
               let command : GlobalTunnelCommand<MC> = GlobalTunnelCommand::TunnelSendOnce(tunn_we,inner_command);
-              GlobalReply::Forward(None,Some(vec![(dest_k,Some(dest_add))]), FWConf {
+              GlobalReply::ForwardOnce(dest_k,Some(dest_add), FWConf {
                 nb_for : 0,
                 discover : true,
               }, command)
