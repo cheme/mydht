@@ -69,6 +69,7 @@ use super::{
   ApiQueriable,
   ApiRepliable,
   PeerStatusListener,
+  RegReaderBorrow,
   PeerStatusCommand,
   MCCommand,
 };
@@ -494,6 +495,8 @@ impl<P : Peer, PR, V : KeyVal, VR> ApiQueriable for KVStoreCommand<P,PR,V,VR> {
     }
   }
 }
+
+impl<MC : MyDHTConf,P : Peer,PR,V : KeyVal,VR> RegReaderBorrow<MC> for KVStoreCommand<P, PR, V, VR> { }
 
 impl<P : Peer,PR,V : KeyVal,VR> PeerStatusListener<PR> for KVStoreCommand<P, PR, V, VR> {
   const DO_LISTEN : bool = false;
@@ -929,6 +932,7 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<M
       GlobalReply::PeerApi(ksr) => GlobalReply::PeerApi(ksr),
       GlobalReply::NoRep => GlobalReply::NoRep,
       GlobalReply::MainLoop(mlc) => GlobalReply::MainLoop(mlc),
+      GlobalReply::ForwardOnce(..) => unreachable!(), // never use here (storeprop uses standard forward)
 
       GlobalReply::Mult(vkr) => {
         let vgr = vkr.into_iter().map(|kr|from_kv(kr)).collect();

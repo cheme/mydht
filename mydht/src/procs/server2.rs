@@ -419,7 +419,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
             // put read in msg plus slab ix
             let shad = replace(&mut self.shad_msg,None).unwrap();
             let stream = replace(&mut self.stream,None).unwrap();
-            mess.put_read(stream,shad,self.token);
+            mess.put_read(stream,shad,self.token,&mut self.enc);
           }
           let mess = mess;
           let s_replace = if let Some((ref mut send, ref mut local_handle)) = self.local_sp {

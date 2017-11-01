@@ -171,6 +171,7 @@ pub use procs::{
   ChallengeEntry,
   Route,
   ReaderBorrowable,
+  RegReaderBorrow,
 };
 pub use procs::api;
 // reexport

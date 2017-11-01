@@ -57,6 +57,7 @@ use super::{
   PeerRefSend,
   PeerStatusListener,
   PeerStatusCommand,
+  RegReaderBorrow,
 };
 use std::marker::PhantomData;
 use std::mem::replace;
@@ -204,6 +205,9 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
   TryConnect(<MC::Transport as Transport>::Address,Option<ApiQueryId>),
 //  ForwardServiceLocal(MC::LocalServiceCommand,usize),
   ForwardService(Option<Vec<MC::PeerRef>>,Option<Vec<(Option<<MC::Peer as KeyVal>::Key>,Option<<MC::Peer as Peer>::Address>)>>,FWConf,MCCommand<MC>),
+
+  /// forward global command with temporary service and write stream
+  ForwardServiceOnce(Option<<MC::Peer as KeyVal>::Key>,Option<<MC::Peer as Peer>::Address>,FWConf,MC::GlobalServiceCommand),
   /// usize is only for mccommand type local to set the number of local to target
   ForwardApi(MCCommand<MC>,usize,MC::ApiReturn),
   /// received peer store command from peer : almost named ProxyPeerStore but it does a local peer
@@ -242,6 +246,7 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
   TryConnect(<MC::Transport as Transport>::Address,Option<ApiQueryId>),
 //  ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
   ForwardService(Option<Vec<PeerRefSend<MC>>>,Option<Vec<(Option<<MC::Peer as KeyVal>::Key>,Option<<MC::Peer as Peer>::Address>)>>,FWConf,<MCCommand<MC> as SRef>::Send),
+  ForwardServiceOnce(Option<<MC::Peer as KeyVal>::Key>,Option<<MC::Peer as Peer>::Address>,FWConf,<MC::GlobalServiceCommand as SRef>::Send),
   ForwardApi(<MCCommand<MC> as SRef>::Send,usize,MC::ApiReturn),
   PeerStore(GlobalCommand<PeerRefSend<MC>,KVStoreCommandSend<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>),
   /// reject stream for this token and Address
@@ -274,6 +279,7 @@ impl<MC : MyDHTConf> Clone for MainLoopCommand<MC>
       MainLoopCommand::TryConnect(ref a,ref aid) => MainLoopCommand::TryConnect(a.clone(),aid.clone()),
 //      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommand::ForwardServiceLocal(gc.clone(),nb),
       MainLoopCommand::ForwardService(ref ovp,ref okad,ref nb_for,ref c) => MainLoopCommand::ForwardService(ovp.clone(),okad.clone(),nb_for.clone(),c.clone()),
+      MainLoopCommand::ForwardServiceOnce(ref ovp,ref okad,ref nb_for,ref c) => MainLoopCommand::ForwardServiceOnce(ovp.clone(),okad.clone(),nb_for.clone(),c.clone()),
       MainLoopCommand::ForwardApi(ref gc,nb_for,ref ret) => MainLoopCommand::ForwardApi(gc.clone(),nb_for,ret.clone()),
       MainLoopCommand::PeerStore(ref cmd) => MainLoopCommand::PeerStore(cmd.clone()),
       MainLoopCommand::RejectReadSpawn(s) => MainLoopCommand::RejectReadSpawn(s),
@@ -308,6 +314,9 @@ impl<MC : MyDHTConf> SRef for MainLoopCommand<MC>
       MainLoopCommand::ForwardService(ovp,okad,nb_for,c) => MainLoopCommandSend::ForwardService({
           ovp.map(|vp|vp.into_iter().map(|p|p.get_sendable()).collect())
         },okad,nb_for,c.get_sendable()),
+      MainLoopCommand::ForwardServiceOnce(ovp,okad,nb_for,c) => MainLoopCommandSend::ForwardServiceOnce(
+        ovp,okad,nb_for,c.get_sendable()),
+
       MainLoopCommand::ForwardApi(gc,nb_for,ret) => MainLoopCommandSend::ForwardApi(gc.get_sendable(),nb_for,ret),
       MainLoopCommand::PeerStore(cmd) => MainLoopCommandSend::PeerStore(cmd.get_sendable()),
       MainLoopCommand::RejectReadSpawn(s) => MainLoopCommandSend::RejectReadSpawn(s),
@@ -342,6 +351,8 @@ impl<MC : MyDHTConf> SToRef<MainLoopCommand<MC>> for MainLoopCommandSend<MC>
       MainLoopCommandSend::ForwardService(ovp,okad,nb_for,c) => MainLoopCommand::ForwardService({
           ovp.map(|vp|vp.into_iter().map(|p|p.to_ref()).collect())
         },okad,nb_for,c.to_ref()),
+      MainLoopCommandSend::ForwardServiceOnce(ovp,okad,nb_for,c) => MainLoopCommand::ForwardServiceOnce(
+          ovp,okad,nb_for,c.to_ref()),
       MainLoopCommandSend::ForwardApi(a,nb_for,r) => MainLoopCommand::ForwardApi(a.to_ref(),nb_for,r),
       MainLoopCommandSend::PeerStore(cmd) => MainLoopCommand::PeerStore(cmd.to_ref()),
       MainLoopCommandSend::RejectReadSpawn(s) => MainLoopCommand::RejectReadSpawn(s),
@@ -532,10 +543,18 @@ impl<MC : MyDHTConf> MDHTState<MC> {
   }
 
 
+  #[inline]
   fn connect_with(&mut self, dest_address : &<MC::Peer as Peer>::Address) -> Result<(usize, Option<usize>)> {
+    self.connect_with2(dest_address,true)
+  }
+  fn connect_with2(&mut self, dest_address : &<MC::Peer as Peer>::Address, allow_mult : bool) -> Result<(usize, Option<usize>)> {
     if self.transport.is_some() {
       // first check cache if there is a connect already : no (if peer yes) 
-      let (ws,ors) = self.transport.as_ref().unwrap().connectwith(&dest_address)?;
+      let (ws,mut ors) = self.transport.as_ref().unwrap().connectwith(&dest_address)?;
+
+      if !allow_mult {
+        ors = None;
+      }
 
       let (s,r) = self.write_channel_in.new()?;
 
@@ -764,8 +783,41 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         // send in global service TODO when send from api use a composed sender to send directly
         send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,sc,"Global service finished TODO code to make it restartable cf write service and initialising from conf in init_state + on error right error mgmt");
       },
+      MainLoopCommand::ForwardServiceOnce(ok,oad,fwconf,sg) => {
+        let address = match oad {
+          Some(ad) => ad,
+          None => {
+            if let Some(Some(a)) = ok.map(|k|self.peer_cache.get_val_c(&k).map(|pe|pe.peer.borrow().get_address().clone())) {
+              a
+            } else {
+              warn!("Could not forward service in forward service once");
+              return Ok(());
+            }
+          },
+        };
+        // connect without mult
+        let (write_token,_ort) = self.connect_with2(&address,false)?;
+        sg.get_read().map(|rreg|
+          rreg.reregister(&self.poll, Token(write_token + START_STREAM_IX), Ready::readable(),
+          PollOpt::edge()).unwrap());
+        if MC::AUTH_MODE != ShadowAuthType::NoAuth {
+          let chal = self.peermgmt_proto.challenge(self.me.borrow());
+          let apr = sg.get_api_reply();
+          self.challenge_cache.add_val_c(chal.clone(),ChallengeEntry {
+            write_tok : write_token,
+            read_tok : None,
+            next_msg : Some(WriteCommand::Service(MCCommand::Global(sg))),
+            next_qid : apr,
+            api_qid : None,
+          });
+          // send a ping
+          self.write_stream_send2(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None,false)?;
+        } else {
+          self.write_stream_send2(write_token,WriteCommand::Service(MCCommand::Global(sg)), <MC>::init_write_spawner_out()?, None,false)?;
+        }
+      },
       MainLoopCommand::ForwardService(ovp,okad,fwconf,sg) => {
-
+        
         let ol = ovp.as_ref().map(|v|v.len()).unwrap_or(0);
         let olka = okad.as_ref().map(|v|v.len()).unwrap_or(0);
         let nb_exp_for = ol + fwconf.nb_for + olka;
@@ -1291,10 +1343,14 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     panic!("TODO");
   }
 
+  #[inline]
+  fn write_stream_send(&mut self, write_token : usize, command : WriteCommand<MC>, write_out : MC::WriteDest, with : Option<MC::PeerRef>) -> Result<()> {
+    self.write_stream_send2(write_token, command, write_out, with, true)
+  }
   /// The state of the slab entry must be checked before, return error on wrong state
   ///  TODO replace dest with channel spawner mut ref
   ///  TODO write_out as param is probably a mistake
-  fn write_stream_send(&mut self, write_token : usize, command : WriteCommand<MC>, write_out : MC::WriteDest, with : Option<MC::PeerRef>) -> Result<()> {
+  fn write_stream_send2(&mut self, write_token : usize, command : WriteCommand<MC>, write_out : MC::WriteDest, with : Option<MC::PeerRef>, not_write_once : bool) -> Result<()> {
     let rem = {
       let se = self.slab_cache.get_mut(write_token);
       if let Some(entry) = se {
@@ -1315,7 +1371,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               };
               // dest is unknown TODO check if still relevant with other use case (read side we allow
               // dest peer as rs could result from a connection with an identified peer)
-              let write_service = WriteService::new(write_token,ws,self.me.clone(),with, self.enc_proto.get_new(),self.peermgmt_proto.clone());
+              let write_service = WriteService::new(write_token,ws,self.me.clone(),with, self.enc_proto.get_new(),self.peermgmt_proto.clone(),!not_write_once);
               let write_handle = self.write_spawn.spawn(write_service, write_out.clone(), ocin, write_r_in, MC::SEND_NB_ITER)?;
               let state = SlabEntryState::WriteSpawned((write_handle,write_s_in));
               replace(e,state);

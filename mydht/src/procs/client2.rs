@@ -61,6 +61,8 @@ pub struct WriteService<MC : MyDHTConf> {
   read_token : Option<usize>,
   /// shadow to use when auth is fine
   shad_msg : Option<<MC::Peer as Peer>::ShadowWMsg>,
+  /// temporary for write once : later should use cleaner way to exit
+  shut_after_first : bool,
 }
 pub struct WriteServiceRef<MC : MyDHTConf> {
   stream : <MC::Transport as Transport>::WriteStream,
@@ -71,6 +73,7 @@ pub struct WriteServiceRef<MC : MyDHTConf> {
   token : usize,
   read_token : Option<usize>,
   shad_msg : Option<<MC::Peer as Peer>::ShadowWMsg>,
+  shut_after_first : bool,
 }
 
 impl<MC : MyDHTConf> SRef for WriteService<MC> where
@@ -81,13 +84,13 @@ impl<MC : MyDHTConf> SRef for WriteService<MC> where
       stream, enc,
       from,
       with,
-      peermgmt, token, read_token, shad_msg,
+      peermgmt, token, read_token, shad_msg, shut_after_first,
     } = self;
     WriteServiceRef {
       stream, enc,
       from : from.get_sendable(),
       with : with.map(|w|w.get_sendable()),
-      peermgmt, token, read_token, shad_msg,
+      peermgmt, token, read_token, shad_msg, shut_after_first,
     }
   }
 }
@@ -99,13 +102,13 @@ impl<MC : MyDHTConf> SToRef<WriteService<MC>> for WriteServiceRef<MC> where
       stream, enc,
       from,
       with,
-      peermgmt, token, read_token, shad_msg,
+      peermgmt, token, read_token, shad_msg, shut_after_first,
     } = self;
     WriteService {
       stream, enc,
       from : from.to_ref(),
       with : with.map(|w|w.to_ref()),
-      peermgmt, token, read_token, shad_msg,
+      peermgmt, token, read_token, shad_msg, shut_after_first,
     }
   }
 }
@@ -113,7 +116,7 @@ impl<MC : MyDHTConf> SToRef<WriteService<MC>> for WriteServiceRef<MC> where
 
 impl<MC : MyDHTConf> WriteService<MC> {
   //pub fn new(token : usize, ws : <MC::Transport as Transport>::WriteStream, me : PeerRefSend<MC>, with : Option<PeerRefSend<MC>>, enc : MC::MsgEnc, peermgmt : MC::PeerMgmtMeths) -> Self {
-  pub fn new(token : usize, ws : <MC::Transport as Transport>::WriteStream, me : MC::PeerRef, with : Option<MC::PeerRef>, enc : MC::MsgEnc, peermgmt : MC::PeerMgmtMeths) -> Self {
+  pub fn new(token : usize, ws : <MC::Transport as Transport>::WriteStream, me : MC::PeerRef, with : Option<MC::PeerRef>, enc : MC::MsgEnc, peermgmt : MC::PeerMgmtMeths, shut_after_first : bool) -> Self {
     WriteService {
       stream : ws,
       enc : enc,
@@ -123,6 +126,7 @@ impl<MC : MyDHTConf> WriteService<MC> {
       token : token,
       read_token : None,
       shad_msg : None,
+      shut_after_first,
     }
   }
 }
@@ -202,6 +206,10 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
 
         debug!("Client service proxying command, write token {}",self.token);
         self.forward_proto(command,async_yield)?;
+
+        if self.shut_after_first {
+          return Err(Error("Write once service end".to_string(), ErrorKind::EndService,None));
+        }
       },
 /*      WriteCommand::GlobalService(command) => {
         self.forward_proto(MCCommand::Global(command),async_yield)?;

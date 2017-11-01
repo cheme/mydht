@@ -111,8 +111,12 @@ pub enum GlobalReply<MC : MyDHTConf> {
   Mult(Vec<GlobalReply<MC>>),
 }*/
 pub enum GlobalReply<P : Peer,PR,GSC,GSR> {
-  /// forward command to list of peers or/and to nb peers from route
+  /// forward command to list of peers or/and to nb peers from route TODO variant with single dest
+  /// (wait for stabilization) as some bad vec cost + may remove FWConf
   Forward(Option<Vec<PR>>,Option<Vec<(Option<<P as KeyVal>::Key>,Option<<P as Peer>::Address>)>>,FWConf,GSC),
+  /// forward in a new transport stream use only for this operation (no peercache), with (last param) a possible
+  /// token registration borrow (eg readstream borrowed)
+  ForwardOnce(Option<<P as KeyVal>::Key>,Option<<P as Peer>::Address>,FWConf,GSC),
   PeerForward(Option<Vec<PR>>,Option<Vec<(Option<<P as KeyVal>::Key>,Option<<P as Peer>::Address>)>>,FWConf,KVStoreCommand<P,PR,P,PR>),
   /// reply to api
   Api(GSR),
@@ -130,6 +134,7 @@ impl<A,B> Clone for GlobalCommand<MC> where MC::GlobalServiceCommand : Clone {
     GlobalCommand(oref.clone(),lsc.clone())
   }
 }*/
+/*
 /// TODO derivec clone should be fine here
 impl<P : Peer,PR : Clone,GSC : Clone,GSR : Clone> Clone for GlobalReply<P,PR,GSC,GSR> {
   fn clone(&self) -> Self {
@@ -144,7 +149,7 @@ impl<P : Peer,PR : Clone,GSC : Clone,GSR : Clone> Clone for GlobalReply<P,PR,GSC
     }
   }
 }
-
+*/
 /*
 impl<MC : MyDHTConf> GetOrigin<MC> for GlobalCommand<MC> {
   fn get_origin(&self) -> Option<&MC::PeerRef> {
@@ -333,6 +338,9 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServic
       },
       GlobalReply::Forward(opr,okad,nb_for,gsc) => {
         self.mainloop.send(MainLoopCommand::ForwardService(opr,okad,nb_for,MCCommand::Global(gsc)))?;
+      },
+      GlobalReply::ForwardOnce(ok,oad,fwconf,gsc) => {
+        self.mainloop.send(MainLoopCommand::ForwardServiceOnce(ok,oad,fwconf,gsc))?;
       },
       GlobalReply::NoRep => (),
     }

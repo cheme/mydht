@@ -44,6 +44,7 @@ use utils::{
 };
 use procs::{
   ReaderBorrowable,
+  RegReaderBorrow,
   OptInto,
   OptFrom,
   MCCommand,
@@ -305,6 +306,7 @@ impl ApiRepliable for TestReply {
   }
 }
 
+impl<MC : MyDHTConf> RegReaderBorrow<MC> for TestCommand<MC> { }
 impl<MC : MyDHTConf> PeerStatusListener<MC::PeerRef> for TestCommand<MC> {
   const DO_LISTEN : bool = false;
   #[inline]

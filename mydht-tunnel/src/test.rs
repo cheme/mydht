@@ -77,6 +77,7 @@ use super::{
   TunnelWriterReader,
   GlobalTunnelCommand,
   GlobalTunnelReply,
+  LocalTunnelReply,
 };
 use mydht::MyDHTConf;
 use mydht::utils::{
@@ -493,7 +494,8 @@ fn test_ping_pong() {
   let o_res = replace_wait_one_result(&o_res,(Vec::new(),0,0)).unwrap();
   assert!(o_res.0.len() == 1);
   for v in o_res.0.iter() {
-    assert!(if let &ApiResult::ServiceReply(MCReply::Global(GlobalTunnelReply::Api(TestReply(TestMessage::TouchR(_))))) = v {true} else {false});
+//    assert!(if let &ApiResult::ServiceReply(MCReply::Local(_)) = v {true} else {false});
+    assert!(if let &ApiResult::ServiceReply(MCReply::Local(LocalTunnelReply::Api(TestReply(TestMessage::TouchR(_))))) = v {true} else {false});
   }
 
   // no service to check connection, currently only for testing and debugging : sleep

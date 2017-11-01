@@ -663,7 +663,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   /// LocalServiceCommand
   /// Need clone to be forward to multiple peers
   /// Opt into store of peer command to route those command if global command allows it
-  type GlobalServiceCommand : ApiQueriable + PeerStatusListener<Self::PeerRef>
+  type GlobalServiceCommand : ApiQueriable + PeerStatusListener<Self::PeerRef> + RegReaderBorrow<Self>
   //  + OptFrom<KVStoreCommand<Self::Peer,Self::Peer,Self::PeerRef>>
     + Clone;// = GlobalCommand<Self>;
   type GlobalServiceReply : ApiRepliable
@@ -863,11 +863,19 @@ pub trait ReaderBorrowable<MC : MyDHTConf> {
   /// if not true the read service is kept otherwhise we error end it
   #[inline]
   fn is_borrow_read_end(&self) -> bool { true }
+  /// reference to msg enc is here to allow transmitting content through special msg encoder (eg
+  /// mydht-tunnel)
   #[inline]
-  fn put_read(&mut self, _read : <MC::Transport as Transport>::ReadStream, _shad : <MC::Peer as Peer>::ShadowRMsg, _token : usize) {
+  fn put_read(&mut self, _read : <MC::Transport as Transport>::ReadStream, _shad : <MC::Peer as Peer>::ShadowRMsg, _token : usize, &mut MC::MsgEnc) {
   }
 }
-
+/// trait use to reregister in mainloop if message contains a borrowed readstream
+pub trait RegReaderBorrow<MC : MyDHTConf> {
+  #[inline]
+  fn get_read(&self) -> Option<&<MC::Transport as Transport>::ReadStream> {
+    None
+  }
+}
  
 #[derive(Clone,Debug)]
 pub struct FWConf {
