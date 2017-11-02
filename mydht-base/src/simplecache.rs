@@ -13,6 +13,9 @@ use std::path::{PathBuf};
 use std::marker::{PhantomData};
 use std::io::{SeekFrom,Write,Read,Seek};
 use std::fs::OpenOptions;
+use std::cmp::min;
+use rand::thread_rng;
+use rand::Rng;
 use serde_json as json;
 //TODO rewrite with parameterization ok!! (generic simplecache)
 
@@ -99,10 +102,37 @@ impl<T : KeyVal, C : KVCache<<T as KeyVal>::Key, T>> KVStore<T> for SimpleCache<
   }
   #[inline]
   fn get_next_vals(&mut self, nb : usize) -> Option<Vec<T>> {
-
-    println!("nb in cache : {:?}",self.cache.len_c());
+    let clen = self.cache.len_c();
+    if clen == 0 {
+      return Some(Vec::new())
+    }
     let t_none : Option <&(fn(&T) -> bool)> = None;
-    Some(self.cache.next_random_values(nb,t_none).into_iter().map(|v|v.clone()).collect())
+    let mut r : Vec<T> = self.cache.next_random_values(nb,t_none).into_iter().map(|v|v.clone()).collect();
+    if r.len() < nb && r.len() < clen {
+      let adjust = min(nb,clen) - r.len();
+      let pos = thread_rng().next_u64() as usize % clen;
+      //  non random
+      if pos < clen - 1 {
+        self.cache.fold_c((0, &mut r, adjust),|(i,res,mut rem),(_k,val)|{
+          if pos < i && rem > 0 && !res.contains(&val) {
+            res.push(val.clone());
+            rem -= 1;
+          }
+          (i+1,res,rem)
+        });
+      }
+      let adjust = min(nb,clen) - r.len();
+      if adjust != 0 {
+        self.cache.fold_c((0, &mut r, adjust),|(i,res,mut rem),(_k,val)|{
+          if pos >= i && rem > 0 && !res.contains(&val) {
+            res.push(val.clone());
+            rem -= 1;
+          }
+          (i+1,res,rem)
+        });
+      }
+    }
+    Some(r)
   }
 
   #[inline]

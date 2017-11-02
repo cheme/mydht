@@ -25,6 +25,8 @@ use procs::storeprop::{
   KVStoreService,
   OptPeerGlobalDest,
   peer_discover,
+  trusted_peer_ping,
+  peer_ping,
 };
 use super::deflocal::{
   GlobalCommand,
@@ -193,6 +195,7 @@ pub struct MyDHT<MC : MyDHTConf>(MainLoopSendIn<MC>);
 /// TODO unclear if only for callback
 pub enum MainLoopSubCommand<P : Peer> {
 //pub enum MainLoopSubCommand<P : Peer,PR,GSC,GSR> {
+  TrustedTryConnect(P),
   TryConnect(<P as KeyVal>::Key,<P as Peer>::Address),
   Discover(Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>),
   PoolSize(usize),
@@ -203,6 +206,7 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
   SubCommand(MainLoopSubCommand<MC::Peer>),
 
   TryConnect(<MC::Transport as Transport>::Address,Option<ApiQueryId>),
+  TrustedTryConnect(MC::PeerRef,Option<ApiQueryId>),
 //  ForwardServiceLocal(MC::LocalServiceCommand,usize),
   ForwardService(Option<Vec<MC::PeerRef>>,Option<Vec<(Option<<MC::Peer as KeyVal>::Key>,Option<<MC::Peer as Peer>::Address>)>>,FWConf,MCCommand<MC>),
 
@@ -244,6 +248,7 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
   Start,
   SubCommand(MainLoopSubCommand<MC::Peer>),
   TryConnect(<MC::Transport as Transport>::Address,Option<ApiQueryId>),
+  TrustedTryConnect(PeerRefSend<MC>,Option<ApiQueryId>),
 //  ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
   ForwardService(Option<Vec<PeerRefSend<MC>>>,Option<Vec<(Option<<MC::Peer as KeyVal>::Key>,Option<<MC::Peer as Peer>::Address>)>>,FWConf,<MCCommand<MC> as SRef>::Send),
   ForwardServiceOnce(Option<<MC::Peer as KeyVal>::Key>,Option<<MC::Peer as Peer>::Address>,FWConf,<MC::GlobalServiceCommand as SRef>::Send),
@@ -277,6 +282,7 @@ impl<MC : MyDHTConf> Clone for MainLoopCommand<MC>
       MainLoopCommand::Start => MainLoopCommand::Start,
       MainLoopCommand::SubCommand(ref sc) => MainLoopCommand::SubCommand(sc.clone()),
       MainLoopCommand::TryConnect(ref a,ref aid) => MainLoopCommand::TryConnect(a.clone(),aid.clone()),
+      MainLoopCommand::TrustedTryConnect(ref p,ref aid) => MainLoopCommand::TrustedTryConnect(p.clone(),aid.clone()),
 //      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommand::ForwardServiceLocal(gc.clone(),nb),
       MainLoopCommand::ForwardService(ref ovp,ref okad,ref nb_for,ref c) => MainLoopCommand::ForwardService(ovp.clone(),okad.clone(),nb_for.clone(),c.clone()),
       MainLoopCommand::ForwardServiceOnce(ref ovp,ref okad,ref nb_for,ref c) => MainLoopCommand::ForwardServiceOnce(ovp.clone(),okad.clone(),nb_for.clone(),c.clone()),
@@ -310,6 +316,7 @@ impl<MC : MyDHTConf> SRef for MainLoopCommand<MC>
       MainLoopCommand::Start => MainLoopCommandSend::Start,
       MainLoopCommand::SubCommand(sc) => MainLoopCommandSend::SubCommand(sc),
       MainLoopCommand::TryConnect(a,aid) => MainLoopCommandSend::TryConnect(a,aid),
+      MainLoopCommand::TrustedTryConnect(p,aid) => MainLoopCommandSend::TrustedTryConnect(p.get_sendable(),aid),
 //      MainLoopCommand::ForwardServiceLocal(ref gc,nb) => MainLoopCommandSend::ForwardServiceLocal(gc.get_sendable(),nb),
       MainLoopCommand::ForwardService(ovp,okad,nb_for,c) => MainLoopCommandSend::ForwardService({
           ovp.map(|vp|vp.into_iter().map(|p|p.get_sendable()).collect())
@@ -347,6 +354,7 @@ impl<MC : MyDHTConf> SToRef<MainLoopCommand<MC>> for MainLoopCommandSend<MC>
       MainLoopCommandSend::Start => MainLoopCommand::Start,
       MainLoopCommandSend::SubCommand(sc) => MainLoopCommand::SubCommand(sc),
       MainLoopCommandSend::TryConnect(a,aid) => MainLoopCommand::TryConnect(a,aid),
+      MainLoopCommandSend::TrustedTryConnect(p,aid) => MainLoopCommand::TrustedTryConnect(p.to_ref(),aid),
 //      MainLoopCommandSend::ForwardServiceLocal(a,nb) => MainLoopCommand::ForwardServiceLocal(a.to_ref(),nb),
       MainLoopCommandSend::ForwardService(ovp,okad,nb_for,c) => MainLoopCommand::ForwardService({
           ovp.map(|vp|vp.into_iter().map(|p|p.to_ref()).collect())
@@ -545,9 +553,10 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
   #[inline]
   fn connect_with(&mut self, dest_address : &<MC::Peer as Peer>::Address) -> Result<(usize, Option<usize>)> {
-    self.connect_with2(dest_address,true)
+    self.connect_with2(dest_address,true,None)
   }
-  fn connect_with2(&mut self, dest_address : &<MC::Peer as Peer>::Address, allow_mult : bool) -> Result<(usize, Option<usize>)> {
+  /// trusted peer is for noauth sending to global on connect
+  fn connect_with2(&mut self, dest_address : &<MC::Peer as Peer>::Address, allow_mult : bool, trusted_peer : Option<MC::PeerRef>) -> Result<(usize, Option<usize>)> {
     if self.transport.is_some() {
       // first check cache if there is a connect already : no (if peer yes) 
       let (ws,mut ors) = self.transport.as_ref().unwrap().connectwith(&dest_address)?;
@@ -573,13 +582,19 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         read : ort,
         write : write_token,
       });
+      if let Some(pr) = trusted_peer {
+        if <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::DO_LISTEN {
+          let listen_global = <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::build_command(PeerStatusCommand::PeerOnline(pr.clone(),PeerPriority::Unchecked));
+          send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,GlobalCommand::Local(listen_global),"Panic sending to peer online to global service");
+        }
+      }
 
       Ok((write_token,ort))
     } else {
       let (s,r) = self.write_channel_in.new()?;
       let connect_token = self.slab_cache.insert (
         SlabEntry {
-          state : SlabEntryState::WriteConnectSynch((s,r,false)),
+          state : SlabEntryState::WriteConnectSynch((s,r,false),trusted_peer),
 //           state : SlabEntryState::WriteConnectSynch((ref write_s_in ,ref write_r_in,ref has_connect)),
           os : None,
           peer : None,
@@ -681,16 +696,31 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       },
       MainLoopCommand::SubCommand(sc) => {
         match sc {
+          MainLoopSubCommand::TrustedTryConnect(peer) => {
+            if !self.peer_cache.has_val_c(peer.get_key_ref()) && !self.address_cache.has_val_c(peer.get_address()) {
+              self.call_inner_loop(MainLoopCommand::TrustedTryConnect(<MC::PeerRef as Ref<_>>::new(peer),None),mlsend,async_yield)?;
+            }
+          },
           MainLoopSubCommand::TryConnect(key,add) => {
-            // peer cache got connected peer TODO a pending connect cache (on address) to avoid multiple connect
-            // attempt to same peer !!
-            if !self.peer_cache.has_val_c(&key) {
+            if !self.peer_cache.has_val_c(&key) && !self.address_cache.has_val_c(&add) {
               self.call_inner_loop(MainLoopCommand::TryConnect(add,None),mlsend,async_yield)?;
             }
           },
           MainLoopSubCommand::PoolSize(min_no_repeat) => {
             if self.peer_pool_maintain < min_no_repeat {
+              debug!("change pool maintain from {:?} to {:?}",self.peer_pool_maintain,min_no_repeat); 
               self.peer_pool_maintain = min_no_repeat;
+              // do not wait next peer pool check
+              let cache_l = if MC::AUTH_MODE == ShadowAuthType::NoAuth {
+                self.address_cache.len_c()
+              } else {
+                self.peer_cache.len_c()
+              };
+              if cache_l < self.peer_pool_maintain {
+                // do update immediatly
+                self.peer_last_query = Instant::now();
+              }
+
             }
     /*        if self.peer_cache.len_c() < min_no_repeat {
               self.peer_pool_wait.push((min_no_repeat,nb_tot,on_res));
@@ -705,7 +735,6 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             let mut nb_send = 0;
             if let Some((command, nb_for, rem_call)) = self.discover_wait_route.pop_back() {
 
-
               assert!(nb_for >= lkad.len());
               for ka in lkad {
                 // do not use connected peer (some may be accepted in between but it is view as
@@ -719,6 +748,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                   };
 
                   if MC::AUTH_MODE == ShadowAuthType::NoAuth || need_ping == false {
+
                     // no auth to do
                     self.write_stream_send(write_token,WriteCommand::Service(command.clone()), <MC>::init_write_spawner_out()?, None)?;
                     nb_send += 1;
@@ -740,6 +770,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                 }
               }
               if nb_send < nb_for && rem_call > 0 {
+
                 let nb_disco = nb_for - nb_send;
                 self.discover_wait_route.push_front((command.clone(),nb_disco,rem_call - 1));
                 let kvscom = GlobalCommand::Local(KVStoreCommand::Subset(nb_disco, peer_discover));
@@ -796,7 +827,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           },
         };
         // connect without mult
-        let (write_token,_ort) = self.connect_with2(&address,false)?;
+        let (write_token,_ort) = self.connect_with2(&address,false,None)?;
         sg.get_read().map(|rreg|
           rreg.reregister(&self.poll, Token(write_token + START_STREAM_IX), Ready::readable(),
           PollOpt::edge()).unwrap());
@@ -960,28 +991,47 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         }
       },
       MainLoopCommand::TryConnect(dest_address,oapi) => {
-        let ocache = self.address_cache.get_val_c(&dest_address).map(|acache|(acache.write,acache.read));
-        let (need_ping,(write_token,ort)) = if let Some(c) = ocache {
-          (false,c)
-        } else {
-          (true,self.connect_with(&dest_address)?)
-        };
-
-        if MC::AUTH_MODE == ShadowAuthType::NoAuth || !need_ping {
-          // no auth to do cache addresse done in connect_with
-        } else {
-          let chal = self.peermgmt_proto.challenge(self.me.borrow());
-          self.challenge_cache.add_val_c(chal.clone(),ChallengeEntry {
-            write_tok : write_token,
-            read_tok : ort,
-            next_msg : None,
-            next_qid : None,
-            api_qid : oapi,
-          });
-          // send a ping
-          self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
+        let add_incache = self.address_cache.has_val_c(&dest_address);
+        if !add_incache {
+          let (write_token,ort) = self.connect_with(&dest_address)?;
+          if MC::AUTH_MODE == ShadowAuthType::NoAuth  {
+            // no auth to do cache addresse done in connect_with
+          } else {
+            let chal = self.peermgmt_proto.challenge(self.me.borrow());
+            self.challenge_cache.add_val_c(chal.clone(),ChallengeEntry {
+              write_tok : write_token,
+              read_tok : ort,
+              next_msg : None,
+              next_qid : None,
+              api_qid : oapi,
+            });
+            // send a ping
+            self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
+          }
         }
 
+      },
+      MainLoopCommand::TrustedTryConnect(peer,oapi) => {
+        let dest_address = peer.borrow().get_address().clone();
+        let add_incache = self.address_cache.has_val_c(&dest_address);
+        if !add_incache {
+          if MC::AUTH_MODE == ShadowAuthType::NoAuth  {
+            // no auth to do cache addresse done in connect_with
+            self.connect_with2(&dest_address,true,Some(peer))?;
+          } else {
+            let (write_token,ort) = self.connect_with2(&dest_address,true,None)?;
+            let chal = self.peermgmt_proto.challenge(self.me.borrow());
+            self.challenge_cache.add_val_c(chal.clone(),ChallengeEntry {
+              write_tok : write_token,
+              read_tok : ort,
+              next_msg : None,
+              next_qid : None,
+              api_qid : oapi,
+            });
+            // send a ping
+            self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
+          }
+        }
       },
       MainLoopCommand::NewPeerChallenge(pr,rtok,chal) => {
         let owtok = self.slab_cache.get(rtok).map(|r|r.os);
@@ -1082,11 +1132,17 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         let oc = if to_wr {
           let ent_p = &mut self.slab_cache.get_mut(write_token).unwrap().state;
           let entry = replace(ent_p,SlabEntryState::Empty);
-          if let SlabEntryState::WriteConnectSynch(mut st) = entry {
+          if let SlabEntryState::WriteConnectSynch(mut st,trusted_peer) = entry {
             // is connected
             st.2 = true;
             let oc = st.1.recv()?;
             replace(ent_p,SlabEntryState::WriteStream(ws, st));
+            if let Some(pr) = trusted_peer {
+              if <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::DO_LISTEN {
+                let listen_global = <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::build_command(PeerStatusCommand::PeerOnline(pr.clone(),PeerPriority::Unchecked));
+                send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,GlobalCommand::Local(listen_global),"Panic sending to peer online to global service");
+              }
+            }
             oc
           } else { unreachable!() }
         } else { None };
@@ -1139,12 +1195,25 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
     self.call_inner_loop(req,mlsend,async_yield)?;
     loop {
+      let cache_l = if MC::AUTH_MODE == ShadowAuthType::NoAuth {
+        self.address_cache.len_c()
+      } else {
+        self.peer_cache.len_c()
+      };
+
       // some bad connection pool management (should use a registered timer for next try)
-      if self.peer_cache.len_c() < self.peer_pool_maintain {
+      if cache_l < self.peer_pool_maintain {
         let now = Instant::now();
-        if self.peer_last_query > now {
-          let nb_disco = (self.peer_pool_maintain - self.peer_cache.len_c()) as f64 * (1.0 + MC::PEER_EXTRA_POOL_RATIO);
-          let kvscom = MainLoopCommand::PeerStore(GlobalCommand::Local(KVStoreCommand::Subset(nb_disco as usize, peer_discover)));
+        if self.peer_last_query < now {
+          let nb_disco = (self.peer_pool_maintain - cache_l) as f64 * (1.0 + MC::PEER_EXTRA_POOL_RATIO);
+//            println!("subset from pool timed");
+          let kvscom = if MC::AUTH_MODE == ShadowAuthType::NoAuth {
+            // peer info is use from kvstore to feed global store if needed
+            MainLoopCommand::PeerStore(GlobalCommand::Local(KVStoreCommand::Subset(nb_disco as usize, trusted_peer_ping)))
+          } else {
+            // send peer to global only after auth and update of peer info
+            MainLoopCommand::PeerStore(GlobalCommand::Local(KVStoreCommand::Subset(nb_disco as usize, peer_ping)))
+          };
           self.call_inner_loop(kvscom,mlsend,async_yield)?;
         }
         self.peer_last_query = Instant::now() + Duration::from_millis(MC::PEER_POOL_DELAY_MS);
@@ -1381,7 +1450,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               None
             } else {unreachable!()}
           },
-          SlabEntryState::WriteConnectSynch((ref mut send,_,_)) |
+          SlabEntryState::WriteConnectSynch((ref mut send,_,_),_) |
           SlabEntryState::WriteStream(_,(ref mut send,_,false)) => {
             // TODO size limit of channel bef connected -> error on send ~= to connection failure
             send.send(command)?;

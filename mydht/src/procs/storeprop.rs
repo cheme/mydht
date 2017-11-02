@@ -941,13 +941,34 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<M
     }
   }
 //}
+
+/// peer in kvstore is trusted and in case of noauth mode it could be forward to global service (if
+/// auth mode peer_ping will forward it after auth (needed for example in default no auth mydht
+/// tunnel).
+pub fn trusted_peer_ping<P : Peer,PR>(v : Vec<P>) -> GlobalReply<P,PR,KVStoreCommand<P,PR,P,PR>,KVStoreReply<PR>> {
+  if v.len() == 0 {
+    GlobalReply::NoRep
+  } else {
+    let cmds = v.into_iter().map(|p|GlobalReply::MainLoop(MainLoopSubCommand::TrustedTryConnect(p.clone()))).collect();
+    GlobalReply::Mult(cmds)
+  }
+}
+
 pub fn peer_ping<P : Peer,PR>(v : Vec<P>) -> GlobalReply<P,PR,KVStoreCommand<P,PR,P,PR>,KVStoreReply<PR>> {
-  let cmds = v.into_iter().map(|p|GlobalReply::MainLoop(MainLoopSubCommand::TryConnect(p.get_key(),p.get_address().clone()))).collect();
-  GlobalReply::Mult(cmds)
+  if v.len() == 0 {
+    GlobalReply::NoRep
+  } else {
+    let cmds = v.into_iter().map(|p|GlobalReply::MainLoop(MainLoopSubCommand::TryConnect(p.get_key(),p.get_address().clone()))).collect();
+    GlobalReply::Mult(cmds)
+  }
 }
 pub fn peer_discover<P : Peer,PR>(v : Vec<P>) -> GlobalReply<P,PR,KVStoreCommand<P,PR,P,PR>,KVStoreReply<PR>> {
-  let dests = v.into_iter().map(|p|(p.get_key(),p.get_address().clone())).collect();
-  GlobalReply::MainLoop(MainLoopSubCommand::Discover(dests))
+  if v.len() == 0 {
+    GlobalReply::NoRep
+  } else {
+    let dests = v.into_iter().map(|p|(p.get_key(),p.get_address().clone())).collect();
+    GlobalReply::MainLoop(MainLoopSubCommand::Discover(dests))
+  }
 }
 
 

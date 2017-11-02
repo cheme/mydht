@@ -249,7 +249,8 @@ impl<MC : MyDHTTunnelConf> GenTunnelTraits for TunnelTraits<MC> {
 
 impl<P : MPeer,PR : Ref<P> + Clone + Debug> Rp<TunPeer<P,PR>> {
   pub fn enough_peer(&self) -> bool {
-    if self.peers.len() < self.route_len() {
+    // + 1 for dest in peers
+    if self.peers.len() < self.route_len() + 1 {
       false
     } else {
       true
@@ -285,7 +286,7 @@ impl<P : MPeer,PR : Ref<P> + Clone + Debug> Rp<TunPeer<P,PR>> {
     };
     let c_len = self.peers.len();
     // Warn this assert is not enough if other is into connected peers
-    assert!(c_len <= min_no_repeat,"{},{}",c_len,min_no_repeat);
+    assert!(c_len >= min_no_repeat,"{},{}",c_len,min_no_repeat);
     /*if c_len < min_no_repeat {
       return Err(IoError::new(IoErrorKind::Other, "Unchecked call to cache exact_rand, insufficient value"));
     }*/

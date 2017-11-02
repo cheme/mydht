@@ -458,15 +458,22 @@ impl MyDHTTunnelConf for TunnelConf {
 }
 
 
+//#[test]
+fn test_ping_pong_no_hop() {
+  test_ping_pong(2,45330)
+}
 
 #[test]
-fn test_ping_pong() {
-  let start_port = 45330;
-  let nb_hop = 2;
+fn test_ping_pong_one_hop() {
+  test_ping_pong(3,45333)
+}
+
+
+fn test_ping_pong(nb_peer : usize, start_port : usize) {
   let mode = MultipleReplyMode::Route;
   let err_mode = MultipleErrorMode::NoHandling;
-  let mut peers : Vec<Node> = Vec::with_capacity(nb_hop);
-  for i in 0..nb_hop {
+  let mut peers : Vec<Node> = Vec::with_capacity(nb_peer);
+  for i in 0..nb_peer {
     let addr = sa4(Ipv4Addr::new(127,0,0,1), (start_port + i) as u16);
     let peer = Node {nodeid: format!("peer {}",i), address : SerSocketAddr(addr)};
     peers.push(peer);
@@ -479,7 +486,7 @@ fn test_ping_pong() {
       mode.clone(),
       err_mode.clone(),
       // route len
-      Some(nb_hop - 2),
+      Some(nb_peer - 2),
       // route bias
       Some(0),
     ).unwrap();

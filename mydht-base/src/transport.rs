@@ -42,7 +42,8 @@ pub enum SlabEntryState<T : Transport, RR, WR, WB,P>
   ReadStream(T::ReadStream,Option<P>),
   /// WB is a buffer to use while stream is unconnected
   WriteStream(T::WriteStream,WB),
-  WriteConnectSynch(WB),
+  /// optional p is trusted peer ref if no auth
+  WriteConnectSynch(WB,Option<P>),
   ReadSpawned(RR),
   WriteSpawned(WR),
   Empty,

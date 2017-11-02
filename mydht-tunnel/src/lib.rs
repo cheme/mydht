@@ -589,6 +589,7 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
     } else if tunn_re.is_err().unwrap() {
       unimplemented!()
     } else {
+      unimplemented!();
       // proxy
       Ok(TunnelMessaging::ProxyFromReader(tunn_re))
     }
@@ -937,14 +938,21 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
         self.address_key.insert(pr.borrow().get_address().clone(),pr.borrow().get_key());
         self.tunnel.route_prov.add_online(TunPeer::new(pr));
         if self.to_send.len() > 0 && self.tunnel.route_prov.enough_peer() {
+          let mut cmds = Vec::with_capacity(self.to_send.len());
           // send all cached
           while let Some((dest, inner_command)) = self.to_send.pop_front() {
-            let route_writer = self.tunnel.new_writer(&TunPeer::new(dest));
-            panic!("TODO sedn protr mess");
+            let (tunn_we,dest_add) = self.tunnel.new_writer(&TunPeer::new(dest));
+            let dest_k = self.address_key.get(&dest_add).map(|k|k.clone());
+            let command : GlobalTunnelCommand<MC> = GlobalTunnelCommand::TunnelSendOnce(tunn_we,inner_command);
+            cmds.push(GlobalReply::ForwardOnce(dest_k,Some(dest_add), FWConf {
+              nb_for : 0,
+              discover : true,
+            }, command));
           }
+          GlobalReply::Mult(cmds)
+        } else {
+          GlobalReply::NoRep
         }
-
-        GlobalReply::NoRep
       },
       GlobalTunnelCommand::Offline(pr) => {
         self.address_key.remove(pr.borrow().get_address());
@@ -972,6 +980,7 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
           },
           GlobalTunnelReply::SendCommandTo(dest, inner_command) => {
             if self.tunnel.route_prov.enough_peer() {
+
               let (tunn_we,dest_add) = self.tunnel.new_writer(&TunPeer::new(dest));
               let dest_k = self.address_key.get(&dest_add).map(|k|k.clone());
               let command : GlobalTunnelCommand<MC> = GlobalTunnelCommand::TunnelSendOnce(tunn_we,inner_command);
@@ -980,8 +989,10 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
                 discover : true,
               }, command)
             } else {
+              debug!("query peers : {:?}", self.tunnel.route_prov.route_len());
               self.to_send.push_back((dest,inner_command));
-              GlobalReply::MainLoop(MainLoopSubCommand::PoolSize(self.tunnel.route_prov.route_len()))
+              // plus one for case where dest in pool
+              GlobalReply::MainLoop(MainLoopSubCommand::PoolSize(self.tunnel.route_prov.route_len() + 1))
             }
           },
 
