@@ -1014,11 +1014,13 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       MainLoopCommand::TrustedTryConnect(peer,oapi) => {
         let dest_address = peer.borrow().get_address().clone();
         let add_incache = self.address_cache.has_val_c(&dest_address);
-        if !add_incache {
-          if MC::AUTH_MODE == ShadowAuthType::NoAuth  {
-            // no auth to do cache addresse done in connect_with
-            self.connect_with2(&dest_address,true,Some(peer))?;
-          } else {
+        if MC::AUTH_MODE == ShadowAuthType::NoAuth  {
+          // we call even if in cache : may not have trusted peer info
+ 
+          // no auth to do cache addresse done in connect_with
+          self.connect_with2(&dest_address,true,Some(peer))?;
+        } else {
+          if !add_incache {
             let (write_token,ort) = self.connect_with2(&dest_address,true,None)?;
             let chal = self.peermgmt_proto.challenge(self.me.borrow());
             self.challenge_cache.add_val_c(chal.clone(),ChallengeEntry {
