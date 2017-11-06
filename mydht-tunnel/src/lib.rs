@@ -1170,6 +1170,8 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
   type WriteDest = NoSend;
  
   type WriteChannelIn = MpscChannel;
+  /// Warning here we expect a spawner using a Clonable spawn handle, if puting this type in tunnel
+  /// conf we need to constrain that!!
   type WriteSpawn = ThreadPark;
 
   type LocalServiceCommand = LocalTunnelCommand<MC>;

@@ -592,7 +592,7 @@ pub trait SpawnUnyield {
 
 /// manages asynch call by possibly yielding process (yield a coroutine if same thread, park or
 /// yield a thread, do nothing (block)
-pub trait SpawnerYield : Clone {
+pub trait SpawnerYield {
   /// For parrallel spawner (threading), it is ok to skip yield once in case of possible racy unyield
   /// (unyield may not be racy : unyield on spawnchannel instead of asynch stream or others), see
   /// threadpark implementation
@@ -995,20 +995,19 @@ pub struct CoroutHandle<S,D,R>(Rc<RefCell<Option<(S,D,R,Result<()>)>>>,CoRHandle
     YieldReturn::Loop
   }
 }*/
-/*
+
 impl<'a,A : SpawnerYield> SpawnerYield for &'a mut A {
   #[inline]
   fn spawn_yield(&mut self) -> YieldReturn {
     (*self).spawn_yield()
   }
-}*/
+}
 
-pub type CoroutineYield = Rc<RefCell<CoroutineC>>;
 
-impl SpawnerYield for CoroutineYield {
+impl SpawnerYield for CoroutineC {
   #[inline]
   fn spawn_yield(&mut self) -> YieldReturn {
-    self.borrow_mut().yield_with(0);
+    self.yield_with(0);
     YieldReturn::Loop
   }
 }
@@ -1073,8 +1072,8 @@ impl<C> SpawnRecv<C> for LocalRc<C> {
 impl<S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOut>,R : 'static + SpawnRecv<S::CommandIn>> 
   Spawner<S,D,R> for Coroutine {
   type Handle = CoroutHandle<S,D,R>;
-  type Yield = CoroutineYield;
-  //type Yield = CoroutYield<'a>;
+  //type Yield = CoroutineYield;
+  type Yield = CoroutineC;
   fn spawn (
     &mut self,
     mut service : S,
@@ -1090,13 +1089,7 @@ impl<S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOut>,
       move || -> Result<()> {
         let mut err = Ok(());
         let rcs = rcs;
-        // TODO test , if ok try to add spawnRefCell function for coroutine (context is handled in asm
-        // over stack and moving coroutine struct seem ok by looking at code).
-        let mut yiel = unsafe {
-          let c = replace(corout,mem::uninitialized());
-          let corout = replace(corout,c);
-          Rc::new(RefCell::new(corout))
-        };
+        let mut yiel = corout;
         spawn_loop!(service,spawn_out,ocin,recv,nb_loop,yiel,err,Err(Error("Coroutine spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
         rcs.replace(Some((service,spawn_out,recv,err)));
         //replace(dest,Some((service,spawn_out,recv,err)));
