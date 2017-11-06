@@ -831,6 +831,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         sg.get_read().map(|rreg|
           rreg.reregister(&self.poll, Token(write_token + START_STREAM_IX), Ready::readable(),
           PollOpt::edge()).unwrap());
+        println!("read reregister : {:?}",write_token);
         if MC::AUTH_MODE != ShadowAuthType::NoAuth {
           let chal = self.peermgmt_proto.challenge(self.me.borrow());
           let apr = sg.get_api_reply();
@@ -1274,6 +1275,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                 },
                 SlabEntryState::WriteConnectSynch(..) => unreachable!(),
                 SlabEntryState::WriteStream(ref mut _ws,(_,ref mut write_r_in,ref mut has_connect)) => {
+                  println!("awrite unyield during connect {:?}", tok.0 - START_STREAM_IX);
                   // case where spawn reach its nb_loop and return, should not happen as yield is
                   // only out of service call (nb_loop test is out of nb call) for receiver which is not registered.
                   // Yet if WriteService could resume which is actually not the case we could have a
@@ -1292,10 +1294,12 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                   (false,oc,os)
                 },
                 SlabEntryState::ReadSpawned((ref mut handle,_)) => {
+                  println!("aread unyield {:?}", tok.0 - START_STREAM_IX);
                   handle.unyield()?;
                   (false,None,os)
                 },
                 SlabEntryState::WriteSpawned((ref mut handle,_)) => {
+                  println!("awrite unyield {:?}", tok.0 - START_STREAM_IX);
                   handle.unyield()?;
                   (false,None,os)
                 },

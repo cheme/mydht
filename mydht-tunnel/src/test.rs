@@ -458,22 +458,22 @@ impl MyDHTTunnelConf for TunnelConf {
 }
 
 
-#[test]
+//#[test]
 fn test_ping_pong_no_hop() {
   test_ping_pong(2,45330)
 }
 
-#[test]
+//#[test]
 fn test_ping_pong_one_hop() {
   test_ping_pong(3,45333)
 }
 #[test]
 fn test_ping_pong_mult_hop() {
-  test_ping_pong(8,45337)
+//  test_ping_pong(8,45337)
     // issue with more hop (blocking half time at 10 blocking at 18) -> Bug to find, probably in
     // route
 //  test_ping_pong(10,45337)
-//  test_ping_pong(18,45337)
+  test_ping_pong(18,45337)
 }
 
 

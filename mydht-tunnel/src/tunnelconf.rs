@@ -356,7 +356,7 @@ impl<P : MPeer,PR : Ref<P> + Clone + Debug> RouteProvider<TunPeer<P, PR>> for Rp
     self.exact_rand(true,dest)
   }
   fn new_reply_route (&mut self, from : &TunPeer<P, PR>) -> Vec<&TunPeer<P, PR>> {
-    self.exact_rand(false,from)
+    self.exact_rand(true,from)
   }
 }
 

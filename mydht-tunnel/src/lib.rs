@@ -455,6 +455,7 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
       TunnelMessaging::TunnelSendOnce(None, _) => unreachable!(),
       TunnelMessaging::TunnelProxyOnce(ref mut proxy, (ref mut rs,ref mut rshad,_)) => {
 
+        println!("start a proxying");
         let mut readbuf = vec![0;MC::PROXY_BUF_SIZE];
         let mut reader = CompExtRInner(rs,rshad);
         proxy.read_header(&mut reader)?;
@@ -462,19 +463,47 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
         proxy.write_header(w)?;
         // unknown length
         let mut ix;
+        let mut total=0;
         while  {
           let l = proxy.read_from(&mut reader, &mut readbuf)?;
+            println!("reda {} {}",l,total);
+          if l == 0 {
+          //  panic!("Read0 at {:?}",total); TODO testing with commenting send
+          //  TODO yield in message (trait then add from write service as box in mesg
+          //  (tunnelmessaging))
+          //  no requires clone -> no as ref in msgenc better in msgenc?? but need to get back
+          //  after call -> bad overall
+          //  in message is the more rational approach : put it in a cell containing the pointer
+          //  : need a super type for message : not allowed 
+          //  -> if spawn yield clone : easy as writer is fine and 
+          //  RefCell the spawnunyield??
+          //
+          //  Clone is best (use Rc<RefCell<CoroutineC>> is only change from actual service :
+          //  spawnyield is not send in this case but not a pb at first glance!!
+          //
+          //  after clone done, simply put it in message like said before and use it here
+            println!("do not w 0 lenth l!!!");
+          }
+          total += l;
           ix = 0;
           while ix < l {
-            ix += proxy.write_into(w, &mut readbuf[..l])?;
+            let nb = proxy.write_into(w, &mut readbuf[..l])?;
+            ix += nb;
+            total  += nb;
           }
           l > 0
         } {}
+        println!("end a proxying{:?}", total);
         proxy.read_end(&mut reader)?;
+        println!("end a proxying2");
         proxy.write_end(w)?;
+        println!("end a proxying3");
         proxy.flush_into(w)?;
+        println!("end a proxying");
+        w.flush()?;
       },
       TunnelMessaging::TunnelReplyOnce(ref mut proto_m, ref mut rwinit, ref mut orw, ref mut destr, (ref mut rs,ref mut rshad,_)) => {
+        println!("Replying!");
         let mut reader = CompExtRInner(rs,rshad);
         <Full<TunnelTraits<MC>>>::reply_writer_init(replace(rwinit,None).unwrap(), orw.as_mut().unwrap(), destr, &mut reader, w)?;
         // TODO dup code with send
@@ -491,8 +520,9 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
           self.current_reply_writer = replace(orw, None);
         } else {
           let tunn_we = orw.as_mut().unwrap();
-          tunn_we.flush_into(w)?;
           tunn_we.write_end(w)?;
+          tunn_we.flush_into(w)?;
+          w.flush()?;
         }
       },
       TunnelMessaging::TunnelSendOnce(ref mut o_tunn_we, ref mut proto_m) => {
@@ -509,8 +539,11 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
           self.current_writer = replace(o_tunn_we, None);
         } else {
           let tunn_we = o_tunn_we.as_mut().unwrap();
-          tunn_we.flush_into(w)?;
+          println!("bef tunwe write end");
           tunn_we.write_end(w)?;
+          println!("aft tunwe write end");
+          tunn_we.flush_into(w)?;
+          w.flush()?;
         }
       },
       TunnelMessaging::ProxyToGlobal(..) => unimplemented!(),

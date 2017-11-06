@@ -55,7 +55,11 @@ use self::coroutine::asymmetric::{
   Coroutine as CoroutineC,
 };
 use std::rc::Rc;
-use std::cell::RefCell;
+use std::cell::{
+  RefCell,
+  RefMut,
+  Ref,
+};
 use std::sync::{
   Arc,
 };
@@ -85,6 +89,7 @@ use std::io::{
   Write,
 };
 use std::mem::replace;
+use std::mem;
 use std::collections::vec_deque::VecDeque;
 
 
@@ -95,11 +100,17 @@ impl<'a,R : Read,Y : SpawnerYield> Read for ReadYield<'a,R,Y> {
       match self.0.read(buf) {
         Ok(r) => {
           if r == 0 {
+/* TODO ? seems good     match self.1.spawn_yield() {
+            YieldReturn::Return => panic!("dd"),
+            YieldReturn::Loop => (), 
+          }*/
+
             continue;
           }
           return Ok(r)
         },
         Err(e) => if let IoErrorKind::WouldBlock = e.kind() {
+          println!("-> a read yield");
           match self.1.spawn_yield() {
             YieldReturn::Return => return Err(e),
             YieldReturn::Loop => (), 
@@ -137,6 +148,7 @@ impl<'a,W : Write, Y : SpawnerYield> Write for WriteYield<'a,W,Y> {
      match self.0.write(buf) {
        Ok(r) => return Ok(r),
        Err(e) => if let IoErrorKind::WouldBlock = e.kind() {
+          println!("-> a write yield");
           match self.1.spawn_yield() {
             YieldReturn::Return => return Err(e),
             YieldReturn::Loop => (), 
@@ -580,7 +592,7 @@ pub trait SpawnUnyield {
 
 /// manages asynch call by possibly yielding process (yield a coroutine if same thread, park or
 /// yield a thread, do nothing (block)
-pub trait SpawnerYield {
+pub trait SpawnerYield : Clone {
   /// For parrallel spawner (threading), it is ok to skip yield once in case of possible racy unyield
   /// (unyield may not be racy : unyield on spawnchannel instead of asynch stream or others), see
   /// threadpark implementation
@@ -743,7 +755,9 @@ impl<C> SpawnSend<C> for NoSend {
   }
 }
 
+#[derive(Clone)]
 pub struct NoYield(pub YieldReturn);
+
 impl SpawnerYield for NoYield {
   #[inline]
   fn spawn_yield(&mut self) -> YieldReturn {
@@ -808,8 +822,10 @@ macro_rules! spawn_loop {($service:ident,$spawn_out:ident,$ocin:ident,$r:ident,$
             // suspend with YieldReturn 
             return $return_build;
           } else if e.level() == ErrorLevel::Panic {
+            println!("      !!!panicking{:?}",e);
             panic!("In spawner : {:?}",e);
           } else {
+            println!("      !!!error ending service{:?}",e);
             $result = Err(e);
             break;
           },
@@ -979,22 +995,23 @@ pub struct CoroutHandle<S,D,R>(Rc<RefCell<Option<(S,D,R,Result<()>)>>>,CoRHandle
     YieldReturn::Loop
   }
 }*/
+/*
 impl<'a,A : SpawnerYield> SpawnerYield for &'a mut A {
   #[inline]
   fn spawn_yield(&mut self) -> YieldReturn {
     (*self).spawn_yield()
   }
-}
-impl SpawnerYield for CoroutineC {
+}*/
+
+pub type CoroutineYield = Rc<RefCell<CoroutineC>>;
+
+impl SpawnerYield for CoroutineYield {
   #[inline]
   fn spawn_yield(&mut self) -> YieldReturn {
-    self.yield_with(0);
+    self.borrow_mut().yield_with(0);
     YieldReturn::Loop
   }
 }
-
-
-
 
 impl<S,D,R> SpawnUnyield for CoroutHandle<S,D,R> {
   #[inline]
@@ -1056,7 +1073,7 @@ impl<C> SpawnRecv<C> for LocalRc<C> {
 impl<S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOut>,R : 'static + SpawnRecv<S::CommandIn>> 
   Spawner<S,D,R> for Coroutine {
   type Handle = CoroutHandle<S,D,R>;
-  type Yield = CoroutineC;
+  type Yield = CoroutineYield;
   //type Yield = CoroutYield<'a>;
   fn spawn (
     &mut self,
@@ -1073,7 +1090,13 @@ impl<S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOut>,
       move || -> Result<()> {
         let mut err = Ok(());
         let rcs = rcs;
-        let mut yiel = corout;
+        // TODO test , if ok try to add spawnRefCell function for coroutine (context is handled in asm
+        // over stack and moving coroutine struct seem ok by looking at code).
+        let mut yiel = unsafe {
+          let c = replace(corout,mem::uninitialized());
+          let corout = replace(corout,c);
+          Rc::new(RefCell::new(corout))
+        };
         spawn_loop!(service,spawn_out,ocin,recv,nb_loop,yiel,err,Err(Error("Coroutine spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
         rcs.replace(Some((service,spawn_out,recv,err)));
         //replace(dest,Some((service,spawn_out,recv,err)));
@@ -1097,6 +1120,8 @@ impl<S,D,R> Clone for ThreadHandleBlockWeak<S,D,R> {
     ThreadHandleBlockWeak(self.0.clone())
   }
 }
+
+#[derive(Clone)]
 pub struct ThreadYieldBlock;
 
 impl<S,D,R> SpawnUnyield for ThreadHandleBlockWeak<S,D,R> {
@@ -1201,6 +1226,7 @@ impl<S,D,R> Clone for ThreadHandleParkWeak<S,D,R> {
 pub struct ThreadHandlePark<S,D,R>(Arc<Mutex<Option<(S,D,R,Result<()>)>>>,JoinHandle<Result<()>>,Arc<(Mutex<bool>,Condvar)>);
 pub struct ThreadHandleParkRef<S : SRef,D : SRef,R : SRef>(Arc<Mutex<Option<(S::Send,D::Send,R::Send,Result<()>)>>>,JoinHandle<Result<()>>,Arc<(Mutex<bool>,Condvar)>);
 
+#[derive(Clone)]
 pub struct ThreadYieldPark(Arc<(Mutex<bool>,Condvar)>);
 
 macro_rules! thread_parkunyield(() => (
@@ -1392,6 +1418,8 @@ impl<S : 'static + Service + SRef, D : SRef + 'static + SpawnSend<S::CommandOut>
 pub struct CpuPool(FCpuPool);
 // TODO simpliest type with Result<() everywhere).
 pub struct CpuPoolHandle<S,D,R>(CpuFuture<(S,D,R,Result<()>),Error>,Option<(S,D,R,Result<()>)>);
+
+#[derive(Clone)]
 pub struct CpuPoolYield;
 
 impl<S : Send + 'static, D : Send + 'static, R : Send + 'static> SpawnUnyield for CpuPoolHandle<S,D,R> {
@@ -1578,5 +1606,3 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
     return Ok(CpuPoolHandleFuture(future,None,recv));
   }
 }
-
-
