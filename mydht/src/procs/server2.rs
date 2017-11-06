@@ -414,8 +414,9 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
         },
         MCCommand::Local(mut mess) => {
 
-          let bre = mess.is_borrow_read_end();
-          if mess.is_borrow_read() {
+          let is_bor = mess.is_borrow_read();
+          let bre = is_bor && mess.is_borrow_read_end();
+          if is_bor {
             // put read in msg plus slab ix
             let shad = replace(&mut self.shad_msg,None).unwrap();
             let stream = replace(&mut self.stream,None).unwrap();
