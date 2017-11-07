@@ -3,7 +3,7 @@ use peer::{
   PeerPriority,
   PeerMgmtMeths,
 };
-
+use std::cell::Cell;
 use rules::DHTRules;
 use procs::synch_transport::{
   SynchConnListenerCommandDest,
@@ -876,7 +876,7 @@ pub trait RegReaderBorrow<MC : MyDHTConf> {
     None
   }
 }
- 
+
 #[derive(Clone,Debug)]
 pub struct FWConf {
   /// only use for forward local to get nb of local to try

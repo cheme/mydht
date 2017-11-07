@@ -202,6 +202,10 @@ impl Registerable for LocalReadStream {
   fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
     Ok(false)
   }
+
+  fn deregister(&self, _poll: &Poll) -> Result<()> {
+    Ok(())
+  }
 }
 impl Registerable for LocalWriteStream {
   fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
@@ -210,6 +214,10 @@ impl Registerable for LocalWriteStream {
   fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
     Ok(false)
   }
+  fn deregister(&self, _poll: &Poll) -> Result<()> {
+    Ok(())
+  }
+
 }
 
 impl Registerable for AsynchLocalReadStream {
@@ -221,6 +229,11 @@ impl Registerable for AsynchLocalReadStream {
     p.reregister(&self.6,t,r,po)?;
     Ok(true)
   }
+ fn deregister(&self, p : &Poll) -> Result<()> {
+    p.deregister(&self.6)?;
+    Ok(())
+  }
+
 }
 impl Registerable for AsynchLocalWriteStream {
   fn register(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
@@ -231,6 +244,11 @@ impl Registerable for AsynchLocalWriteStream {
     p.reregister(&self.6,t,r,po)?;
     Ok(true)
   }
+ fn deregister(&self, p : &Poll) -> Result<()> {
+    p.deregister(&self.6)?;
+    Ok(())
+  }
+
 
 }
 
@@ -331,6 +349,11 @@ impl Registerable for TransportTest {
   fn reregister(&self, _ : &Poll, _: Token, _ : Ready, _ : PollOpt) -> Result<bool> {
     Ok(false)
   }
+ fn deregister(&self, _ : &Poll) -> Result<()> {
+    Ok(())
+  }
+
+
 }
 impl Registerable for AsynchTransportTest {
   fn register(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
@@ -341,6 +364,11 @@ impl Registerable for AsynchTransportTest {
     p.reregister(&self.6,t,r,po)?;
     Ok(true)
   }
+  fn deregister(&self, p : &Poll) -> Result<()> {
+    p.deregister(&self.6)?;
+    Ok(())
+  }
+
 }
 
 /// default dospawn impl : it is a managed transport.

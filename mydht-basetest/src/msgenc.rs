@@ -1,14 +1,23 @@
 use std::io::Cursor;
 use mydht_base::msgenc::MsgEnc;
-
+use readwrite_comp::{
+  ExtWrite,
+  ExtRead,
+};
 use mydht_base::msgenc::send_variant::ProtoMessage as ProtoMessageSend;
 use mydht_base::msgenc::ProtoMessage;
 use shadow::{
   ShadowModeTest,
 };
 
-
-use peer::PeerTest;
+use mydht_base::service::{
+  NoYield,
+  YieldReturn,
+};
+use peer::{
+  PeerTest,
+  NoShadow,
+};
 use transport::LocalAdd;
 
 pub fn test_peer_enc<ME : MsgEnc<PeerTest,PeerTest>> (mut e : ME) {
@@ -25,9 +34,11 @@ pub fn test_peer_enc<ME : MsgEnc<PeerTest,PeerTest>> (mut e : ME) {
   let ms : ProtoMessageSend<PeerTest> = ProtoMessageSend::PING(&to_p,v1.clone(),v2.clone());
   let mut out = Cursor::new(Vec::new());
  
-  e.encode_into(&mut out, &ms).unwrap();
+  let mut y = NoYield(YieldReturn::Loop);
+  let mut shad = NoShadow;
+  e.encode_into(&mut out, &mut shad, &mut y, &ms).unwrap();
   let mut input = Cursor::new(out.into_inner());
-  let ms2 : ProtoMessage<PeerTest> = e.decode_from(&mut input).unwrap();
+  let ms2 : ProtoMessage<PeerTest> = e.decode_from(&mut input, &mut shad, &mut y).unwrap();
   if let ProtoMessage::PING(a,b,c) = ms2 {
     assert!(a == to_p);
     assert!(b == v1);

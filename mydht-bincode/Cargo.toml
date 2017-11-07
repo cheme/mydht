@@ -17,6 +17,11 @@ serde = { version = "~1.0.10", features = ["rc"]}
 [dependencies.mydht-base]
 path = "../mydht-base/"
 
+[dependencies.readwrite-comp]
+#path = "../../readwrite-comp/"
+git = "https://github.com/cheme/readwrite-comp.git"
+
+
 [dev-dependencies.mydht-basetest]
 path = "../mydht-basetest/"
 

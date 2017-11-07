@@ -92,7 +92,6 @@ use std::mem::replace;
 use std::mem;
 use std::collections::vec_deque::VecDeque;
 
-
 pub struct ReadYield<'a,R : 'a + Read,Y : 'a + SpawnerYield> (pub &'a mut R,pub &'a mut Y);
 impl<'a,R : Read,Y : SpawnerYield> Read for ReadYield<'a,R,Y> {
   fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
@@ -110,7 +109,7 @@ impl<'a,R : Read,Y : SpawnerYield> Read for ReadYield<'a,R,Y> {
           return Ok(r)
         },
         Err(e) => if let IoErrorKind::WouldBlock = e.kind() {
-          println!("-> a read yield");
+          //println!("-> a read yield {:?}", thread::current().id());
           match self.1.spawn_yield() {
             YieldReturn::Return => return Err(e),
             YieldReturn::Loop => (), 
@@ -148,7 +147,7 @@ impl<'a,W : Write, Y : SpawnerYield> Write for WriteYield<'a,W,Y> {
      match self.0.write(buf) {
        Ok(r) => return Ok(r),
        Err(e) => if let IoErrorKind::WouldBlock = e.kind() {
-          println!("-> a write yield");
+          //println!("-> a write yield {:?}", thread::current().id());
           match self.1.spawn_yield() {
             YieldReturn::Return => return Err(e),
             YieldReturn::Loop => (), 
@@ -331,6 +330,10 @@ impl<R> Registerable for MioRecv<R> {
   fn reregister(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
     p.reregister(&self.reg,t,r,po)?;
     Ok(true)
+  }
+  fn deregister(&self, poll: &Poll) -> Result<()> {
+    poll.deregister(&self.reg)?;
+    Ok(())
   }
 }
 /// mio registerable channel sender
@@ -592,15 +595,23 @@ pub trait SpawnUnyield {
 
 /// manages asynch call by possibly yielding process (yield a coroutine if same thread, park or
 /// yield a thread, do nothing (block)
-pub trait SpawnerYield {
+pub trait SpawnerYield : Sized {
   /// For parrallel spawner (threading), it is ok to skip yield once in case of possible racy unyield
   /// (unyield may not be racy : unyield on spawnchannel instead of asynch stream or others), see
   /// threadpark implementation
   /// At the time no SpawnerYield return both variant of YieldReturn and it could be a constant
   /// (use of both mode is spawner is not very likely but possible).
   fn spawn_yield(&mut self) -> YieldReturn;
+  /// spawner yield should be clone but currently no satisfying implementation for Coroutine
+  fn opt_clone(&mut self) -> Option<Self>;
 }
-
+/*
+pub trait OptClone : Sized {
+  /// spawner yield should be clone but currently no satisfying implementation for Coroutine
+  fn opt_clone(&mut self) -> Option<Self>;
+}
+*/
+  /// For parrallel spawner (threading), it is ok to skip yield once in case of possible racy unyield
 #[derive(Clone,Copy)]
 pub enum YieldReturn {
   /// end spawn, transmit state to handle. Some Service may be restartable if enough info in state.
@@ -763,7 +774,10 @@ impl SpawnerYield for NoYield {
   fn spawn_yield(&mut self) -> YieldReturn {
     self.0
   }
+  #[inline]
+  fn opt_clone(&mut self) -> Option<Self> { Some(self.clone()) }
 }
+
 
 pub struct BlockingSameThread<S,D,R>((S,D,R,Result<()>));
 impl<S,D,R> SpawnUnyield for BlockingSameThread<S,D,R> {
@@ -822,10 +836,10 @@ macro_rules! spawn_loop {($service:ident,$spawn_out:ident,$ocin:ident,$r:ident,$
             // suspend with YieldReturn 
             return $return_build;
           } else if e.level() == ErrorLevel::Panic {
-            println!("      !!!panicking{:?}",e);
+            error!("      !!!panicking{:?}",e);
             panic!("In spawner : {:?}",e);
           } else {
-            println!("      !!!error ending service{:?}",e);
+            error!("      !!!error ending service{:?}",e);
             $result = Err(e);
             break;
           },
@@ -1001,6 +1015,11 @@ impl<'a,A : SpawnerYield> SpawnerYield for &'a mut A {
   fn spawn_yield(&mut self) -> YieldReturn {
     (*self).spawn_yield()
   }
+  #[inline]
+  fn opt_clone(&mut self) -> Option<Self> { 
+    self.opt_clone()
+  }
+
 }
 
 
@@ -1010,6 +1029,11 @@ impl SpawnerYield for CoroutineC {
     self.yield_with(0);
     YieldReturn::Loop
   }
+  #[inline]
+  fn opt_clone(&mut self) -> Option<Self> { 
+    None
+  }
+
 }
 
 impl<S,D,R> SpawnUnyield for CoroutHandle<S,D,R> {
@@ -1167,6 +1191,8 @@ impl SpawnerYield for ThreadYieldBlock {
     thread::yield_now();
     YieldReturn::Loop
   }
+  #[inline]
+  fn opt_clone(&mut self) -> Option<Self> { Some(self.clone()) }
 }
 
 
@@ -1319,6 +1345,8 @@ impl SpawnerYield for ThreadYieldPark {
     //}
     YieldReturn::Loop
   }
+  #[inline]
+  fn opt_clone(&mut self) -> Option<Self> { Some(self.clone()) }
 }
 
 
@@ -1458,7 +1486,10 @@ impl SpawnerYield for CpuPoolYield {
     thread::park(); // TODO check without (may block)
     YieldReturn::Loop
   }
+  #[inline]
+  fn opt_clone(&mut self) -> Option<Self> { Some(self.clone()) }
 }
+
 
 impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>, R : 'static + Send + SpawnRecv<S::CommandIn>> 
   Spawner<S,D,R> for CpuPool

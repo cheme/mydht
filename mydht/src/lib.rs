@@ -5,6 +5,7 @@
 #[macro_use] extern crate log;
 #[macro_use] extern crate mydht_base;
 #[macro_use] extern crate serde_derive;
+extern crate readwrite_comp;
 extern crate serde;
 extern crate serde_json;
 extern crate time;

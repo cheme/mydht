@@ -131,9 +131,14 @@ impl Registerable for Tcp {
     Ok(true)
   }
   fn reregister(&self, poll : &Poll, token: Token, interest: Ready, opts: PollOpt) -> Result<bool> {
-    poll.register(&self.listener,token,interest,opts)?;
+    poll.reregister(&self.listener,token,interest,opts)?;
     Ok(true)
   }
+  fn deregister(&self, poll : &Poll) -> Result<()> {
+    poll.deregister(&self.listener)?;
+    Ok(())
+  }
+
 }
 /*tttttttttt 
 #[cfg(feature="with-extra-test")]

@@ -13,17 +13,14 @@ use super::mainloop::{
 use super::client2::{
   WriteCommand,
 };
-
+use readwrite_comp::{
+  ExtRead,
+};
 use utils::{
   Proto,
   Ref,
   SRef,
   SToRef,
-  receive_msg,
-  receive_msg_msg,
-  receive_att,
-  shad_read_header,
-  shad_read_end,
 };
 use peer::{
   PeerMgmtMeths,
@@ -35,6 +32,7 @@ use transport::{
 };
 use msgenc::{
   ProtoMessage,
+  MsgEnc,
 };
 use super::{
   MyDHTConf,
@@ -252,8 +250,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
       return Ok(ReadReply::NoReply)
     }
     let opmess = {
-      let ust = self.stream.as_mut().unwrap();
-      let mut stream = ReadYield(ust, async_yield);
+      let stream = self.stream.as_mut().unwrap();
       match req {
         ReadCommand::ReadBorrowReturn(..) => unreachable!(),// done at call start
         ReadCommand::Run => {
@@ -273,20 +270,20 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
             },*/
           };
 
-          shad_read_header(&mut shad, &mut stream)?;
+          shad.read_header(&mut ReadYield(stream,async_yield))?;
           // read in single pass
           // TODO specialize ping pong messages with MaxSize. - 
-          let msg : ProtoMessage<MC::Peer> = receive_msg(&mut stream, &mut self.enc, &mut shad)?;
+          let msg : ProtoMessage<MC::Peer> = self.enc.decode_from(stream, &mut shad, async_yield)?;
 
           match msg {
             ProtoMessage::PING(mut p, chal, sig) => {
               // attachment probably useless but if it is possible...
               let atsize = p.attachment_expected_size();
               if atsize > 0 {
-                let att = receive_att(&mut stream, &mut self.enc, &mut shad, atsize)?;
+                let att = self.enc.attach_from(stream, &mut shad, async_yield, atsize)?;
                 p.set_attachment(&att);
               }
-              shad_read_end(&mut shad, &mut stream)?;
+              shad.read_end(&mut ReadYield(stream,async_yield))?;
               // check sig
               if !self.peermgmt.checkmsg(&p,&chal[..],&sig[..]) {
                 // send refuse peer with token to mainloop 
@@ -316,10 +313,10 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
 
               let atsize = withpeer.attachment_expected_size();
               if atsize > 0 {
-                let att = receive_att(&mut stream, &mut self.enc, &mut shad, atsize)?;
+                let att = self.enc.attach_from(stream, &mut shad, async_yield, atsize)?;
                 withpeer.set_attachment(&att);
               }
-              shad_read_end(&mut shad, &mut stream)?;
+              shad.read_end(&mut ReadYield(stream,async_yield))?;
               // check sig
               if !self.peermgmt.checkmsg(&withpeer,&initial_chal[..],&sig[..]) {
                 // send refuse peer with token to mainloop 
@@ -378,17 +375,17 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
                 }
               },
             };*/
-            shad_read_header(&mut shad, &mut stream)?;
+            shad.read_header(&mut ReadYield(stream,async_yield))?;
 
             self.shad_msg = Some(shad);
           }
           let shad = self.shad_msg.as_mut().unwrap();
-          let mut pmess : MC::ProtoMsg = receive_msg_msg(&mut stream, &mut self.enc, shad)?;
+          let mut pmess : MC::ProtoMsg = self.enc.decode_msg_from(stream, shad, async_yield)?;
           let atts_s = pmess.attachment_expected_sizes();
           if atts_s.len() > 0 {
             let mut atts = Vec::with_capacity(atts_s.len());
             for atsize in atts_s {
-              let att = receive_att(&mut stream, &mut self.enc, shad, atsize)?;
+              let att = self.enc.attach_from(stream, shad, async_yield, atsize)?;
               atts.push(att);
             }
             pmess.set_attachments(&atts[..]);

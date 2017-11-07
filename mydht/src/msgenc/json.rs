@@ -1,4 +1,11 @@
 
+use readwrite_comp::{
+  ExtRead,
+  ExtWrite,
+  CompExtWInner,
+  CompExtRInner,
+};
+
 use serde::{
   Serialize,
 };
@@ -31,6 +38,11 @@ use byteorder::{
 };
 use num::traits::ToPrimitive;
 use utils::Proto;
+use service::{
+  SpawnerYield,
+  ReadYield,
+  WriteYield,
+};
 
 /// standard usage of rust serialize with json over proto messages no intemediatory type all content
 /// is used : full encoding
@@ -57,17 +69,21 @@ unsafe impl Send for Json {
 
 impl<P : Peer, M : Serialize + DeserializeOwned> MsgEnc<P,M> for Json {
 
-  fn encode_into<'a, W : Write> (&mut self, w : &mut W, mesg : &ProtoMessageSend<'a,P>) -> MDHTResult<()> 
+  fn encode_into<'a, W : Write, EW : ExtWrite, S : SpawnerYield> (&mut self, w : &mut W, sh : &mut EW, s : &mut S, mesg : &ProtoMessageSend<'a,P>) -> MDHTResult<()> 
 where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a {
- 
+     let mut wy = WriteYield(w,s);
+     let mut w = CompExtWInner(&mut wy,sh);
+
     tryfor!(JSonErr,json::to_vec(mesg).map(|bytes|{
       try!(w.write_u64::<LittleEndian>(bytes.len().to_u64().unwrap()));
       w.write_all(&bytes[..])
     })).map_err(|e|e.into())
   }
-  fn encode_msg_into<'a, W : Write> (&mut self, w : &mut W, mesg : &mut M) -> MDHTResult<()> {
- 
+
+  fn encode_msg_into<'a, W : Write, EW : ExtWrite, S : SpawnerYield> (&mut self, w : &mut W, sh : &mut EW, s : &mut S, mesg : &mut M) -> MDHTResult<()> {
+     let mut wy = WriteYield(w,s);
+     let mut w = CompExtWInner(&mut wy,sh);
     tryfor!(JSonErr,json::to_vec(mesg).map(|bytes|{
       try!(w.write_u64::<LittleEndian>(bytes.len().to_u64().unwrap()));
       w.write_all(&bytes[..])
@@ -77,11 +93,16 @@ where <P as Peer>::Address : 'a,
 
   /// attach into will simply add bytes afterward json cont (no hex or base64 costly enc otherwhise
   /// it would be into message)
-  fn attach_into<W : Write> (&mut self, w : &mut W, a : &Attachment) -> MDHTResult<()> {
-    write_attachment(w,a)
+  fn attach_into<W : Write, EW : ExtWrite, S : SpawnerYield> (&mut self, w : &mut W, sh : &mut EW, s : &mut S, a : &Attachment) -> MDHTResult<()> {
+    let mut wy = WriteYield(w,s);
+    let mut w = CompExtWInner(&mut wy,sh);
+
+    write_attachment(&mut w,a)
   }
 
-  fn decode_msg_from<R : Read>(&mut self, r : &mut R) -> MDHTResult<M> {
+  fn decode_msg_from<R : Read, ER : ExtRead, S : SpawnerYield>(&mut self, r : &mut R, sh : &mut ER, s : &mut S) -> MDHTResult<M> {
+    let mut ry = ReadYield(r,s);
+    let mut r = CompExtRInner(&mut ry,sh);
     let len = try!(r.read_u64::<LittleEndian>()) as usize;
     // TODO max len : easy overflow here
     if len > MAX_BUFF {
@@ -94,7 +115,9 @@ where <P as Peer>::Address : 'a,
   }
 
 
-  fn decode_from<R : Read>(&mut self, r : &mut R) -> MDHTResult<ProtoMessage<P>> {
+  fn decode_from<R : Read, ER : ExtRead, S : SpawnerYield>(&mut self, r : &mut R, sh : &mut ER, s : &mut S) -> MDHTResult<ProtoMessage<P>> {
+    let mut ry = ReadYield(r,s);
+    let mut r = CompExtRInner(&mut ry,sh);
     let len = try!(r.read_u64::<LittleEndian>()) as usize;
     // TODO max len : easy overflow here
     if len > MAX_BUFF {
@@ -106,8 +129,10 @@ where <P as Peer>::Address : 'a,
     Ok(tryfor!(JSonErr,json::from_slice(&mut vbuf[..])))
   }
 
-  fn attach_from<R : Read>(&mut self, r : &mut R, mlen : usize) -> MDHTResult<Attachment> {
-    read_attachment(r,mlen)
+  fn attach_from<R : Read, ER : ExtRead, S : SpawnerYield>(&mut self, r : &mut R, sh : &mut ER, s : &mut S, mlen : usize) -> MDHTResult<Attachment> {
+    let mut ry = ReadYield(r,s);
+    let mut r = CompExtRInner(&mut ry,sh);
+    read_attachment(&mut r,mlen)
   }
 
 

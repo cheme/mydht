@@ -108,6 +108,10 @@ impl<T> Registerable for MpscRec<T> {
     p.reregister(&self.reg,t,r,po)?;
     Ok(true)
   }
+  fn deregister(&self, poll: &Poll) -> Result<()> {
+    poll.deregister(&self.reg)?;
+    Ok(())
+  }
 }
 pub struct MpscSend<T> {
   mpsc : Sender<T>,

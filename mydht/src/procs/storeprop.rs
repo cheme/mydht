@@ -193,6 +193,8 @@ pub enum KVStoreProtoMsg<P : Peer, V : KeyVal,R : Ref<V> + Serialize + Deseriali
   PROPAGATE(PropagateMsg<P>, R),
 }
 
+
+
 /// Protomessage to use in simple Dht with no localservice command and a KV store as main service
 #[derive(Serialize,Deserialize,Debug)]
 #[serde(bound(deserialize = ""))]
@@ -200,6 +202,7 @@ pub enum KVStoreProtoMsgWithPeer<P : Peer, RP : Ref<P> + Serialize + Deserialize
   Main(KVStoreProtoMsg<P,V,R>),
   PeerMgmt(KVStoreProtoMsg<P,P,RP>),
 }
+
 impl<P : Peer, RP : Ref<P> + Serialize + DeserializeOwned + Clone, V : KeyVal,R : Ref<V> + Serialize + DeserializeOwned + Clone>
     GettableAttachments for KVStoreProtoMsgWithPeer<P,RP,V,R> {
   fn get_nb_attachments(&self) -> usize {

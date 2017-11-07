@@ -1,7 +1,9 @@
-
 //! msgenc : encoding of message exchanged between peers.
 
-
+use readwrite_comp::{
+  ExtRead,
+  ExtWrite,
+};
 use keyval::{
   Attachment,
 };
@@ -18,7 +20,7 @@ use num::traits::ToPrimitive;
 use utils;
 use utils::Proto;
 use self::send_variant::ProtoMessage as ProtoMessageSend;
-
+use service::SpawnerYield;
 
 /// Trait for message encoding between peers.
 /// It use bytes which will be used by transport.
@@ -27,22 +29,26 @@ use self::send_variant::ProtoMessage as ProtoMessageSend;
 /// use tunnel encoder)
 /// TODO split in read/write and make mut??
 /// TODO why sync
+/// TODO trait change and is not encoded only oriented (extwrite and asyncyield added) -> create a
+/// new trait ??
 pub trait MsgEnc<P : Peer,M> : Send + 'static + Proto {
   //fn encode<P : Peer, V : KeyVal>(&self, &ProtoMessage<P,V>) -> Option<Vec<u8>>;
   
   /// encode
-  fn encode_into<'a,W : Write> (&mut self, w : &mut W, mesg : &ProtoMessageSend<'a,P>) -> MDHTResult<()>
+  fn encode_into<'a,W : Write,EW : ExtWrite,S : SpawnerYield> (&mut self, w : &mut W, &mut EW, &mut S, masg : &ProtoMessageSend<'a,P>) -> MDHTResult<()>
 where <P as Peer>::Address : 'a;
-  fn decode_from<R : Read>(&mut self, &mut R) -> MDHTResult<ProtoMessage<P>>;
 
-  fn encode_msg_into<'a,W : Write> (&mut self, w : &mut W, mesg : &mut M) -> MDHTResult<()>;
+  fn decode_from<R : Read,ER : ExtRead,S : SpawnerYield>(&mut self, &mut R, &mut ER, &mut S) -> MDHTResult<ProtoMessage<P>>;
 
-  fn attach_into<W : Write> (&mut self, &mut W, &Attachment) -> MDHTResult<()>;
-//  fn decode<P : Peer, V : KeyVal>(&self, &[u8]) -> Option<ProtoMessage<P,V>>;
+  fn encode_msg_into<'a,W : Write,EW : ExtWrite,S : SpawnerYield> (&mut self, w : &mut W, &mut EW, &mut S, mesg : &mut M) -> MDHTResult<()>;
+
+  fn attach_into<W : Write,EW : ExtWrite,S : SpawnerYield> (&mut self, &mut W, &mut EW, &mut S, &Attachment) -> MDHTResult<()>;
+
   /// decode
-  fn decode_msg_from<R : Read>(&mut self, &mut R) -> MDHTResult<M>;
+  fn decode_msg_from<R : Read,ER : ExtRead,S : SpawnerYield>(&mut self, &mut R, &mut ER, &mut S) -> MDHTResult<M>;
+
   /// error if attachment more than a treshold (0 if no limit).
-  fn attach_from<R : Read>(&mut self, &mut R, usize) -> MDHTResult<Attachment>;
+  fn attach_from<R : Read,ER : ExtRead,S : SpawnerYield>(&mut self, &mut R, &mut ER, &mut S, usize) -> MDHTResult<Attachment>;
 }
 
 

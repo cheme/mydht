@@ -147,7 +147,8 @@ pub trait Registerable {
   fn register(&self, &Poll, Token, Ready, PollOpt) -> Result<bool>;
   /// async reregister
   fn reregister(&self, &Poll, Token, Ready, PollOpt) -> Result<bool>;
- 
+
+  fn deregister(&self, poll: &Poll) -> Result<()>;
 }
 /// transport must be sync (in running type), it implies that it is badly named as transport must
 /// only contain enough information to instantiate needed component (even not sync) in the start
@@ -234,6 +235,10 @@ impl Registerable for TcpStream {
   fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
     Ok(false)
   }
+
+  fn deregister(&self, poll: &Poll) -> Result<()> {
+    Ok(())
+  }
 }
 
 impl WriteTransportStream for TcpStream {
@@ -259,6 +264,11 @@ impl Registerable for MioStream {
   fn reregister(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
     p.reregister(self, t, r, po)?;
     Ok(true)
+  }
+
+  fn deregister(&self, poll: &Poll) -> Result<()> {
+    poll.deregister(self)?;
+    Ok(())
   }
 }
 

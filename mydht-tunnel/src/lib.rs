@@ -100,7 +100,10 @@ use std::io::{
   Read,
 };
 use tunnel::Peer as TPeer;
-use mydht::peer::Peer;
+use mydht::peer::{
+  Peer,
+  NoShadow,
+};
 use mydht::utils::{
   Ref,
   Proto,
@@ -151,6 +154,10 @@ use mydht::utils::{
 };
 use mydht::service::{
   Service,
+  ReadYield,
+  WriteYield,
+  NoYield,
+  YieldReturn,
  // MioChannel,
  // SpawnChannel,
   MpscChannel,
@@ -358,6 +365,8 @@ pub enum TunnelMessaging<MC : MyDHTTunnelConf> {
   /// reply based on borrow reader content
   ReplyFromReader(MC::ProtoMsg,ReadMsgState<MC>),
 }
+
+
 impl<MC : MyDHTTunnelConf> OptFrom<MCCommand<MyDHTTunnelConfType<MC>>> for TunnelMessaging<MC> {
   fn can_from(m : &MCCommand<MyDHTTunnelConfType<MC>>) -> bool {
     match *m {
@@ -373,7 +382,7 @@ impl<MC : MyDHTTunnelConf> OptFrom<MCCommand<MyDHTTunnelConfType<MC>>> for Tunne
             TunnelMessaging::TunnelReplyOnce(inner_proto,Some(rinit),Some(rw),des_r,r_borrow)),
         GlobalTunnelCommand::TunnelSendOnce(tunn_w, inner) => inner.opt_into().map(|inner_proto|
           TunnelMessaging::TunnelSendOnce(Some(tunn_w), inner_proto)),
-        GlobalTunnelCommand::TunnelProxyOnce(proxy_w, bs) => Some(TunnelMessaging::TunnelProxyOnce(proxy_w,bs)),
+        GlobalTunnelCommand::TunnelProxyOnce(proxy_w,bs) => Some(TunnelMessaging::TunnelProxyOnce(proxy_w,bs)),
         GlobalTunnelCommand::Inner(..)
           | GlobalTunnelCommand::NewOnline(..)
           | GlobalTunnelCommand::Offline(..)
@@ -417,6 +426,7 @@ impl<MC : MyDHTTunnelConf> Into<MCCommand<MyDHTTunnelConfType<MC>>> for TunnelMe
 
 
 /// a special msg enc dec using tunnel primitive (tunnelw tunnelr in protomessage)
+/// Warning currently inner encoder can not use Yield (always call with NoYield)
 pub struct TunnelWriterReader<MC : MyDHTTunnelConf> {
   pub inner_enc : MC::MsgEnc,
   pub current_writer : Option<FullWTConf<MC>>,
@@ -442,31 +452,38 @@ impl<MC : MyDHTTunnelConf> Proto for TunnelWriterReader<MC> {
 }
 
 impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriterReader<MC> {
-  fn encode_into<'a,W : Write> (&mut self, w : &mut W, m : &ProtoMessageSend<'a,MC::Peer>) -> Result<()>
+
+  #[inline]
+  fn encode_into<'a,W : Write,EW : ExtWrite,S : SpawnerYield> (&mut self, w : &mut W, shad : &mut EW, y : &mut S, m : &ProtoMessageSend<'a,MC::Peer>) -> Result<()>
     where <MC::Peer as Peer>::Address : 'a {
-    self.inner_enc.encode_into(w,m)
+    self.inner_enc.encode_into(w,shad,y,m)
   }
-  fn decode_from<R : Read>(&mut self, r : &mut R) -> Result<ProtoMessage<MC::Peer>> {
-    self.inner_enc.decode_from(r)
+  #[inline]
+  fn decode_from<R : Read,ER : ExtRead,S : SpawnerYield>(&mut self, r : &mut R, shad : &mut ER, y : &mut S) -> Result<ProtoMessage<MC::Peer>> {
+    self.inner_enc.decode_from(r,shad,y)
   }
 
-  fn encode_msg_into<'a,W : Write> (&mut self, w : &mut W, mesg : &mut TunnelMessaging<MC>) -> Result<()> {
+  fn encode_msg_into<'a,W : Write,EW : ExtWrite,S : SpawnerYield> (&mut self, w : &mut W, wshad : &mut EW, y : &mut S, mesg : &mut TunnelMessaging<MC>) -> Result<()> {
     match *mesg {
       TunnelMessaging::TunnelSendOnce(None, _) => unreachable!(),
       TunnelMessaging::TunnelProxyOnce(ref mut proxy, (ref mut rs,ref mut rshad,_)) => {
 
-        println!("start a proxying");
+ //       println!("start a proxying");
         let mut readbuf = vec![0;MC::PROXY_BUF_SIZE];
-        let mut reader = CompExtRInner(rs,rshad);
+        let mut y2 = y.opt_clone().unwrap();
+        let mut ry = ReadYield(rs,y);
+        let mut reader = CompExtRInner(&mut ry,rshad);
         proxy.read_header(&mut reader)?;
 
-        proxy.write_header(w)?;
+        let mut wy = WriteYield(w,&mut y2);
+        let mut w = CompExtWInner(&mut wy,wshad);
+        proxy.write_header(&mut w)?;
         // unknown length
         let mut ix;
-        let mut total=0;
+//        let mut total=0;
         while  {
           let l = proxy.read_from(&mut reader, &mut readbuf)?;
-            println!("reda {} {}",l,total);
+ //           println!("reda {} {}",l,total);
           if l == 0 {
           //  panic!("Read0 at {:?}",total); TODO testing with commenting send
           //  TODO yield in message (trait then add from write service as box in mesg
@@ -482,37 +499,40 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
           //  spawnyield is not send in this case but not a pb at first glance!!
           //
           //  after clone done, simply put it in message like said before and use it here
-            println!("do not w 0 lenth l!!!");
+//            println!("do not w 0 lenth l!!!");
           }
-          total += l;
+ //         total += l;
           ix = 0;
           while ix < l {
-            let nb = proxy.write_into(w, &mut readbuf[..l])?;
+            let nb = proxy.write_into(&mut w, &mut readbuf[..l])?;
             ix += nb;
-            total  += nb;
+ //           total  += nb;
           }
           l > 0
         } {}
-        println!("end a proxying{:?}", total);
+ //       println!("end a proxying{:?}", total);
         proxy.read_end(&mut reader)?;
-        println!("end a proxying2");
-        proxy.write_end(w)?;
-        println!("end a proxying3");
-        proxy.flush_into(w)?;
-        println!("end a proxying");
+        proxy.write_end(&mut w)?;
+        proxy.flush_into(&mut w)?;
         w.flush()?;
+//        println!("end a proxying");
       },
       TunnelMessaging::TunnelReplyOnce(ref mut proto_m, ref mut rwinit, ref mut orw, ref mut destr, (ref mut rs,ref mut rshad,_)) => {
         println!("Replying!");
-        let mut reader = CompExtRInner(rs,rshad);
-        <Full<TunnelTraits<MC>>>::reply_writer_init(replace(rwinit,None).unwrap(), orw.as_mut().unwrap(), destr, &mut reader, w)?;
+        let mut y2 = y.opt_clone().unwrap();
+        let mut ry = ReadYield(rs,y);
+        let mut reader = CompExtRInner(&mut ry,rshad);
+
+        let mut wy = WriteYield(w,&mut y2);
+        let mut w = CompExtWInner(&mut wy,wshad);
+        <Full<TunnelTraits<MC>>>::reply_writer_init(replace(rwinit,None).unwrap(), orw.as_mut().unwrap(), destr, &mut reader, &mut w)?;
         // TODO dup code with send
         let nb_att = proto_m.get_nb_attachments();
         {
           let rw = orw.as_mut().unwrap();
-          rw.write_header(w)?;
-          let mut tunn_w = CompExtWInner(w, rw);
-          self.inner_enc.encode_msg_into(&mut tunn_w,proto_m)?;
+          rw.write_header(&mut w)?;
+          let mut tunn_w = CompExtWInner(&mut w, rw);
+          self.inner_enc.encode_msg_into(&mut tunn_w, &mut NoShadow, &mut NoYield(YieldReturn::Loop), proto_m)?;
         }
         self.current_reply_writer = None;
         if nb_att > 0 {
@@ -520,18 +540,22 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
           self.current_reply_writer = replace(orw, None);
         } else {
           let tunn_we = orw.as_mut().unwrap();
-          tunn_we.write_end(w)?;
-          tunn_we.flush_into(w)?;
+          tunn_we.write_end(&mut w)?;
+          tunn_we.flush_into(&mut w)?;
           w.flush()?;
         }
       },
       TunnelMessaging::TunnelSendOnce(ref mut o_tunn_we, ref mut proto_m) => {
+
+        let mut wy = WriteYield(w,y);
+        let mut w = CompExtWInner(&mut wy,wshad);
+
         let nb_att = proto_m.get_nb_attachments();
         {
           let tunn_we = o_tunn_we.as_mut().unwrap();
-          tunn_we.write_header(w)?;
-          let mut tunn_w = CompExtWInner(w, tunn_we);
-          self.inner_enc.encode_msg_into(&mut tunn_w,proto_m)?;
+          tunn_we.write_header(&mut w)?;
+          let mut tunn_w = CompExtWInner(&mut w, tunn_we);
+          self.inner_enc.encode_msg_into(&mut tunn_w,&mut NoShadow, &mut NoYield(YieldReturn::Loop),proto_m)?;
         }
         self.current_writer = None;
         if nb_att > 0 {
@@ -539,10 +563,10 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
           self.current_writer = replace(o_tunn_we, None);
         } else {
           let tunn_we = o_tunn_we.as_mut().unwrap();
-          println!("bef tunwe write end");
-          tunn_we.write_end(w)?;
-          println!("aft tunwe write end");
-          tunn_we.flush_into(w)?;
+        //  println!("bef tunwe write end");
+          tunn_we.write_end(&mut w)?;
+       //   println!("aft tunwe write end");
+          tunn_we.flush_into(&mut w)?;
           w.flush()?;
         }
       },
@@ -554,37 +578,44 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
     Ok(())
   }
 
-  fn attach_into<W : Write> (&mut self, w : &mut W, att : &Attachment) -> Result<()> {
+  fn attach_into<W : Write,EW : ExtWrite,S : SpawnerYield> (&mut self, w : &mut W, shad : &mut EW, y : &mut S, att : &Attachment) -> Result<()> {
     // attachment require storing tunn_w in MsgEnc and flushing/writing end somehow
     // (probably by storing nb attach when encode and write end at last one 
     // or at end of encode if none)
+
+    let mut wy = WriteYield(w,y);
+    let mut w = CompExtWInner(&mut wy,shad);
     if let Some(tunn_we) = self.current_writer.as_mut() {
+
       {
-        let mut tunn_w = CompExtWInner(w, tunn_we);
-        self.inner_enc.attach_into(&mut tunn_w, att)?;
+        let mut tunn_w = CompExtWInner(&mut w, tunn_we);
+        self.inner_enc.attach_into(&mut tunn_w, &mut NoShadow, &mut NoYield(YieldReturn::Loop), att)?;
       }
       self.nb_attach_rem -= 1;
       if self.nb_attach_rem == 0 {
-        tunn_we.flush_into(w)?;
-        tunn_we.write_end(w)?;
+        tunn_we.flush_into(&mut w)?;
+        tunn_we.write_end(&mut w)?;
       }
     }
     // TODO fn for duplicated code
     if let Some(tunn_we) = self.current_reply_writer.as_mut() {
       {
-        let mut tunn_w = CompExtWInner(w, tunn_we);
-        self.inner_enc.attach_into(&mut tunn_w, att)?;
+        let mut tunn_w = CompExtWInner(&mut w, tunn_we);
+        self.inner_enc.attach_into(&mut tunn_w, &mut NoShadow, &mut NoYield(YieldReturn::Loop), att)?;
       }
       self.nb_attach_rem -= 1;
       if self.nb_attach_rem == 0 {
-        tunn_we.flush_into(w)?;
-        tunn_we.write_end(w)?;
+        tunn_we.flush_into(&mut w)?;
+        tunn_we.write_end(&mut w)?;
       }
     }
     Ok(())
   }
-  fn decode_msg_from<R : Read>(&mut self, r : &mut R) -> Result<TunnelMessaging<MC>> {
+  fn decode_msg_from<R : Read,ER : ExtRead,S : SpawnerYield>(&mut self, rs : &mut R, rshad : &mut ER, y : &mut S)  -> Result<TunnelMessaging<MC>> {
 
+    let mut ry = ReadYield(rs,y);
+    let mut r = CompExtRInner(&mut ry,rshad);
+    let r = &mut r;
     let mut tunn_re = self.t_readprov.new_reader();
     self.do_finalize_read = false;
     tunn_re.read_header(r)?;
@@ -595,7 +626,7 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
           dest_reader.read_header(r)?;
           let proto_m = {
             let mut tunn_r = CompExtRInner(r, &mut dest_reader);
-            self.inner_enc.decode_msg_from(&mut tunn_r)?
+            self.inner_enc.decode_msg_from(&mut tunn_r,&mut NoShadow, &mut NoYield(YieldReturn::Loop))?
           };
           self.nb_attach_rem = proto_m.attachment_expected_sizes().len();
           let (do_reply,need_init,owr) = self.t_readprov.new_reply_writer(&mut dest_reader, r)?;
@@ -674,11 +705,15 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
       }
     }
   }
-  fn attach_from<R : Read>(&mut self, r : &mut R, max_size : usize) -> Result<Attachment> {
+  fn attach_from<R : Read,ER : ExtRead,S : SpawnerYield>(&mut self, rs : &mut R, rshad : &mut ER, y : &mut S, max_size : usize) -> Result<Attachment> {
+    let mut ry = ReadYield(rs,y);
+    let mut r = CompExtRInner(&mut ry,rshad);
+    let r = &mut r;
+ 
     if let Some(dest_reader) = self.current_reader.as_mut() {
       let att = {
         let mut tunn_r = CompExtRInner(r, dest_reader);
-        self.inner_enc.attach_from(&mut tunn_r, max_size)?
+        self.inner_enc.attach_from(&mut tunn_r, &mut NoShadow, &mut NoYield(YieldReturn::Loop), max_size)?
       };
 
       if self.do_finalize_read {
@@ -796,7 +831,8 @@ impl<MC : MyDHTTunnelConf> RegReaderBorrow<MyDHTTunnelConfType<MC>> for GlobalTu
 
   fn get_read(&self) -> Option<&<MC::Transport as Transport>::ReadStream> {
     match *self {
-      GlobalTunnelCommand::TunnelReplyOnce(_,_,_,_,(ref rs,_,_)) => Some(rs),
+      GlobalTunnelCommand::TunnelReplyOnce(_,_,_,_,(ref rs,_,_)) |
+      GlobalTunnelCommand::TunnelProxyOnce(_,(ref rs,_,_)) => Some(rs),
       _ => None,
     }
   }
@@ -1170,8 +1206,6 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
   type WriteDest = NoSend;
  
   type WriteChannelIn = MpscChannel;
-  /// Warning here we expect a spawner using a Clonable spawn handle, if puting this type in tunnel
-  /// conf we need to constrain that!!
   type WriteSpawn = ThreadPark;
 
   type LocalServiceCommand = LocalTunnelCommand<MC>;

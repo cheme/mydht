@@ -6,7 +6,6 @@ extern crate time;
 extern crate openssl;
 extern crate bincode;
 
-extern crate readwrite_comp;
 
 // reexport from base
 pub use mydht_base::utils::*;
@@ -16,12 +15,12 @@ pub use procs::{
   OptFrom,
   OptInto,
 };
-use self::readwrite_comp::{
+/*use self::readwrite_comp::{
   ExtRead,
   ExtWrite,
   CompExtWInner,
   CompExtRInner,
-};
+};*/
 use rand::Rng;
 use rand::thread_rng;
 use keyval::{Attachment};
@@ -41,6 +40,7 @@ use self::crypto::sha2::Sha256;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::fs::File;
+use service::SpawnerYield;
 //use std::iter;
 //use std::borrow::ToOwned;
 //use std::ffi::OsStr;
@@ -105,27 +105,28 @@ pub fn random_bytes(size : usize) -> Vec<u8> {
    bytes
 }
 
-
-pub fn receive_msg<P : Peer, M, T : Read, E : MsgEnc<P,M>, S : ExtRead>(t : &mut T, e : &mut E, s : &mut S) -> MDHTResult<ProtoMessage<P>> {
+/*
+pub fn receive_msg<P : Peer, M, T : Read, S : SpawnerYield, E : MsgEnc<P,M>, S : ExtRead>(t : &mut T, e : &mut E, s : &mut S) -> MDHTResult<ProtoMessage<P>> {
   let mut cr = CompExtRInner(t,s);
   let m = e.decode_from(&mut cr)?;
   Ok(m)
 }
-pub fn receive_msg_msg<P : Peer, M, T : Read, E : MsgEnc<P,M>, S : ExtRead>(t : &mut T, e : &mut E, s : &mut S) -> MDHTResult<M> {
+pub fn receive_msg_msg<P : Peer, M, T : Read, S : SpawnerYield, E : MsgEnc<P,M>, S : ExtRead>(t : &mut T, e : &mut E, s : &mut S) -> MDHTResult<M> {
   let mut cr = CompExtRInner(t,s);
   let m = e.decode_msg_from(&mut cr)?;
   Ok(m)
 }
 
-pub fn receive_att<P : Peer, M, T : Read, E : MsgEnc<P,M>, S : ExtRead>(t : &mut T, e : &mut E, s : &mut S, sl : usize) -> MDHTResult<Attachment> {
+pub fn receive_att<P : Peer, M, T : Read, S : SpawnerYield, E : MsgEnc<P,M>, S : ExtRead>(t : &mut T, e : &mut E, s : &mut S, sl : usize) -> MDHTResult<Attachment> {
   let mut cr = CompExtRInner(t,s);
   let oa = e.attach_from(&mut cr,sl)?;
   Ok(oa)
 }
-
-#[inline]
-pub fn shad_read_header<T : Read, S : ExtRead>(s : &mut S, t : &mut T) -> MDHTResult<()> {
-  s.read_header(t)?;
+*/
+/*#[inline]
+  fn decode_from<R : Read, ER : ExtRead, S : SpawnerYield>(&mut self, r : &mut R, sh : &mut ER, s : &mut S) -> MDHTResult<ProtoMessage<P>> {
+pub fn shad_read_header<R : Read,ER : ExtRead,S : SpawnerYield>(r : &mut R, sh : &mut ER, s : &mut S) -> MDHTResult<()> {
+  let mut ry = ReadYield(r,s);
   Ok(())
 }
 #[inline]
@@ -147,7 +148,8 @@ pub fn shad_flush<T : Write, S : ExtWrite>(s : &mut S, t : &mut T) -> MDHTResult
 pub fn shad_write_end<T : Write, S : ExtWrite>(s : &mut S, t : &mut T) -> MDHTResult<()> {
   s.write_end(t)?;
   Ok(())
-}
+}*/
+/*
 pub fn send_msg<P : Peer, M, T : Write, E : MsgEnc<P,M>, S : ExtWrite>(m : &ProtoMessageSend<P>, t : &mut T, e : &mut E, s : &mut S) -> MDHTResult<()> {
   let mut cw = CompExtWInner(t,s);
   e.encode_into(&mut cw,m)?;
@@ -164,7 +166,7 @@ pub fn send_att<P : Peer, M, T : Write, E : MsgEnc<P,M>, S : ExtWrite>(att : &At
   let mut cw = CompExtWInner(t,s);
   e.attach_into(&mut cw,att)
 }
-
+*/
 
 
 

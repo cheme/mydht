@@ -15,14 +15,13 @@ use keyval::{
 use transport::{
   Transport,
 };
+use readwrite_comp::{
+  ExtWrite,
+};
+use msgenc::MsgEnc;
 use utils::{
   SRef,
   SToRef,
-  shad_write_header,
-  shad_write_end,
-  send_msg,
-  send_msg_msg,
-  send_att,
 };
 use super::{
   MyDHTConf,
@@ -30,6 +29,7 @@ use super::{
   MCCommand,
   PeerRefSend,
 };
+use std::cell::Cell;
 use msgenc::send_variant::{
   ProtoMessage,
 };
@@ -164,7 +164,6 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
       },
       WriteCommand::Pong(rp,chal,read_token,option_chal2) => {
         self.read_token = Some(read_token);
-        let mut stream = WriteYield(&mut self.stream, async_yield);
         // update dest : this ensure that on after auth with is initialized! Remember that with may
         // contain initializing shared secret for message shadow.
         self.with = Some(rp);
@@ -172,33 +171,31 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
         let pmess : ProtoMessage<MC::Peer> = ProtoMessage::PONG(self.from.borrow(),chal,sig,option_chal2);
         // once shadower
         let mut shad = get_shad_auth::<MC>(&self.from,&self.with);
-        shad_write_header(&mut shad, &mut stream)?;
+        shad.write_header(&mut WriteYield(&mut self.stream,async_yield))?;
 
-        send_msg(&pmess, &mut stream, &mut self.enc, &mut shad)?;
+        self.enc.encode_into(&mut self.stream, &mut shad, async_yield, &pmess)?;
         if let Some(ref att) = self.from.borrow().get_attachment() {
-          send_att(att, &mut stream, &mut self.enc, &mut shad)?;
+          self.enc.attach_into(&mut self.stream, &mut shad, async_yield, att)?;
         }
 
-        shad_write_end(&mut shad, &mut stream)?;
-        stream.flush()?;
+        shad.write_end(&mut WriteYield(&mut self.stream,async_yield))?;
+        shad.flush_into(&mut WriteYield(&mut self.stream,async_yield))?;
       },
       WriteCommand::Ping(chal) => {
         debug!("Client service sending ping command");
-        let mut stream = WriteYield(&mut self.stream, async_yield);
- //       let chal = self.peermgmt.challenge(self.from.borrow());
         let sign = self.peermgmt.signmsg(self.from.borrow(), &chal);
         // we do not wait for a result
         let pmess : ProtoMessage<MC::Peer> = ProtoMessage::PING(self.from.borrow(), chal.clone(), sign);
         let mut shad = get_shad_auth::<MC>(&self.from,&self.with);
-        shad_write_header(&mut shad, &mut stream)?;
+        shad.write_header(&mut WriteYield(&mut self.stream,async_yield))?;
 
-        send_msg(&pmess, &mut stream, &mut self.enc, &mut shad)?;
+        self.enc.encode_into(&mut self.stream, &mut shad, async_yield, &pmess)?;
         if let Some(ref att) = self.from.borrow().get_attachment() {
-          send_att(att, &mut stream, &mut self.enc, &mut shad)?;
+          self.enc.attach_into(&mut self.stream, &mut shad, async_yield, att)?;
         }
 
-        shad_write_end(&mut shad, &mut stream)?;
-        stream.flush()?;
+        shad.write_end(&mut WriteYield(&mut self.stream,async_yield))?;
+        shad.flush_into(&mut WriteYield(&mut self.stream,async_yield))?;
 //        return Ok(WriteReply::MainLoop(MainLoopCommand::NewChallenge(self.token,chal)));
 
       },
@@ -225,7 +222,6 @@ impl<MC : MyDHTConf> WriteService<MC> {
   fn forward_proto<S : SpawnerYield, R : OptInto<MC::ProtoMsg>>(&mut self, command: R, async_yield : &mut S) -> Result<()> {
     if command.can_into() {
 
-      let mut stream = WriteYield(&mut self.stream, async_yield);
 
       if self.shad_msg.is_none() {
         let mut shad = match MC::AUTH_MODE {
@@ -241,14 +237,15 @@ impl<MC : MyDHTConf> WriteService<MC> {
         };
 
         // write head before storing
-        shad_write_header(&mut shad, &mut stream)?;
+        shad.write_header(&mut WriteYield(&mut self.stream,async_yield))?;
         self.shad_msg = Some(shad);
       }
 
       let mut shad = self.shad_msg.as_mut().unwrap();
 
       let mut pmess = command.opt_into().unwrap();
-      send_msg_msg(&mut pmess, &mut stream, &mut self.enc, &mut shad)?;
+
+      self.enc.encode_msg_into(&mut self.stream, shad, async_yield, &mut pmess)?;
 /*      let mut cursor = Cursor::new(Vec::new());
       send_msg_msg(&pmess, &mut cursor, &self.enc, &mut shad)?;
       let v = cursor.into_inner();
@@ -258,7 +255,7 @@ impl<MC : MyDHTConf> WriteService<MC> {
 
       if pmess.get_nb_attachments() > 0 {
         for att in pmess.get_attachments() {
-          send_att(att, &mut stream, &mut self.enc, &mut shad)?;
+          self.enc.attach_into(&mut self.stream, shad, async_yield, att)?;
         }
       }
     }

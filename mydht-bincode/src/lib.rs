@@ -1,8 +1,19 @@
 #[macro_use] extern crate mydht_base;
 extern crate bincode;
 extern crate serde;
+extern crate readwrite_comp;
 #[cfg(test)]
 extern crate mydht_basetest;
+
+
+
+use readwrite_comp::{
+  ExtRead,
+  ExtWrite,
+  CompExtWInner,
+  CompExtRInner,
+};
+
 
 use serde::{Serialize};
 use serde::de::{DeserializeOwned};
@@ -15,6 +26,11 @@ use mydht_base::msgenc::ProtoMessage;
 //use std::collections::BTreeMap;
 use std::io::Write;
 use std::io::Read;
+use mydht_base::service::{
+  SpawnerYield,
+  ReadYield,
+  WriteYield,
+};
 use mydht_base::msgenc::write_attachment;
 use mydht_base::msgenc::read_attachment;
 use mydht_base::mydhtresult::Result as MDHTResult;
@@ -57,33 +73,44 @@ impl<P : Peer, M : Serialize + DeserializeOwned> MsgEnc<P,M> for Bincode {
     bincode::decode(buff).ok()
   }*/
 
-  fn encode_into<'a,W : Write> (&mut self, w : &mut W, mesg : &ProtoMessageSend<'a,P>) -> MDHTResult<()>
+  fn encode_into<'a, W : Write, EW : ExtWrite, S : SpawnerYield> (&mut self, w : &mut W, sh : &mut EW, s : &mut S, mesg : &ProtoMessageSend<'a,P>) -> MDHTResult<()> 
 where <P as Peer>::Address : 'a,
       <P as KeyVal>::Key : 'a {
-  
-     tryfor!(BinErr,bincode::serialize_into(w, mesg, Infinite));
-     Ok(())
-  }
-  fn encode_msg_into<W : Write> (&mut self, w : &mut W, mesg : &mut M) -> MDHTResult<()> {
-     tryfor!(BinErr,bincode::serialize_into(w, mesg, Infinite));
+     let mut wy = WriteYield(w,s);
+     let mut w = CompExtWInner(&mut wy,sh);
+     tryfor!(BinErr,bincode::serialize_into(&mut w, mesg, Infinite));
      Ok(())
   }
 
+  fn encode_msg_into<'a, W : Write, EW : ExtWrite, S : SpawnerYield> (&mut self, w : &mut W, sh : &mut EW, s : &mut S, mesg : &mut M) -> MDHTResult<()> {
+     let mut wy = WriteYield(w,s);
+     let mut w = CompExtWInner(&mut wy,sh);
+     tryfor!(BinErr,bincode::serialize_into(&mut w, mesg, Infinite));
+     Ok(())
+  }
 
-  fn attach_into<W : Write> (&mut self, w : &mut W, a : &Attachment) -> MDHTResult<()> {
+  fn attach_into<W : Write, EW : ExtWrite, S : SpawnerYield> (&mut self, w : &mut W, sh : &mut EW, s : &mut S, a : &Attachment) -> MDHTResult<()> {
+    let mut wy = WriteYield(w,s);
+    let mut w = CompExtWInner(&mut wy,sh);
 //    try!(w.write_all(&[if a.is_some(){1}else{0}]));
-    write_attachment(w,a)
+    write_attachment(&mut w,a)
+  }
+ 
+  fn decode_from<R : Read, ER : ExtRead, S : SpawnerYield>(&mut self, r : &mut R, sh : &mut ER, s : &mut S) -> MDHTResult<ProtoMessage<P>> {
+    let mut ry = ReadYield(r,s);
+    let mut r = CompExtRInner(&mut ry,sh);
+    Ok(tryfor!(BinErr,bincode::deserialize_from(&mut r, Infinite)))
   }
 
-  fn decode_from<R : Read>(&mut self, r : &mut R) -> MDHTResult<ProtoMessage<P>> {
-    Ok(tryfor!(BinErr,bincode::deserialize_from(r, Infinite)))
-  }
-  fn decode_msg_from<R : Read>(&mut self, r : &mut R) -> MDHTResult<M> {
-    Ok(tryfor!(BinErr,bincode::deserialize_from(r, Infinite)))
+  fn decode_msg_from<R : Read, ER : ExtRead, S : SpawnerYield>(&mut self, r : &mut R, sh : &mut ER, s : &mut S) -> MDHTResult<M> {
+    let mut ry = ReadYield(r,s);
+    let mut r = CompExtRInner(&mut ry,sh);
+    Ok(tryfor!(BinErr,bincode::deserialize_from(&mut r, Infinite)))
   }
 
-
-  fn attach_from<R : Read>(&mut self, r : &mut R, mlen : usize) -> MDHTResult<Attachment> {
+  fn attach_from<R : Read, ER : ExtRead, S : SpawnerYield>(&mut self, r : &mut R, sh : &mut ER, s : &mut S, mlen : usize) -> MDHTResult<Attachment> {
+    let mut ry = ReadYield(r,s);
+    let mut r = CompExtRInner(&mut ry,sh);
 /*    let mut buf = [0];
     try!(r.read(&mut buf));
     match buf[0] {
@@ -94,7 +121,7 @@ where <P as Peer>::Address : 'a,
       },
       _ => return Err(Error("Invalid attachment description".to_string(), ErrorKind::SerializingError, None)),
     }*/
-    read_attachment(r,mlen)
+    read_attachment(&mut r,mlen)
   }
 
 }
