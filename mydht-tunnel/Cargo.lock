@@ -307,7 +307,7 @@ dependencies = [
  "serde 1.0.17 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_derive 1.0.17 (registry+https://github.com/rust-lang/crates.io-index)",
  "sized_windows_lim 0.0.1 (git+https://github.com/cheme/readwrite-comp.git)",
- "tunnel 0.0.1",
+ "tunnel 0.0.1 (git+https://github.com/cheme/tunnel.git)",
 ]
 
 [[package]]
@@ -627,6 +627,7 @@ dependencies = [
 [[package]]
 name = "tunnel"
 version = "0.0.1"
+source = "git+https://github.com/cheme/tunnel.git#13c5c981e7d068955cbb9241357cebbffd10d7f1"
 dependencies = [
  "bincode 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -759,6 +760,7 @@ dependencies = [
 "checksum synom 0.11.3 (registry+https://github.com/rust-lang/crates.io-index)" = "a393066ed9010ebaed60b9eafa373d4b1baac186dd7e008555b0f702b51945b6"
 "checksum thread_local 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)" = "1697c4b57aeeb7a536b647165a2825faddffb1d3bad386d507709bd51a90bb14"
 "checksum time 0.1.38 (registry+https://github.com/rust-lang/crates.io-index)" = "d5d788d3aa77bc0ef3e9621256885555368b47bd495c13dd2e7413c89f845520"
+"checksum tunnel 0.0.1 (git+https://github.com/cheme/tunnel.git)" = "<none>"
 "checksum unicode-xid 0.0.4 (registry+https://github.com/rust-lang/crates.io-index)" = "8c1f860d7d29cf02cb2f3f359fd35991af3d30bac52c57d265a3c461074cb4dc"
 "checksum unreachable 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "382810877fe448991dfc7f0dd6e3ae5d58088fd0ea5e35189655f84e6814fa56"
 "checksum utf8-ranges 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "662fab6525a98beff2921d7f61a39e7d59e0b425ebc7d0d9e66d316e55124122"

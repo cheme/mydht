@@ -337,7 +337,7 @@ pub enum ReadMsgState<MC : MyDHTTunnelConf> {
   NoReply,
   /// use in service then directly forward to write with read addition
   /// Will get read token from local
-  ReplyDirectInit(ReplyWriterTConf<MC>,Option<DestFullRTConf<MC>>,MC::TransportAddress,Option<ReadBorrowStream<MC>>),
+  ReplyDirectInit(ReplyWriterTConf<MC>,Option<DestFullRTConf<MC>>,MC::TransportAddress,Option<ReadBorrowStream<MC>>,Option<(MC::LimiterR,MC::LimiterW,usize)>),
 
   /// use in service then send reply directly with the writer
   ReplyDirectNoInit(ReplyWriterTConf<MC>,MC::TransportAddress),
@@ -484,23 +484,10 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
         while  {
           let l = proxy.read_from(&mut reader, &mut readbuf)?;
  //           println!("reda {} {}",l,total);
-          if l == 0 {
-          //  panic!("Read0 at {:?}",total); TODO testing with commenting send
-          //  TODO yield in message (trait then add from write service as box in mesg
-          //  (tunnelmessaging))
-          //  no requires clone -> no as ref in msgenc better in msgenc?? but need to get back
-          //  after call -> bad overall
-          //  in message is the more rational approach : put it in a cell containing the pointer
-          //  : need a super type for message : not allowed 
-          //  -> if spawn yield clone : easy as writer is fine and 
-          //  RefCell the spawnunyield??
-          //
-          //  Clone is best (use Rc<RefCell<CoroutineC>> is only change from actual service :
-          //  spawnyield is not send in this case but not a pb at first glance!!
-          //
-          //  after clone done, simply put it in message like said before and use it here
+         // if l == 0 {
+          //  panic!("Read0 at {:?}",total); 
 //            println!("do not w 0 lenth l!!!");
-          }
+         // }
  //         total += l;
           ix = 0;
           while ix < l {
@@ -651,8 +638,9 @@ impl<MC : MyDHTTunnelConf> MsgEnc<MC::Peer,TunnelMessaging<MC>> for TunnelWriter
               } else {
                 Some(dest_reader)
               };
+              let init_init = self.t_readprov.reply_writer_init_init()?;
               // send to write with read (run inner service in local)
-              TunnelMessaging::ReplyFromReader(proto_m, ReadMsgState::ReplyDirectInit(reply_w,dest_reader,dest,None))
+              TunnelMessaging::ReplyFromReader(proto_m, ReadMsgState::ReplyDirectInit(reply_w,dest_reader,dest,None,init_init))
             } else {
               // send to write without read (run inner service in local)
               TunnelMessaging::ReplyFromReader(proto_m, ReadMsgState::ReplyDirectNoInit(reply_w,dest))
@@ -866,7 +854,7 @@ impl<MC : MyDHTTunnelConf> ReaderBorrowable<MyDHTTunnelConfType<MC>> for LocalTu
     match *self {
       LocalTunnelCommand::Inner(..) => (),
       LocalTunnelCommand::LocalFromRead(_,ReadMsgState::NoReply) => (),
-      LocalTunnelCommand::LocalFromRead(_,ReadMsgState::ReplyDirectInit(_,ref mut dr,_,ref mut ost)) 
+      LocalTunnelCommand::LocalFromRead(_,ReadMsgState::ReplyDirectInit(_,ref mut dr,_,ref mut ost,_)) 
       | LocalTunnelCommand::LocalFromRead(_,ReadMsgState::ReplyToGlobalWithRead(ref mut dr,ref mut ost))
         => {
           if wr.current_reader.is_some() {
@@ -981,6 +969,14 @@ impl<MC : MyDHTTunnelConf> Service for LocalTunnelService<MC> {
                 println!("tunnel without reply, local tunnel service reply not send");
                 LocalReply::Read(ReadReply::NoReply)
               },
+              ReadMsgState::ReplyDirectInit(mut reply_writer,Some(mut dest_read),dest_add,Some(rs),Some(reply_writer_init)) => {
+                let command : GlobalTunnelCommand<MC> = GlobalTunnelCommand::TunnelReplyOnce(inner_reply,reply_writer_init,reply_writer,dest_read,rs);
+                LocalReply::Read(ReadReply::MainLoop(MainLoopCommand::ForwardServiceOnce(
+                   None,Some(dest_add),FWConf {
+                    nb_for : 0,
+                    discover : true,
+                  }, command)))
+              },
               _ => {
                 // TODO need a second command to mainloop to rewire read stream!! plus unyield on
                 // rewire as racy !!! -> bad design, read should not be call from global service
@@ -1048,7 +1044,8 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
       GlobalTunnelCommand::TransmitReply(state,reply_command) => {
         match state {
           ReadMsgState::NoReply => GlobalReply::NoRep, // TODO add a warning as it should not have been send
-          ReadMsgState::ReplyDirectInit(mut reply_writer,Some(mut dest_read),dest_add,Some(rs)) => {
+          ReadMsgState::ReplyDirectInit(_,_,_,_,Some(_)) => unreachable!(),
+          ReadMsgState::ReplyDirectInit(mut reply_writer,Some(mut dest_read),dest_add,Some(rs),None) => {
             let reply_writer_init = self.tunnel.reply_writer_init_init(&mut reply_writer, &mut dest_read)?;
             let dest_k = self.address_key.get(&dest_add).map(|k|k.clone());
             let command : GlobalTunnelCommand<MC> = GlobalTunnelCommand::TunnelReplyOnce(reply_command,reply_writer_init,reply_writer,dest_read,rs);
