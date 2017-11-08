@@ -471,8 +471,9 @@ fn test_ping_pong_one_hop() {
 fn test_ping_pong_mult_hop() {
 //  test_ping_pong(8,45337)
   test_ping_pong(25,45337)
-    // not with this size limiter frame size skyrocket with nb hop (>35 seems too much already)
-    // TODO a max window size
+  // warning for testing with 128 or higher we may reach file limit on somelinux systems (1024 by default),
+  // testing with 'ulimit -n 4096' succeed.
+  //test_ping_pong(128,45337)
 }
 
 
@@ -572,6 +573,7 @@ pub struct TestSizedWindows;
 impl SizedWindowsParams for TestSizedWindows {
 //    const INIT_SIZE : usize = 45;
     const INIT_SIZE : usize = 15;
+    const MAX_SIZE : usize = 2048;
     const GROWTH_RATIO : Option<(usize,usize)> = Some((3,2));
     const WRITE_SIZE : bool = true;
     const SECURE_PAD : bool = false;
