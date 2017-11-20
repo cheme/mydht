@@ -173,6 +173,9 @@ impl Registerable for Udp {
   fn reregister(&self, _ : &Poll, _: Token, _ : Ready, _ : PollOpt) -> Result<bool> {
     Ok(false)
   }
+  fn deregister(&self, _poll: &Poll) -> Result<()> {
+    Ok(())
+  }
  
 }
 impl Transport for Udp {
@@ -223,6 +226,10 @@ impl Registerable for UdpStream {
   fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
     Ok(false)
   }
+  fn deregister(&self, _poll: &Poll) -> Result<()> {
+    Ok(())
+  }
+ 
 }
 impl Registerable for ReadUdpStream {
   fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
@@ -231,6 +238,10 @@ impl Registerable for ReadUdpStream {
   fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
     Ok(false)
   }
+  fn deregister(&self, _poll: &Poll) -> Result<()> {
+    Ok(())
+  }
+ 
 }
 
 

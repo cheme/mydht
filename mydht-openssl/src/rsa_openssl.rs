@@ -986,27 +986,10 @@ impl<I : KVContent,A : Address,C : OpenSSLConf> RSAPeer<I,A,C> {
 
 
 
-
-
-#[cfg(feature="mydhtimpl")]
-#[cfg(test)]
-pub mod mydhttest {
-  use super::*;
-
-/// Same as RSAPeer from mydhtwot but transport agnostic
-pub type RSAPeerTest<I> = RSAPeer<I,LocalAdd,RSAPeerConf>;
-
-#[inline]
-pub fn new_peer_test<I : KVContent> (address : usize, info : I) -> IoResult<RSAPeerTest<I>> {
-  RSAPeer::new(LocalAdd(address),info)
-}
-
-
-
 #[derive(PartialEq,Eq,Debug,Clone,Serialize,Deserialize)]
-pub struct RSAPeerConf;
+pub struct RSA2048SHA512AES256;
 
-impl OpenSSLConf for RSAPeerConf {
+impl OpenSSLConf for RSA2048SHA512AES256 {
   #[inline]
   fn HASH_SIGN() -> MessageDigest { MessageDigest::sha512() }
   #[inline]
@@ -1028,6 +1011,23 @@ impl OpenSSLConf for RSAPeerConf {
   /// padding is use
   const CRYPTER_ASYM_BUFF_SIZE_DEC : usize = 214;
 }
+
+
+
+#[cfg(feature="mydhtimpl")]
+#[cfg(test)]
+pub mod mydhttest {
+  use super::*;
+
+/// Same as RSAPeer from mydhtwot but transport agnostic
+pub type RSAPeerTest<I> = RSAPeer<I,LocalAdd,RSA2048SHA512AES256>;
+
+#[inline]
+pub fn new_peer_test<I : KVContent> (address : usize, info : I) -> IoResult<RSAPeerTest<I>> {
+  RSAPeer::new(LocalAdd(address),info)
+}
+
+
 
 
 
@@ -1078,9 +1078,9 @@ fn rsa_shadower4_test () {
 #[test]
 fn rsa_shadower5_test () {
   let smode = ASymSymMode::ASymSym;
-  let input_length = RSAPeerConf::SHADOW_TYPE().block_size();
-  let write_buffer_length = RSAPeerConf::SHADOW_TYPE().block_size();
-  let read_buffer_length = RSAPeerConf::SHADOW_TYPE().block_size();
+  let input_length = RSA2048SHA512AES256::SHADOW_TYPE().block_size();
+  let write_buffer_length = RSA2048SHA512AES256::SHADOW_TYPE().block_size();
+  let read_buffer_length = RSA2048SHA512AES256::SHADOW_TYPE().block_size();
   rsa_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
 }
 
@@ -1114,9 +1114,9 @@ fn rsa_shadower8_test () {
 fn rsa_shadower9_test () {
   let smode = ASymSymMode::ASymOnly;
   //let input_length = <RSAPeerTest as OpenSSLConf>::CRYPTER_BLOCK_SIZE;
-  let input_length = RSAPeerConf::SHADOW_TYPE().block_size();
-  let write_buffer_length = RSAPeerConf::SHADOW_TYPE().block_size();
-  let read_buffer_length = RSAPeerConf::SHADOW_TYPE().block_size();
+  let input_length = RSA2048SHA512AES256::SHADOW_TYPE().block_size();
+  let write_buffer_length = RSA2048SHA512AES256::SHADOW_TYPE().block_size();
+  let read_buffer_length = RSA2048SHA512AES256::SHADOW_TYPE().block_size();
   rsa_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
 }
 #[test]

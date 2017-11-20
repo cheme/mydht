@@ -837,9 +837,11 @@ macro_rules! spawn_loop {($service:ident,$spawn_out:ident,$ocin:ident,$r:ident,$
             return $return_build;
           } else if e.level() == ErrorLevel::Panic {
             error!("      !!!panicking{:?}",e);
+            println!("      !!!panicking{:?}",e);
             panic!("In spawner : {:?}",e);
           } else {
             error!("      !!!error ending service{:?}",e);
+            println!("      !!!error ending service{:?}",e);
             $result = Err(e);
             break;
           },

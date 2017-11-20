@@ -73,6 +73,10 @@ impl Registerable for Tcp {
   fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
     Ok(false)
   }
+
+  fn deregister(&self, _poll: &Poll) -> Result<()> {
+    Ok(())
+  }
 }
 impl Transport for Tcp {
   type ReadStream = TcpStream;
