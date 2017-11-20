@@ -457,6 +457,11 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
             // not rewired in main process : when rewiring in main process it must unyield dest
             // !!)
             // for now end with error
+            // TODO send an end service message to mainloop instead (need to send error also for
+            // incomming message before end of service occurs). TODO add the possibility to exit
+            // from service with a message for channel : or simply send end (even if close there is
+            // an obvious race condition where we got some message and it is mainloop that will
+            // need to manage those when closing.
             return Err(Error("End as borrow is not expected to be back".to_string(), ErrorKind::EndService,None));
           }
         },

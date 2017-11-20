@@ -43,11 +43,10 @@ use readwrite_comp::{
   ExtWrite,
   ReadDefImpl,
 };
+use mydht_base::transport::Address;
 use mydht_base::peer::{NoShadow};
 use mydht_base::keyval::{KeyVal};
-#[cfg(test)]
 use mydht_base::keyval::{Attachment,SettableAttachment};
-#[cfg(test)]
 use mydht_base::peer::{Peer};
 #[cfg(test)]
 use self::mydht_basetest::transport::LocalAdd;
@@ -68,8 +67,8 @@ use mydht_base::tunnel::{
 /// Additional funtionalites over openssl lib PKey
 /// last bool allow serializing private key (it defaults to false and revert to false at each
 /// access)
-pub struct PKeyExt<RT : OpenSSLConf>(pub Vec<u8>,pub Arc<Rsa>,pub bool,pub PhantomData<RT>);
-pub struct PKeyExtSerPri<RT : OpenSSLConf>(pub PKeyExt<RT>);
+pub struct PKeyExt<RT>(pub Vec<u8>,pub Arc<Rsa>,pub bool,pub PhantomData<RT>);
+pub struct PKeyExtSerPri<RT>(pub PKeyExt<RT>);
 /*#[derive(Clone,Serialize,Deserialize)]
 pub enum KeyType {
   RSA,
@@ -889,6 +888,101 @@ impl<RT : OpenSSLConf> PKeyExt<RT> {
 }
 
 
+#[derive(Debug,PartialEq,Eq,Clone,Serialize,Deserialize)]
+#[serde(bound(deserialize = ""))]
+/// Same as RSAPeer from mydhtwot but transport agnostic
+pub struct RSAPeer<I : KVContent,A : Address,C : OpenSSLConf> {
+  /// key to use to identify peer, derived from publickey it is shorter
+  key : Vec<u8>,
+  /// is used as id/key TODO maybe two publickey use of a master(in case of compromition)
+  publickey : PKeyExt<C>,
+
+  pub address : A,
+
+  /// local info
+  pub peerinfo : I,
+  
+}
+
+
+impl<I : KVContent,A : Address,C : OpenSSLConf> SettableAttachment for RSAPeer<I,A,C> {}
+
+impl<I : KVContent,A : Address,C : OpenSSLConf> KeyVal for RSAPeer<I,A,C> {
+  type Key = Vec<u8>;
+
+  #[inline]
+  fn get_key_ref(&self) -> &Vec<u8> {
+    &self.key
+  }
+ 
+  #[inline]
+  fn get_key(&self) -> Vec<u8> {
+    self.key.clone()
+  }
+
+  #[inline]
+  fn encode_kv<S:Serializer> (&self, _: S, _ : bool, _ : bool) -> Result<S::Ok, S::Error> {
+    panic!("TODO remove from peer trait");
+  }
+  #[inline]
+  fn decode_kv<'de,D:Deserializer<'de>> (_ : D, _ : bool, _ : bool) -> Result<RSAPeer<I,A,C>, D::Error> {
+    panic!("TODO remove from Peer trait");
+  }
+  noattachment!();
+}
+
+
+impl<I : KVContent,A : Address,C : OpenSSLConf> Peer for RSAPeer<I,A,C> {
+  type Address = A;
+  type ShadowWMsg = OSSLShadowerW<C>;
+  type ShadowRMsg = OSSLShadowerR<C>;
+  type ShadowWAuth = OSSLShadowerW<C>;
+  type ShadowRAuth = OSSLShadowerR<C>;
+  #[inline]
+  fn get_address(&self) -> &A {
+    &self.address
+  }
+ 
+  #[inline]
+  fn get_shadower_r_auth (&self) -> Self::ShadowRAuth {
+    let mut r = OSSLShadowerR::new(self.publickey.clone()).unwrap();
+    r.mode = ASymSymMode::ASymOnly;
+    r
+  }
+  #[inline]
+  fn get_shadower_r_msg (&self) -> Self::ShadowRMsg {
+    OSSLShadowerR::new(self.publickey.clone()).unwrap()
+  }
+ 
+  #[inline]
+  fn get_shadower_w_auth (&self) -> Self::ShadowWAuth {
+    let mut r = OSSLShadowerW::new(self.publickey.clone()).unwrap();
+    r.mode = ASymSymMode::ASymOnly;
+    r
+  }
+  #[inline]
+  fn get_shadower_w_msg (&self) -> Self::ShadowWMsg {
+    OSSLShadowerW::new(self.publickey.clone()).unwrap()
+  }
+
+
+}
+
+impl<I : KVContent,A : Address,C : OpenSSLConf> RSAPeer<I,A,C> {
+  pub fn new (address : A, info : I) -> IoResult<RSAPeer<I,A,C>> {
+    let pkeyrsa = Rsa::generate(<C as OpenSSLConf>::RSA_SIZE)?;
+
+    let pkeyext = PKeyExt::new(Arc::new(pkeyrsa));
+    let key = pkeyext.derive_key()?;
+
+    Ok(RSAPeer {
+      key : key,
+      publickey : pkeyext,
+      address : address,
+      peerinfo : info,
+    })
+  }
+}
 
 
 
@@ -899,55 +993,15 @@ impl<RT : OpenSSLConf> PKeyExt<RT> {
 pub mod mydhttest {
   use super::*;
 
-#[derive(Debug,PartialEq,Eq,Clone,Serialize,Deserialize)]
 /// Same as RSAPeer from mydhtwot but transport agnostic
-pub struct RSAPeerTest<I> {
-  /// key to use to identify peer, derived from publickey it is shorter
-  key : Vec<u8>,
-  /// is used as id/key TODO maybe two publickey use of a master(in case of compromition)
-  publickey : PKeyExt<RSAPeerConf>,
+pub type RSAPeerTest<I> = RSAPeer<I,LocalAdd,RSAPeerConf>;
 
-  pub address : LocalAdd,
-
-  ////// local info
-  pub peerinfo : I,
-  
-}
-
-impl<I> RSAPeerTest<I> {
-  pub fn new (address : usize, info : I) -> IoResult<RSAPeerTest<I>> {
-    let pkeyrsa = Rsa::generate(<RSAPeerConf as OpenSSLConf>::RSA_SIZE)?;
-
-    let pkeyext = PKeyExt::new(Arc::new(pkeyrsa));
-    let key = pkeyext.derive_key()?;
-
-    Ok(RSAPeerTest {
-      key : key,
-      publickey : pkeyext,
-      address : LocalAdd(address),
-      peerinfo : info,
-    })
-  }
+#[inline]
+pub fn new_peer_test<I : KVContent> (address : usize, info : I) -> IoResult<RSAPeerTest<I>> {
+  RSAPeer::new(LocalAdd(address),info)
 }
 
 
-impl<I : KVContent> KeyVal for RSAPeerTest<I> {
-  type Key = Vec<u8>;
-
-  #[inline]
-  fn get_key(&self) -> Vec<u8> {
-    self.key.clone()
-  }
-  #[inline]
-  fn encode_kv<S:Serializer> (&self, _: S, _ : bool, _ : bool) -> Result<S::Ok, S::Error> {
-    panic!("not used in tests");
-  }
-  #[inline]
-  fn decode_kv<'de,D:Deserializer<'de>> (_ : D, _ : bool, _ : bool) -> Result<RSAPeerTest<I>, D::Error> {
-    panic!("not used in tests");
-  }
-  noattachment!();
-}
 
 #[derive(PartialEq,Eq,Debug,Clone,Serialize,Deserialize)]
 pub struct RSAPeerConf;
@@ -975,44 +1029,12 @@ impl OpenSSLConf for RSAPeerConf {
   const CRYPTER_ASYM_BUFF_SIZE_DEC : usize = 214;
 }
 
-impl<I> SettableAttachment for RSAPeerTest<I> {}
 
-impl<I : KVContent> Peer for RSAPeerTest<I> {
-  type Address = LocalAdd;
-  type ShadowWMsg = OSSLShadowerW<RSAPeerConf>;
-  type ShadowRMsg = OSSLShadowerR<RSAPeerConf>;
-  type ShadowWAuth = NoShadow;
-  type ShadowRAuth = NoShadow;
-  #[inline]
-  fn get_address(&self) -> &LocalAdd {
-    &self.address
-  }
- 
-  #[inline]
-  fn get_shadower_r_auth (&self) -> Self::ShadowRAuth {
-    NoShadow
-  }
-  #[inline]
-  fn get_shadower_r_msg (&self) -> Self::ShadowRMsg {
-    OSSLShadowerR::new(self.publickey.clone()).unwrap() // TODO change peer trait
-  }
- 
-  #[inline]
-  fn get_shadower_w_auth (&self) -> Self::ShadowWAuth {
-    NoShadow
-  }
-  #[inline]
-  fn get_shadower_w_msg (&self) -> Self::ShadowWMsg {
-    OSSLShadowerW::new(self.publickey.clone()).unwrap() // TODO change peer trait
-  }
-
-
-}
 
 fn rsa_shadower_test (input_length : usize, write_buffer_length : usize,
 read_buffer_length : usize, smode : ASymSymMode) {
 
-  let to_p = RSAPeerTest::new(1,()).unwrap();
+  let to_p = new_peer_test(1,()).unwrap();
   shadower_test(to_p,input_length,write_buffer_length,read_buffer_length);
 
 }
@@ -1127,12 +1149,12 @@ fn rsa_shadowerc_test () {
 #[cfg(test)]
 fn peer_tests () -> Vec<RSAPeerTest<()>> {
 [ 
-  RSAPeerTest::new(1,()).unwrap(),
-  RSAPeerTest::new(2,()).unwrap(),
-  RSAPeerTest::new(3,()).unwrap(),
-  RSAPeerTest::new(4,()).unwrap(),
-  RSAPeerTest::new(5,()).unwrap(),
-  RSAPeerTest::new(6,()).unwrap(),
+  new_peer_test(1,()).unwrap(),
+  new_peer_test(2,()).unwrap(),
+  new_peer_test(3,()).unwrap(),
+  new_peer_test(4,()).unwrap(),
+  new_peer_test(5,()).unwrap(),
+  new_peer_test(6,()).unwrap(),
 ].to_vec()
 }
 
