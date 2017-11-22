@@ -67,6 +67,7 @@ use mydht_base::tunnel::{
 /// Additional funtionalites over openssl lib PKey
 /// last bool allow serializing private key (it defaults to false and revert to false at each
 /// access)
+/// TODO remove Arc usage (need to implement clone by hand)
 pub struct PKeyExt<RT>(pub Vec<u8>,pub Arc<Rsa>,pub bool,pub PhantomData<RT>);
 pub struct PKeyExtSerPri<RT>(pub PKeyExt<RT>);
 /*#[derive(Clone,Serialize,Deserialize)]
@@ -79,7 +80,7 @@ pub enum KeyType {
 
 impl<RT : OpenSSLConf> Debug for PKeyExt<RT> {
   fn fmt (&self, f : &mut Formatter) -> Result<(),FmtError> {
-    if self.2 {
+    if !self.2 {
       write!(f, "public : {:?} \n private : *********", self.0.to_hex())
     } else {
       //self.2 = false;
@@ -111,7 +112,7 @@ impl<RT : OpenSSLConf> Serialize for PKeyExt<RT> {
   fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
     let mut state = s.serialize_struct("pkey",2)?;
     state.serialize_field("publickey", &self.0)?;
-    let pk = if self.2 {
+    let pk = if !self.2 {
       Vec::new()
     } else {
       self.1.private_key_to_der().unwrap_or(Vec::new())
@@ -123,6 +124,7 @@ impl<RT : OpenSSLConf> Serialize for PKeyExt<RT> {
 
 impl<'de, RT : OpenSSLConf> Deserialize<'de> for PKeyExt<RT> {
   fn deserialize<D:Deserializer<'de>> (d : D) -> Result<PKeyExt<RT>, D::Error> {
+
         enum Field { Pub, Priv };
 
         impl<'de> Deserialize<'de> for Field {
@@ -201,21 +203,25 @@ impl<'de, RT : OpenSSLConf> Deserialize<'de> for PKeyExt<RT> {
                     }
                 }
 
-                let publickey : &[u8] = publickey.ok_or_else(|| de::Error::missing_field("publickey"))?;
-                let privatekey : &[u8] = privatekey.ok_or_else(|| de::Error::missing_field("privatekey"))?;
+                // incompatible with impl such as json
+                //let publickey : &[u8] = publickey.ok_or_else(|| de::Error::missing_field("publickey"))?;
+                //let privatekey : &[u8] = privatekey.ok_or_else(|| de::Error::missing_field("privatekey"))?;
+                let publickey : Vec<u8> = publickey.ok_or_else(|| de::Error::missing_field("publickey"))?;
+                let privatekey : Vec<u8> = privatekey.ok_or_else(|| de::Error::missing_field("privatekey"))?;
                 let pk = if privatekey.len() > 0 {
-                  Rsa::private_key_from_der(privatekey).map_err(|_|
-                    de::Error::invalid_value(Unexpected::Bytes(privatekey),&" array byte not pkey"))?
+                  Rsa::private_key_from_der(&privatekey[..]).map_err(|_|
+                    de::Error::invalid_value(Unexpected::Bytes(&privatekey[..]),&" array byte not pkey"))?
                 } else {
-                  Rsa::public_key_from_der(publickey).map_err(|_|
-                    de::Error::invalid_value(Unexpected::Bytes(publickey),&" array byte not pkey"))?
+                  Rsa::public_key_from_der(&publickey[..]).map_err(|_|
+                    de::Error::invalid_value(Unexpected::Bytes(&publickey[..]),&" array byte not pkey"))?
                 };
-                Ok(PKeyExt(publickey.to_vec(), Arc::new(pk), false, PhantomData))
+                Ok(PKeyExt(publickey, Arc::new(pk), false, PhantomData))
 
             }
         }
 
         const FIELDS: &'static [&'static str] = &["publickey", "privatekey"];
+
         d.deserialize_struct("pkey", FIELDS, PKeyVisitor(PhantomData))
   }
 }
@@ -982,6 +988,14 @@ impl<I : KVContent,A : Address,C : OpenSSLConf> RSAPeer<I,A,C> {
       peerinfo : info,
     })
   }
+  pub fn is_write_private(&self) -> bool {
+    self.publickey.2
+  }
+  // TODO redesign with a closure or a drop struct
+  pub fn set_write_private(&mut self, v : bool) {
+    self.publickey.2 = v;
+  }
+
 }
 
 
