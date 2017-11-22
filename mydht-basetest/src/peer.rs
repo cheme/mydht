@@ -27,6 +27,20 @@ use shadow::{
 // reexport
 pub use mydht_base::peer::*;
 
+
+
+/// test for PeerMgmtMeths auth primitives (challenge, signmsg, checkmsg)
+pub fn basic_auth_test<P : Peer, R : PeerMgmtMeths<P>> (r : &R, p1 : &P, p2 : &P) {
+  let chal1 = r.challenge(p1);
+  let chal2 = r.challenge(p2);
+  assert!(chal1 != chal2);
+  let sign1 = r.signmsg(p1,&chal1);
+  let sign2 = r.signmsg(p2,&chal2);
+  assert!(r.checkmsg(p1,&chal1,&sign1));
+  assert!(r.checkmsg(p2,&chal2,&sign2));
+}
+
+
 #[derive(Deserialize,Serialize,Debug,PartialEq,Eq,Clone)]
 /// Node using an usize as address (for use with transport tests)
 pub struct PeerTest {

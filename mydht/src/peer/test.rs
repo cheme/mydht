@@ -11,8 +11,13 @@ use peer::PeerPriority;
 //use utils;
 use mydht_basetest::transport::LocalAdd;
 
+
+
 // reexport
-pub use mydht_basetest::peer::PeerTest;
+pub use mydht_basetest::peer::{
+  PeerTest,
+  basic_auth_test,
+};
 pub use mydht_basetest::shadow::ShadowModeTest;
 
 #[derive(Debug,Clone)]
@@ -93,18 +98,6 @@ impl<P : Peer> PeerMgmtMeths<P> for TestingRules {
 
 
 }
-
-/// test for PeerMgmtMeths auth primitives (challenge, signmsg, checkmsg)
-pub fn basic_auth_test<P : Peer, R : PeerMgmtMeths<P>> (r : &R, p1 : &P, p2 : &P) {
-  let chal1 = r.challenge(p1);
-  let chal2 = r.challenge(p2);
-  assert!(chal1 != chal2);
-  let sign1 = r.signmsg(p1,&chal1);
-  let sign2 = r.signmsg(p2,&chal2);
-  assert!(r.checkmsg(p1,&chal1,&sign1));
-  assert!(r.checkmsg(p2,&chal2,&sign2));
-}
-
 #[test]
 fn test_testingrules () {
   let p1 = PeerTest {nodeid: "dummyID1".to_string(), address : LocalAdd(0), keyshift: 1, modeshauth : ShadowModeTest::NoShadow, modeshmsg : ShadowModeTest::SimpleShift};

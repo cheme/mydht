@@ -30,7 +30,6 @@ use procs::storeprop::{
 };
 use procs::api::{
   ApiQueriable,
-  ApiQueryId,
   ApiRepliable,
   ApiDest,
   ApiReturn,
@@ -77,7 +76,11 @@ use mydhtresult::{
   Result,
 };
 
-pub use procs::api::Api;
+pub use procs::api::{
+  Api,
+  ApiResult,
+  ApiQueryId,
+};
 pub use mydht_base::procs::*;
 use service::{
   HandleSend,

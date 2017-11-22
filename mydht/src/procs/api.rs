@@ -69,7 +69,6 @@ use std::time::{
 };
 use std::marker::PhantomData;
 
-
 /// An implementation of api service using a kvcache as storage and with a max duration
 /// No clean cache is currently call : TODO merge with QueryCache (same thing)
 pub struct Api<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>>(pub QC,pub Duration,pub usize,pub PhantomData<MC>);

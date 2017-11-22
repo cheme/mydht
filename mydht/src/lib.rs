@@ -155,6 +155,8 @@ pub use procs::{
   MyDHT,
   ApiCommand,
   Api,
+  ApiQueryId,
+  ApiResult,
   MyDHTConf,
   PeerCacheRouteBase,
   PeerCacheEntry,
@@ -173,12 +175,14 @@ pub use procs::{
   Route,
   ReaderBorrowable,
   RegReaderBorrow,
+  storeprop,
+  noservice,
+  ClientMode,
 };
 pub use procs::api;
 // reexport
 pub use peer::{PeerPriority,PeerState};
 pub use query::{QueryConf,QueryPriority,QueryMode,LastSentConf};
-pub use query::simplecache::HashMapQuery;
 pub use kvstore::{CachePolicy};
 pub use mydht_base::kvstore::{StoragePriority};
 pub use mydht_base::keyval::{Attachment,SettableAttachment};
@@ -208,7 +212,10 @@ pub mod dhtimpl {
     Cache,
     SlabCache,
   };
-  pub use query::simplecache::{SimpleCacheQuery};
+  pub use query::simplecache::{
+    SimpleCacheQuery,
+    HashMapQuery,
+  };
   pub use simplecache::{SimpleCache};
   //pub use route::inefficientmap::{Inefficientmap};
 

@@ -5,7 +5,7 @@
 #[cfg(test)]
 extern crate mydht_basetest;
 
-
+use openssl::rand::rand_bytes;
 use mydht_base::keyval::Key as KVContent;
 use std::fmt;
 use std::cmp::{max,min};
@@ -47,7 +47,11 @@ use mydht_base::transport::Address;
 use mydht_base::peer::{NoShadow};
 use mydht_base::keyval::{KeyVal};
 use mydht_base::keyval::{Attachment,SettableAttachment};
-use mydht_base::peer::{Peer};
+use mydht_base::peer::{
+  Peer,
+  PeerPriority,
+  PeerMgmtMeths,
+};
 #[cfg(test)]
 use self::mydht_basetest::transport::LocalAdd;
 #[cfg(test)]
@@ -236,6 +240,7 @@ impl<RT : OpenSSLConf> Eq for PKeyExt<RT> {}
 
 /// This trait allows any keyval having a rsa pkey and any symm cipher to implement Shadow 
 pub trait OpenSSLConf : KVContent {
+  // TODO seems unused : remove ?
   fn HASH_SIGN() -> MessageDigest;
   fn HASH_KEY() -> MessageDigest;
   const RSA_SIZE : u32;
@@ -910,7 +915,12 @@ pub struct RSAPeer<I : KVContent,A : Address,C : OpenSSLConf> {
   
 }
 
-
+/// basic peer management for rsapeer : no priority managed
+#[derive(Debug,Clone)]
+pub struct RSAPeerMgmt<C>(PhantomData<C>);
+impl<C> RSAPeerMgmt<C> {
+  pub fn new() -> Self { RSAPeerMgmt(PhantomData) }
+}
 impl<I : KVContent,A : Address,C : OpenSSLConf> SettableAttachment for RSAPeer<I,A,C> {}
 
 impl<I : KVContent,A : Address,C : OpenSSLConf> KeyVal for RSAPeer<I,A,C> {
@@ -998,7 +1008,38 @@ impl<I : KVContent,A : Address,C : OpenSSLConf> RSAPeer<I,A,C> {
 
 }
 
+/// TODO use signer ?? TODO change peermgmt to return result
+impl<I : KVContent,A : Address,C : OpenSSLConf> PeerMgmtMeths<RSAPeer<I,A,C>> for RSAPeerMgmt<C> {
+  fn challenge (&self, _p : &RSAPeer<I,A,C>) -> Vec<u8> {
+    let mut chal = vec![0;C::CRYPTER_ASYM_BUFF_SIZE_DEC];
+    rand_bytes(&mut chal[..]).unwrap();
+    chal
+  }
+  /// sign a message. Node and challenge. Node in parameter is ourselve.
+  fn signmsg (&self, p : &RSAPeer<I,A,C>, chal : &[u8]) -> Vec<u8> {
+    let mut sign = vec![0;C::CRYPTER_ASYM_BUFF_SIZE_ENC];
+    let ekeyl = p.publickey.1.private_encrypt(&chal[..], &mut sign[..], rsa::PKCS1_PADDING).unwrap();
+    assert!(ekeyl == C::CRYPTER_ASYM_BUFF_SIZE_ENC);
+    sign
+  }
+  /// check a message. Peer, challenge and signature.
+  fn checkmsg (&self, p : &RSAPeer<I,A,C>, challenge : &[u8], sig : &[u8]) -> bool {
+    let mut chal = vec![0;C::CRYPTER_ASYM_BUFF_SIZE_ENC];
+//    panic!("sig : {}, chal :{}", sig.len(),challenge.len());
+    let ekeyl = p.publickey.1.public_decrypt(&sig[..], &mut chal[..], rsa::PKCS1_PADDING).unwrap();
+    assert!(ekeyl == C::CRYPTER_ASYM_BUFF_SIZE_DEC);
+    &chal[..ekeyl] == &challenge[..]
+  }
+  /// accept a peer? (reference to running process and running context could be use to query
+  /// ourself
+  /// Post PONG message handle
+  /// If accept is heavy it can run asynch by returning PeerPriority::Unchecked and sending, then
+  /// check will be done by sending accept query to PeerMgmt service
+  fn accept (&self, _p : &RSAPeer<I,A,C>) -> Option<PeerPriority> {
+    Some(PeerPriority::Normal)
+  }
 
+}
 
 #[derive(PartialEq,Eq,Debug,Clone,Serialize,Deserialize)]
 pub struct RSA2048SHA512AES256;
@@ -1033,6 +1074,9 @@ impl OpenSSLConf for RSA2048SHA512AES256 {
 pub mod mydhttest {
   use super::*;
 
+  use self::mydht_basetest::peer::{
+    basic_auth_test,
+  };
 /// Same as RSAPeer from mydhtwot but transport agnostic
 pub type RSAPeerTest<I> = RSAPeer<I,LocalAdd,RSA2048SHA512AES256>;
 
@@ -1041,7 +1085,13 @@ pub fn new_peer_test<I : KVContent> (address : usize, info : I) -> IoResult<RSAP
   RSAPeer::new(LocalAdd(address),info)
 }
 
-
+#[test]
+fn test_mgmtrules () {
+  let p1 = new_peer_test(1,()).unwrap();
+  let p2 = new_peer_test(2,()).unwrap();
+  let r : RSAPeerMgmt<RSA2048SHA512AES256> = RSAPeerMgmt::new(); 
+  basic_auth_test(&r,&p1,&p2);
+}
 
 
 
