@@ -20,7 +20,7 @@ pub type HashMapQuery<P,V,RP> = HashMap<QueryID, Query<P,V,RP>>;
 //pub type CacheQuery<P,V> = KVCache<QueryID, Query<P,V>>;
 /// A simple implementation (basic hashmap) to store/cache query
 //pub struct SimpleCacheQuery<P : Peer, V : KeyVal> {
-pub struct SimpleCacheQuery<P : Peer, V, RP : Ref<P>, C : KVCache<QueryID, Query<P,V,RP>>> {
+pub struct SimpleCacheQuery<P,V,RP,C> {
   cache : C,
   // cache : HashMap<QueryID, Query<P,V>>,
   /// use randow id, if false sequential ids will be used

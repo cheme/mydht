@@ -73,6 +73,8 @@ use mydht_base::tunnel::{
 /// access)
 /// TODO remove Arc usage (need to implement clone by hand)
 pub struct PKeyExt<RT>(pub Vec<u8>,pub Arc<Rsa>,pub bool,pub PhantomData<RT>);
+
+
 pub struct PKeyExtSerPri<RT>(pub PKeyExt<RT>);
 /*#[derive(Clone,Serialize,Deserialize)]
 pub enum KeyType {
@@ -227,6 +229,21 @@ impl<'de, RT : OpenSSLConf> Deserialize<'de> for PKeyExt<RT> {
         const FIELDS: &'static [&'static str] = &["publickey", "privatekey"];
 
         d.deserialize_struct("pkey", FIELDS, PKeyVisitor(PhantomData))
+  }
+}
+
+
+pub mod pkey_with_pri {
+  use serde::{self, Deserialize, Serializer, Deserializer};
+  use serde::ser::SerializeStruct;
+  use super::{OpenSSLConf,PKeyExt};
+  pub fn serialize<S : Serializer,RT : OpenSSLConf>(pk: &PKeyExt<RT>, s: S) -> Result<S::Ok, S::Error>
+  {
+    let mut state = s.serialize_struct("pkey",2)?;
+    state.serialize_field("publickey", &pk.0)?;
+    state.serialize_field("privatekey", &
+      pk.1.private_key_to_der().unwrap_or(Vec::new()))?;
+    state.end()
   }
 }
 
@@ -1006,9 +1023,17 @@ impl<I : KVContent,A : Address,C : OpenSSLConf> RSAPeer<I,A,C> {
     self.publickey.2 = v;
   }
 
+  pub fn get_pub_key_ref(&self) -> &[u8] {
+    &self.publickey.0[..]
+  }
+  pub fn get_pri_key(&self) -> Vec<u8> {
+    self.publickey.1.private_key_to_der().unwrap()
+  }
+
 }
 
-/// TODO use signer ?? TODO change peermgmt to return result
+/// TODO use signer ?? TODO change peermgmt to return result TODO move sign and check to peer!!
+/// TODO move to wotpeer
 impl<I : KVContent,A : Address,C : OpenSSLConf> PeerMgmtMeths<RSAPeer<I,A,C>> for RSAPeerMgmt<C> {
   fn challenge (&self, _p : &RSAPeer<I,A,C>) -> Vec<u8> {
     let mut chal = vec![0;C::CRYPTER_ASYM_BUFF_SIZE_DEC];

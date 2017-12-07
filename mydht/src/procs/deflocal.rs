@@ -55,7 +55,7 @@ pub enum GlobalCommand<PR,GSC> {
 }
 impl<PR,GSC> GlobalCommand<PR,GSC> {
   #[inline]
-  fn get_inner_command(&self) -> &GSC {
+  pub fn get_inner_command(&self) -> &GSC {
     match *self {
       GlobalCommand::Local(ref gsc) 
         | GlobalCommand::Distant(_,ref gsc)
@@ -63,7 +63,7 @@ impl<PR,GSC> GlobalCommand<PR,GSC> {
     }
   }
   #[inline]
-  fn get_inner_command_mut(&mut self) -> &mut GSC {
+  pub fn get_inner_command_mut(&mut self) -> &mut GSC {
     match *self {
       GlobalCommand::Local(ref mut gsc) 
         | GlobalCommand::Distant(_,ref mut gsc)

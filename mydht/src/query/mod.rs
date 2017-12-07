@@ -30,7 +30,7 @@ pub type LastSentConf = Option<(usize,bool)>; // if bool true then ls hop else l
 // TODO switch condvar to something with timeout
 #[derive(Clone)]
 /// Internal data type to manage query reply
-pub enum QReply<P : Peer,V,RP : Ref<P>> {
+pub enum QReply<P : Peer,V,RP> {
   /// send reply to api of query id, wait for nb res in vec or nb error
   Local(ApiQueryId,usize,Vec<V>,usize,QueryPriority),
   /// reply should be forwarded given a query conf.
@@ -80,7 +80,7 @@ impl QueryConf {
 //#[derive(Clone)]
 /// The query is seen as ok when all peer reply None or the first peer replies something (if number
 /// TODO remove QueryID (useless)
-pub struct Query<P : Peer, V, RP : Ref<P>> (pub QueryID, pub QReply<P,V,RP>, pub Option<Instant>);
+pub struct Query<P : Peer, V, RP> (pub QueryID, pub QReply<P,V,RP>, pub Option<Instant>);
 
 /// Query methods
 impl<P : Peer,V, RP : Ref<P>> Query<P,V,RP> {

@@ -35,11 +35,26 @@ use mydht_base::peer::{Peer,NoShadow};
 use bincode::SizeLimit;
 use mydht_openssl::rsa_openssl::PKeyExt;
 use mydht_openssl::rsa_openssl::{
+  pkey_with_pri,
   OpenSSLConf,
   OSSLShadowerW,
   OSSLShadowerR,
   ASymSymMode,
 };
+
+#[derive(Serialize)]
+#[serde(remote = "RSAPeer")]
+pub struct RSAPeerWithPri<RT : OpenSSLConf, I : KVCont> {
+  key : Vec<u8>,
+  #[serde(with = "pkey_with_pri")]
+  publickey : PKeyExt<RT>,
+  name : String,
+  date : TimeSpecExt,
+  peersign : Vec<u8>,
+  signedextend : I,
+  #[serde(skip)]
+  conf : PhantomData<RT>,
+}
 
 
 /// a TrustedPeer using RSA 2048 openssl implementation with sha 512 on content and to derive id.
