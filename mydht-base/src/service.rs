@@ -293,6 +293,9 @@ pub trait SpawnSend<Command> : Sized {
 
 /// send command to spawn, it is non blocking (None returned by recv on not ready) : cf macro
 /// spawn_loop or others implementation
+/// TODO consider changing to Iterator of Result<Command>, that way we could for instance use repeat instead
+/// of default recv or others... Yet hving Result<Options<C>> instead of Option<Result<C>> seems
+/// better
 pub trait SpawnRecv<Command> : Sized {
   /// mut on self is currently not needed by impl
   fn recv(&mut self) -> Result<Option<Command>>;
