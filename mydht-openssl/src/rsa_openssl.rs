@@ -257,18 +257,15 @@ impl<RT : OpenSSLConf> Eq for PKeyExt<RT> {}
 
 /// This trait allows any keyval having a rsa pkey and any symm cipher to implement Shadow 
 pub trait OpenSSLConf : KVContent {
+  type SymConf : OpenSSLSymConf;
   // TODO seems unused : remove ?
   fn HASH_SIGN() -> MessageDigest;
   fn HASH_KEY() -> MessageDigest;
   const RSA_SIZE : u32;
 //  const KEY_TYPE : KeyType; Only RSA allows encoding data for openssl (currently)
-  fn SHADOW_TYPE() -> SymmType;
-  const CRYPTER_KEY_ENC_SIZE : usize;
-  const CRYPTER_KEY_DEC_SIZE : usize;
 
   const CRYPTER_ASYM_BUFF_SIZE_ENC : usize;
   const CRYPTER_ASYM_BUFF_SIZE_DEC : usize;
-  fn  CRYPTER_BUFF_SIZE() -> usize;
 //  const CRYPTER_KEY_SIZE : usize;
 /*
   fn get_pkey<'a>(&'a self) -> &'a PKeyExt<Self>;
@@ -322,7 +319,29 @@ pub trait OpenSSLConf : KVContent {
 
 }
 
-pub struct OSSLSym<RT : OpenSSLConf> {
+pub trait OpenSSLSymConf {
+  fn SHADOW_TYPE() -> SymmType;
+  const CRYPTER_KEY_ENC_SIZE : usize;
+  const CRYPTER_KEY_DEC_SIZE : usize;
+
+  fn  CRYPTER_BUFF_SIZE() -> usize;
+}
+
+#[derive(PartialEq,Eq,Debug,Clone,Serialize,Deserialize)]
+pub struct AES256CBC;
+
+impl OpenSSLSymConf for AES256CBC {
+  #[inline]
+  fn SHADOW_TYPE() -> Cipher { Cipher::aes_256_cbc() }
+  /// size must allow no padding
+  const CRYPTER_KEY_ENC_SIZE : usize = 256;
+  /// size must allow no padding
+  const CRYPTER_KEY_DEC_SIZE : usize = 214;
+  #[inline]
+  fn CRYPTER_BUFF_SIZE() -> usize { Self::SHADOW_TYPE().block_size() }// TODO try bigger
+}
+
+pub struct OSSLSym<RT : OpenSSLSymConf> {
     /// sym cripter (use for write or read only
     crypter : Crypter,
     /// Symetric key, renew on connect (aka new object), contain salt if needed
@@ -333,16 +352,16 @@ pub struct OSSLSym<RT : OpenSSLConf> {
     _p : PhantomData<RT>,
 }
 
-pub struct OSSLSymW<RT : OpenSSLConf>(pub OSSLSym<RT>);
-pub struct OSSLSymR<RT : OpenSSLConf>{
+pub struct OSSLSymW<RT : OpenSSLSymConf>(pub OSSLSym<RT>);
+pub struct OSSLSymR<RT : OpenSSLSymConf>{
   sym : OSSLSym<RT>,
   underbuf : Option<Vec<u8>>,
   suix : usize,
   euix : usize
 }
 
-impl<RT : OpenSSLConf> OSSLSymR<RT> {
-  fn from_read_sym(sym : OSSLSym<RT>) -> Self {
+impl<RT : OpenSSLSymConf> OSSLSymR<RT> {
+  pub fn from_read_sym(sym : OSSLSym<RT>) -> Self {
     OSSLSymR {
       sym : sym,
       underbuf : None,
@@ -351,19 +370,19 @@ impl<RT : OpenSSLConf> OSSLSymR<RT> {
     }
   }
 }
-impl<RT : OpenSSLConf> OSSLSym<RT> {
+impl<RT : OpenSSLSymConf> OSSLSym<RT> {
   pub fn new_key() -> IoResult<Vec<u8>> {
     let mut rng = OsRng::new()?;
-    let ivl = <RT as OpenSSLConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
-    let kl = <RT as OpenSSLConf>::SHADOW_TYPE().key_len();
+    let ivl = <RT as OpenSSLSymConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
+    let kl = <RT as OpenSSLSymConf>::SHADOW_TYPE().key_len();
     let mut s = vec![0; ivl + kl];
     rng.fill_bytes(&mut s);
     Ok(s)
   }
   pub fn new (key : Vec<u8>, send : bool) -> IoResult<OSSLSym<RT>> {
-    let ivl = <RT as OpenSSLConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
-    let kl = <RT as OpenSSLConf>::SHADOW_TYPE().key_len();
-    let mut bufsize = <RT as OpenSSLConf>::CRYPTER_BUFF_SIZE() + <RT as OpenSSLConf>::SHADOW_TYPE().block_size();
+    let ivl = <RT as OpenSSLSymConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
+    let kl = <RT as OpenSSLSymConf>::SHADOW_TYPE().key_len();
+    let mut bufsize = <RT as OpenSSLSymConf>::CRYPTER_BUFF_SIZE() + <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
     assert!(key.len() == ivl + kl); // TODO replace panic by io error
     let mode = if send {
       Mode::Encrypt
@@ -378,7 +397,7 @@ impl<RT : OpenSSLConf> OSSLSym<RT> {
         Some(iv)
       };
       Crypter::new(
-        <RT as OpenSSLConf>::SHADOW_TYPE(),
+        <RT as OpenSSLSymConf>::SHADOW_TYPE(),
         mode,
         k,
         piv)
@@ -394,18 +413,18 @@ impl<RT : OpenSSLConf> OSSLSym<RT> {
   }
 }
 
-impl<RT : OpenSSLConf> OSSLSymR<RT> {
+impl<RT : OpenSSLSymConf> OSSLSymR<RT> {
   pub fn new (key : Vec<u8>) -> IoResult<OSSLSymR<RT>> { 
     Ok(OSSLSymR::from_read_sym(OSSLSym::new(key,false)?))
   }
 }
-impl<RT : OpenSSLConf> OSSLSymW<RT> {
+impl<RT : OpenSSLSymConf> OSSLSymW<RT> {
   pub fn new (key : Vec<u8>) -> IoResult<OSSLSymW<RT>> { 
     Ok(OSSLSymW(OSSLSym::new(key,true)?))
   }
 
 }
-impl<RT : OpenSSLConf> ExtRead for OSSLSymR<RT> {
+impl<RT : OpenSSLSymConf> ExtRead for OSSLSymR<RT> {
 
   fn read_header<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
     Ok(())
@@ -418,7 +437,7 @@ impl<RT : OpenSSLConf> ExtRead for OSSLSymR<RT> {
       self.suix += tocopy;
       Ok(tocopy)
     } else {
-      let bs = <RT as OpenSSLConf>::SHADOW_TYPE().block_size();
+      let bs = <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
   //    assert!(buf.len() > bs);
       let (tot,rec) = {
         let dest = if buf.len() > bs {
@@ -471,13 +490,13 @@ impl<RT : OpenSSLConf> ExtRead for OSSLSymR<RT> {
   }
    
 }
-impl<RT : OpenSSLConf> ExtWrite for OSSLSymW<RT> {
+impl<RT : OpenSSLSymConf> ExtWrite for OSSLSymW<RT> {
   fn write_header<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
     Ok(())
   }
   fn write_into<W : Write>(&mut self, w : &mut W, cont : &[u8]) -> IoResult<usize> {
 
-    let bs = <RT as OpenSSLConf>::SHADOW_TYPE().block_size();
+    let bs = <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
     let swrite = min(cont.len(), self.0.buff.len() - bs);
     let iu = self.0.crypter.update(&cont[..swrite], &mut self.0.buff[..])?;
     self.0.finalize = false;
@@ -507,7 +526,7 @@ impl<RT : OpenSSLConf> ExtWrite for OSSLSymW<RT> {
 
 pub struct OSSLMixR<RT : OpenSSLConf> {
   keyexch : PKeyExt<RT>,
-  sym : Option<OSSLSymR<RT>>,
+  sym : Option<OSSLSymR<RT::SymConf>>,
   _p : PhantomData<RT>,
 }
 
@@ -524,8 +543,8 @@ impl<RT : OpenSSLConf> OSSLMixR<RT> {
 impl<RT : OpenSSLConf> ExtRead for OSSLMixR<RT> {
 
   fn read_header<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
-    let is = <RT as OpenSSLConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
-    let ks = <RT as OpenSSLConf>::SHADOW_TYPE().key_len();
+    let is = <RT::SymConf as OpenSSLSymConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
+    let ks = <RT::SymConf as OpenSSLSymConf>::SHADOW_TYPE().key_len();
     let ksbuf = max(ks, self.keyexch.1.size());
 
     // TODO if other use out of header put in osslmixr
@@ -535,7 +554,7 @@ impl<RT : OpenSSLConf> ExtRead for OSSLMixR<RT> {
     }
     // allways reinit sym crypter (not the case in previous impl
     //if self.key.len() == 0 {
-    let mut enckey = vec![0;<RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE]; // enc from 32 to 256
+    let mut enckey = vec![0;<RT::SymConf as OpenSSLSymConf>::CRYPTER_KEY_ENC_SIZE]; // enc from 32 to 256
     r.read_exact(&mut enckey[..])?;
        /*let mut s = 0;
        while s < enckey.len() {
@@ -586,7 +605,7 @@ impl<RT : OpenSSLConf> ExtRead for OSSLMixR<RT> {
 }
 pub struct OSSLMixW<RT : OpenSSLConf> {
   dest : PKeyExt<RT>,
-  sym : Option<OSSLSymW<RT>>,
+  sym : Option<OSSLSymW<RT::SymConf>>,
   _p : PhantomData<RT>,
 }
 impl<RT : OpenSSLConf> OSSLMixW<RT> {
@@ -602,13 +621,13 @@ impl<RT : OpenSSLConf> OSSLMixW<RT> {
 
 impl<RT : OpenSSLConf> ExtWrite for OSSLMixW<RT> {
   fn write_header<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
-    let is = <RT as OpenSSLConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
-    let ks = <RT as OpenSSLConf>::SHADOW_TYPE().key_len();
-    let ivk = <OSSLSym<RT>>::new_key()?;
+    let is = <RT::SymConf as OpenSSLSymConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
+    let ks = <RT::SymConf as OpenSSLSymConf>::SHADOW_TYPE().key_len();
+    let ivk = <OSSLSym<RT::SymConf>>::new_key()?;
     w.write_all(&ivk[..is])?;
-    let mut enckey = vec![0;<RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE];
+    let mut enckey = vec![0;<RT::SymConf as OpenSSLSymConf>::CRYPTER_KEY_ENC_SIZE];
     let ekeyl = self.dest.1.public_encrypt(&ivk[is..], &mut enckey[..], rsa::PKCS1_PADDING)?;
-    assert!(ekeyl == <RT as OpenSSLConf>::CRYPTER_KEY_ENC_SIZE);
+    assert!(ekeyl == <RT::SymConf as OpenSSLSymConf>::CRYPTER_KEY_ENC_SIZE);
     w.write_all(&enckey[..])?;
     
     let sym = OSSLSymW::new(ivk)?;
@@ -699,6 +718,9 @@ pub enum ASymSymMode {
 // Crypter is not send but lets try
 unsafe impl<RT : OpenSSLConf> Send for OSSLShadowerW<RT> {}
 unsafe impl<RT : OpenSSLConf> Send for OSSLShadowerR<RT> {}
+
+unsafe impl<C : OpenSSLSymConf> Send for OSSLSymW<C> {}
+unsafe impl<C : OpenSSLSymConf> Send for OSSLSymR<C> {}
 
 impl<RT : OpenSSLConf> ExtRead for OSSLShadowerR<RT> {
   #[inline]
@@ -1070,26 +1092,19 @@ impl<I : KVContent,A : Address,C : OpenSSLConf> PeerMgmtMeths<RSAPeer<I,A,C>> fo
 pub struct RSA2048SHA512AES256;
 
 impl OpenSSLConf for RSA2048SHA512AES256 {
+
+  type SymConf = AES256CBC;
   #[inline]
   fn HASH_SIGN() -> MessageDigest { MessageDigest::sha512() }
   #[inline]
   fn HASH_KEY() -> MessageDigest { MessageDigest::sha512() }
   const RSA_SIZE : u32 = 2048;
-//  const KEY_TYPE : KeyType = KeyType::RSA;
-  #[inline]
-  fn SHADOW_TYPE() -> Cipher { Cipher::aes_256_cbc()}
-//  const CRYPTER_KEY_SIZE : usize = 32;
-  /// size must allow no padding
-  const CRYPTER_KEY_ENC_SIZE : usize = 256;
-  /// size must allow no padding
-  const CRYPTER_KEY_DEC_SIZE : usize = 214;
-  #[inline]
-  fn CRYPTER_BUFF_SIZE() -> usize { Self::SHADOW_TYPE().block_size() }// TODO try bigger
 
   /// padding is use
   const CRYPTER_ASYM_BUFF_SIZE_ENC : usize = 256;
   /// padding is use
   const CRYPTER_ASYM_BUFF_SIZE_DEC : usize = 214;
+
 }
 
 
@@ -1167,9 +1182,9 @@ fn rsa_shadower4_test () {
 #[test]
 fn rsa_shadower5_test () {
   let smode = ASymSymMode::ASymSym;
-  let input_length = RSA2048SHA512AES256::SHADOW_TYPE().block_size();
-  let write_buffer_length = RSA2048SHA512AES256::SHADOW_TYPE().block_size();
-  let read_buffer_length = RSA2048SHA512AES256::SHADOW_TYPE().block_size();
+  let input_length = <RSA2048SHA512AES256 as OpenSSLConf>::SymConf::SHADOW_TYPE().block_size();
+  let write_buffer_length = <RSA2048SHA512AES256 as OpenSSLConf>::SymConf::SHADOW_TYPE().block_size();
+  let read_buffer_length = <RSA2048SHA512AES256 as OpenSSLConf>::SymConf::SHADOW_TYPE().block_size();
   rsa_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
 }
 
@@ -1203,9 +1218,9 @@ fn rsa_shadower8_test () {
 fn rsa_shadower9_test () {
   let smode = ASymSymMode::ASymOnly;
   //let input_length = <RSAPeerTest as OpenSSLConf>::CRYPTER_BLOCK_SIZE;
-  let input_length = RSA2048SHA512AES256::SHADOW_TYPE().block_size();
-  let write_buffer_length = RSA2048SHA512AES256::SHADOW_TYPE().block_size();
-  let read_buffer_length = RSA2048SHA512AES256::SHADOW_TYPE().block_size();
+  let input_length = <RSA2048SHA512AES256 as OpenSSLConf>::SymConf::SHADOW_TYPE().block_size();
+  let write_buffer_length = <RSA2048SHA512AES256 as OpenSSLConf>::SymConf::SHADOW_TYPE().block_size();
+  let read_buffer_length = <RSA2048SHA512AES256 as OpenSSLConf>::SymConf::SHADOW_TYPE().block_size();
   rsa_shadower_test (input_length, write_buffer_length, read_buffer_length, smode);
 }
 #[test]

@@ -32,6 +32,7 @@ use mydht::transportif::{
 
 use super::{
   SSWCache,
+  SSRCache,
 };
 use self::sized_windows_lim::{
   SizedWindowsParams,
@@ -44,9 +45,6 @@ use tunnel::full::{
   TunnelCachedWriterExt,
   ErrorWriter,
 };
-
-
-
 
 use mydht::kvstoreif::{
   KVCache,
@@ -177,6 +175,7 @@ impl SRef for TestMessage {
     self
   }
 }
+
 impl SToRef<TestMessage> for TestMessage {
   fn to_ref(self) -> TestMessage {
     self
@@ -297,7 +296,6 @@ impl<MC : MyDHTTunnelConf> Into<MCCommand<MyDHTTunnelConfType<MC>>> for TestMess
   }
 }
 
-
 impl<P> PeerStatusListener<P> for TestMessage {
   const DO_LISTEN : bool = false;
   #[inline]
@@ -373,7 +371,7 @@ impl MyDHTTunnelConf for TunnelConf {
   type SP = SProv;
 
   type CacheSSW = HashMap<Vec<u8>,SSWCache<Self>>;
-  type CacheSSR = HashMap<Vec<u8>,MultiRExt<Self::SSR>>;
+  type CacheSSR = HashMap<Vec<u8>,SSRCache<Self>>;
   type CacheErW = HashMap<Vec<u8>,(ErrorWriter,<Self::Transport as Transport>::Address)>;
   type CacheErR = HashMap<Vec<u8>,Vec<MultipleErrorInfo>>;
 // peer name, listener port, is_multiplexed, node in kvstore, and dest for query
@@ -586,6 +584,7 @@ pub struct SProv (ShadowTest);
 pub struct SRead (ShadowTest);
 #[derive(Clone)]
 pub struct SWrite (ShadowTest);
+
 impl ExtWrite for SWrite {
   #[inline]
   fn write_header<W : Write>(&mut self, w : &mut W) -> IoResult<()> {

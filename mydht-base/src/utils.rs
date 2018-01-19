@@ -170,7 +170,7 @@ impl<T : Clone + Send + Sync> ToRef<T,ArcRef<T>> for ArcRef<T> {
 
 /// Rc is used locally (the content size is not meaningless), a copy of the content is done if
 /// threads are used.
-#[derive(Clone,Eq,PartialEq)]
+#[derive(Debug,Clone,Eq,PartialEq)]
 pub struct RcRef<T>(Rc<T>);
 
 #[derive(Clone,Eq,PartialEq)]
@@ -240,7 +240,7 @@ impl<'de,T : Clone + Send + Deserialize<'de>> Deserialize<'de> for RcRef<T> {
 
 /// Content is already send and cloned as neededtsttststststs
 /// location : only for small contents
-#[derive(Clone,Eq,PartialEq)]
+#[derive(Debug,Clone,Eq,PartialEq)]
 pub struct CloneRef<T>(T);
 
 

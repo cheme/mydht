@@ -66,6 +66,7 @@ use std::time::Instant;
 use std::time::Duration;
 use serde::{Serialize};
 use serde::de::{DeserializeOwned};
+
 #[cfg(test)]
 extern crate mydht_basetest;
 #[cfg(test)]
@@ -119,8 +120,10 @@ use mydht::{
   RegReaderBorrow,
   PeerStatusListener,
   PeerStatusCommand,
-  HashMapQuery,
   Route,
+};
+use mydht::dhtimpl::{
+  HashMapQuery,
 };
 use mydht::api::{
   Api,
@@ -182,6 +185,25 @@ use mydht::service::{
  
 };
  
+// reexport from tunnel should be thought again
+pub mod reexp {
+  pub use tunnel::info::multi::{
+    MultipleReplyMode,
+  };
+  pub use tunnel::info::error::{
+    MultipleErrorMode,
+  };
+ 
+  pub use tunnel::full::{
+    ErrorWriter,
+  };
+  pub use tunnel::info::error::{
+    MultipleErrorInfo,
+  };
+  pub use tunnel::{
+    SymProvider,
+  };
+}
 
 #[cfg(test)]
 mod test;
@@ -262,7 +284,7 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
     + Send;
 
   /// TODO unclear we do not need that much convs TODO when stable test without
-  type ProtoMsg : Into<MCCommand<MyDHTTunnelConfType<Self>>> + SettableAttachments + GettableAttachments
+  type ProtoMsg : SettableAttachments + GettableAttachments
     + OptFrom<Self::InnerCommand>
     + Into<Self::InnerCommand>
     ;
@@ -322,7 +344,8 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
 }
 
 //type SSWCache<MC : MyDHTTunnelConf> = (TunnelCachedWriterExt<MC::SSW,MC::LimiterW>,<TunPeer<MC::Peer,MC::PeerRef> as TPeer>::Address);
-type SSWCache<MC : MyDHTTunnelConf> = (TunnelCachedWriterExt<MC::SSW,MC::LimiterW>,MC::TransportAddress);
+pub type SSWCache<MC : MyDHTTunnelConf> = (TunnelCachedWriterExt<MC::SSW,MC::LimiterW>,MC::TransportAddress);
+pub type SSRCache<MC : MyDHTTunnelConf> = MultiRExt<MC::SSR>;
 pub struct MyDHTTunnel<MC : MyDHTTunnelConf> {
   me : MC::PeerRef,
 }

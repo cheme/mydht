@@ -179,6 +179,7 @@ pub use procs::{
   noservice,
   ClientMode,
 };
+pub use mydht_base::route2::IndexableWriteCache;
 pub use procs::api;
 // reexport
 pub use peer::{PeerPriority,PeerState};

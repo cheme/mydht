@@ -22,13 +22,14 @@ use mydht_base::mydhtresult::Result;
 use std::borrow::Borrow;
 use mydht_base::route2::{
   GetPeerRef,
+  IndexableWriteCache,
   RouteBaseMessage,
   RouteBase as RouteBase2,
   RouteMsgType,
 };
 
 
-/// simply iterate on cache
+/// simply iterate on cache (non random routing) 
 pub struct InefficientmapBase2<P : Peer,RP : Borrow<P>, GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Key,GP>> {
    peers_nbquery : Vec<(P::Key,Option<usize>)>,
    next : usize,
@@ -47,6 +48,14 @@ impl<P : Peer,RP : Borrow<P>, GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Ke
     }
   }
 }
+
+impl<P : Peer,RP : Borrow<P>, GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Key,GP>>
+  IndexableWriteCache for InefficientmapBase2<P,RP,GP,C> {
+  fn get_at(&self, ix : usize) -> Option<usize> {
+    self.peers_nbquery.get(ix).and_then(|v|v.1)
+  }
+}
+
 impl<P : Peer,RP : Borrow<P>, GP : GetPeerRef<P,RP>, C : Cache<<P as KeyVal>::Key,GP>>
 InefficientmapBase2<P,RP,GP,C> {
 
