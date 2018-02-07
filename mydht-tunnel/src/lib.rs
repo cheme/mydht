@@ -54,6 +54,7 @@ use tunnel::nope::{
 
 use tunnel::{
   SymProvider,
+  RouteProvider,
 };
 use std::collections::VecDeque;
 use mydht_slab::slab::{
@@ -76,6 +77,7 @@ use mydht::keyval::{
   GettableAttachments,
   SettableAttachments,
   Attachment,
+  KeyVal,
 };
 use mydht::msgencif::{
   MsgEnc,
@@ -84,7 +86,6 @@ use mydht::dhtif::{
   Result,
   PeerMgmtMeths,
   DHTRules,
-  KeyVal,
 };
 use mydht::dhtimpl::{
   Cache,
@@ -937,6 +938,7 @@ type ReplyWriterInitTConf<MC : MyDHTTunnelConf> = (MC::LimiterR,MC::LimiterW,usi
 pub enum GlobalTunnelReply<MC : MyDHTTunnelConf> {
   /// inner service return a result for api
   Api(MC::InnerReply),
+  SendCommandToRand(MC::InnerCommand),
   SendCommandTo(MC::PeerRef,MC::InnerCommand),
   TryReplyFromReader(MC::InnerCommand),
   NoRep,
@@ -961,6 +963,10 @@ impl<MC : MyDHTTunnelConf> Service for LocalTunnelService<MC> {
             unreachable!()
           },
           GlobalTunnelReply::Api(inner_reply) => {
+            // from global
+            unreachable!()
+          },
+          GlobalTunnelReply::SendCommandToRand(inner_command) => {
             // from global
             unreachable!()
           },
@@ -1025,6 +1031,10 @@ impl<MC : MyDHTTunnelConf> Service for LocalTunnelService<MC> {
             // read stream is wrong here, or do it at reuse of stream which means putting the
             // reader back in the msgenc)
           },
+          GlobalTunnelReply::SendCommandToRand(inner_command) => {
+            // only for global call
+            unreachable!()
+          },
           GlobalTunnelReply::SendCommandTo(dest, inner_command) => {
             // only for global call
             unreachable!()
@@ -1050,7 +1060,7 @@ impl<MC : MyDHTTunnelConf> Service for LocalTunnelService<MC> {
 
 pub struct GlobalTunnelService<MC : MyDHTTunnelConf> {
   pub inner : MC::InnerService,
-  pub to_send : VecDeque<(MC::PeerRef,MC::InnerCommand)>,
+  pub to_send : VecDeque<(Option<MC::PeerRef>,MC::InnerCommand)>,
   pub tunnel : Full<TunnelTraits<MC>>,
   pub address_key : HashMap<MC::TransportAddress,MC::PeerKey>,
 }
@@ -1096,14 +1106,17 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
         if self.to_send.len() > 0 && self.tunnel.route_prov.enough_peer() {
           let mut cmds = Vec::with_capacity(self.to_send.len());
           // send all cached
-          while let Some((dest, inner_command)) = self.to_send.pop_front() {
-            let (tunn_we,dest_add) = self.tunnel.new_writer(&TunPeer::new(dest));
+          while let Some((o_dest, inner_command)) = self.to_send.pop_front() {
+            let dest = o_dest.map(|d|TunPeer::new(d))
+              .unwrap_or_else(||self.tunnel.route_prov.rand_dest().clone());
+            let (tunn_we,dest_add) = self.tunnel.new_writer(&dest);
             let dest_k = self.address_key.get(&dest_add).map(|k|k.clone());
             let command : GlobalTunnelCommand<MC> = GlobalTunnelCommand::TunnelSendOnce(tunn_we,inner_command);
             cmds.push(GlobalReply::ForwardOnce(dest_k,Some(dest_add), FWConf {
               nb_for : 0,
               discover : true,
             }, command));
+
           }
           GlobalReply::Mult(cmds)
         } else {
@@ -1134,6 +1147,23 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
               GlobalReply::NoRep
             }
           },
+          GlobalTunnelReply::SendCommandToRand(inner_command) => {
+            if self.tunnel.route_prov.enough_peer() {
+              let dest = self.tunnel.route_prov.rand_dest().clone();
+              // TODO third time using this block 
+              let (tunn_we,dest_add) = self.tunnel.new_writer(&dest);
+              let dest_k = self.address_key.get(&dest_add).map(|k|k.clone());
+              let command : GlobalTunnelCommand<MC> = GlobalTunnelCommand::TunnelSendOnce(tunn_we,inner_command);
+              GlobalReply::ForwardOnce(dest_k,Some(dest_add), FWConf {
+                nb_for : 0,
+                discover : true,
+              }, command)
+
+            } else {
+              self.to_send.push_back((None,inner_command));
+              GlobalReply::MainLoop(MainLoopSubCommand::PoolSize(self.tunnel.route_prov.route_len() + 1))
+            }
+          },
           GlobalTunnelReply::SendCommandTo(dest, inner_command) => {
             if self.tunnel.route_prov.enough_peer() {
 
@@ -1146,7 +1176,7 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
               }, command)
             } else {
               //debug!("query peers : {:?}", self.tunnel.route_prov.route_len());
-              self.to_send.push_back((dest,inner_command));
+              self.to_send.push_back((Some(dest),inner_command));
               // plus one for case where dest in pool
               GlobalReply::MainLoop(MainLoopSubCommand::PoolSize(self.tunnel.route_prov.route_len() + 1))
             }
@@ -1618,6 +1648,7 @@ impl<MC : MyDHTTunnelConf> ApiRepliable for GlobalTunnelReply<MC> {
     match *self {
       GlobalTunnelReply::Api(ref inn_c) => inn_c.get_api_reply(),
       GlobalTunnelReply::SendCommandTo(..) => None,
+      GlobalTunnelReply::SendCommandToRand(..) => None,
       GlobalTunnelReply::TryReplyFromReader(..) => None,
       GlobalTunnelReply::NoRep => None,
     }

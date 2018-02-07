@@ -249,8 +249,7 @@ impl<MC : MyDHTTunnelConf> GenTunnelTraits for TunnelTraits<MC> {
 
 impl<P : MPeer,PR : Ref<P> + Clone + Debug> Rp<TunPeer<P,PR>> {
   pub fn enough_peer(&self) -> bool {
-    // + 1 for dest in peers
-    if self.peers.len() < self.route_len() + 1 {
+    if self.peers.len() < self.route_len() {
       false
     } else {
       true
@@ -272,6 +271,11 @@ impl<P : MPeer,PR : Ref<P> + Clone + Debug> Rp<TunPeer<P,PR>> {
         self.positions.swap_remove(ixp);
       }
     }
+  }
+  fn rand_one(&mut self) -> &TunPeer<P,PR> {
+    let c_len = self.peers.len();
+    let pos = self.rng.next_u64() as usize % c_len;
+    self.peers.get(pos).unwrap()
   }
   fn exact_rand(&mut self, sending : bool, other : &TunPeer<P,PR>) -> Vec<&TunPeer<P,PR>> {
     let min_no_repeat = if self.routebias > 0 {
@@ -309,6 +313,7 @@ impl<P : MPeer,PR : Ref<P> + Clone + Debug> Rp<TunPeer<P,PR>> {
     if sending {
       if result.len() > 1 && result.get(result.len()-1).unwrap().get_address() == other.get_address() {
         if result.len() > 2 {
+          // TODO case where result -2 is also other
           let (a,b) = (result.len()-2,result.len()-1);
           // can have other in route (we only ensure it is not before itself
           result.swap(a,b);
@@ -357,6 +362,9 @@ impl<P : MPeer,PR : Ref<P> + Clone + Debug> RouteProvider<TunPeer<P, PR>> for Rp
   }
   fn new_reply_route (&mut self, from : &TunPeer<P, PR>) -> Vec<&TunPeer<P, PR>> {
     self.exact_rand(true,from)
+  }
+  fn rand_dest (&mut self) -> &TunPeer<P, PR> {
+    self.rand_one()
   }
 }
 

@@ -5,6 +5,7 @@
 #[cfg(test)]
 extern crate mydht_basetest;
 
+use std::io::Cursor;
 use openssl::rand::rand_bytes;
 use mydht_base::keyval::Key as KVContent;
 use std::fmt;
@@ -463,7 +464,13 @@ impl<RT : OpenSSLSymConf> ExtRead for OSSLSymR<RT> {
         } else {
           if !self.sym.finalize {
             self.sym.finalize = true;
-            (self.sym.crypter.finalize(dest)?,false)
+            let fr = self.sym.crypter.finalize(dest);
+            let sr = if RELAX_FINALIZE && fr.is_err() {
+              0
+            } else {
+              fr?
+            };
+            (sr,false)
           } else {
             (0,false)
           }
@@ -490,6 +497,11 @@ impl<RT : OpenSSLSymConf> ExtRead for OSSLSymR<RT> {
   }
    
 }
+
+#[cfg(feature="relaxfinalize")]
+const RELAX_FINALIZE : bool = true;
+#[cfg(not(feature="relaxfinalize"))]
+const RELAX_FINALIZE : bool = false;
 impl<RT : OpenSSLSymConf> ExtWrite for OSSLSymW<RT> {
   fn write_header<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
     Ok(())
@@ -543,15 +555,18 @@ impl<RT : OpenSSLConf> OSSLMixR<RT> {
 impl<RT : OpenSSLConf> ExtRead for OSSLMixR<RT> {
 
   fn read_header<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
+
     let is = <RT::SymConf as OpenSSLSymConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
     let ks = <RT::SymConf as OpenSSLSymConf>::SHADOW_TYPE().key_len();
     let ksbuf = max(ks, self.keyexch.1.size());
 
+//    self.keyexch.2 = true;
     // TODO if other use out of header put in osslmixr
     let mut ivk = vec![0;is + ksbuf];
     if is > 0 {
       r.read_exact(&mut ivk[..is])?;
     }
+
     // allways reinit sym crypter (not the case in previous impl
     //if self.key.len() == 0 {
     let mut enckey = vec![0;<RT::SymConf as OpenSSLSymConf>::CRYPTER_KEY_ENC_SIZE]; // enc from 32 to 256
@@ -579,6 +594,7 @@ impl<RT : OpenSSLConf> ExtRead for OSSLMixR<RT> {
      ivk.truncate(is + ks);
      let sym = OSSLSymR::new(ivk)?;
      self.sym = Some(sym);
+
      Ok(())
   }
   fn read_from<R : Read>(&mut self, r : &mut R, buf : &mut[u8]) -> IoResult<usize> {

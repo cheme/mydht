@@ -9,6 +9,8 @@ default = ["mydhtimpl"]
 tunnelimpl = ["tunnel"]
 mydhtimpl = ["mydht-base"]
 nightly = []
+# relax finalize for some usage (eg decrypting of unknown size stream in tunnels : if limiter has padding)
+relaxfinalize = []
 
 [dependencies]
 log = "~0.3.4"
