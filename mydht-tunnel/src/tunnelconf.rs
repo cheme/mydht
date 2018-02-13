@@ -248,11 +248,11 @@ impl<MC : MyDHTTunnelConf> GenTunnelTraits for TunnelTraits<MC> {
 
 
 impl<P : MPeer,PR : Ref<P> + Clone + Debug> Rp<TunPeer<P,PR>> {
-  pub fn enough_peer(&self) -> bool {
+  pub fn missing_peer(&self) -> usize {
     if self.peers.len() < self.route_len() {
-      false
+      self.route_len() - self.peers.len()
     } else {
-      true
+      0
     }
   }
   pub fn route_len(&self) -> usize {

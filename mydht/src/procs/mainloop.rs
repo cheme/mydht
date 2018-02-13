@@ -418,7 +418,7 @@ pub struct MDHTState<MC : MyDHTConf> {
   discover_wait_route : VecDeque<(MCCommand<MC>,usize,usize)>,
 
   peer_pool_maintain : usize,
-  peer_last_query : Instant,
+  peer_next_query : Instant,
   //peer_pool_wait : Vec<(usize,usize,fn(Vec<MC::PeerRef>) -> MainLoopCommand<MC>)>,
 
 
@@ -428,18 +428,18 @@ pub struct MDHTState<MC : MyDHTConf> {
   synch_connect_handle_send : Vec<(
     SynchConnectHandle<MC>,
     <MC::SynchConnectChannelIn as SpawnChannel<SynchConnectCommandIn<MC::Transport>>>::Send,
-  )>,
+    )>,
 }
 
 impl<MC : MyDHTConf> MDHTState<MC> {
 
   pub fn init_state(conf : &mut MC,mlsend : &mut MainLoopSendIn<MC>) -> Result<MDHTState<MC>> {
-  //pub fn init_state(conf : &mut MC,mlsend : &mut MainLoopSendIn<MC>) -> Result<MDHTState<MC>> {
+    //pub fn init_state(conf : &mut MC,mlsend : &mut MainLoopSendIn<MC>) -> Result<MDHTState<MC>> {
     let poll = Poll::new()?;
     let transport = conf.init_transport()?;
     let route = conf.init_route()?;
     let (transport, transport_synch) = if transport.register(&poll, LISTENER, Ready::readable(),
-                    PollOpt::edge())? {
+    PollOpt::edge())? {
       debug!("Asynch transport successfully registered");
       (Some(transport),None)
     } else {
@@ -474,8 +474,8 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     // TODO use a true dest with mainloop, api weak as dest
     let api_gdest = api_handle.get_weak_handle().map(|wh|{
       MC::ApiServiceChannelIn::get_weak_send(&api_send).map(|aps|
-        HandleSend(aps,wh)
-      )
+                                                            HandleSend(aps,wh)
+                                                           )
     }).unwrap_or(None);
     let global_dest = GlobalDest {
       mainloop : mlsend.clone(),
@@ -483,8 +483,8 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     };
     let api_gdest_peer = api_handle.get_weak_handle().map(|wh|{
       MC::ApiServiceChannelIn::get_weak_send(&api_send).map(|aps|
-        HandleSend(aps,wh)
-      )
+                                                            HandleSend(aps,wh)
+                                                           )
     }).unwrap_or(None);
     let global_dest_peer = GlobalDest {
       mainloop : mlsend.clone(),
@@ -542,7 +542,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       peerstore_handle : peerstore_handle,
       discover_wait_route : VecDeque::new(),
       peer_pool_maintain : MC::PEER_POOL_INIT_SIZE,
-      peer_last_query : Instant::now() - Duration::from_millis(MC::PEER_POOL_DELAY_MS),
+      peer_next_query : Instant::now() - Duration::from_millis(MC::PEER_POOL_DELAY_MS),
       //peer_pool_wait : Vec::new(),
       synch_connect_ix : 0,
       synch_connect_handle_send : Vec::with_capacity(MC::NB_SYNCH_CONNECT),
@@ -558,12 +558,12 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     self.connect_with2(dest_address,true,None)
   }
   /// trusted peer is for noauth sending to global on connect
-  fn connect_with2(&mut self, dest_address : &<MC::Peer as Peer>::Address, allow_mult : bool, trusted_peer : Option<MC::PeerRef>) -> Result<(usize, Option<usize>)> {
+  fn connect_with2(&mut self, dest_address : &<MC::Peer as Peer>::Address, not_once : bool, trusted_peer : Option<MC::PeerRef>) -> Result<(usize, Option<usize>)> {
     if self.transport.is_some() {
       // first check cache if there is a connect already : no (if peer yes) 
       let (ws,mut ors) = self.transport.as_ref().unwrap().connectwith(&dest_address)?;
 
-      if !allow_mult {
+      if !not_once {
         ors = None;
       }
 
@@ -579,11 +579,13 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         self.slab_cache.get_mut(write_token).map(|r|r.os = Some(read_token));
         Ok(Some(read_token))
       }).unwrap_or(Ok(None))?;
-
-      self.address_cache.add_val_c(dest_address.clone(),AddressCacheEntry {
-        read : ort,
-        write : write_token,
-      });
+      if not_once {
+        self.address_cache.add_val_c(dest_address.clone(),AddressCacheEntry {
+          read : ort,
+          write : write_token,
+          //tp_send : trusted_peer.is_some(),
+        });
+      }
       if let Some(pr) = trusted_peer {
         if <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::DO_LISTEN {
           let listen_global = <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::build_command(PeerStatusCommand::PeerOnline(pr.clone(),PeerPriority::Unchecked));
@@ -597,15 +599,19 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       let connect_token = self.slab_cache.insert (
         SlabEntry {
           state : SlabEntryState::WriteConnectSynch((s,r,false),trusted_peer),
-//           state : SlabEntryState::WriteConnectSynch((ref write_s_in ,ref write_r_in,ref has_connect)),
+          //           state : SlabEntryState::WriteConnectSynch((ref write_s_in ,ref write_r_in,ref has_connect)),
           os : None,
           peer : None,
         }
       );
-      self.address_cache.add_val_c(dest_address.clone(),AddressCacheEntry {
-        read : None,
-        write : connect_token,
-      });
+
+      if not_once {
+        self.address_cache.add_val_c(dest_address.clone(),AddressCacheEntry {
+          read : None,
+          write : connect_token,
+          //tp_send : false,
+        });
+      }
       let do_spawn = if self.synch_connect_ix == self.synch_connect_handle_send.len() {
         if self.synch_connect_handle_send.len() < MC::NB_SYNCH_CONNECT {
           true
@@ -682,11 +688,11 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     }
 
 
-//    self.peerstore_send.send()?;
+    //    self.peerstore_send.send()?;
     Ok(())
   }
 
- 
+
   /// sub call for service (actually mor relevant service implementation : the call will only
   /// return one CommandOut to spawner : finished or fail).
   /// Async yield being into self.
@@ -701,7 +707,20 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           MainLoopSubCommand::TrustedTryConnect(peer) => {
             if !self.peer_cache.has_val_c(peer.get_key_ref()) && !self.address_cache.has_val_c(peer.get_address()) {
               self.call_inner_loop(MainLoopCommand::TrustedTryConnect(<MC::PeerRef as Ref<_>>::new(peer),None),mlsend,async_yield)?;
-            }
+            }/* else {
+              // send peer update if needed : NoAuth mode (peer cache empty) and address cache
+              // exisiting but without global send (connected through address without Peer info
+              // knowledge)
+              if MC::AUTH_MODE == ShadowAuthType::NoAuth && <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::DO_LISTEN {
+                if let Some(ref mut adc) = self.address_cache.get_val_mut_c(peer.get_address()) {
+                  if !adc.tp_send {
+                    let listen_global = <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::build_command(PeerStatusCommand::PeerOnline(<MC::PeerRef as Ref<_>>::new(peer),PeerPriority::Unchecked));
+                    send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,GlobalCommand::Local(listen_global),"Panic sending to peer online to global service");
+                    adc.tp_send = true;
+                  }
+                }
+              }
+            }*/
           },
           MainLoopSubCommand::TryConnect(key,add) => {
             if !self.peer_cache.has_val_c(&key) && !self.address_cache.has_val_c(&add) {
@@ -720,16 +739,16 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               };
               if cache_l < self.peer_pool_maintain {
                 // do update immediatly
-                self.peer_last_query = Instant::now();
+                self.peer_next_query = Instant::now();
               }
 
             }
-    /*        if self.peer_cache.len_c() < min_no_repeat {
-              self.peer_pool_wait.push((min_no_repeat,nb_tot,on_res));
-            } else {
-              let peers = self.peer_cache.exact_rand(min_no_repeat,nb_tot)?.into_iter().map(|pc|pc.peer).collect();
-              self.call_inner_loop(on_res(peers),mlsend,async_yield)?;
-            }*/
+            /*        if self.peer_cache.len_c() < min_no_repeat {
+                      self.peer_pool_wait.push((min_no_repeat,nb_tot,on_res));
+                      } else {
+                      let peers = self.peer_cache.exact_rand(min_no_repeat,nb_tot)?.into_iter().map(|pc|pc.peer).collect();
+                      self.call_inner_loop(on_res(peers),mlsend,async_yield)?;
+                      }*/
           },
 
           MainLoopSubCommand::Discover(lkad) => {
@@ -785,18 +804,18 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
       MainLoopCommand::PeerStore(kvcmd) => {
         /*
-        match kvcmd {
-          GlobalCommand(Some(with),KVStoreCommand::Find(ref qm,ref key,None)) => {
-            if qm.nb_res == 1 && oaqid.is_some() {
-              let op = self.peer_cache.get_val_c(key).map(|v|v.peer.clone());
-              if op.is_some() {
-              TODO here we can reuse kvstore code to proxy to peer : depending on qm and with...
-              }
-            }
-          },
-          _ => (),
-        }
-        */
+           match kvcmd {
+           GlobalCommand(Some(with),KVStoreCommand::Find(ref qm,ref key,None)) => {
+           if qm.nb_res == 1 && oaqid.is_some() {
+           let op = self.peer_cache.get_val_c(key).map(|v|v.peer.clone());
+           if op.is_some() {
+           TODO here we can reuse kvstore code to proxy to peer : depending on qm and with...
+           }
+           }
+           },
+           _ => (),
+           }
+           */
         // local query on cache for kvfind before kvstore proxy
         send_with_handle_panic!(&mut self.peerstore_send,&mut self.peerstore_handle,kvcmd,"TODO peerstore service restart?");
       },
@@ -808,9 +827,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           mlsend.send(MainLoopReply::ServiceReply(sc))?;
         }
       },
-/*      MainLoopCommand::ProxyApiGlobalReply(sc) => {
-        // TODO log try restart ???
-        send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::GlobalServiceReply(sc),"TODO api service restart?");
+      /*      MainLoopCommand::ProxyApiGlobalReply(sc) => {
+      // TODO log try restart ???
+      send_with_handle_panic!(&mut self.api_send,&mut self.api_handle,ApiCommand::GlobalServiceReply(sc),"TODO api service restart?");
       },*/
       MainLoopCommand::ProxyGlobal(sc) => {
         // send in global service TODO when send from api use a composed sender to send directly
@@ -831,9 +850,9 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         // connect without mult
         let (write_token,_ort) = self.connect_with2(&address,false,None)?;
         sg.get_read().map(|rreg|{
-//          rreg.deregister(&self.poll).unwrap();
+          //          rreg.deregister(&self.poll).unwrap();
           rreg.reregister(&self.poll, Token(write_token + START_STREAM_IX), Ready::readable(),
-          PollOpt::edge()).unwrap();
+                          PollOpt::edge()).unwrap();
           debug!("read reregister : {:?} , {:?}",write_token,thread::current().id());
         });
         if MC::AUTH_MODE != ShadowAuthType::NoAuth {
@@ -853,7 +872,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         }
       },
       MainLoopCommand::ForwardService(ovp,okad,fwconf,sg) => {
-        
+
         let ol = ovp.as_ref().map(|v|v.len()).unwrap_or(0);
         let olka = okad.as_ref().map(|v|v.len()).unwrap_or(0);
         let nb_exp_for = ol + fwconf.nb_for + olka;
@@ -1021,7 +1040,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         let add_incache = self.address_cache.has_val_c(&dest_address);
         if MC::AUTH_MODE == ShadowAuthType::NoAuth  {
           // we call even if in cache : may not have trusted peer info
- 
+
           // no auth to do cache addresse done in connect_with
           self.connect_with2(&dest_address,true,Some(peer))?;
         } else {
@@ -1067,15 +1086,15 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           next_qid : None,
           api_qid : None,
         });
-  
+
         // do not store new peer as it is not authentified with a fresh challenge (could be replay)
-//         self.update_peer(pr.clone(),pp,Some(wtok),Some(rtok))?;
+        //         self.update_peer(pr.clone(),pp,Some(wtok),Some(rtok))?;
         // send pong with 2nd challeng
         let pongmess = WriteCommand::Pong(pr,chal,rtok,Some(chal2));
         // with is not used because the command will init it
         self.write_stream_send(wtok, pongmess, <MC>::init_write_spawner_out()?, None)?; // TODO remove peer on error
       },
- 
+
       MainLoopCommand::NewPeerUncheckedChallenge(pr,pp,rtok,chal,nextchal) => {
         // check chal
         match self.challenge_cache.remove_val_c(&chal) {
@@ -1125,13 +1144,13 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           self.slab_cache.get_mut(write_token).map(|r|r.os = Some(read_token));
           Ok(())
         }).unwrap_or(Ok(()))?;
-   
+
         let to_wr = if let Some(&SlabEntry {
-           state : SlabEntryState::WriteConnectSynch(..),
-           os : _,
-           peer : _,
+          state : SlabEntryState::WriteConnectSynch(..),
+          os : _,
+          peer : _,
         }) = self.slab_cache.get(write_token) {
-           true
+          true
         } else {
           warn!("transport connected synchronously with an unknown connection query");
           false
@@ -1211,9 +1230,8 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       // some bad connection pool management (should use a registered timer for next try)
       if cache_l < self.peer_pool_maintain {
         let now = Instant::now();
-        if self.peer_last_query < now {
+        if self.peer_next_query < now {
           let nb_disco = (self.peer_pool_maintain - cache_l) as f64 * (1.0 + MC::PEER_EXTRA_POOL_RATIO);
-//            println!("subset from pool timed");
           let kvscom = if MC::AUTH_MODE == ShadowAuthType::NoAuth {
             // peer info is use from kvstore to feed global store if needed
             MainLoopCommand::PeerStore(GlobalCommand::Local(KVStoreCommand::Subset(nb_disco as usize, trusted_peer_ping)))
@@ -1223,7 +1241,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           };
           self.call_inner_loop(kvscom,mlsend,async_yield)?;
         }
-        self.peer_last_query = Instant::now() + Duration::from_millis(MC::PEER_POOL_DELAY_MS);
+        self.peer_next_query = Instant::now() + Duration::from_millis(MC::PEER_POOL_DELAY_MS);
       }
       self.poll.poll(events, None)?;
       for event in events.iter() {
@@ -1517,6 +1535,8 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 pub struct AddressCacheEntry {
   read : Option<usize>,
   write : usize,
+  // mark if peer has been published to global service
+  //tp_send : bool,
 }
 #[derive(Clone)]
 pub struct PeerCacheEntry<RP : Clone> {

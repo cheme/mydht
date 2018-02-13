@@ -5,6 +5,7 @@ extern crate rand;
 extern crate mydht_slab;
 extern crate readwrite_comp;
 
+use std::cmp::max;
 use std::io::Cursor;
 use std::mem::replace;
 use std::borrow::Borrow;
@@ -344,9 +345,12 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
 
 }
 
-//type SSWCache<MC : MyDHTTunnelConf> = (TunnelCachedWriterExt<MC::SSW,MC::LimiterW>,<TunPeer<MC::Peer,MC::PeerRef> as TPeer>::Address);
+//  type SSWCache<MC : MyDHTTunnelConf> = (TunnelCachedWriterExt<MC::SSW,MC::LimiterW>,<TunPeer<MC::Peer,MC::PeerRef> as TPeer>::Address);
+
 pub type SSWCache<MC : MyDHTTunnelConf> = (TunnelCachedWriterExt<MC::SSW,MC::LimiterW>,MC::TransportAddress);
+
 pub type SSRCache<MC : MyDHTTunnelConf> = MultiRExt<MC::SSR>;
+
 pub struct MyDHTTunnel<MC : MyDHTTunnelConf> {
   me : MC::PeerRef,
 }
@@ -1103,7 +1107,7 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
       GlobalTunnelCommand::NewOnline(pr) => {
         self.address_key.insert(pr.borrow().get_address().clone(),pr.borrow().get_key());
         self.tunnel.route_prov.add_online(TunPeer::new(pr));
-        if self.to_send.len() > 0 && self.tunnel.route_prov.enough_peer() {
+        if self.to_send.len() > 0 && self.tunnel.route_prov.missing_peer() == 0 {
           let mut cmds = Vec::with_capacity(self.to_send.len());
           // send all cached
           while let Some((o_dest, inner_command)) = self.to_send.pop_front() {
@@ -1148,7 +1152,8 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
             }
           },
           GlobalTunnelReply::SendCommandToRand(inner_command) => {
-            if self.tunnel.route_prov.enough_peer() {
+            let need_nb_peer = self.tunnel.route_prov.missing_peer();
+            if need_nb_peer == 0 {
               let dest = self.tunnel.route_prov.rand_dest().clone();
               // TODO third time using this block 
               let (tunn_we,dest_add) = self.tunnel.new_writer(&dest);
@@ -1165,7 +1170,8 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
             }
           },
           GlobalTunnelReply::SendCommandTo(dest, inner_command) => {
-            if self.tunnel.route_prov.enough_peer() {
+            let need_nb_peer = self.tunnel.route_prov.missing_peer();
+            if need_nb_peer  == 0 {
 
               let (tunn_we,dest_add) = self.tunnel.new_writer(&TunPeer::new(dest));
               let dest_k = self.address_key.get(&dest_add).map(|k|k.clone());
