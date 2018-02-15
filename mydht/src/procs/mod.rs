@@ -766,8 +766,21 @@ pub trait MyDHTConf : 'static + Send + Sized
     DHTIn<Self>,
     <Self::MainLoopChannelOut as SpawnChannel<MainLoopReply<Self>>>::Recv
     )> {
-    println!("Start loop");
     let (s,r) = MioChannel(self.init_main_loop_channel_in()?).new()?;
+    let ro = self.start_loop_with_channel(s.clone(),r)?;
+    Ok((DHTIn{
+      main_loop : s,
+    },ro))
+  }
+
+  #[inline]
+  fn start_loop_with_channel(mut self : Self,
+    s : MainLoopSendIn<Self>,
+    r : MainLoopRecvIn<Self>)
+    -> Result<
+        <Self::MainLoopChannelOut as SpawnChannel<MainLoopReply<Self>>>::Recv
+      > {
+    println!("Start loop");
     let (so,ro) = self.init_main_loop_channel_out()?.new()?;
 
     let mut sp = self.get_main_spawner()?;
@@ -775,20 +788,9 @@ pub trait MyDHTConf : 'static + Send + Sized
     let service = MyDHTService(self,r,so,s.clone());
     // the  spawn loop is not use, the poll loop is : here we run a single loop without receive
     sp.spawn(service, NoSend, Some(MainLoopCommand::Start), NoRecv, 1)?; 
-    // TODO replace this shit by a spawner then remove constraint on MDht trait where
-  /*  ThreadBuilder::new().name(Self::LOOP_NAME.to_string()).spawn(move || {
-      let mut state = self.init_state(r)?;
-      let mut yield_spawn = NoYield(YieldReturn::Loop);
-      let r = state.main_loop(&mut yield_spawn);
-      if r.is_err() {
-        panic!("mainloop err : {:?}",&r);
-      }
-      r
-    })?;*/
-    Ok((DHTIn{
-      main_loop : s,
-    },ro))
+    Ok(ro)
   }
+
 
   fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>>;
   fn init_peer_kvstore_query_cache(&mut self) -> Result<Box<Fn() -> Result<Self::PeerStoreQueryCache> + Send>>;
