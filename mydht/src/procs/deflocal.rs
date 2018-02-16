@@ -55,6 +55,14 @@ pub enum GlobalCommand<PR,GSC> {
 }
 impl<PR,GSC> GlobalCommand<PR,GSC> {
   #[inline]
+  pub fn is_local(&self) -> bool {
+    if let &GlobalCommand::Local(_) = self {
+      return true
+    }
+    false
+  }
+ 
+  #[inline]
   pub fn get_inner_command(&self) -> &GSC {
     match *self {
       GlobalCommand::Local(ref gsc) 
@@ -367,6 +375,7 @@ impl<MC : MyDHTConf> SpawnSend<LocalReply<MC>> for LocalDest<MC> {
         };
         if let Some(c) = cml {
           self.api = None;
+ 
           self.read.send(ReadReply::MainLoop(MainLoopCommand::ProxyApiReply(MCReply::Local(c))))?;
         }
       },

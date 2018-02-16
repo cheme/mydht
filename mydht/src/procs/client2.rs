@@ -5,6 +5,7 @@ use peer::Peer;
 use peer::{
   PeerMgmtMeths,
 };
+use std::collections::VecDeque;
 use super::api::{
   ApiQueryId,
 };
@@ -27,6 +28,7 @@ use super::{
   MyDHTConf,
   ShadowAuthType,
   MCCommand,
+  MCCommandSend,
   PeerRefSend,
 };
 use std::cell::Cell;
@@ -63,8 +65,14 @@ pub struct WriteService<MC : MyDHTConf> {
   shad_msg : Option<<MC::Peer as Peer>::ShadowWMsg>,
   /// temporary for write once : later should use cleaner way to exit
   shut_after_first : bool,
+  /// store message when not available (while authenticating or other)
+  /// and when the input could not be use (would change message ordering)
+  buff_msgs : VecDeque<MCCommand<MC>>,
 }
-pub struct WriteServiceRef<MC : MyDHTConf> {
+
+pub struct WriteServiceSend<MC : MyDHTConf> 
+  where MC::LocalServiceCommand : SRef,
+        MC::GlobalServiceCommand : SRef {
   stream : <MC::Transport as Transport>::WriteStream,
   enc : MC::MsgEnc,
   from : PeerRefSend<MC>,
@@ -74,40 +82,47 @@ pub struct WriteServiceRef<MC : MyDHTConf> {
   read_token : Option<usize>,
   shad_msg : Option<<MC::Peer as Peer>::ShadowWMsg>,
   shut_after_first : bool,
+  buff_msgs : VecDeque<MCCommandSend<MC>>,
 }
 
-impl<MC : MyDHTConf> SRef for WriteService<MC> where
-  {
-  type Send = WriteServiceRef<MC>;
+impl<MC : MyDHTConf> SRef for WriteService<MC>
+  where MC::LocalServiceCommand : SRef,
+        MC::GlobalServiceCommand : SRef {
+  type Send = WriteServiceSend<MC>;
   fn get_sendable(self) -> Self::Send {
     let WriteService {
       stream, enc,
       from,
       with,
+      buff_msgs,
       peermgmt, token, read_token, shad_msg, shut_after_first,
     } = self;
-    WriteServiceRef {
+    WriteServiceSend {
       stream, enc,
       from : from.get_sendable(),
       with : with.map(|w|w.get_sendable()),
+      buff_msgs : buff_msgs.into_iter().map(|c|c.get_sendable()).collect(),
       peermgmt, token, read_token, shad_msg, shut_after_first,
     }
   }
 }
 
-impl<MC : MyDHTConf> SToRef<WriteService<MC>> for WriteServiceRef<MC> where
-  {
+impl<MC : MyDHTConf> SToRef<WriteService<MC>> for WriteServiceSend<MC>
+  where MC::LocalServiceCommand : SRef,
+        MC::GlobalServiceCommand : SRef {
   fn to_ref(self) -> WriteService<MC> {
-    let WriteServiceRef {
+    let WriteServiceSend {
       stream, enc,
       from,
       with,
+      buff_msgs,
       peermgmt, token, read_token, shad_msg, shut_after_first,
     } = self;
     WriteService {
       stream, enc,
       from : from.to_ref(),
       with : with.map(|w|w.to_ref()),
+      buff_msgs : buff_msgs.into_iter().map(|c|c.to_ref()).collect(),
       peermgmt, token, read_token, shad_msg, shut_after_first,
     }
   }
@@ -127,6 +142,7 @@ impl<MC : MyDHTConf> WriteService<MC> {
       read_token : None,
       shad_msg : None,
       shut_after_first,
+      buff_msgs : VecDeque::new(),
     }
   }
 }
@@ -168,6 +184,7 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
         // contain initializing shared secret for message shadow.
         self.with = Some(rp);
         let sig = self.peermgmt.signmsg(self.from.borrow(), &chal[..]);
+        {
         let pmess : ProtoMessage<MC::Peer> = ProtoMessage::PONG(self.from.borrow(),chal,sig,option_chal2);
         // once shadower
         let mut shad = get_shad_auth::<MC>(&self.from,&self.with);
@@ -180,6 +197,10 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
 
         shad.write_end(&mut WriteYield(&mut self.stream,async_yield))?;
         shad.flush_into(&mut WriteYield(&mut self.stream,async_yield))?;
+        } // end limit pmess from borrow
+        // debuf message here (service could get stuck on yield while containing msg otherwhise)
+        self.debuff_msgs(async_yield)?;
+
       },
       WriteCommand::Ping(chal) => {
         debug!("Client service sending ping command");
@@ -200,7 +221,11 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
 
       },
       WriteCommand::Service(command) => {
-
+        if MC::AUTH_MODE != ShadowAuthType::NoAuth && self.with.is_none() {
+          self.buff_msgs.push_front(command);
+          return Ok(WriteReply::NoRep);
+        }
+        self.debuff_msgs(async_yield)?;
         debug!("Client service proxying command, write token {}",self.token);
         self.forward_proto(command,async_yield)?;
 
@@ -219,6 +244,14 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
 
 impl<MC : MyDHTConf> WriteService<MC> {
 
+  #[inline]
+  fn debuff_msgs<S : SpawnerYield>(&mut self, async_yield : &mut S) -> Result<()> {
+    while let Some(command) = self.buff_msgs.pop_back() {
+      self.forward_proto(command,async_yield)?;
+    }
+    Ok(())
+  }
+
   fn forward_proto<S : SpawnerYield, R : OptInto<MC::ProtoMsg>>(&mut self, command: R, async_yield : &mut S) -> Result<()> {
     if command.can_into() {
 
@@ -231,7 +264,9 @@ impl<MC : MyDHTConf> WriteService<MC> {
           ShadowAuthType::Public | ShadowAuthType::Private => {
             match self.with {
               Some(ref w) => w.borrow().get_shadower_w_msg(),
-              None => {return Err(Error("route return slab may contain write ref of non initialized (connected), a route impl issue".to_string(), ErrorKind::Bug,None));},
+              None => {
+                return Err(Error("route return slab may contain write ref of non initialized (connected), a route impl issue".to_string(), ErrorKind::Bug,None));
+              },
             }
           },
         };

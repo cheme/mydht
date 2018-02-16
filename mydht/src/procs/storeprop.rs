@@ -334,6 +334,7 @@ impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwn
       KVStoreCommand::Start => false,
       KVStoreCommand::CommitStore => false,
       KVStoreCommand::Subset(..) => false,
+      KVStoreCommand::WithLocalValue(..) => false,
       KVStoreCommand::Find(..) => true,
       KVStoreCommand::FindLocally(..) => false,
       KVStoreCommand::Store(..) => true,
@@ -348,6 +349,7 @@ impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V> + Serialize + DeserializeOwn
       KVStoreCommand::Start => None,
       KVStoreCommand::CommitStore => None,
       KVStoreCommand::Subset(..) => None,
+      KVStoreCommand::WithLocalValue(..) => None,
       KVStoreCommand::Find(qmess, key,_) => Some(KVStoreProtoMsg::FIND(qmess,key)),
       KVStoreCommand::FindLocally(..) => None,
       KVStoreCommand::Store(qid,vrs) => {
@@ -425,6 +427,8 @@ pub enum KVStoreCommand<P : Peer, PR, V : KeyVal, VR> {
   CommitStore,
   /// exec a fn on a subset of the store
   Subset(usize, fn(Vec<V>) -> GlobalReply<P,PR,KVStoreCommand<P,PR,V,VR>,KVStoreReply<VR>>),
+  /// exec on local value found
+  WithLocalValue(V::Key, fn(Option<V>) -> GlobalReply<P,PR,KVStoreCommand<P,PR,V,VR>,KVStoreReply<VR>>),
   Find(QueryMsg<P>, V::Key,Option<ApiQueryId>),
   FindLocally(V::Key,ApiQueryId),
   Store(QueryID,Vec<VR>),
@@ -457,6 +461,7 @@ impl<P : Peer, PR, V : KeyVal, VR> ApiQueriable for KVStoreCommand<P,PR,V,VR> {
       KVStoreCommand::Start => false,
       KVStoreCommand::CommitStore => false,
       KVStoreCommand::Subset(..) => false,
+      KVStoreCommand::WithLocalValue(..) => false,
       KVStoreCommand::Find(..) => true,
       KVStoreCommand::FindLocally(..) => true,
       KVStoreCommand::Store(..) => false,
@@ -468,6 +473,7 @@ impl<P : Peer, PR, V : KeyVal, VR> ApiQueriable for KVStoreCommand<P,PR,V,VR> {
     match *self {
       KVStoreCommand::Start => (),
       KVStoreCommand::Subset(..) => (),
+      KVStoreCommand::WithLocalValue(..) => (),
       KVStoreCommand::CommitStore => (),
       KVStoreCommand::StoreLocally(_,_,ref mut oaqid)
         | KVStoreCommand::Find(_,_,ref mut oaqid) => {
@@ -485,6 +491,7 @@ impl<P : Peer, PR, V : KeyVal, VR> ApiQueriable for KVStoreCommand<P,PR,V,VR> {
     match *self {
       KVStoreCommand::Start => None,
       KVStoreCommand::Subset(..) => None,
+      KVStoreCommand::WithLocalValue(..) => None,
       KVStoreCommand::CommitStore => None,
       KVStoreCommand::StoreLocally(_,_,ref oaqid)
         | KVStoreCommand::Find(_,_,ref oaqid) => {
@@ -509,11 +516,13 @@ impl<P : Peer,PR,V : KeyVal,VR> PeerStatusListener<PR> for KVStoreCommand<P, PR,
   }
 }
 
+// TODO remove local command eg subset
 pub enum KVStoreCommandSend<P : Peer, PR, V : KeyVal, VR : SRef> {
   /// Do nothing but lazy initialize of store as any command.
   Start,
   CommitStore,
   Subset(usize, fn(Vec<V>) -> GlobalReply<P,PR,KVStoreCommand<P,PR,V,VR>,KVStoreReply<VR>>),
+  WithLocalValue(V::Key, fn(Option<V>) -> GlobalReply<P,PR,KVStoreCommand<P,PR,V,VR>,KVStoreReply<VR>>),
   Find(QueryMsg<P>, V::Key,Option<ApiQueryId>),
   FindLocally(V::Key,ApiQueryId),
   Store(QueryID,Vec<<VR as SRef>::Send>),
@@ -529,6 +538,7 @@ impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V>> SRef for KVStoreCommand<P,P
       KVStoreCommand::Start => KVStoreCommandSend::Start,
       KVStoreCommand::CommitStore => KVStoreCommandSend::CommitStore,
       KVStoreCommand::Subset(nb,f) => KVStoreCommandSend::Subset(nb,f),
+      KVStoreCommand::WithLocalValue(k,f) => KVStoreCommandSend::WithLocalValue(k,f),
       KVStoreCommand::Find(qm,k,oaqid) => KVStoreCommandSend::Find(qm,k,oaqid),
       KVStoreCommand::FindLocally(k,oaqid) => KVStoreCommandSend::FindLocally(k,oaqid),
       KVStoreCommand::Store(qid,vrp) => KVStoreCommandSend::Store(qid,vrp.into_iter().map(|rp|rp.get_sendable()).collect()),
@@ -544,6 +554,7 @@ impl<P : Peer, PR : Ref<P>, V : KeyVal, VR : Ref<V>> SToRef<KVStoreCommand<P,PR,
       KVStoreCommandSend::Start => KVStoreCommand::Start,
       KVStoreCommandSend::CommitStore => KVStoreCommand::CommitStore,
       KVStoreCommandSend::Subset(nb,f) => KVStoreCommand::Subset(nb,f),
+      KVStoreCommandSend::WithLocalValue(k,f) => KVStoreCommand::WithLocalValue(k,f),
       KVStoreCommandSend::Find(qm, k,oaqid) => KVStoreCommand::Find(qm,k,oaqid),
       KVStoreCommandSend::FindLocally(k,oaqid) => KVStoreCommand::FindLocally(k,oaqid),
       KVStoreCommandSend::Store(qid,vrp) => KVStoreCommand::Store(qid,vrp.into_iter().map(|rp|rp.to_ref()).collect()),
@@ -657,6 +668,12 @@ impl<
           },
         }
       },
+      KVStoreCommand::WithLocalValue(k,f) => {
+        let oval = store.get_val(&k);
+        let cmd = f(oval);
+        return Ok(cmd);
+      },
+
       KVStoreCommand::CommitStore => {
         if !store.commit_store() {
           panic!("Store commit failure, ending");
@@ -973,8 +990,10 @@ pub fn peer_discover<P : Peer,PR>(v : Vec<P>) -> GlobalReply<P,PR,KVStoreCommand
     GlobalReply::MainLoop(MainLoopSubCommand::Discover(dests))
   }
 }
-
-
+#[inline]
+pub fn peer_forward_ka<P : Peer,PR>(op : Option<P>) -> GlobalReply<P,PR,KVStoreCommand<P,PR,P,PR>,KVStoreReply<PR>> {
+  GlobalReply::MainLoop(MainLoopSubCommand::FoundAddressForKey(op.map(|p|p.get_address().clone())))
+}
 
 /*pub fn peer_discover<MC : MyDHTConf>(v : Vec<MC::Peer>) -> GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>> {
   GlobalReply::ForwardMainLoop(MainLoopSubCommand::TryConnect(p.get_key(),p.get_address().clone()))).collect();

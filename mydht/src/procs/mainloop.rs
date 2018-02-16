@@ -27,6 +27,7 @@ use procs::storeprop::{
   KVStoreService,
   OptPeerGlobalDest,
   peer_discover,
+  peer_forward_ka,
   trusted_peer_ping,
   peer_ping,
 };
@@ -200,6 +201,7 @@ pub enum MainLoopSubCommand<P : Peer> {
   TrustedTryConnect(P),
   TryConnect(<P as KeyVal>::Key,<P as Peer>::Address),
   Discover(Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>),
+  FoundAddressForKey(Option<<P as Peer>::Address>),
   PoolSize(usize),
 }
 /// command supported by MyDHT loop
@@ -416,6 +418,7 @@ pub struct MDHTState<MC : MyDHTConf> {
   peerstore_handle : PeerStoreHandle<MC>,
 
   discover_wait_route : VecDeque<(MCCommand<MC>,usize,usize)>,
+  peer_find_address : VecDeque<(MCCommand<MC>,<MC::Peer as KeyVal>::Key,FWConf)>,
 
   peer_pool_maintain : usize,
   peer_next_query : Instant,
@@ -541,6 +544,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       peerstore_send : peerstore_send,
       peerstore_handle : peerstore_handle,
       discover_wait_route : VecDeque::new(),
+      peer_find_address : VecDeque::new(),
       peer_pool_maintain : MC::PEER_POOL_INIT_SIZE,
       peer_next_query : Instant::now() - Duration::from_millis(MC::PEER_POOL_DELAY_MS),
       //peer_pool_wait : Vec::new(),
@@ -751,6 +755,16 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                       }*/
           },
 
+          MainLoopSubCommand::FoundAddressForKey(oad) => {
+            if let Some((sg, key, fwconf)) = self.peer_find_address.pop_back() {
+              if let Some(ad) = oad {
+                let command = MainLoopCommand::ForwardService(None,Some([(Some(key),Some(ad))].to_vec()),fwconf, sg);
+                self.call_inner_loop(command,mlsend,async_yield)?;
+              } else {
+                warn!("not found local address, consider running peer search");
+              }
+            }
+          },
           MainLoopSubCommand::Discover(lkad) => {
             debug!("Discover fwd to : {:?}", lkad.len());
             let mut nb_send = 0;
@@ -901,6 +915,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               }).unwrap_or(fwconf.discover);
 
               if do_connect && ka.1.is_some() {
+
                 let ocache = self.address_cache.get_val_c(ka.1.as_ref().unwrap()).map(|acache|(acache.write,acache.read));
                 let (need_ping,(write_token,ort)) = if let Some(c) = ocache {
                   (false,c)
@@ -925,6 +940,14 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                   self.write_stream_send(write_token,WriteCommand::Ping(chal), <MC>::init_write_spawner_out()?, None)?;
                   nb_disco += 1;
                 }
+              }
+              if do_connect && ka.1.is_none() {
+                // try to get from peer kvstore
+                warn!("Could not forward, no automatic peer discovery implemented yet");
+                self.peer_find_address.push_front((sg.clone(),ka.0.clone().unwrap(), fwconf.clone()));
+                let kvscom = GlobalCommand::Local(KVStoreCommand::WithLocalValue(ka.0.clone().unwrap(), peer_forward_ka));
+                send_with_handle_panic!(&mut self.peerstore_send,&mut self.peerstore_handle,kvscom,"Panic sending to peerstore");
+                nb_disco += 1;
               }
             }
           },

@@ -96,7 +96,6 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
         ApiReply::Done
       },
       ApiCommand::Adjust(qid,nb) => {
-        println!("nb : !!{}",nb);
         let rem = if let Some(q) = self.0.get_val_mut_c(&qid) {
           let mut r = false;
           for _ in 0..nb {
@@ -121,6 +120,7 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
         }
         match lsc {
           lsc @ MCCommand::Local(..) => {
+ 
             ApiReply::ProxyMainloop(MainLoopCommand::ForwardService(None,None,FWConf{ nb_for : nb_for, discover : false },lsc))
            // self.call_inner_loop(MainLoopCommand::ForwardService(None,None,nb_for,sc), async_yield)?;
           },
@@ -308,6 +308,7 @@ impl<MC : MyDHTConf> ApiCommand<MC> {
   }
  
   pub fn call_service_local(c : MC::LocalServiceCommand, nb_for : usize ) -> ApiCommand<MC> {
+ 
     let cmd = MainLoopCommand::ForwardService(None,None,FWConf{ nb_for : nb_for, discover : false },MCCommand::Local(c));
     ApiCommand::MainLoop(cmd)
   }
