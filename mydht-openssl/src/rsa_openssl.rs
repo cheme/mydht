@@ -174,10 +174,14 @@ impl<'de, RT : OpenSSLConf> Deserialize<'de> for PKeyExt<RT> {
             fn visit_seq<V>(self, mut seq: V) -> Result<Self::Value, V::Error>
                 where V: SeqAccess<'de>
             {
-                let publickey : &[u8] = seq.next_element()?
+                // issue when deser to &[u8] (eg with bincode, find with json) : TODO test case for bincode and
+                // json plus native serde impl or feature switch it
+                let publickey : Vec<u8> = seq.next_element()?
                               .ok_or_else(|| de::Error::invalid_length(0, &self))?;
-                let privatekey : &[u8] = seq.next_element()?
+                let publickey = &publickey[..];
+                let privatekey : Vec<u8> = seq.next_element()?
                                .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+                let privatekey = &privatekey[..];
                 let pk = if privatekey.len() > 0 {
                   Rsa::private_key_from_der(privatekey).map_err(|_|
                     de::Error::invalid_value(Unexpected::Bytes(privatekey),&" array byte not pkey"))?
@@ -695,7 +699,7 @@ impl<RT : OpenSSLConf> ExtWrite for OSSLMixW<RT> {
 /// Shadower based upon openssl symm and pky
 pub struct OSSLShadowerR<RT : OpenSSLConf> {
     inner : OSSLMixR<RT>,
-    mode : ASymSymMode,
+    pub mode : ASymSymMode,
     asymbufs : Option<(Vec<u8>,usize,Vec<u8>,usize)>,
 }
 
@@ -721,7 +725,7 @@ impl<RT : OpenSSLConf> OSSLShadowerW<RT> {
 
 pub struct OSSLShadowerW<RT : OpenSSLConf> {
     inner : OSSLMixW<RT>,
-    mode : ASymSymMode,
+    pub mode : ASymSymMode,
     asymbufs : Option<(Vec<u8>,usize,Vec<u8>,usize)>,
 }
 

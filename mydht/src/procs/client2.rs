@@ -154,7 +154,9 @@ pub fn get_shad_auth<MC : MyDHTConf>(from : &MC::PeerRef,with : &Option<MC::Peer
     ShadowAuthType::NoAuth => {
       unreachable!()
     },
-    ShadowAuthType::Public => from.borrow().get_shadower_w_auth(),
+    ShadowAuthType::Public => {
+      from.borrow().get_shadower_w_auth()
+    },
     ShadowAuthType::Private => {
       match with {
         &Some (ref w) => w.borrow().get_shadower_w_auth(),
@@ -212,11 +214,12 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
 
         self.enc.encode_into(&mut self.stream, &mut shad, async_yield, &pmess)?;
         if let Some(ref att) = self.from.borrow().get_attachment() {
+        debug!("ping put att");
           self.enc.attach_into(&mut self.stream, &mut shad, async_yield, att)?;
         }
-
         shad.write_end(&mut WriteYield(&mut self.stream,async_yield))?;
         shad.flush_into(&mut WriteYield(&mut self.stream,async_yield))?;
+
 //        return Ok(WriteReply::MainLoop(MainLoopCommand::NewChallenge(self.token,chal)));
 
       },
@@ -281,12 +284,6 @@ impl<MC : MyDHTConf> WriteService<MC> {
       let mut pmess = command.opt_into().unwrap();
 
       self.enc.encode_msg_into(&mut self.stream, shad, async_yield, &mut pmess)?;
-/*      let mut cursor = Cursor::new(Vec::new());
-      send_msg_msg(&pmess, &mut cursor, &self.enc, &mut shad)?;
-      let v = cursor.into_inner();
-      println!("writing size : {}",v.len());
-      println!("writing  : {:?}",&v[..]);
-      stream.write_all(&v[..]);*/
 
       if pmess.get_nb_attachments() > 0 {
         for att in pmess.get_attachments() {

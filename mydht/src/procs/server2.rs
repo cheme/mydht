@@ -268,15 +268,19 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
                 None => return Err(Error("No dest in read for private network, could not allow receive".to_string(),ErrorKind::Bug,None)),
               }
             },*/
+
           };
 
           shad.read_header(&mut ReadYield(stream,async_yield))?;
+
           // read in single pass
           // TODO specialize ping pong messages with MaxSize. - 
           let msg : ProtoMessage<MC::Peer> = self.enc.decode_from(stream, &mut shad, async_yield)?;
 
+
           match msg {
             ProtoMessage::PING(mut p, chal, sig) => {
+              debug!("A ping message");
               // attachment probably useless but if it is possible...
               let atsize = p.attachment_expected_size();
               if atsize > 0 {
