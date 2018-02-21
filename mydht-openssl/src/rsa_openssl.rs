@@ -416,6 +416,7 @@ impl<RT : OpenSSLSymConf> OSSLSym<RT> {
       _p : PhantomData,
     })
   }
+
 }
 
 impl<RT : OpenSSLSymConf> OSSLSymR<RT> {
@@ -484,7 +485,7 @@ impl<RT : OpenSSLSymConf> ExtRead for OSSLSymR<RT> {
         self.euix = tot;
         self.suix = 0;
         let tocopy = min(buf.len(),tot);
-        buf.clone_from_slice(&self.underbuf.as_mut().unwrap()[self.suix..tocopy]);
+        buf[..tocopy].clone_from_slice(&self.underbuf.as_mut().unwrap()[self.suix..tocopy]);
         self.suix += tocopy;
         Ok(tocopy)
       } else {
@@ -1134,6 +1135,8 @@ impl OpenSSLConf for RSA2048SHA512AES256 {
 pub mod mydhttest {
   use super::*;
 
+  use rand::thread_rng;
+  use rand::Rng;
   use self::mydht_basetest::peer::{
     basic_auth_test,
   };
@@ -1160,6 +1163,9 @@ read_buffer_length : usize, smode : ASymSymMode) {
 
   let to_p = new_peer_test(1,()).unwrap();
   shadower_test(to_p,input_length,write_buffer_length,read_buffer_length);
+
+  // non std
+  shadower_sym::<AES256CBC>(input_length,write_buffer_length,read_buffer_length);
 
 }
 
@@ -1315,6 +1321,73 @@ fn tunnel_fourhop_publictunnel_3() {
   tunnel_public_test(4, TunnelShadowMode::Last, 500, 130, 360, ASymSymMode::ASymOnly, ASymSymMode::ASymSym);
 }
 */
+
+
+
+pub fn shadower_sym<RT : OpenSSLSymConf> (input_length : usize, write_buffer_length : usize,
+read_buffer_length : usize) 
+{
+
+  let input_length_double = input_length * 2;
+  let mut inputb = vec![0;input_length_double];
+  thread_rng().fill_bytes(&mut inputb);
+  let mut output = Cursor::new(Vec::new());
+  let input = inputb;
+ // let mut from_shad = to_p.get_shadower_w_msg();
+ // let mut to_shad = to_p.get_shadower_r_msg();
+
+  // sim test
+  let k = OSSLSym::<RT>::new_key().unwrap(); 
+  let mut ix = 0;
+  let mut shad_sim_w =  OSSLSymW::<RT>::new(k.clone()).unwrap();
+  let mut shad_sim_r =  OSSLSymR::<RT>::new(k.clone()).unwrap();
+ 
+  let k2 = k.clone();
+  let mut ki = Cursor::new(&k[..]);
+  let mut ki = Cursor::new(&k2[..]);
+ 
+  while ix < input_length {
+    if ix + write_buffer_length < input_length {
+      ix += shad_sim_w.write_into(&mut output, &input[ix..ix + write_buffer_length]).unwrap();
+    } else {
+      ix += shad_sim_w.write_into(&mut output, &input[ix..input_length]).unwrap();
+    }
+  }
+
+  // flush is call at end of message
+  shad_sim_w.flush_into(&mut output).unwrap();
+  while ix - input_length  < input_length {
+    if ix + write_buffer_length < input_length {
+      ix += shad_sim_w.write_into(&mut output, &input[ix..ix + write_buffer_length]).unwrap();
+    } else {
+      ix += shad_sim_w.write_into(&mut output, &input[ix..]).unwrap();
+    }
+  }
+
+
+ // let el = output.get_ref().len();
+  shad_sim_w.write_end(&mut output).unwrap();
+  shad_sim_w.flush_into(&mut output).unwrap();
+  output.flush().unwrap();
+ // let el = output.get_ref().len();
+  ix = 0;
+  let mut readbuf = vec![0;read_buffer_length];
+
+  let mut input_v = Cursor::new(output.into_inner());
+  while ix < input_length_double {
+    let l = shad_sim_r.read_from(&mut input_v, &mut readbuf).unwrap();
+    assert!(l!=0);
+
+    assert!(&readbuf[..l] == &input[ix..ix + l]);
+    ix += l;
+  }
+
+  let l = shad_sim_r.read_from(&mut input_v, &mut readbuf).unwrap();
+  assert!(l==0);
+  shad_sim_r.read_end(&mut input_v).unwrap();
+
+}
+
 }
 /*
 #[cfg(test)]
