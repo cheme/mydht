@@ -21,7 +21,7 @@ use serde::de::{Visitor, SeqAccess, MapAccess,Unexpected,DeserializeOwned};
 use serde::de;
 use serde::ser::SerializeStruct;
 use std::io::Result as IoResult;
-use openssl::hash::{Hasher,MessageDigest};
+use openssl::hash::{Hasher,MessageDigest,hash};
 use openssl::pkey::{PKey};
 use openssl::rsa::Rsa;
 use openssl::rsa;
@@ -265,8 +265,6 @@ impl<RT : OpenSSLConf> Eq for PKeyExt<RT> {}
 /// This trait allows any keyval having a rsa pkey and any symm cipher to implement Shadow 
 pub trait OpenSSLConf : KVContent {
   type SymConf : OpenSSLSymConf;
-  // TODO seems unused : remove ?
-  fn HASH_SIGN() -> MessageDigest;
   fn HASH_KEY() -> MessageDigest;
   const RSA_SIZE : u32;
 //  const KEY_TYPE : KeyType; Only RSA allows encoding data for openssl (currently)
@@ -328,6 +326,7 @@ pub trait OpenSSLConf : KVContent {
 
 pub trait OpenSSLSymConf {
   fn SHADOW_TYPE() -> SymmType;
+  fn HASH_SHIFT_IV() -> MessageDigest;
   const CRYPTER_KEY_ENC_SIZE : usize;
   const CRYPTER_KEY_DEC_SIZE : usize;
 
@@ -340,6 +339,8 @@ pub struct AES256CBC;
 impl OpenSSLSymConf for AES256CBC {
   #[inline]
   fn SHADOW_TYPE() -> Cipher { Cipher::aes_256_cbc() }
+  #[inline]
+  fn HASH_SHIFT_IV() -> MessageDigest { MessageDigest::sha256() }
   /// size must allow no padding
   const CRYPTER_KEY_ENC_SIZE : usize = 256;
   /// size must allow no padding
@@ -406,7 +407,7 @@ impl<RT : OpenSSLSymConf> OSSLSym<RT> {
         None
       } else {
         if ivshift {
-          shift_iv(&mut iv[..]);
+          shift_iv::<RT>(&mut iv[..]);
         }
         Some(&iv[..])
       };
@@ -1163,8 +1164,6 @@ impl OpenSSLConf for RSA2048SHA512AES256 {
 
   type SymConf = AES256CBC;
   #[inline]
-  fn HASH_SIGN() -> MessageDigest { MessageDigest::sha512() }
-  #[inline]
   fn HASH_KEY() -> MessageDigest { MessageDigest::sha512() }
   const RSA_SIZE : u32 = 2048;
 
@@ -1497,11 +1496,9 @@ fn asym_test () {
 
 
 // next iv when reinitiating message from state : 
-// TODO should switch to hash function(initial iv is
-// random : not that sure).
-// TODO the function should be in the trait somehow
-fn shift_iv (iv : &mut [u8]) {
-  let mut x = 0;
+// TODO move in ossl to avoid multiple instantiation of hasher
+fn shift_iv<RT : OpenSSLSymConf> (iv : &mut [u8]) -> IoResult<()> {
+  /*let mut x = 0;
   loop {
     if iv[x] == MAX_U8 {
       iv[x] = 0;
@@ -1510,5 +1507,18 @@ fn shift_iv (iv : &mut [u8]) {
       iv[x] += 1;
       break;
     }
+  }*/
+
+  let d = hash(RT::HASH_SHIFT_IV(),&iv[..])?;
+
+  let cp = min(iv.len(), d.len());
+  if cp == d.len() {
+    // TODO manage it (with possible second round of hash)
+    // for now use long enough hash
+    unimplemented!()
   }
+  iv[..cp].clone_from_slice(&d[..cp]);
+
+  Ok(())
 }
+
