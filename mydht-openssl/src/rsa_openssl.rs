@@ -5,6 +5,8 @@
 #[cfg(test)]
 extern crate mydht_basetest;
 
+use std::u8::MAX as MAX_U8; 
+use std::mem::replace;
 use std::io::Cursor;
 use openssl::rand::rand_bytes;
 use mydht_base::keyval::Key as KVContent;
@@ -384,7 +386,11 @@ impl<RT : OpenSSLSymConf> OSSLSym<RT> {
     rng.fill_bytes(&mut s);
     Ok(s)
   }
+  #[inline]
   pub fn new (key : Vec<u8>, send : bool) -> IoResult<OSSLSym<RT>> {
+    Self::new_iv_shift(key,send,false)
+  }
+  pub fn new_iv_shift(mut key : Vec<u8>, send : bool, ivshift : bool) -> IoResult<OSSLSym<RT>> {
     let ivl = <RT as OpenSSLSymConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
     let kl = <RT as OpenSSLSymConf>::SHADOW_TYPE().key_len();
     let mut bufsize = <RT as OpenSSLSymConf>::CRYPTER_BUFF_SIZE() + <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
@@ -395,11 +401,14 @@ impl<RT : OpenSSLSymConf> OSSLSym<RT> {
       Mode::Decrypt
     };
     let mut crypter = {
-      let (iv,k) = key[..].split_at(ivl);
+      let (iv,k) = key[..].split_at_mut(ivl);
       let piv = if iv.len() == 0 {
         None
       } else {
-        Some(iv)
+        if ivshift {
+          shift_iv(&mut iv[..]);
+        }
+        Some(&iv[..])
       };
       Crypter::new(
         <RT as OpenSSLSymConf>::SHADOW_TYPE(),
@@ -411,7 +420,7 @@ impl<RT : OpenSSLSymConf> OSSLSym<RT> {
     Ok(OSSLSym {
       crypter : crypter,
       key : key,
-      finalize : true,
+      finalize : false,
       buff : vec![0;bufsize],
       _p : PhantomData,
     })
@@ -432,7 +441,18 @@ impl<RT : OpenSSLSymConf> OSSLSymW<RT> {
 }
 impl<RT : OpenSSLSymConf> ExtRead for OSSLSymR<RT> {
 
-  fn read_header<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
+  fn read_header<R : Read>(&mut self, _r : &mut R) -> IoResult<()> {
+    if self.sym.finalize == true {
+      self.suix = 0;
+      self.euix = 0;
+      let k = replace(&mut self.sym.key,Vec::new());
+
+      let nc = OSSLSym::new_iv_shift(k,false,true)?;
+      self.sym = nc;
+
+    }
+
+
     Ok(())
   }
   fn read_from<R : Read>(&mut self, r : &mut R, buf : &mut[u8]) -> IoResult<usize> {
@@ -498,6 +518,25 @@ impl<RT : OpenSSLSymConf> ExtRead for OSSLSymR<RT> {
     }
   }
   fn read_end<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
+
+    self.suix = 0;
+    self.euix = 0;
+    if !self.sym.finalize {
+      panic!("dofinaly");
+      self.sym.finalize = true;
+      if self.underbuf.is_none() {
+        let bs = <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
+        // default to double block size
+        self.underbuf = Some(vec![0;bs + bs]);
+      }
+      // warn panic if not null 
+      let fr = self.sym.crypter.finalize(&mut self.underbuf.as_mut().unwrap()[..]);
+      if RELAX_FINALIZE && fr.is_err() {
+      } else {
+        fr?;
+      }
+    }
+
     Ok(())
   }
    
@@ -508,7 +547,15 @@ const RELAX_FINALIZE : bool = true;
 #[cfg(not(feature="relaxfinalize"))]
 const RELAX_FINALIZE : bool = false;
 impl<RT : OpenSSLSymConf> ExtWrite for OSSLSymW<RT> {
-  fn write_header<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
+  fn write_header<W : Write>(&mut self, _w : &mut W) -> IoResult<()> {
+    if self.0.finalize == true {
+      let k = replace(&mut self.0.key,Vec::new());
+
+      let nc = OSSLSym::new_iv_shift(k,true,true)?;
+      self.0 = nc;
+
+    }
+
     Ok(())
   }
   fn write_into<W : Write>(&mut self, w : &mut W, cont : &[u8]) -> IoResult<usize> {
@@ -529,8 +576,8 @@ impl<RT : OpenSSLSymConf> ExtWrite for OSSLSymW<RT> {
   }
   fn write_end<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
     if !self.0.finalize {
-      let i = self.0.crypter.finalize(&mut self.0.buff[..])?;
       self.0.finalize = true;
+      let i = self.0.crypter.finalize(&mut self.0.buff[..])?;
       if i > 0 {
         w.write_all(&self.0.buff[..i])
       } else { Ok(()) }
@@ -1323,8 +1370,21 @@ fn tunnel_fourhop_publictunnel_3() {
 */
 
 
-
 pub fn shadower_sym<RT : OpenSSLSymConf> (input_length : usize, write_buffer_length : usize,
+read_buffer_length : usize) 
+{
+  let k = OSSLSym::<RT>::new_key().unwrap(); 
+  let k2 = k.clone();
+  let mut shad_sim_w =  OSSLSymW::<RT>::new(k.clone()).unwrap();
+  let mut shad_sim_r =  OSSLSymR::<RT>::new(k.clone()).unwrap();
+  shadower_sym_int(&mut shad_sim_w, &mut shad_sim_r, input_length, write_buffer_length, read_buffer_length);
+  assert!(shad_sim_w.0.finalize == true);
+  // multiple msg (write_end then use same)
+  shadower_sym_int(&mut shad_sim_w, &mut shad_sim_r, input_length, write_buffer_length, read_buffer_length);
+}
+
+
+fn shadower_sym_int<RT : OpenSSLSymConf> (shad_sim_w : &mut OSSLSymW<RT>, shad_sim_r : &mut OSSLSymR<RT>, input_length : usize, write_buffer_length : usize,
 read_buffer_length : usize) 
 {
 
@@ -1337,15 +1397,10 @@ read_buffer_length : usize)
  // let mut to_shad = to_p.get_shadower_r_msg();
 
   // sim test
-  let k = OSSLSym::<RT>::new_key().unwrap(); 
+
   let mut ix = 0;
-  let mut shad_sim_w =  OSSLSymW::<RT>::new(k.clone()).unwrap();
-  let mut shad_sim_r =  OSSLSymR::<RT>::new(k.clone()).unwrap();
- 
-  let k2 = k.clone();
-  let mut ki = Cursor::new(&k[..]);
-  let mut ki = Cursor::new(&k2[..]);
- 
+  shad_sim_w.write_header(&mut output).unwrap();
+
   while ix < input_length {
     if ix + write_buffer_length < input_length {
       ix += shad_sim_w.write_into(&mut output, &input[ix..ix + write_buffer_length]).unwrap();
@@ -1374,13 +1429,19 @@ read_buffer_length : usize)
   let mut readbuf = vec![0;read_buffer_length];
 
   let mut input_v = Cursor::new(output.into_inner());
+  shad_sim_r.read_header(&mut input_v).unwrap();
+  let mut inpend = 0;
   while ix < input_length_double {
     let l = shad_sim_r.read_from(&mut input_v, &mut readbuf).unwrap();
     assert!(l!=0);
 
-    assert!(&readbuf[..l] == &input[ix..ix + l]);
+
+    inpend = min(ix + l, input.len()); // in case we read padding
+    assert_eq!(&readbuf[..l], &input[ix..inpend],"index {},{}", ix, input_length);
     ix += l;
   }
+
+  assert_eq!(inpend,input.len());
 
   let l = shad_sim_r.read_from(&mut input_v, &mut readbuf).unwrap();
   assert!(l==0);
@@ -1433,3 +1494,21 @@ fn asym_test () {
   }
 
 }*/
+
+
+// next iv when reinitiating message from state : 
+// TODO should switch to hash function(initial iv is
+// random : not that sure).
+// TODO the function should be in the trait somehow
+fn shift_iv (iv : &mut [u8]) {
+  let mut x = 0;
+  loop {
+    if iv[x] == MAX_U8 {
+      iv[x] = 0;
+      x += 1 % iv.len();
+    } else {
+      iv[x] += 1;
+      break;
+    }
+  }
+}
