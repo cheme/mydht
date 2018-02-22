@@ -361,11 +361,12 @@ pub struct OSSLSym<RT : OpenSSLSymConf> {
 }
 
 pub struct OSSLSymW<RT : OpenSSLSymConf>(pub OSSLSym<RT>);
-pub struct OSSLSymR<RT : OpenSSLSymConf>{
+pub struct OSSLSymR<RT : OpenSSLSymConf> {
   sym : OSSLSym<RT>,
   underbuf : Option<Vec<u8>>,
   suix : usize,
-  euix : usize
+  euix : usize,
+  bufflastix : usize,
 }
 
 impl<RT : OpenSSLSymConf> OSSLSymR<RT> {
@@ -375,6 +376,7 @@ impl<RT : OpenSSLSymConf> OSSLSymR<RT> {
       underbuf : None,
       suix : 0,
       euix : 0, 
+      bufflastix : 0,
     }
   }
 }
@@ -450,6 +452,16 @@ impl<RT : OpenSSLSymConf> ExtRead for OSSLSymR<RT> {
 
       let nc = OSSLSym::new_iv_shift(k,false,true)?;
       self.sym = nc;
+      if self.bufflastix > 0 {
+        let bs = <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
+        // TODO consider non optional underbuf
+        if self.underbuf.is_none() {
+          // default to double block size
+          self.underbuf = Some(vec![0;bs + bs]);
+        }
+        let iu = self.sym.crypter.update(&self.sym.buff[..self.bufflastix], &mut self.underbuf.as_mut().unwrap()[..])?;
+        self.euix = iu;
+      }
 
     }
 
@@ -457,17 +469,25 @@ impl<RT : OpenSSLSymConf> ExtRead for OSSLSymR<RT> {
     Ok(())
   }
   fn read_from<R : Read>(&mut self, r : &mut R, buf : &mut[u8]) -> IoResult<usize> {
+    let buflen = buf.len();
+    if buflen == 0 {
+      return Ok(0);
+    }
     if self.euix > self.suix {
       let rem = self.euix - self.suix;
-      let tocopy = min(buf.len(),rem);
+      let tocopy = min(buflen,rem);
       &mut buf[..tocopy].clone_from_slice(&self.underbuf.as_mut().unwrap()[self.suix..self.suix + tocopy]);
       self.suix += tocopy;
       Ok(tocopy)
     } else {
+      if self.sym.finalize {
+        return Ok(0)
+      }
+
       let bs = <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
   //    assert!(buf.len() > bs);
       let (tot,rec) = {
-        let dest = if buf.len() > bs {
+        let dest = if buflen > bs + bs {
           &mut buf[..]
         } else {
           if self.underbuf.is_none() {
@@ -476,66 +496,79 @@ impl<RT : OpenSSLSymConf> ExtRead for OSSLSymR<RT> {
           }
           &mut self.underbuf.as_mut().unwrap()[..]
         };
-        let sread = min(dest.len() - bs, self.sym.buff.len());
+//        let sread = min(dest.len() - bs, self.sym.buff.len());
+//        let sread = bs;
 
-        let ir = r.read(&mut self.sym.buff[..sread])?;
+        let ir = r.read(&mut self.sym.buff[..bs])?;
         if ir != 0 {
-          self.sym.finalize = false;
+//          self.sym.finalize = false;
           let iu = self.sym.crypter.update(&self.sym.buff[..ir], dest)?;
+          self.bufflastix += ir;
+          self.bufflastix %= bs;
+
           if iu == 0 {
             (0,true)
           } else {
             (iu,false)
           }
-        } else {
-          if !self.sym.finalize {
-            self.sym.finalize = true;
-            let fr = self.sym.crypter.finalize(dest);
-            let sr = if RELAX_FINALIZE && fr.is_err() {
-              0
-            } else {
-              fr?
-            };
-            (sr,false)
+        } else if !self.sym.finalize {
+          self.sym.finalize = true;
+          let fr = self.sym.crypter.finalize(dest);
+          let sr = if RELAX_FINALIZE && fr.is_err() {
+            0
           } else {
-            (0,false)
-          }
+            let fs = fr?;
+            fs
+          };
+          (sr,false)
+        } else {
+          (0,false)
         }
       };
-      if buf.len() <= bs && tot > 0 {
+      if buflen <= bs + bs && tot > 0 {
         self.euix = tot;
         self.suix = 0;
-        let tocopy = min(buf.len(),tot);
+        let tocopy = min(buflen,tot);
         buf[..tocopy].clone_from_slice(&self.underbuf.as_mut().unwrap()[self.suix..tocopy]);
         self.suix += tocopy;
         Ok(tocopy)
-      } else {
-      if rec {
+      } else if rec {
         //recurse
         self.read_from(r,buf)
       } else {
         Ok(tot)
-      }}
+      }
     }
   }
-  fn read_end<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
+  fn read_end<R : Read>(&mut self, _r : &mut R) -> IoResult<()> {
 
     self.suix = 0;
     self.euix = 0;
     if !self.sym.finalize {
-      panic!("dofinaly");
+
+      // lix byte should not have been read
       self.sym.finalize = true;
+      //println!("lix : {}",self.bufflastix);
+      if self.bufflastix == 0 {
+      let bs = <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
       if self.underbuf.is_none() {
-        let bs = <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
         // default to double block size
         self.underbuf = Some(vec![0;bs + bs]);
       }
       // warn panic if not null 
       let fr = self.sym.crypter.finalize(&mut self.underbuf.as_mut().unwrap()[..]);
-      if RELAX_FINALIZE && fr.is_err() {
+      if fr.is_err() {
+        // the buffer size content was no padding frame
+        self.bufflastix = bs;
       } else {
-        fr?;
+        self.bufflastix = fr?;
+        //println!("finalize : {}",self.bufflastix);
       }
+      }
+
+      // we are using padding : extra data added to update need to be report to next call
+    } else {
+      self.bufflastix = 0;
     }
 
     Ok(())
@@ -564,7 +597,7 @@ impl<RT : OpenSSLSymConf> ExtWrite for OSSLSymW<RT> {
     let bs = <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
     let swrite = min(cont.len(), self.0.buff.len() - bs);
     let iu = self.0.crypter.update(&cont[..swrite], &mut self.0.buff[..])?;
-    self.0.finalize = false;
+//    self.0.finalize = false;
     if iu != 0 {
       w.write_all(&self.0.buff[..iu])?;
     }
@@ -608,6 +641,8 @@ impl<RT : OpenSSLConf> OSSLMixR<RT> {
 impl<RT : OpenSSLConf> ExtRead for OSSLMixR<RT> {
 
   fn read_header<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
+    // only if needed (can reuse after read_end)
+    if self.sym.is_none() {
 
     let is = <RT::SymConf as OpenSSLSymConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
     let ks = <RT::SymConf as OpenSSLSymConf>::SHADOW_TYPE().key_len();
@@ -648,7 +683,10 @@ impl<RT : OpenSSLConf> ExtRead for OSSLMixR<RT> {
      let sym = OSSLSymR::new(ivk)?;
      self.sym = Some(sym);
 
-     Ok(())
+    } else {
+      self.sym.as_mut().unwrap().read_header(r)?;
+    }
+    Ok(())
   }
   fn read_from<R : Read>(&mut self, r : &mut R, buf : &mut[u8]) -> IoResult<usize> {
     match self.sym {
@@ -669,7 +707,13 @@ impl<RT : OpenSSLConf> ExtRead for OSSLMixR<RT> {
     }
   }
   fn read_end<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
-    Ok(())
+    match self.sym {
+      Some(ref mut s) => s.read_end(r),
+      None => Err(IoError::new (
+         IoErrorKind::Other,
+         "Non initialize sym cipher",
+       )),
+    }
   }
 }
 pub struct OSSLMixW<RT : OpenSSLConf> {
@@ -690,6 +734,7 @@ impl<RT : OpenSSLConf> OSSLMixW<RT> {
 
 impl<RT : OpenSSLConf> ExtWrite for OSSLMixW<RT> {
   fn write_header<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
+    if self.sym.is_none() {
     let is = <RT::SymConf as OpenSSLSymConf>::SHADOW_TYPE().iv_len().unwrap_or(0);
     let ks = <RT::SymConf as OpenSSLSymConf>::SHADOW_TYPE().key_len();
     let ivk = <OSSLSym<RT::SymConf>>::new_key()?;
@@ -701,6 +746,9 @@ impl<RT : OpenSSLConf> ExtWrite for OSSLMixW<RT> {
     
     let sym = OSSLSymW::new(ivk)?;
     self.sym = Some(sym);
+    } else {
+      self.sym.as_mut().unwrap().write_header(w)?;
+    }
     Ok(())
   }
 
@@ -750,6 +798,7 @@ pub struct OSSLShadowerR<RT : OpenSSLConf> {
     inner : OSSLMixR<RT>,
     pub mode : ASymSymMode,
     asymbufs : Option<(Vec<u8>,usize,Vec<u8>,usize)>,
+    init : bool,
 }
 
 impl<RT : OpenSSLConf> OSSLShadowerR<RT> {
@@ -758,6 +807,7 @@ impl<RT : OpenSSLConf> OSSLShadowerR<RT> {
       inner : OSSLMixR::new(pk),
       mode : ASymSymMode::ASymSym,
       asymbufs : None,
+      init : false,
     })
   }
 }
@@ -767,6 +817,7 @@ impl<RT : OpenSSLConf> OSSLShadowerW<RT> {
       inner : OSSLMixW::new(pk)?,
       mode : ASymSymMode::ASymSym,
       asymbufs : None,
+      init : false,
     })
   }
 }
@@ -776,6 +827,7 @@ pub struct OSSLShadowerW<RT : OpenSSLConf> {
     inner : OSSLMixW<RT>,
     pub mode : ASymSymMode,
     asymbufs : Option<(Vec<u8>,usize,Vec<u8>,usize)>,
+    init : bool,
 }
 
 #[derive(PartialEq,Eq,Debug,Clone,Serialize,Deserialize)]
@@ -794,6 +846,7 @@ unsafe impl<C : OpenSSLSymConf> Send for OSSLSymR<C> {}
 impl<RT : OpenSSLConf> ExtRead for OSSLShadowerR<RT> {
   #[inline]
   fn read_header<R : Read>(&mut self, r : &mut R) -> IoResult<()> {
+    if !self.init {
     let mut tag = [0];
     try!(r.read(&mut tag));
 
@@ -809,6 +862,14 @@ impl<RT : OpenSSLConf> ExtRead for OSSLShadowerR<RT> {
       }
     } else {
       self.mode = ASymSymMode::None;
+    }
+    self.init = true;
+    } else {
+      match self.mode {
+        ASymSymMode::ASymSym => self.inner.read_header(r)?,
+        ASymSymMode::ASymOnly => (),
+        ASymSymMode::None => (),
+      }
     }
     Ok(())
   }
@@ -884,6 +945,7 @@ impl<RT : OpenSSLConf> ExtRead for OSSLShadowerR<RT> {
 impl<RT : OpenSSLConf> ExtWrite for OSSLShadowerW<RT> {
 
   fn write_header<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
+    if !self.init {
     match self.mode {
       ASymSymMode::ASymSym => {
         w.write(&[SMODE_ENABLE])?;
@@ -900,6 +962,15 @@ impl<RT : OpenSSLConf> ExtWrite for OSSLShadowerW<RT> {
       ASymSymMode::None => {
         w.write(&[SMODE_DISABLE])?;
       },
+    }
+    self.init = true;
+    } else {
+      match self.mode {
+        ASymSymMode::ASymSym => self.inner.write_header(w)?,
+        // TODO put counter to 0??
+        ASymSymMode::ASymOnly => (),
+        ASymSymMode::None => (),
+      }
     }
     Ok(())
   }
@@ -1373,18 +1444,17 @@ pub fn shadower_sym<RT : OpenSSLSymConf> (input_length : usize, write_buffer_len
 read_buffer_length : usize) 
 {
   let k = OSSLSym::<RT>::new_key().unwrap(); 
-  let k2 = k.clone();
   let mut shad_sim_w =  OSSLSymW::<RT>::new(k.clone()).unwrap();
   let mut shad_sim_r =  OSSLSymR::<RT>::new(k.clone()).unwrap();
-  shadower_sym_int(&mut shad_sim_w, &mut shad_sim_r, input_length, write_buffer_length, read_buffer_length);
+  shadower_sym_int(&mut shad_sim_w, &mut shad_sim_r, input_length, write_buffer_length, read_buffer_length, 1);
   assert!(shad_sim_w.0.finalize == true);
   // multiple msg (write_end then use same)
-  shadower_sym_int(&mut shad_sim_w, &mut shad_sim_r, input_length, write_buffer_length, read_buffer_length);
+  shadower_sym_int(&mut shad_sim_w, &mut shad_sim_r, input_length, write_buffer_length, read_buffer_length, 2);
 }
 
 
 fn shadower_sym_int<RT : OpenSSLSymConf> (shad_sim_w : &mut OSSLSymW<RT>, shad_sim_r : &mut OSSLSymR<RT>, input_length : usize, write_buffer_length : usize,
-read_buffer_length : usize) 
+read_buffer_length : usize, call_nb : usize) 
 {
 
   let input_length_double = input_length * 2;
@@ -1423,6 +1493,8 @@ read_buffer_length : usize)
   shad_sim_w.write_end(&mut output).unwrap();
   shad_sim_w.flush_into(&mut output).unwrap();
   output.flush().unwrap();
+  // extra content to check it is unconsumed
+  output.write(&[1,2,3]).unwrap();
  // let el = output.get_ref().len();
   ix = 0;
   let mut readbuf = vec![0;read_buffer_length];
@@ -1431,20 +1503,28 @@ read_buffer_length : usize)
   shad_sim_r.read_header(&mut input_v).unwrap();
   let mut inpend = 0;
   while ix < input_length_double {
-    let l = shad_sim_r.read_from(&mut input_v, &mut readbuf).unwrap();
+    let bufread_size = min(read_buffer_length, input_length_double - ix);
+    let l = shad_sim_r.read_from(&mut input_v, &mut readbuf[..bufread_size]).unwrap();
     assert!(l!=0);
 
 
     inpend = min(ix + l, input.len()); // in case we read padding
-    assert_eq!(&readbuf[..l], &input[ix..inpend],"index {},{}", ix, input_length);
+    assert_eq!(&readbuf[..l], &input[ix..inpend],"index {},{},{},{},{:?},{:?},{}", ix, input_length, bufread_size, l, shad_sim_r.sym.buff, shad_sim_r.underbuf,call_nb);
     ix += l;
   }
 
   assert_eq!(inpend,input.len());
-
-  let l = shad_sim_r.read_from(&mut input_v, &mut readbuf).unwrap();
-  assert!(l==0);
   shad_sim_r.read_end(&mut input_v).unwrap();
+  let l = input_v.read(&mut readbuf).unwrap();
+  if shad_sim_r.bufflastix > 0 {
+    assert_eq!([1,2,3], &shad_sim_r.sym.buff[..3]);
+    assert!(l==0);
+    shad_sim_r.bufflastix = 0;
+  } else { 
+    assert_eq!([1,2,3], &readbuf[..l],"underbuf : {:?} ({},{}) , symbuf : {:?}",shad_sim_r.underbuf, shad_sim_r.suix, shad_sim_r.euix, shad_sim_r.sym.buff);
+  //  let l = shad_sim_r.read_from(&mut input_v, &mut readbuf).unwrap();
+    assert!(l==3);
+  }
 
 }
 
