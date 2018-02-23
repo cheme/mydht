@@ -450,8 +450,7 @@ impl<RT : OpenSSLSymConf> ExtRead for OSSLSymR<RT> {
       self.euix = 0;
       let k = replace(&mut self.sym.key,Vec::new());
 
-      let nc = OSSLSym::new_iv_shift(k,false,true)?;
-      self.sym = nc;
+      let mut nc = OSSLSym::new_iv_shift(k,false,true)?;
       if self.bufflastix > 0 {
         let bs = <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
         // TODO consider non optional underbuf
@@ -459,9 +458,11 @@ impl<RT : OpenSSLSymConf> ExtRead for OSSLSymR<RT> {
           // default to double block size
           self.underbuf = Some(vec![0;bs + bs]);
         }
-        let iu = self.sym.crypter.update(&self.sym.buff[..self.bufflastix], &mut self.underbuf.as_mut().unwrap()[..])?;
+        println!("head from shad : {:?}",&self.sym.buff[..self.bufflastix]);
+        let iu = nc.crypter.update(&self.sym.buff[..self.bufflastix], &mut self.underbuf.as_mut().unwrap()[..])?;
         self.euix = iu;
       }
+      self.sym = nc;
 
     }
 
@@ -558,7 +559,7 @@ impl<RT : OpenSSLSymConf> ExtRead for OSSLSymR<RT> {
       // warn panic if not null 
       let fr = self.sym.crypter.finalize(&mut self.underbuf.as_mut().unwrap()[..]);
       if fr.is_err() {
-        // the buffer size content was no padding frame
+        // the buffer size content was no padding frame 
         self.bufflastix = bs;
       } else {
         self.bufflastix = fr?;
@@ -609,10 +610,12 @@ impl<RT : OpenSSLSymConf> ExtWrite for OSSLSymW<RT> {
     Ok(())
   }
   fn write_end<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
+    println!("IN END");
     if !self.0.finalize {
       self.0.finalize = true;
       let i = self.0.crypter.finalize(&mut self.0.buff[..])?;
       if i > 0 {
+    println!("IN END write fin : {}, {:?}", i, &self.0.buff[..i]);
         w.write_all(&self.0.buff[..i])
       } else { Ok(()) }
     } else {
@@ -1519,6 +1522,9 @@ read_buffer_length : usize, call_nb : usize)
   if shad_sim_r.bufflastix > 0 {
     assert_eq!([1,2,3], &shad_sim_r.sym.buff[..3]);
     assert!(l==0);
+    assert!(false, "this should not happen (additional bytes read) : it is fine with cursor but not with asynch transport (yield until
+     next frame or timeout...).");
+  
     shad_sim_r.bufflastix = 0;
   } else { 
     assert_eq!([1,2,3], &readbuf[..l],"underbuf : {:?} ({},{}) , symbuf : {:?}",shad_sim_r.underbuf, shad_sim_r.suix, shad_sim_r.euix, shad_sim_r.sym.buff);

@@ -1,4 +1,5 @@
 //! Client service
+use std::cmp::min;
 use procs::OptInto;
 use std::borrow::Borrow;
 use peer::Peer;
@@ -274,13 +275,14 @@ impl<MC : MyDHTConf> WriteService<MC> {
           },
         };
 
-        // write head before storing
-        shad.write_header(&mut WriteYield(&mut self.stream,async_yield))?;
         self.shad_msg = Some(shad);
       }
 
+//      let mut selfstream = Cursor::new(Vec::new());
       let mut shad = self.shad_msg.as_mut().unwrap();
 
+      shad.write_header(&mut WriteYield(&mut self.stream,async_yield))?;
+ 
       let mut pmess = command.opt_into().unwrap();
 
       self.enc.encode_msg_into(&mut self.stream, shad, async_yield, &mut pmess)?;
@@ -290,6 +292,12 @@ impl<MC : MyDHTConf> WriteService<MC> {
           self.enc.attach_into(&mut self.stream, shad, async_yield, att)?;
         }
       }
+
+      // we need to write end (eg for block cipher, buffers must be flushed)
+      shad.write_end(&mut WriteYield(&mut self.stream,async_yield))?;
+      shad.flush_into(&mut WriteYield(&mut self.stream,async_yield))?;
+
+ 
     }
 
     Ok(())

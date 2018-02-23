@@ -270,9 +270,8 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
             },*/
 
           };
-
           shad.read_header(&mut ReadYield(stream,async_yield))?;
-
+ 
           // read in single pass
           // TODO specialize ping pong messages with MaxSize. - 
           let msg : ProtoMessage<MC::Peer> = self.enc.decode_from(stream, &mut shad, async_yield)?;
@@ -314,7 +313,6 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
             },
             ProtoMessage::PONG(mut withpeer,initial_chal, sig, next_chal) => {
               debug!("a pong received from {:?}", withpeer.get_key_ref());
-
               let atsize = withpeer.attachment_expected_size();
               if atsize > 0 {
                 let att = self.enc.attach_from(stream, &mut shad, async_yield, atsize)?;
@@ -379,12 +377,22 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
                 }
               },
             };*/
-            shad.read_header(&mut ReadYield(stream,async_yield))?;
-
             self.shad_msg = Some(shad);
-          }
+          }/* else {
+            let mut r = ReadYield(stream,async_yield);
+            while 1 != r.read(&mut vec![0;1])? {}
+            println!("read a byte");
+       let mut buf = vec![0;50];
+       let n = r.read(&mut buf[..])?;
+          println!("read start : {:?}", &buf[..n]);
+
+          }*/
           let shad = self.shad_msg.as_mut().unwrap();
+
+          shad.read_header(&mut ReadYield(stream,async_yield))?;
+
           let mut pmess : MC::ProtoMsg = self.enc.decode_msg_from(stream, shad, async_yield)?;
+
           let atts_s = pmess.attachment_expected_sizes();
           if atts_s.len() > 0 {
             let mut atts = Vec::with_capacity(atts_s.len());
@@ -394,6 +402,16 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
             }
             pmess.set_attachments(&atts[..]);
           }
+
+          shad.read_end(&mut ReadYield(stream,async_yield))?;
+/*     if MC::AUTH_MODE != ShadowAuthType::NoAuth {
+       let mut buf = vec![0;50];
+       let mut r = ReadYield(stream,async_yield);
+       let n = r.read(&mut buf[..])?;
+          println!("read end : {:?}", &buf[..n]);
+        }
+*/
+
           Some(pmess)
         }
         }
