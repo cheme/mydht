@@ -330,24 +330,44 @@ pub trait OpenSSLSymConf {
   const CRYPTER_KEY_ENC_SIZE : usize;
   const CRYPTER_KEY_DEC_SIZE : usize;
 
+  const PADDING_MODE : CrypterPaddingMode; 
   fn  CRYPTER_BUFF_SIZE() -> usize;
 }
 
 #[derive(PartialEq,Eq,Debug,Clone,Serialize,Deserialize)]
 pub struct AES256CBC;
 
+#[derive(PartialEq,Eq,Debug,Clone,Serialize,Deserialize)]
+pub struct AES256CBCPAD;
+
 impl OpenSSLSymConf for AES256CBC {
   #[inline]
   fn SHADOW_TYPE() -> Cipher { Cipher::aes_256_cbc() }
-  #[inline]
-  fn HASH_SHIFT_IV() -> MessageDigest { MessageDigest::sha256() }
   /// size must allow no padding
   const CRYPTER_KEY_ENC_SIZE : usize = 256;
   /// size must allow no padding
   const CRYPTER_KEY_DEC_SIZE : usize = 214;
+  const PADDING_MODE : CrypterPaddingMode = CrypterPaddingMode::UnsizedPadding; 
+  #[inline]
+  fn HASH_SHIFT_IV() -> MessageDigest { MessageDigest::sha256() }
   #[inline]
   fn CRYPTER_BUFF_SIZE() -> usize { Self::SHADOW_TYPE().block_size() }// TODO try bigger
 }
+
+impl OpenSSLSymConf for AES256CBCPAD {
+  #[inline]
+  fn HASH_SHIFT_IV() -> MessageDigest { MessageDigest::sha256() }
+  #[inline]
+  fn SHADOW_TYPE() -> Cipher { Cipher::aes_256_cbc() }
+  /// size must allow no padding
+  const CRYPTER_KEY_ENC_SIZE : usize = 256;
+  /// size must allow no padding
+  const CRYPTER_KEY_DEC_SIZE : usize = 214;
+  const PADDING_MODE : CrypterPaddingMode = CrypterPaddingMode::Native; 
+  #[inline]
+  fn CRYPTER_BUFF_SIZE() -> usize { Self::SHADOW_TYPE().block_size() }// TODO try bigger
+}
+
 
 pub struct OSSLSym<RT : OpenSSLSymConf> {
     /// sym cripter (use for write or read only
@@ -357,6 +377,8 @@ pub struct OSSLSym<RT : OpenSSLSymConf> {
     /// if crypter was finalize (create a new for next)
     finalize : bool,
     buff : Vec<u8>,
+    /// current buff ix
+    symbuffix : usize,
     _p : PhantomData<RT>,
 }
 
@@ -366,7 +388,6 @@ pub struct OSSLSymR<RT : OpenSSLSymConf> {
   underbuf : Option<Vec<u8>>,
   suix : usize,
   euix : usize,
-  bufflastix : usize,
 }
 
 impl<RT : OpenSSLSymConf> OSSLSymR<RT> {
@@ -376,7 +397,6 @@ impl<RT : OpenSSLSymConf> OSSLSymR<RT> {
       underbuf : None,
       suix : 0,
       euix : 0, 
-      bufflastix : 0,
     }
   }
 }
@@ -419,16 +439,21 @@ impl<RT : OpenSSLSymConf> OSSLSym<RT> {
         k,
         piv)
     }?;
-    crypter.pad(true);
+    crypter.pad(
+      match RT::PADDING_MODE {
+        CrypterPaddingMode::NoPadding
+        | CrypterPaddingMode::UnsizedPadding => false,
+        CrypterPaddingMode::Native => true,
+    });
     Ok(OSSLSym {
       crypter : crypter,
       key : key,
       finalize : false,
       buff : vec![0;bufsize],
+      symbuffix : 0,
       _p : PhantomData,
     })
   }
-
 }
 
 impl<RT : OpenSSLSymConf> OSSLSymR<RT> {
@@ -445,28 +470,33 @@ impl<RT : OpenSSLSymConf> OSSLSymW<RT> {
 impl<RT : OpenSSLSymConf> ExtRead for OSSLSymR<RT> {
 
   fn read_header<R : Read>(&mut self, _r : &mut R) -> IoResult<()> {
-    if self.sym.finalize == true {
-      self.suix = 0;
-      self.euix = 0;
-      let k = replace(&mut self.sym.key,Vec::new());
 
-      let mut nc = OSSLSym::new_iv_shift(k,false,true)?;
-      if self.bufflastix > 0 {
-        let bs = <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
-        // TODO consider non optional underbuf
-        if self.underbuf.is_none() {
-          // default to double block size
-          self.underbuf = Some(vec![0;bs + bs]);
+    match RT::PADDING_MODE {
+      CrypterPaddingMode::Native => {
+        if self.sym.finalize == true {
+          self.suix = 0;
+          self.euix = 0;
+          let k = replace(&mut self.sym.key,Vec::new());
+   
+          let mut nc = OSSLSym::new_iv_shift(k,false,true)?;
+          if self.sym.symbuffix > 0 {
+            let bs = <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
+            // TODO consider non optional underbuf
+            if self.underbuf.is_none() {
+              // default to double block size
+              self.underbuf = Some(vec![0;bs + bs]);
+            }
+            println!("head from shad : {:?}",&self.sym.buff[..self.sym.symbuffix]);
+            let iu = nc.crypter.update(&self.sym.buff[..self.sym.symbuffix], &mut self.underbuf.as_mut().unwrap()[..])?;
+            self.sym.symbuffix = 0;
+            self.euix = iu;
+          }
+          self.sym = nc;
         }
-        println!("head from shad : {:?}",&self.sym.buff[..self.bufflastix]);
-        let iu = nc.crypter.update(&self.sym.buff[..self.bufflastix], &mut self.underbuf.as_mut().unwrap()[..])?;
-        self.euix = iu;
-      }
-      self.sym = nc;
-
+      },
+      CrypterPaddingMode::NoPadding 
+      | CrypterPaddingMode::UnsizedPadding => (),
     }
-
-
     Ok(())
   }
   fn read_from<R : Read>(&mut self, r : &mut R, buf : &mut[u8]) -> IoResult<usize> {
@@ -500,26 +530,36 @@ impl<RT : OpenSSLSymConf> ExtRead for OSSLSymR<RT> {
 //        let sread = min(dest.len() - bs, self.sym.buff.len());
 //        let sread = bs;
 
-        let ir = r.read(&mut self.sym.buff[..bs])?;
-        if ir != 0 {
+        let mut ir = 0;
+        while {
+          let nb = r.read(&mut self.sym.buff[ir..bs])?;
+          ir += nb;
+          nb != 0 && ir != bs 
+        } {}
+        if ir == bs {
 //          self.sym.finalize = false;
           let iu = self.sym.crypter.update(&self.sym.buff[..ir], dest)?;
-          self.bufflastix += ir;
-          self.bufflastix %= bs;
+          if RT::PADDING_MODE == CrypterPaddingMode::Native {
+            self.sym.symbuffix += ir;
+          } else {
+            self.sym.symbuffix += iu;
+          }
+          self.sym.symbuffix %= bs;
 
           if iu == 0 {
             (0,true)
           } else {
             (iu,false)
           }
-        } else if !self.sym.finalize {
+        } else if RT::PADDING_MODE == CrypterPaddingMode::Native
+          && !self.sym.finalize {
           self.sym.finalize = true;
           let fr = self.sym.crypter.finalize(dest);
+          self.sym.symbuffix += ir;
           let sr = if RELAX_FINALIZE && fr.is_err() {
             0
           } else {
-            let fs = fr?;
-            fs
+            fr?
           };
           (sr,false)
         } else {
@@ -542,34 +582,43 @@ impl<RT : OpenSSLSymConf> ExtRead for OSSLSymR<RT> {
     }
   }
   fn read_end<R : Read>(&mut self, _r : &mut R) -> IoResult<()> {
-
-    self.suix = 0;
-    self.euix = 0;
-    if !self.sym.finalize {
-
-      // lix byte should not have been read
-      self.sym.finalize = true;
-      //println!("lix : {}",self.bufflastix);
-      if self.bufflastix == 0 {
-      let bs = <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
-      if self.underbuf.is_none() {
-        // default to double block size
-        self.underbuf = Some(vec![0;bs + bs]);
-      }
-      // warn panic if not null 
-      let fr = self.sym.crypter.finalize(&mut self.underbuf.as_mut().unwrap()[..]);
-      if fr.is_err() {
-        // the buffer size content was no padding frame 
-        self.bufflastix = bs;
-      } else {
-        self.bufflastix = fr?;
-        //println!("finalize : {}",self.bufflastix);
-      }
-      }
-
-      // we are using padding : extra data added to update need to be report to next call
-    } else {
-      self.bufflastix = 0;
+    match RT::PADDING_MODE {
+      CrypterPaddingMode::Native => {
+        self.suix = 0;
+        self.euix = 0;
+        if !self.sym.finalize {
+          // lix byte should not have been read
+          self.sym.finalize = true;
+          //println!("lix : {}",self.bufflastix);
+          if self.sym.symbuffix == 0 {
+          let bs = <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
+          if self.underbuf.is_none() {
+            // default to double block size
+            self.underbuf = Some(vec![0;bs + bs]);
+          }
+          // warn panic if not null 
+          let fr = self.sym.crypter.finalize(&mut self.underbuf.as_mut().unwrap()[..]);
+          if fr.is_err() {
+            // the buffer size content was no padding frame 
+            self.sym.symbuffix = bs;
+          } else {
+            self.sym.symbuffix = fr?;
+            //println!("finalize : {}",self.bufflastix);
+          }
+          }
+    
+          // we are using padding : extra data added to update need to be report to next call
+        } else {
+//          self.sym.symbuffix = 0;
+        }
+ 
+      },
+      CrypterPaddingMode::NoPadding => (),
+      CrypterPaddingMode::UnsizedPadding => {
+        // possible underbuf padding on very small reading buf
+        self.euix = 0;
+        self.suix = 0;
+      },
     }
 
     Ok(())
@@ -582,15 +631,20 @@ const RELAX_FINALIZE : bool = true;
 #[cfg(not(feature="relaxfinalize"))]
 const RELAX_FINALIZE : bool = false;
 impl<RT : OpenSSLSymConf> ExtWrite for OSSLSymW<RT> {
-  fn write_header<W : Write>(&mut self, _w : &mut W) -> IoResult<()> {
-    if self.0.finalize == true {
-      let k = replace(&mut self.0.key,Vec::new());
+  fn write_header<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
+    match RT::PADDING_MODE {
+      CrypterPaddingMode::Native => {
+        if self.0.finalize == true {
+          let k = replace(&mut self.0.key,Vec::new());
 
-      let nc = OSSLSym::new_iv_shift(k,true,true)?;
-      self.0 = nc;
-
+          let nc = OSSLSym::new_iv_shift(k,true,true)?;
+          self.0 = nc;
+        }
+      },
+      // keep same sym
+      CrypterPaddingMode::NoPadding 
+      | CrypterPaddingMode::UnsizedPadding => (),
     }
-
     Ok(())
   }
   fn write_into<W : Write>(&mut self, w : &mut W, cont : &[u8]) -> IoResult<usize> {
@@ -598,7 +652,9 @@ impl<RT : OpenSSLSymConf> ExtWrite for OSSLSymW<RT> {
     let bs = <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
     let swrite = min(cont.len(), self.0.buff.len() - bs);
     let iu = self.0.crypter.update(&cont[..swrite], &mut self.0.buff[..])?;
-//    self.0.finalize = false;
+    self.0.symbuffix += swrite;
+    self.0.symbuffix %= bs;
+    //self.0.finalize = false;
     if iu != 0 {
       w.write_all(&self.0.buff[..iu])?;
     }
@@ -610,18 +666,31 @@ impl<RT : OpenSSLSymConf> ExtWrite for OSSLSymW<RT> {
     Ok(())
   }
   fn write_end<W : Write>(&mut self, w : &mut W) -> IoResult<()> {
-    println!("IN END");
-    if !self.0.finalize {
-      self.0.finalize = true;
-      let i = self.0.crypter.finalize(&mut self.0.buff[..])?;
-      if i > 0 {
-    println!("IN END write fin : {}, {:?}", i, &self.0.buff[..i]);
-        w.write_all(&self.0.buff[..i])
-      } else { Ok(()) }
-    } else {
-      // TODO add a warning (write end call twice)
-      Ok(())
+    match RT::PADDING_MODE {
+      CrypterPaddingMode::Native => {
+        if !self.0.finalize {
+          self.0.finalize = true;
+          let i = self.0.crypter.finalize(&mut self.0.buff[..])?;
+          self.0.symbuffix = 0;
+          if i > 0 {
+            w.write_all(&self.0.buff[..i])?;
+          }
+        }
+      },
+      CrypterPaddingMode::UnsizedPadding => {
+        if self.0.symbuffix != 0 {
+          let bs = <RT as OpenSSLSymConf>::SHADOW_TYPE().block_size();
+          let s = bs - self.0.symbuffix;
+          // TODO avoid vec alloc using xisting ones?
+          let iu = self.0.crypter.update(&vec![s as u8;s][..], &mut self.0.buff[..])?;
+          assert!(iu == bs);
+          w.write_all(&self.0.buff[..iu])?;
+          self.0.symbuffix = 0;
+        }
+      },
+      CrypterPaddingMode::NoPadding  => (),
     }
+    Ok(())
   }
 }
 
@@ -1286,6 +1355,7 @@ read_buffer_length : usize, smode : ASymSymMode) {
 
   // non std
   shadower_sym::<AES256CBC>(input_length,write_buffer_length,read_buffer_length);
+  shadower_sym::<AES256CBCPAD>(input_length,write_buffer_length,read_buffer_length);
 
 }
 
@@ -1450,7 +1520,8 @@ read_buffer_length : usize)
   let mut shad_sim_w =  OSSLSymW::<RT>::new(k.clone()).unwrap();
   let mut shad_sim_r =  OSSLSymR::<RT>::new(k.clone()).unwrap();
   shadower_sym_int(&mut shad_sim_w, &mut shad_sim_r, input_length, write_buffer_length, read_buffer_length, 1);
-  assert!(shad_sim_w.0.finalize == true);
+
+  assert!(RT::PADDING_MODE != CrypterPaddingMode::Native || shad_sim_w.0.finalize == true);
   // multiple msg (write_end then use same)
   shadower_sym_int(&mut shad_sim_w, &mut shad_sim_r, input_length, write_buffer_length, read_buffer_length, 2);
 }
@@ -1519,13 +1590,13 @@ read_buffer_length : usize, call_nb : usize)
   assert_eq!(inpend,input.len());
   shad_sim_r.read_end(&mut input_v).unwrap();
   let l = input_v.read(&mut readbuf).unwrap();
-  if shad_sim_r.bufflastix > 0 {
+  if shad_sim_r.sym.symbuffix > 0 {
     assert_eq!([1,2,3], &shad_sim_r.sym.buff[..3]);
     assert!(l==0);
-    assert!(false, "this should not happen (additional bytes read) : it is fine with cursor but not with asynch transport (yield until
+    assert!(RT::PADDING_MODE == CrypterPaddingMode::Native, "this should not happen (additional bytes read) : it is fine with cursor but not with asynch transport (yield until
      next frame or timeout...).");
   
-    shad_sim_r.bufflastix = 0;
+    shad_sim_r.sym.symbuffix = 0;
   } else { 
     assert_eq!([1,2,3], &readbuf[..l],"underbuf : {:?} ({},{}) , symbuf : {:?}",shad_sim_r.underbuf, shad_sim_r.suix, shad_sim_r.euix, shad_sim_r.sym.buff);
   //  let l = shad_sim_r.read_from(&mut input_v, &mut readbuf).unwrap();
@@ -1580,6 +1651,21 @@ fn asym_test () {
 
 }*/
 
+#[derive(PartialEq,Eq,Debug)]
+pub enum CrypterPaddingMode {
+  /// for cipher mode where padding is useless or to run stream wise
+  NoPadding,
+  /// using cipher padding, this is fine with file or stream that return 0 when ended,
+  /// but is not compatible with asynch network stream for instance : should not be use 
+  /// for message (reading message requires that a subsequent message is send due to padding
+  /// analysis)
+  Native,
+  /// padding is done only when block size is not reach, and only by writer. It means that reader
+  /// will get bigger content (some dummy byte) : this mode should only be use if size of content
+  /// read is defined : that is the case with message desirializer and most likely not an 
+  /// issue with tunnel where at the end you open a message.
+  UnsizedPadding,
+}
 
 // next iv when reinitiating message from state : 
 // TODO move in ossl to avoid multiple instantiation of hasher
@@ -1607,4 +1693,51 @@ fn shift_iv<RT : OpenSSLSymConf> (iv : &mut [u8]) -> IoResult<()> {
 
   Ok(())
 }
+/*#[test]
+fn ciph_test_deb () {
+  let input2 : Vec<u8> = (0..16).collect();
+  let input : Vec<u8> = (0..5).collect();
+  let padding = false;
 
+  println!("input : {:?}",&input[..]);
+  let shadtype = Cipher::aes_256_cbc();
+  let iv = vec![0;shadtype.iv_len().unwrap_or(0)];
+  let iv = &iv[..];
+  let key = vec![0;shadtype.key_len()];
+  let key = &key[..];
+  let mut w_buf1 = vec![0;32];
+  let mut w_buf2 = vec![0;32];
+  let mut w_buf3 = vec![0;32];
+  let mut r_buf = vec![0;32];
+
+  let mut e1 = Crypter::new(shadtype, Mode::Encrypt, key, Some(iv)).unwrap();
+  e1.pad(padding);
+  let a = e1.update(&input[..], &mut w_buf1).unwrap();
+  let w_buf1 = &w_buf1[..a];
+  println!("buf1 {}, {:?}",a,&w_buf1[..a]);
+  /*let a = e1.update(&input[a..], &mut w_buf2).unwrap();
+  let w_buf2 = &w_buf2[..a];
+  println!("buf2 {}, {:?}",a,&w_buf2[..a]);*/
+  let add = 16 - a;
+  let a = e1.update(&vec![add as u8;add][..], &mut w_buf2).unwrap();
+  let w_buf2 = &w_buf2[..a];
+  println!("buf2 {}, {:?}",a,&w_buf2[..a]);
+/*  let a = e1.finalize(&mut w_buf3).unwrap();
+  let w_buf3 = &w_buf3[..a];
+  println!("buf3 {}, {:?}",a,&w_buf3[..a]);*/
+
+  let mut d1 = Crypter::new(shadtype, Mode::Decrypt, key, Some(iv)).unwrap();
+  d1.pad(padding);
+  let a = d1.update(w_buf1, &mut r_buf[..]).unwrap();
+  println!("buf1 {}, {:?}",a,&r_buf[..a]);
+  let a = d1.update(w_buf2, &mut r_buf[..]).unwrap();
+  println!("buf2 {}, {:?}",a,&r_buf[..a]);
+/*  let a = d1.update(w_buf3, &mut r_buf[..]).unwrap();
+  println!("buf3 {}, {:?}",a,&r_buf[..a]);
+  let a = d1.finalize(&mut r_buf[..]).unwrap();
+  println!("finalize {}, {:?}",a,&r_buf[..a]);*/
+
+
+
+  assert!(false,"expected");
+}*/

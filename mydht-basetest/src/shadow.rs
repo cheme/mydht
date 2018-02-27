@@ -1,5 +1,5 @@
 
-
+use std::cmp::min;
 use peer::{
   Peer,
 };
@@ -222,11 +222,22 @@ read_buffer_length : usize)
     let l = to_shad.read_from(&mut input_v, &mut readbuf).unwrap();
     assert!(l!=0);
 //panic!("{:?},{:?}",l,readbuf.len());
-    assert_eq!(&readbuf[..l], &input[ix..ix + l]);
+
+    // shadow is allowed could overflow due to unmanaged padding
+    // old test was assert_eq!(&readbuf[..l], &input[ix..ix + l]);
+    // It is believed that we know input length (case of serde deserializer)
+    // or use a limiter composition.
+    let nb = min(input.len() - ix,l);
+    assert_eq!(&readbuf[..nb], &input[ix..ix + nb]);
     ix += l;
   }
 
+  // this call is needed as some unmanaged padding could be still present 
+  // in case of read buffer small (smaller than shadower max padding size)
+  to_shad.read_end(&mut input_v).unwrap();
+
   let l = to_shad.read_from(&mut input_v, &mut readbuf).unwrap();
-  assert_eq!(l,0);
+  assert_eq!(l,0,"{:?}, with read buffer length {}",
+             &readbuf[..l],read_buffer_length);
 
 }
