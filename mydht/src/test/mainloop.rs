@@ -24,6 +24,7 @@ use utils::{
 use kvcache::KVCache;
 use service::{
   SpawnSend,
+  SpawnWeakUnyield,
 };
 
 use query::simplecache::{
@@ -310,8 +311,8 @@ impl<MC : MyDHTConf> RegReaderBorrow<MC> for TestCommand<MC> { }
 impl<MC : MyDHTConf> PeerStatusListener<MC::PeerRef> for TestCommand<MC> {
   const DO_LISTEN : bool = false;
   #[inline]
-  fn build_command(_ : PeerStatusCommand<MC::PeerRef>) -> Self {
-    unreachable!()
+  fn build_command(_ : PeerStatusCommand<MC::PeerRef>) -> Option<Self> {
+    None
   }
 }
 

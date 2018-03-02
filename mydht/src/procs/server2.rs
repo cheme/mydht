@@ -42,13 +42,13 @@ use super::{
   ApiHandleSend,
   MainLoopSendIn,
   ApiWeakSend,
-  ApiWeakHandle,
+  ApiWeakUnyield,
   GlobalWeakSend,
-  GlobalWeakHandle,
+  GlobalWeakUnyield,
   LocalHandle,
   LocalSendIn,
   WriteWeakSend,
-  WriteWeakHandle,
+  WriteWeakUnyield,
   WriteHandleSend,
   ReaderBorrowable,
 };
@@ -124,11 +124,11 @@ impl<MC : MyDHTConf> SRef for ReadService<MC> where
   <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Send : Send,
   MainLoopSendIn<MC> : Send,
   ApiWeakSend<MC> : Send,
-  ApiWeakHandle<MC> : Send,
+  ApiWeakUnyield<MC> : Send,
   GlobalWeakSend<MC> : Send,
-  GlobalWeakHandle<MC> : Send,
+  GlobalWeakUnyield<MC> : Send,
   WriteWeakSend<MC> : Send,
-  WriteWeakHandle<MC> : Send,
+  WriteWeakUnyield<MC> : Send,
   {
   type Send = ReadServiceSend<MC>;
   #[inline]
@@ -160,11 +160,11 @@ impl<MC : MyDHTConf> SToRef<ReadService<MC>> for ReadServiceSend<MC> where
   <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Send : Send,
   MainLoopSendIn<MC> : Send,
   ApiWeakSend<MC> : Send,
-  ApiWeakHandle<MC> : Send,
+  ApiWeakUnyield<MC> : Send,
   GlobalWeakSend<MC> : Send,
-  GlobalWeakHandle<MC> : Send,
+  GlobalWeakUnyield<MC> : Send,
   WriteWeakSend<MC> : Send,
-  WriteWeakHandle<MC> : Send,
+  WriteWeakUnyield<MC> : Send,
   {
   #[inline]
   fn to_ref(self) -> ReadService<MC> {
@@ -570,9 +570,9 @@ impl<MC : MyDHTConf> SRef for ReadDest<MC> where
   <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send : Send,
   MainLoopSendIn<MC> : Send,
   GlobalWeakSend<MC> : Send,
-  GlobalWeakHandle<MC> : Send,
+  GlobalWeakUnyield<MC> : Send,
   WriteWeakSend<MC> : Send,
-  WriteWeakHandle<MC> : Send,
+  WriteWeakUnyield<MC> : Send,
   {
   type Send = ReadDest<MC>;
   fn get_sendable(self) -> Self::Send {
@@ -584,9 +584,9 @@ impl<MC : MyDHTConf> SToRef<ReadDest<MC>> for ReadDest<MC> where
   <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send : Send,
   MainLoopSendIn<MC> : Send,
   GlobalWeakSend<MC> : Send,
-  GlobalWeakHandle<MC> : Send,
+  GlobalWeakUnyield<MC> : Send,
   WriteWeakSend<MC> : Send,
-  WriteWeakHandle<MC> : Send,
+  WriteWeakUnyield<MC> : Send,
   {
   fn to_ref(self) -> ReadDest<MC> {
     self

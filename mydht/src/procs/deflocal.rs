@@ -31,11 +31,17 @@ use super::server2::{
 use super::{
   MyDHTConf,
   ApiHandleSend,
+  PeerStoreHandleSend,
+  PeerStoreWeakSend,
+  PeerStoreWeakUnyield,
+  GlobalHandleSend,
+  GlobalWeakSend,
+  GlobalWeakUnyield,
   MCCommand,
   MCReply,
   MainLoopSendIn,
   ApiWeakSend,
-  ApiWeakHandle,
+  ApiWeakUnyield,
 };
 use super::storeprop::{
   KVStoreCommand,
@@ -130,6 +136,7 @@ pub enum GlobalReply<P : Peer,PR,GSC,GSR> {
   Api(GSR),
   PeerApi(KVStoreReply<PR>),
   MainLoop(MainLoopSubCommand<P>),
+  PeerStore(KVStoreCommand<P,PR,P,PR>),
   /// no rep
   NoRep,
   Mult(Vec<GlobalReply<P,PR,GSC,GSR>>),
@@ -237,6 +244,7 @@ pub struct LocalDest<MC : MyDHTConf> {
 pub struct GlobalDest<MC : MyDHTConf> {
   pub mainloop : MainLoopSendIn<MC>,
   pub api : Option<ApiHandleSend<MC>>,
+  pub peerstore : Option<PeerStoreHandleSend<MC>>,
 }
 impl<MC : MyDHTConf> Clone for LocalDest<MC> {
   fn clone(&self) -> Self {
@@ -263,9 +271,11 @@ impl<MC : MyDHTConf> SToRef<GlobalDest<MC>> for  GlobalDest<MC> {
 impl<MC : MyDHTConf> SRef for GlobalDest<MC> where
   MainLoopSendIn<MC> : Send,
   ApiWeakSend<MC> : Send,
-  ApiWeakHandle<MC> : Send,
+  ApiWeakUnyield<MC> : Send,
+  PeerStoreWeakSend<MC> : Send,
+  PeerStoreWeakUnyield<MC> : Send,
   {
-  type Send = GlobalDest<MC>;
+  type Send = Self;
   #[inline]
   fn get_sendable(self) -> Self::Send {
     self
@@ -275,7 +285,9 @@ impl<MC : MyDHTConf> SRef for GlobalDest<MC> where
 impl<MC : MyDHTConf> SToRef<GlobalDest<MC>> for GlobalDest<MC> where
   MainLoopSendIn<MC> : Send,
   ApiWeakSend<MC> : Send,
-  ApiWeakHandle<MC> : Send,
+  ApiWeakUnyield<MC> : Send,
+  PeerStoreWeakSend<MC> : Send,
+  PeerStoreWeakUnyield<MC> : Send,
   {
   #[inline]
   fn to_ref(self) -> GlobalDest<MC> {
@@ -308,6 +320,7 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServic
         self.mainloop.send(MainLoopCommand::SubCommand(mlc))?;
       },
       GlobalReply::PeerApi(c) => {
+        // TODO weak send macro of inline function!!!
         if c.get_api_reply().is_some() {
           let cml =  match self.api {
             Some(ref mut api_weak) => {
@@ -349,6 +362,22 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServic
       },
       GlobalReply::ForwardOnce(ok,oad,fwconf,gsc) => {
         self.mainloop.send(MainLoopCommand::ForwardServiceOnce(ok,oad,fwconf,gsc))?;
+      },
+  //PeerStore(KVStoreCommand<P,PR,P,PR>),
+      GlobalReply::PeerStore(k) => {
+        let od = match self.peerstore {
+          Some(ref mut ps_weak) => {
+              ps_weak.send_with_handle(GlobalCommand::Local(k))?.map(|c|
+                  if let GlobalCommand::Local(k) = c {k} else {unreachable!()})
+          },
+          None => {
+            Some(k)
+          },
+        };
+        if let Some(k) = od {
+          self.api = None;
+          self.mainloop.send(MainLoopCommand::PeerStore(GlobalCommand::Local(k)))?;
+        }
       },
       GlobalReply::NoRep => (),
     }

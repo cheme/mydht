@@ -8,7 +8,16 @@
 //! MainLoop::ForwardService command
 //! TODO non auth may refer to owith for replying : need variant using token
 use std::collections::VecDeque;
-use mydht_base::route2::RouteBaseMessage;
+pub use mydht_base::route2::RouteBaseMessage;
+use super::mainloop::{
+  MainLoopCommand,
+  MainLoopSubCommand,
+};
+use super::api::{
+  ApiCommand,
+  ApiQueryId,
+};
+
 use keyval::{
   KeyVal,
   GettableAttachments,
@@ -27,9 +36,6 @@ use procs::deflocal::{
 use query::cache::{
   QueryCache,
 };
-use super::api::{
-  ApiQueryId,
-};
 use serde::{Serialize};
 use serde::de::DeserializeOwned;
 use peer::{
@@ -46,9 +52,6 @@ use query::{
 use mydhtresult::{
   Result,
 };
-use super::mainloop::{
-  MainLoopSubCommand,
-};
 use kvstore::{
   KVStore,
 };
@@ -58,11 +61,18 @@ use service::{
   SpawnSend,
   SpawnChannel,
   SpawnerYield,
+  SpawnSendWithHandle,
 };
 use super::{
   MainLoopSendIn,
+  ApiHandleSend,
   ApiWeakSend,
-  ApiWeakHandle,
+  ApiWeakUnyield,
+  PeerStoreWeakSend,
+  PeerStoreWeakUnyield,
+  GlobalHandleSend,
+  GlobalWeakSend,
+  GlobalWeakUnyield,
   FWConf,
   MyDHTConf,
   OptFrom,
@@ -72,6 +82,7 @@ use super::{
   RegReaderBorrow,
   PeerStatusCommand,
   MCCommand,
+  MCReply,
 };
 use std::marker::PhantomData;
 use utils::{
@@ -227,7 +238,8 @@ impl<MC : MyDHTConf<GlobalServiceCommand = KVStoreCommand<<MC as MyDHTConf>::Pee
   Into<MCCommand<MC>> 
   for KVStoreProtoMsgWithPeer<MC::Peer, MC::PeerRef, V,R>  where 
    <MC as MyDHTConf>::GlobalServiceChannelIn : SpawnChannel<GlobalCommand<<MC as MyDHTConf>::PeerRef, KVStoreCommand<<MC as MyDHTConf>::Peer, <MC as MyDHTConf>::PeerRef, V, R>>>,
-   <MC as MyDHTConf>::GlobalServiceSpawn: Spawner<<MC as MyDHTConf>::GlobalService, GlobalDest<MC>, <<MC as MyDHTConf>::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<<MC as MyDHTConf>::PeerRef, KVStoreCommand<<MC as MyDHTConf>::Peer, <MC as MyDHTConf>::PeerRef, V, R>>>>::Recv>
+   <MC as MyDHTConf>::GlobalServiceSpawn: Spawner<<MC as MyDHTConf>::GlobalService, GlobalDest<MC>, <<MC as MyDHTConf>::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<<MC as MyDHTConf>::PeerRef, KVStoreCommand<<MC as MyDHTConf>::Peer, <MC as MyDHTConf>::PeerRef, V, R>>>>::Recv>,
+//   KVStoreCommand<<MC as MyDHTConf>::Peer,<MC as MyDHTConf>::PeerRef,V,R> : PeerStatusListener<MC::PeerRef>
 {
   fn into(self) -> MCCommand<MC> {
     match self {
@@ -240,7 +252,9 @@ impl<MC : MyDHTConf<GlobalServiceCommand = KVStoreCommand<<MC as MyDHTConf>::Pee
   OptFrom<MCCommand<MC>>
   for KVStoreProtoMsgWithPeer<MC::Peer, MC::PeerRef, V,R>  where 
    <MC as MyDHTConf>::GlobalServiceChannelIn : SpawnChannel<GlobalCommand<<MC as MyDHTConf>::PeerRef, KVStoreCommand<<MC as MyDHTConf>::Peer, <MC as MyDHTConf>::PeerRef, V, R>>>,
-   <MC as MyDHTConf>::GlobalServiceSpawn: Spawner<<MC as MyDHTConf>::GlobalService, GlobalDest<MC>, <<MC as MyDHTConf>::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<<MC as MyDHTConf>::PeerRef, KVStoreCommand<<MC as MyDHTConf>::Peer, <MC as MyDHTConf>::PeerRef, V, R>>>>::Recv>
+   <MC as MyDHTConf>::GlobalServiceSpawn: Spawner<<MC as MyDHTConf>::GlobalService, GlobalDest<MC>, <<MC as MyDHTConf>::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<<MC as MyDHTConf>::PeerRef, KVStoreCommand<<MC as MyDHTConf>::Peer, <MC as MyDHTConf>::PeerRef, V, R>>>>::Recv>,
+//   KVStoreCommand<<MC as MyDHTConf>::Peer,<MC as MyDHTConf>::PeerRef,<MC as MyDHTConf>::Peer,<MC as MyDHTConf>::PeerRef> : PeerStatusListener<MC::PeerRef>,
+//   KVStoreCommand<<MC as MyDHTConf>::Peer,<MC as MyDHTConf>::PeerRef,V,R> : PeerStatusListener<MC::PeerRef>
   {
   fn can_from(c : &MCCommand<MC>) -> bool {
     match *c {
@@ -509,10 +523,11 @@ impl<P : Peer, PR, V : KeyVal, VR> ApiQueriable for KVStoreCommand<P,PR,V,VR> {
 impl<MC : MyDHTConf,P : Peer,PR,V : KeyVal,VR> RegReaderBorrow<MC> for KVStoreCommand<P, PR, V, VR> { }
 
 impl<P : Peer,PR,V : KeyVal,VR> PeerStatusListener<PR> for KVStoreCommand<P, PR, V, VR> {
+//impl<P : Peer,PR> PeerStatusListener<PR> for KVStoreCommand<P, PR, P, PR> {
   const DO_LISTEN : bool = false;
   #[inline]
-  fn build_command(_ : PeerStatusCommand<PR>) -> Self {
-    unreachable!()
+  fn build_command(_ : PeerStatusCommand<PR>) -> Option<Self> {
+    None
   }
 }
 
@@ -892,29 +907,41 @@ impl<
 }
 
 
-/// adapter to forward peer message into global dest
-pub struct OptPeerGlobalDest<MC : MyDHTConf> (pub GlobalDest<MC>);
+// adapter to forward peer message into global dest
+//pub struct OptPeerGlobalDest<MC : MyDHTConf> (pub GlobalDest<MC>);
+pub struct OptPeerGlobalDest<MC : MyDHTConf> {
+  pub mainloop : MainLoopSendIn<MC>,
+  pub api : Option<ApiHandleSend<MC>>,
+  // issue with recursive resolution of send for local if using it
+  // Send checking should be lazy when using subtype -> TODO formalize issue 
+  // Alternative would be to change WeakUnyield to being Send
+//  pub globalservice : Option<GlobalHandleSend<MC>>,
+}
 
 impl<MC : MyDHTConf> SRef for OptPeerGlobalDest<MC> where
   MainLoopSendIn<MC> : Send,
   ApiWeakSend<MC> : Send,
-  ApiWeakHandle<MC> : Send,
+  ApiWeakUnyield<MC> : Send,
+//  GlobalWeakSend<MC> : Send,
+//  GlobalWeakUnyield<MC> : Send,
   {
-  type Send = OptPeerGlobalDest<MC>;
+  type Send = Self;
   #[inline]
   fn get_sendable(self) -> Self::Send {
-    OptPeerGlobalDest(self.0.get_sendable())
+    self
   }
 }
 
 impl<MC : MyDHTConf> SToRef<OptPeerGlobalDest<MC>> for OptPeerGlobalDest<MC> where
   MainLoopSendIn<MC> : Send,
   ApiWeakSend<MC> : Send,
-  ApiWeakHandle<MC> : Send,
+  ApiWeakUnyield<MC> : Send,
+//  GlobalWeakSend<MC> : Send,
+//  GlobalWeakUnyield<MC> : Send,
   {
   #[inline]
   fn to_ref(self) -> OptPeerGlobalDest<MC> {
-    OptPeerGlobalDest(self.0.get_sendable())
+    self
   }
 }
 
@@ -923,45 +950,57 @@ impl<MC : MyDHTConf> SToRef<OptPeerGlobalDest<MC>> for OptPeerGlobalDest<MC> whe
 
 impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>>> for OptPeerGlobalDest<MC> {
   const CAN_SEND : bool = true;
-  fn send(&mut self, c : GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>>) -> Result<()> {
-    //let gr = <GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServiceCommand,MC::GlobalServiceReply>>::from(c);
-    let gr = from_kv(c);
-    self.0.send(gr)
-    /*let ogr = <GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServiceCommand,MC::GlobalServiceReply>>::opt_from(c);
-    if let Some(gr) = ogr {
-      self.0.send(gr)?
-    };
-    }*/
-//    Ok(())
+  fn send(&mut self, r : GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>>) -> Result<()> {
+    match r {
+      GlobalReply::Mult(cmds) => {
+        for cmd in cmds.into_iter() {
+          self.send(cmd)?;
+        }
+      },
+      GlobalReply::MainLoop(mlc) => {
+        self.mainloop.send(MainLoopCommand::SubCommand(mlc))?;
+      },
+      GlobalReply::PeerApi(c) => {
+        // TODO weak send macro of inline function!!!
+        if c.get_api_reply().is_some() {
+          let cml =  match self.api {
+            Some(ref mut api_weak) => {
+              api_weak.send_with_handle(ApiCommand::ServiceReply(MCReply::PeerStore(c)))?.map(|c|
+                  if let ApiCommand::ServiceReply(MCReply::PeerStore(c)) = c {c} else {unreachable!()})
+            },
+            None => {
+              Some(c)
+            },
+          };
+          if let Some(c) = cml {
+            self.api = None;
+            self.mainloop.send(MainLoopCommand::ProxyApiReply(MCReply::PeerStore(c)))?;
+          }
+        }
+      },
+      GlobalReply::Api(c) => {
+        self.send(GlobalReply::PeerApi(c))?;
+      },
+      GlobalReply::PeerForward(opr,okad,nb_for,gsc) => {
+        self.mainloop.send(MainLoopCommand::ForwardService(opr,okad,nb_for,MCCommand::PeerStore(gsc)))?;
+      },
+      GlobalReply::Forward(opr,okad,nb_for,gsc) => {
+        self.send(GlobalReply::PeerForward(opr,okad,nb_for,gsc))?;
+      },
+      GlobalReply::ForwardOnce(ok,oad,fwconf,gsc) => {
+        // never use here (storeprop uses standard forward)
+        unreachable!()
+      },
+      GlobalReply::PeerStore(..) => {
+        unreachable!()
+      },
+      GlobalReply::NoRep => (),
+    }
+    Ok(())
   }
 }
-/*  Forward(Option<Vec<PR>>,Option<Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>>,usize,GSC),
-  /// reply to api
-  Api(GSR),
-  /// no rep
-  NoRep,
-  Mult(Vec<GlobalReply<P,PR,GSC,GSR>>),*/
 
-//impl<P : Peer,PR : Ref<P>,GSC,GSR> From<GlobalReply<P,PR,KVStoreCommand<P,P,PR>,KVStoreReply<PR>>> for GlobalReply<P,PR,GSC,GSR> {
- // fn from(t : GlobalReply<P,PR,KVStoreCommand<P,P,PR>,KVStoreReply<PR>>) -> Self {
-  fn from_kv<P : Peer,PR : Ref<P>,GSC,GSR>(t : GlobalReply<P,PR,KVStoreCommand<P,PR,P,PR>,KVStoreReply<PR>>) -> GlobalReply<P,PR,GSC,GSR> {
-    match t {
-      GlobalReply::Forward(opr,okad,nbfor,ksc) =>  GlobalReply::PeerForward(opr,okad,nbfor,ksc),
-      GlobalReply::PeerForward(opr,okad,nbfor,ksc) => GlobalReply::PeerForward(opr,okad,nbfor,ksc),
-      GlobalReply::Api(ksr) => GlobalReply::PeerApi(ksr),
-      GlobalReply::PeerApi(ksr) => GlobalReply::PeerApi(ksr),
-      GlobalReply::NoRep => GlobalReply::NoRep,
-      GlobalReply::MainLoop(mlc) => GlobalReply::MainLoop(mlc),
-      GlobalReply::ForwardOnce(..) => unreachable!(), // never use here (storeprop uses standard forward)
-
-      GlobalReply::Mult(vkr) => {
-        let vgr = vkr.into_iter().map(|kr|from_kv(kr)).collect();
-        GlobalReply::Mult(vgr)
-      }
-    }
-  }
-//}
-
+ 
 /// peer in kvstore is trusted and in case of noauth mode it could be forward to global service (if
 /// auth mode peer_ping will forward it after auth (needed for example in default no auth mydht
 /// tunnel).
@@ -993,6 +1032,11 @@ pub fn peer_discover<P : Peer,PR>(v : Vec<P>) -> GlobalReply<P,PR,KVStoreCommand
 #[inline]
 pub fn peer_forward_ka<P : Peer,PR>(op : Option<P>) -> GlobalReply<P,PR,KVStoreCommand<P,PR,P,PR>,KVStoreReply<PR>> {
   GlobalReply::MainLoop(MainLoopSubCommand::FoundAddressForKey(op.map(|p|p.get_address().clone())))
+}
+
+#[inline]
+pub fn send_user_to_global<P : Peer,RP> (res_q_peer : Option<P>) -> GlobalReply<P,RP,KVStoreCommand<P,RP,P,RP>,KVStoreReply<RP>> {
+  GlobalReply::MainLoop(MainLoopSubCommand::PeerForGlobal(res_q_peer))
 }
 
 /*pub fn peer_discover<MC : MyDHTConf>(v : Vec<MC::Peer>) -> GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>> {

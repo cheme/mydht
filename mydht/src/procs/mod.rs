@@ -88,6 +88,7 @@ use service::{
   Spawner,
   SpawnSend,
   SpawnHandle,
+  SpawnWeakUnyield,
   SpawnChannel,
   MioChannel,
   MioSend,
@@ -896,18 +897,19 @@ pub struct FWConf {
 pub trait PeerStatusListener<P> : Sized {
   const DO_LISTEN : bool;
   /// if return false it means that no status update should be send
-  /// Should use unreachable if DO_LISTEN is false
-  fn build_command(PeerStatusCommand<P>) -> Self;
+  fn build_command(PeerStatusCommand<P>) -> Option<Self>;
 }
 
 #[derive(Clone)]
 pub enum PeerStatusCommand<P> {
   PeerOnline(P,PeerPriority),
   PeerOffline(P,PeerPriority),
+  PeerQuery(Option<P>),
 }
 pub enum PeerStatusCommandSend<P : SRef> {
   PeerOnline(P::Send,PeerPriority),
   PeerOffline(P::Send,PeerPriority),
+  PeerQuery(Option<P::Send>),
 }
 
 
@@ -919,6 +921,8 @@ impl<P : SRef> SRef for PeerStatusCommand<P> {
         PeerStatusCommandSend::PeerOnline(p.get_sendable(),pp),
       PeerStatusCommand::PeerOffline(p,pp) =>
         PeerStatusCommandSend::PeerOffline(p.get_sendable(),pp),
+      PeerStatusCommand::PeerQuery(op) =>
+        PeerStatusCommandSend::PeerQuery(op.map(|p|p.get_sendable())),
     }
   }
 }
@@ -930,11 +934,13 @@ impl<P : SRef> SToRef<PeerStatusCommand<P>> for PeerStatusCommandSend<P> {
         PeerStatusCommand::PeerOnline(p.to_ref(),pp),
       PeerStatusCommandSend::PeerOffline(p,pp) =>
         PeerStatusCommand::PeerOffline(p.to_ref(),pp),
+      PeerStatusCommandSend::PeerQuery(op) =>
+        PeerStatusCommand::PeerQuery(op.map(|p|p.to_ref())),
     }
   }
 }
 
-
+// TODO macro for those alias!!
 pub type LocalRecvIn<MC : MyDHTConf> = <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Recv;
 pub type LocalSendIn<MC : MyDHTConf> = <MC::LocalServiceChannelIn as SpawnChannel<MC::LocalServiceCommand>>::Send;
 pub type LocalHandle<MC : MyDHTConf> = <MC::LocalServiceSpawn as Spawner<MC::LocalService,LocalDest<MC>,LocalRecvIn<MC>>>::Handle;
@@ -944,38 +950,42 @@ pub type GlobalSendIn<MC : MyDHTConf> = <MC::GlobalServiceChannelIn as SpawnChan
 pub type GlobalRecvIn<MC : MyDHTConf> = <MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::Recv;
 pub type GlobalHandle<MC : MyDHTConf> = <MC::GlobalServiceSpawn as Spawner<MC::GlobalService,GlobalDest<MC>,GlobalRecvIn<MC>>>::Handle;
 pub type GlobalWeakSend<MC : MyDHTConf> = <MC::GlobalServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>>>::WeakSend;
-pub type GlobalWeakHandle<MC : MyDHTConf> = <GlobalHandle<MC> as SpawnHandle<MC::GlobalService,GlobalDest<MC>, GlobalRecvIn<MC>>>::WeakHandle;
-pub type GlobalHandleSend<MC : MyDHTConf> = HandleSend<GlobalWeakSend<MC>,GlobalWeakHandle<MC>>;
+pub type GlobalWeakUnyield<MC : MyDHTConf> = <GlobalHandle<MC> as SpawnWeakUnyield>::WeakUnyield;
+pub type GlobalHandleSend<MC : MyDHTConf> = HandleSend<GlobalWeakSend<MC>,GlobalWeakUnyield<MC>>;
 
 pub type ApiSendIn<MC : MyDHTConf> = <MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Send;
 pub type ApiRecvIn<MC : MyDHTConf> = <MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::Recv;
 pub type ApiHandle<MC : MyDHTConf> = <MC::ApiServiceSpawn as Spawner<MC::ApiService,ApiDest<MC>,ApiRecvIn<MC>>>::Handle;
-pub type ApiWeakHandle<MC : MyDHTConf> = <ApiHandle<MC> as SpawnHandle<MC::ApiService,ApiDest<MC>,ApiRecvIn<MC>>>::WeakHandle;
+pub type ApiWeakUnyield<MC : MyDHTConf> = <ApiHandle<MC> as SpawnWeakUnyield>::WeakUnyield;
 pub type ApiWeakSend<MC: MyDHTConf> = <MC::ApiServiceChannelIn as SpawnChannel<ApiCommand<MC>>>::WeakSend;
-pub type ApiHandleSend<MC : MyDHTConf> = HandleSend<ApiWeakSend<MC>,ApiWeakHandle<MC>>;
+pub type ApiHandleSend<MC : MyDHTConf> = HandleSend<ApiWeakSend<MC>,ApiWeakUnyield<MC>>;
 
 
 
 pub type WriteSendIn<MC : MyDHTConf> = <MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::Send;
 pub type WriteRecvIn<MC : MyDHTConf> = <MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::Recv;
 pub type WriteHandle<MC : MyDHTConf> = <MC::WriteSpawn as Spawner<WriteService<MC>,MC::WriteDest,WriteRecvIn<MC>>>::Handle;
-pub type WriteWeakHandle<MC : MyDHTConf> = <WriteHandle<MC> as SpawnHandle<WriteService<MC>,MC::WriteDest,WriteRecvIn<MC>>>::WeakHandle;
+pub type WriteWeakUnyield<MC : MyDHTConf> = <WriteHandle<MC> as SpawnWeakUnyield>::WeakUnyield;
 pub type WriteWeakSend<MC : MyDHTConf> = <MC::WriteChannelIn as SpawnChannel<WriteCommand<MC>>>::WeakSend;
-pub type WriteHandleSend<MC : MyDHTConf> = HandleSend<WriteWeakSend<MC>,WriteWeakHandle<MC>>;
+pub type WriteHandleSend<MC : MyDHTConf> = HandleSend<WriteWeakSend<MC>,WriteWeakUnyield<MC>>;
 
 
 pub type ReadSendIn<MC : MyDHTConf> = <MC::ReadChannelIn as SpawnChannel<ReadCommand<MC>>>::Send;
 pub type ReadRecvIn<MC : MyDHTConf> = <MC::ReadChannelIn as SpawnChannel<ReadCommand<MC>>>::Recv;
 pub type ReadHandle<MC : MyDHTConf> = <MC::ReadSpawn as Spawner<ReadService<MC>,ReadDest<MC>,DefaultRecv<ReadCommand<MC>,ReadRecvIn<MC>>>>::Handle;
 //type SpawnerRefsDefRecv<S : Service,COM,D, CI : SpawnChannel<COM>, RS : Spawner<S,D,DefaultRecv<COM,CI::Recv>>> = (RS::Handle,CI::Send);
+pub type PeerStoreRecvIn<MC : MyDHTConf> = <MC::PeerStoreServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>>>::Recv;
+pub type PeerStoreSendIn<MC : MyDHTConf> = <MC::PeerStoreServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>>>::Send;
 pub type PeerStoreHandle<MC : MyDHTConf> = <MC::PeerStoreServiceSpawn as 
 Spawner<
     KVStoreService<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef,MC::PeerKVStore,MC::DHTRules,MC::PeerStoreQueryCache>,
-    OptPeerGlobalDest<MC>,
-    <MC::PeerStoreServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>>>::Recv
+    OptPeerGlobalDest<MC>, PeerStoreRecvIn<MC>
   >
 >::Handle;
 
+pub type PeerStoreWeakSend<MC : MyDHTConf> = <MC::PeerStoreServiceChannelIn as SpawnChannel<GlobalCommand<MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>>>>::WeakSend;
+pub type PeerStoreWeakUnyield<MC : MyDHTConf> = <PeerStoreHandle<MC> as SpawnWeakUnyield>::WeakUnyield;
+pub type PeerStoreHandleSend<MC : MyDHTConf> = HandleSend<PeerStoreWeakSend<MC>,PeerStoreWeakUnyield<MC>>;
 pub type SynchConnectHandle<MC : MyDHTConf> = <MC::SynchConnectSpawn as 
  Spawner<
     SynchConnect<MC::Transport>,

@@ -79,6 +79,7 @@ use service::{
   SpawnRecv,
   SpawnHandle,
   SpawnUnyield,
+  SpawnWeakUnyield,
   SpawnChannel,
   SpawnerYield,
   DefaultRecv,
@@ -196,12 +197,14 @@ pub struct MyDHT<MC : MyDHTConf>(MainLoopSendIn<MC>);
 #[derive(Clone)]
 /// subset of mainloop command TODO get api command in here and make MainLoopCommand technical
 /// TODO unclear if only for callback
+/// TODO add RP as parameter and implement SRef for this : for now clone until macro to do it
 pub enum MainLoopSubCommand<P : Peer> {
 //pub enum MainLoopSubCommand<P : Peer,PR,GSC,GSR> {
   TrustedTryConnect(P),
   TryConnect(<P as KeyVal>::Key,<P as Peer>::Address),
   Discover(Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>),
   FoundAddressForKey(Option<<P as Peer>::Address>),
+  PeerForGlobal(Option<P>),
   PoolSize(usize),
 }
 /// command supported by MyDHT loop
@@ -475,30 +478,21 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
     let global_service = conf.init_global_service()?;
     // TODO use a true dest with mainloop, api weak as dest
-    let api_gdest = api_handle.get_weak_handle().map(|wh|{
+    let api_gdest = api_handle.get_weak_unyield().map(|wh|{
       MC::ApiServiceChannelIn::get_weak_send(&api_send).map(|aps|
                                                             HandleSend(aps,wh)
                                                            )
     }).unwrap_or(None);
-    let global_dest = GlobalDest {
-      mainloop : mlsend.clone(),
-      api : api_gdest,
-    };
-    let api_gdest_peer = api_handle.get_weak_handle().map(|wh|{
+    let api_gdest_peer = api_handle.get_weak_unyield().map(|wh|{
       MC::ApiServiceChannelIn::get_weak_send(&api_send).map(|aps|
                                                             HandleSend(aps,wh)
                                                            )
     }).unwrap_or(None);
-    let global_dest_peer = GlobalDest {
+    let peerstore_dest = OptPeerGlobalDest {
       mainloop : mlsend.clone(),
       api : api_gdest_peer,
+//      globalservice : None,
     };
-
-    let mut global_channel_in = conf.init_global_channel_in()?;
-    let (global_send, global_recv) = global_channel_in.new()?;
-    let global_handle = global_spawn.spawn(global_service, global_dest, None, global_recv, MC::GLOBAL_NB_ITER)?;
-    let local_channel_in = conf.init_local_channel_in()?;
-    let local_spawn = conf.init_local_spawner()?;
     let mut peerstore_channel_in = conf.init_peerstore_channel_in()?;
     let (peerstore_send, peerstore_recv) = peerstore_channel_in.new()?;
     let mut peerstore_spawn = conf.init_peerstore_spawner()?;
@@ -512,9 +506,32 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       discover : conf.do_peer_query_forward_with_discover(),
       _ph : PhantomData,
     };
-    let peerstore_dest = OptPeerGlobalDest(global_dest_peer);
-    let peerstore_handle = peerstore_spawn.spawn(peerstore_service,peerstore_dest,None,peerstore_recv, MC::PEERSTORE_NB_ITER)?;
 
+
+    let peerstore_handle = peerstore_spawn.spawn(peerstore_service,peerstore_dest,None,peerstore_recv, MC::PEERSTORE_NB_ITER)?;
+    let peerstore_gdest = peerstore_handle.get_weak_unyield().map(|wh|{
+      MC::PeerStoreServiceChannelIn::get_weak_send(&peerstore_send).map(|aps|
+                                                            HandleSend(aps,wh)
+                                                           )
+    }).unwrap_or(None);
+    let global_dest = GlobalDest {
+      mainloop : mlsend.clone(),
+      api : api_gdest,
+      peerstore : peerstore_gdest,
+    };
+
+
+    let mut global_channel_in = conf.init_global_channel_in()?;
+    let (global_send, global_recv) = global_channel_in.new()?;
+    let global_handle = global_spawn.spawn(global_service, global_dest, None, global_recv, MC::GLOBAL_NB_ITER)?;
+    let global_gdest = global_handle.get_weak_unyield().map(|wh|{
+      MC::GlobalServiceChannelIn::get_weak_send(&global_send).map(|aps|
+                                                            HandleSend(aps,wh)
+                                                           )
+    }).unwrap_or(None);
+ 
+    let local_channel_in = conf.init_local_channel_in()?;
+    let local_spawn = conf.init_local_spawner()?;
     let s = MDHTState {
       me : me,
       transport : transport,
@@ -592,8 +609,10 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       }
       if let Some(pr) = trusted_peer {
         if <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::DO_LISTEN {
-          let listen_global = <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::build_command(PeerStatusCommand::PeerOnline(pr.clone(),PeerPriority::Unchecked));
-          send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,GlobalCommand::Local(listen_global),"Panic sending to peer online to global service");
+          let o_listen_global = <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::build_command(PeerStatusCommand::PeerOnline(pr.clone(),PeerPriority::Unchecked));
+          if let Some(listen_global) = o_listen_global {
+            send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,GlobalCommand::Local(listen_global),"Panic sending to peer online to global service");
+          }
         }
       }
 
@@ -672,8 +691,10 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       p_entry.get_write_token()
     } else { None };
     if <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::DO_LISTEN {
-      let listen_global = <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::build_command(PeerStatusCommand::PeerOnline(pr.clone(),pp.clone()));
-      send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,GlobalCommand::Local(listen_global),"Panic sending to peer online to global service");
+      let o_listen_global = <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::build_command(PeerStatusCommand::PeerOnline(pr.clone(),pp.clone()));
+      if let Some(listen_global) = o_listen_global {
+        send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,GlobalCommand::Local(listen_global),"Panic sending to peer online to global service");
+      }
     }
     self.peer_cache.add_val_c(pk, PeerCacheEntry {
       peer : pr.clone(),
@@ -755,6 +776,14 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                       }*/
           },
 
+          MainLoopSubCommand::PeerForGlobal(op) => {
+             let o_listen_global = <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::build_command(PeerStatusCommand::PeerQuery(op.map(|p|<MC::PeerRef as Ref<MC::Peer>>::new(p))));
+             if let Some(listen_global) = o_listen_global {
+               send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,GlobalCommand::Local(listen_global),"Panic sending peer query result to global service");
+             } else {
+               warn!("Peer query for global was issued but global command does not allow it (see PeerStatusListener implementation for this command)");
+             }
+          },
           MainLoopSubCommand::FoundAddressForKey(oad) => {
             if let Some((sg, key, fwconf)) = self.peer_find_address.pop_back() {
               if let Some(ad) = oad {
@@ -1188,8 +1217,10 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             replace(ent_p,SlabEntryState::WriteStream(ws, st));
             if let Some(pr) = trusted_peer {
               if <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::DO_LISTEN {
-                let listen_global = <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::build_command(PeerStatusCommand::PeerOnline(pr.clone(),PeerPriority::Unchecked));
-                send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,GlobalCommand::Local(listen_global),"Panic sending to peer online to global service");
+                let o_listen_global = <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::build_command(PeerStatusCommand::PeerOnline(pr.clone(),PeerPriority::Unchecked));
+                if let Some(listen_global) = o_listen_global {
+                  send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,GlobalCommand::Local(listen_global),"Panic sending to peer online to global service");
+                }
               }
             }
             oc
@@ -1378,7 +1409,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     let ow = self.slab_cache.get(wtoken);
     if let Some(ca) = ow {
       if let SlabEntryState::WriteSpawned((ref write_handle,ref write_s_in)) = ca.state {
-        write_handle.get_weak_handle().map(|wh|{
+        write_handle.get_weak_unyield().map(|wh|{
           MC::WriteChannelIn::get_weak_send(&write_s_in).map(|aps|
             HandleSend(aps,wh)
           )
@@ -1401,7 +1432,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
 //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
 //(self.mainloop_send).send((MainLoopCommand::Start))?;
-    let gl = match self.global_handle.get_weak_handle() {
+    let gl = match self.global_handle.get_weak_unyield() {
       Some(wh) => 
         MC::GlobalServiceChannelIn::get_weak_send(&self.global_send).map(|aps| HandleSend(aps,wh)),
       None => None,
@@ -1425,7 +1456,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           _ => unreachable!(),
         };
         let (read_s_in,read_r_in) = self.read_channel_in.new()?;
-        let ah = match self.api_handle.get_weak_handle() {
+        let ah = match self.api_handle.get_weak_unyield() {
           Some(wh) => 
             MC::ApiServiceChannelIn::get_weak_send(&self.api_send).map(|aps|HandleSend(aps,wh)),
           None => None,

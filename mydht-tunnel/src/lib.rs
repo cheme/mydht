@@ -1640,10 +1640,11 @@ impl<MC : MyDHTTunnelConf> Clone for GlobalTunnelCommand<MC> {
 
 impl<MC : MyDHTTunnelConf> PeerStatusListener<MC::PeerRef> for GlobalTunnelCommand<MC> {
   const DO_LISTEN : bool = true;
-  fn build_command(command : PeerStatusCommand<MC::PeerRef>) -> Self {
+  fn build_command(command : PeerStatusCommand<MC::PeerRef>) -> Option<Self> {
     match command {
-      PeerStatusCommand::PeerOnline(rp,_) => GlobalTunnelCommand::NewOnline(rp),
-      PeerStatusCommand::PeerOffline(rp,_) => GlobalTunnelCommand::Offline(rp),
+      PeerStatusCommand::PeerOnline(rp,_) => Some(GlobalTunnelCommand::NewOnline(rp)),
+      PeerStatusCommand::PeerOffline(rp,_) => Some(GlobalTunnelCommand::Offline(rp)),
+      PeerStatusCommand::PeerQuery(_) => None,
     }
   }
 }

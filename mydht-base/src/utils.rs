@@ -74,7 +74,11 @@ pub trait SToRef<T : SRef> : Send + Sized {
 /// Principal use case is using Rc which is not sendable.
 /// TODO name should change to Immut
 pub trait Ref<T> : SRef + Borrow<T> {
+  //type Ref<'a,T>;
   fn new(t : T) -> Self;
+  // only possible with associated lifetime, for now borrow is fine if we do not compose enum : see
+  // numerous clone of voting machine type https://github.com/rust-lang/rust/issues/44265
+  //fn get_ref(t) -> Self::Ref;
 }
 #[derive(Debug)]
 /// Tech struct for impl

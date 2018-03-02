@@ -299,8 +299,8 @@ impl<MC : MyDHTTunnelConf> Into<MCCommand<MyDHTTunnelConfType<MC>>> for TestMess
 impl<P> PeerStatusListener<P> for TestMessage {
   const DO_LISTEN : bool = false;
   #[inline]
-  fn build_command(_ : PeerStatusCommand<P>) -> Self {
-    unreachable!()
+  fn build_command(_ : PeerStatusCommand<P>) -> Option<Self> {
+    None
   }
 }
 
