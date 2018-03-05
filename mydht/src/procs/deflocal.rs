@@ -137,6 +137,7 @@ pub enum GlobalReply<P : Peer,PR,GSC,GSR> {
   PeerApi(KVStoreReply<PR>),
   MainLoop(MainLoopSubCommand<P>),
   PeerStore(KVStoreCommand<P,PR,P,PR>),
+  GlobalSendPeer(Option<PR>),
   /// no rep
   NoRep,
   Mult(Vec<GlobalReply<P,PR,GSC,GSR>>),
@@ -378,6 +379,9 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServic
           self.api = None;
           self.mainloop.send(MainLoopCommand::PeerStore(GlobalCommand::Local(k)))?;
         }
+      },
+      GlobalReply::GlobalSendPeer(_op) => {
+        unreachable!()
       },
       GlobalReply::NoRep => (),
     }

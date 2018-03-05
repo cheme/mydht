@@ -1,7 +1,10 @@
 //! Main loop for mydht. This is the main dht loop, see default implementation of MyDHT main_loop
 //! method.
 //! Usage of mydht library requires to create a struct implementing the MyDHTConf trait, by linking with suitable inner trait implementation and their requires component.
-
+use std::sync::{
+  Mutex,
+  Arc,
+};
 use std::thread;
 use std::clone::Clone;
 use std::time::{
@@ -76,6 +79,7 @@ use service::{
   HandleSend,
   Spawner,
   SpawnSend,
+  SpawnSendWithHandle,
   SpawnRecv,
   SpawnHandle,
   SpawnUnyield,
@@ -86,7 +90,6 @@ use service::{
   DefaultRecvChannel,
   NoRecv,
 };
-use std::sync::Arc;
 
 use peer::{
   Peer,
@@ -204,7 +207,6 @@ pub enum MainLoopSubCommand<P : Peer> {
   TryConnect(<P as KeyVal>::Key,<P as Peer>::Address),
   Discover(Vec<(<P as KeyVal>::Key,<P as Peer>::Address)>),
   FoundAddressForKey(Option<<P as Peer>::Address>),
-  PeerForGlobal(Option<P>),
   PoolSize(usize),
 }
 /// command supported by MyDHT loop
@@ -488,10 +490,12 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                                                             HandleSend(aps,wh)
                                                            )
     }).unwrap_or(None);
+    let gsb = Arc::new(Mutex::new(None));
     let peerstore_dest = OptPeerGlobalDest {
       mainloop : mlsend.clone(),
       api : api_gdest_peer,
-//      globalservice : None,
+      globalservice : None,
+      globalservice_build : (true,gsb.clone()),
     };
     let mut peerstore_channel_in = conf.init_peerstore_channel_in()?;
     let (peerstore_send, peerstore_recv) = peerstore_channel_in.new()?;
@@ -524,11 +528,17 @@ impl<MC : MyDHTConf> MDHTState<MC> {
     let mut global_channel_in = conf.init_global_channel_in()?;
     let (global_send, global_recv) = global_channel_in.new()?;
     let global_handle = global_spawn.spawn(global_service, global_dest, None, global_recv, MC::GLOBAL_NB_ITER)?;
-    let global_gdest = global_handle.get_weak_unyield().map(|wh|{
-      MC::GlobalServiceChannelIn::get_weak_send(&global_send).map(|aps|
-                                                            HandleSend(aps,wh)
-                                                           )
+    let global_gdest 
+      = global_handle.get_weak_unyield().map(|wh|{
+      MC::GlobalServiceChannelIn::get_weak_send(&global_send).map(|aps| {
+        let a : Box<SpawnSendWithHandle<_> + Send> = Box::new(HandleSend(aps,wh));
+        a
+      })
     }).unwrap_or(None);
+
+    if let Ok(mut g) = gsb.lock() {
+      *g = global_gdest;
+    }
  
     let local_channel_in = conf.init_local_channel_in()?;
     let local_spawn = conf.init_local_spawner()?;
@@ -774,15 +784,6 @@ impl<MC : MyDHTConf> MDHTState<MC> {
                       let peers = self.peer_cache.exact_rand(min_no_repeat,nb_tot)?.into_iter().map(|pc|pc.peer).collect();
                       self.call_inner_loop(on_res(peers),mlsend,async_yield)?;
                       }*/
-          },
-
-          MainLoopSubCommand::PeerForGlobal(op) => {
-             let o_listen_global = <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::build_command(PeerStatusCommand::PeerQuery(op.map(|p|<MC::PeerRef as Ref<MC::Peer>>::new(p))));
-             if let Some(listen_global) = o_listen_global {
-               send_with_handle_panic!(&mut self.global_send,&mut self.global_handle,GlobalCommand::Local(listen_global),"Panic sending peer query result to global service");
-             } else {
-               warn!("Peer query for global was issued but global command does not allow it (see PeerStatusListener implementation for this command)");
-             }
           },
           MainLoopSubCommand::FoundAddressForKey(oad) => {
             if let Some((sg, key, fwconf)) = self.peer_find_address.pop_back() {

@@ -8,6 +8,7 @@
 //! MainLoop::ForwardService command
 //! TODO non auth may refer to owith for replying : need variant using token
 use std::collections::VecDeque;
+use std::mem::replace;
 pub use mydht_base::route2::RouteBaseMessage;
 use super::mainloop::{
   MainLoopCommand,
@@ -17,7 +18,10 @@ use super::api::{
   ApiCommand,
   ApiQueryId,
 };
-
+use std::sync::{
+  Arc,
+  Mutex,
+};
 use keyval::{
   KeyVal,
   GettableAttachments,
@@ -912,9 +916,12 @@ impl<
 pub struct OptPeerGlobalDest<MC : MyDHTConf> {
   pub mainloop : MainLoopSendIn<MC>,
   pub api : Option<ApiHandleSend<MC>>,
-  // issue with recursive resolution of send for local if using it
-  // Send checking should be lazy when using subtype -> TODO formalize issue 
-  // Alternative would be to change WeakUnyield to being Send
+  // issue with recursive resolution of send for local (evaluating trait recurse on Send
+  // constraint)
+  // For now use a Fat Pointer, which is maybe a good idea to leverage the initialization
+  // difficulty
+  pub globalservice : Option<Box<SpawnSendWithHandle<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>> + Send>>,
+  pub globalservice_build : (bool,Arc<Mutex<Option<Box<SpawnSendWithHandle<GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>> + Send>>>>),
 //  pub globalservice : Option<GlobalHandleSend<MC>>,
 }
 
@@ -994,6 +1001,37 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<M
       GlobalReply::PeerStore(..) => {
         unreachable!()
       },
+      GlobalReply::GlobalSendPeer(op) => {
+        // lazy init
+        if self.globalservice_build.0 == true {
+          if self.globalservice_build.0 {
+          if let Ok(mut g) = self.globalservice_build.1.lock() {
+            if g.is_some() {
+              self.globalservice = replace(&mut g,None);
+              self.globalservice_build.0 = false;
+            }
+          }
+          }
+        }
+        let o_listen_global = <MC::GlobalServiceCommand as PeerStatusListener<MC::PeerRef>>::build_command(PeerStatusCommand::PeerQuery(op));
+        if let Some(k) = o_listen_global {
+          let od = match self.globalservice {
+            Some(ref mut ps_weak) => {
+                ps_weak.send_with_handle(GlobalCommand::Local(k))?.map(|c|
+                    if let GlobalCommand::Local(k) = c {k} else {unreachable!()})
+            },
+            None => {
+              Some(k)
+            },
+          };
+          if let Some(k) = od {
+           self.api = None;
+           self.mainloop.send(MainLoopCommand::ProxyGlobal(GlobalCommand::Local(k)))?;
+          }
+        } else {
+          warn!("Peer query for global was issued but global command does not allow it (see PeerStatusListener implementation for this command)");
+        }
+      },
       GlobalReply::NoRep => (),
     }
     Ok(())
@@ -1035,8 +1073,8 @@ pub fn peer_forward_ka<P : Peer,PR>(op : Option<P>) -> GlobalReply<P,PR,KVStoreC
 }
 
 #[inline]
-pub fn send_user_to_global<P : Peer,RP> (res_q_peer : Option<P>) -> GlobalReply<P,RP,KVStoreCommand<P,RP,P,RP>,KVStoreReply<RP>> {
-  GlobalReply::MainLoop(MainLoopSubCommand::PeerForGlobal(res_q_peer))
+pub fn send_user_to_global<P : Peer,RP : Ref<P>> (res_q_peer : Option<P>) -> GlobalReply<P,RP,KVStoreCommand<P,RP,P,RP>,KVStoreReply<RP>> {
+  GlobalReply::GlobalSendPeer(res_q_peer.map(|p|<RP as Ref<P>>::new(p)))
 }
 
 /*pub fn peer_discover<MC : MyDHTConf>(v : Vec<MC::Peer>) -> GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>> {
