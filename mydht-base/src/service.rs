@@ -903,7 +903,7 @@ impl<S : Service, D : SpawnSend<<S as Service>::CommandOut>, R : SpawnRecv<S::Co
     let mut yiel = NoYield(YieldReturn::Loop);
     let mut err = Ok(());
     spawn_loop!(service,spawn_out,ocin,r,nb_loop,yiel,err,Err(Error("Blocking spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
-    return Ok((BlockingSameThread((service,spawn_out,r,err))))
+    return Ok(BlockingSameThread((service,spawn_out,r,err)))
   }
 }
 
@@ -1043,8 +1043,9 @@ impl<'a,A : SpawnerYield> SpawnerYield for &'a mut A {
     (*self).spawn_yield()
   }
   #[inline]
-  fn opt_clone(&mut self) -> Option<Self> { 
-    self.opt_clone()
+  fn opt_clone(&mut self) -> Option<Self> {
+//    self.opt_clone()
+    None
   }
 
 }
@@ -1161,11 +1162,21 @@ impl<S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOut>,
 
 
 pub struct ThreadBlock;
-pub struct ThreadHandleBlock<S,D,R>(Arc<Mutex<Option<(S,D,R,Result<()>)>>>,JoinHandle<Result<()>>,Arc<AtomicBool>);
-pub struct ThreadHandleBlockWeak(Arc<AtomicBool>);
+pub struct ThreadHandleBlock<S,D,R> {
+  return_state : Arc<Mutex<Option<(S,D,R,Result<()>)>>>,
+  th_join : JoinHandle<Result<()>>,
+  finished : Arc<AtomicBool>
+}
+
+pub struct ThreadHandleBlockWeak {
+  finished : Arc<AtomicBool>
+}
+
 impl Clone for ThreadHandleBlockWeak {
   fn clone(&self) -> Self {
-    ThreadHandleBlockWeak(self.0.clone())
+    ThreadHandleBlockWeak{
+      finished : self.finished.clone()
+    }
   }
 }
 
@@ -1175,7 +1186,7 @@ pub struct ThreadYieldBlock;
 impl SpawnUnyield for ThreadHandleBlockWeak {
   #[inline]
   fn is_finished(&mut self) -> bool {
-    self.0.load(Ordering::Relaxed)
+    self.finished.load(Ordering::Relaxed)
   }
   #[inline]
   fn unyield(&mut self) -> Result<()> {
@@ -1186,7 +1197,7 @@ impl SpawnUnyield for ThreadHandleBlockWeak {
 impl<S,D,R> SpawnUnyield for ThreadHandleBlock<S,D,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
-    self.2.load(Ordering::Relaxed)
+    self.finished.load(Ordering::Relaxed)
   }
   #[inline]
   fn unyield(&mut self) -> Result<()> {
@@ -1197,10 +1208,10 @@ impl<S,D,R> SpawnHandle<S,D,R> for ThreadHandleBlock<S,D,R> {
 
   #[inline]
   fn unwrap_state(self) -> Result<(S,D,R,Result<()>)> {
-    let mut mlock = self.0.lock();
+    let mut mlock = self.return_state.lock();
     if mlock.is_some() {
       //let ost = mutex.into_inner();
-      self.2.store(true,Ordering::Relaxed);
+      //self.2.store(true,Ordering::Relaxed);
       let ost = replace(&mut (*mlock),None);
       Ok(ost.unwrap())
     } else {
@@ -1215,7 +1226,9 @@ impl<S,D,R> SpawnWeakUnyield for ThreadHandleBlock<S,D,R> {
 
   #[inline]
   fn get_weak_unyield(&self) -> Option<Self::WeakUnyield> {
-    Some(ThreadHandleBlockWeak(self.2.clone()))
+    Some(ThreadHandleBlockWeak {
+      finished : self.finished.clone()
+    })
   }
 }
 
@@ -1250,19 +1263,21 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
     mut recv : R,
     mut nb_loop : usize
   ) -> Result<Self::Handle> {
-    let finished = Arc::new(Mutex::new(None));
-    let ato_finished = Arc::new(AtomicBool::new(false));
-    let ato_finished2 = Arc::new(AtomicBool::new(false));
+    let finished = (Arc::new(Mutex::new(None)),Arc::new(AtomicBool::new(false)));
     let finished2 = finished.clone();
     let join_handle = thread::Builder::new().spawn(move ||{
       let mut err = Ok(());
       spawn_loop!(service,spawn_out,ocin,recv,nb_loop,ThreadYieldBlock,err,Err(Error("Thread block spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
-      ato_finished.store(true,Ordering::Relaxed);
-      let mut data = finished.lock();
+      let mut data = finished.0.lock();
       *data = Some((service,spawn_out,recv,err));
+      finished.1.store(true,Ordering::Relaxed);
       Ok(())
     })?;
-    return Ok(ThreadHandleBlock(finished2,join_handle,ato_finished2));
+    return Ok(ThreadHandleBlock {
+      return_state : finished2.0,
+      th_join : join_handle,
+      finished : finished2.1,
+    });
   }
 }
 
@@ -1276,30 +1291,43 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
 pub struct ThreadPark;
 /// variant of thread park using command and channel as Ref to obtain send versio 
 pub struct ThreadParkRef;
-pub struct ThreadHandleParkWeak((),(),Arc<(Mutex<bool>,Condvar)>,Arc<AtomicBool>);
-impl Clone for ThreadHandleParkWeak {
-  fn clone(&self) -> Self {
-    ThreadHandleParkWeak((),(),self.2.clone(),self.3.clone())
-  }
-}
-
-pub struct ThreadHandlePark<S,D,R>(Arc<Mutex<Option<(S,D,R,Result<()>)>>>,JoinHandle<Result<()>>,Arc<(Mutex<bool>,Condvar)>,Arc<AtomicBool>);
-pub struct ThreadHandleParkRef<S : SRef,D : SRef,R : SRef>(Arc<Mutex<Option<(S::Send,D::Send,R::Send,Result<()>)>>>,JoinHandle<Result<()>>,Arc<(Mutex<bool>,Condvar)>,Arc<AtomicBool>);
 
 #[derive(Clone)]
-pub struct ThreadYieldPark(Arc<(Mutex<bool>,Condvar)>);
+pub struct ThreadHandleParkWeak {
+  park_sync : Arc<(Mutex<bool>,Condvar)>,
+  finished : Arc<AtomicBool>
+}
+
+pub struct ThreadHandlePark<S,D,R> {
+  return_state : Arc<Mutex<Option<(S,D,R,Result<()>)>>>,
+  th_join : JoinHandle<Result<()>>,
+  park_sync : Arc<(Mutex<bool>,Condvar)>,
+  finished : Arc<AtomicBool>,
+}
+
+pub struct ThreadHandleParkRef<S : SRef,D : SRef,R : SRef> {
+  return_state : Arc<Mutex<Option<(S::Send,D::Send,R::Send,Result<()>)>>>,
+  th_join : JoinHandle<Result<()>>,
+  park_sync : Arc<(Mutex<bool>,Condvar)>,
+  finished : Arc<AtomicBool>,
+}
+
+#[derive(Clone)]
+pub struct ThreadYieldPark {
+  park_sync : Arc<(Mutex<bool>,Condvar)>,
+}
 
 macro_rules! thread_parkunyield(() => (
   #[inline]
   fn is_finished(&mut self) -> bool {
-    self.3.load(Ordering::Relaxed)
+    self.finished.load(Ordering::Relaxed)
   }
   #[inline]
   fn unyield(&mut self) -> Result<()> {
-    let mut guard = (self.2).0.lock();
+    let mut guard = (self.park_sync).0.lock();
     if !*guard {
       *guard = true;
-      (self.2).1.notify_one();
+      (self.park_sync).1.notify_one();
     }
     Ok(())
   }
@@ -1323,7 +1351,7 @@ impl<S,D,R> SpawnUnyield for ThreadHandlePark<S,D,R> {
 impl<S : SRef,D : SRef,R : SRef> SpawnHandle<S,D,R> for ThreadHandleParkRef<S,D,R> {
   #[inline]
   fn unwrap_state(self) -> Result<(S,D,R,Result<()>)> {
-    let mut mlock = self.0.lock();
+    let mut mlock = self.return_state.lock();
     if mlock.is_some() {
       //let ost = mutex.into_inner();
       let ost = replace(&mut (*mlock),None);
@@ -1341,7 +1369,10 @@ impl<S : SRef,D : SRef,R : SRef> SpawnWeakUnyield for ThreadHandleParkRef<S,D,R>
 
   #[inline]
   fn get_weak_unyield(&self) -> Option<Self::WeakUnyield> {
-    Some(ThreadHandleParkWeak((),(),self.2.clone(),self.3.clone()))
+    Some(ThreadHandleParkWeak {
+      park_sync : self.park_sync.clone(),
+      finished : self.finished.clone(),
+    })
   }
 }
 
@@ -1350,7 +1381,7 @@ impl<S : SRef,D : SRef,R : SRef> SpawnWeakUnyield for ThreadHandleParkRef<S,D,R>
 impl<S,D,R> SpawnHandle<S,D,R> for ThreadHandlePark<S,D,R> {
   #[inline]
   fn unwrap_state(self) -> Result<(S,D,R,Result<()>)> {
-    let mut mlock = self.0.lock();
+    let mut mlock = self.return_state.lock();
     if mlock.is_some() {
       //let ost = mutex.into_inner();
       let ost = replace(&mut (*mlock),None);
@@ -1366,7 +1397,10 @@ impl<S,D,R> SpawnWeakUnyield for ThreadHandlePark<S,D,R> {
 
   #[inline]
   fn get_weak_unyield(&self) -> Option<Self::WeakUnyield> {
-    Some(ThreadHandleParkWeak((),(),self.2.clone(),self.3.clone()))
+    Some(ThreadHandleParkWeak {
+      park_sync : self.park_sync.clone(),
+      finished : self.finished.clone(),
+    })
   }
 }
 
@@ -1382,10 +1416,10 @@ impl SpawnerYield for ThreadYieldPark {
       
       // park (thread::park();)
     {
-      let mut guard = (self.0).0.lock();
+      let mut guard = (self.park_sync).0.lock();
 //      (self.0).0.store(2,Ordering::Release);
       while !*guard {
-        (self.0).1.wait(&mut guard);
+        (self.park_sync).1.wait(&mut guard);
         //guard = (self.0).1.wait(guard);
       }
       *guard = false;
@@ -1414,21 +1448,24 @@ impl<S : 'static + Send + Service, D : 'static + Send + SpawnSend<S::CommandOut>
   ) -> Result<Self::Handle> {
     let skip = Arc::new((Mutex::new(false),Condvar::new()));
     let skip2 = skip.clone();
-    let ato_finished = Arc::new(AtomicBool::new(false));
-    let ato_finished2 = ato_finished.clone();
-    let finished = Arc::new(Mutex::new(None));
+    let finished = (Arc::new(Mutex::new(None)),Arc::new(AtomicBool::new(false)));
     let finished2 = finished.clone();
     let join_handle = thread::Builder::new().spawn(move ||{
-      let mut y = ThreadYieldPark(skip2);
+      let mut y = ThreadYieldPark { park_sync : skip2 };
 
       let mut err = Ok(());
       spawn_loop!(service,spawn_out,ocin,recv,nb_loop,y,err,Err(Error("Thread park spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
-      ato_finished.store(true,Ordering::Relaxed);
-      let mut data = finished.lock();
+      let mut data = finished.0.lock();
       *data = Some((service,spawn_out,recv,err));
+      finished.1.store(true,Ordering::Relaxed);
       Ok(())
     })?;
-    return Ok(ThreadHandlePark(finished2,join_handle,skip,ato_finished2));
+    return Ok(ThreadHandlePark {
+      return_state : finished2.0,
+      th_join : join_handle,
+      park_sync : skip,
+      finished : finished2.1,
+      });
   }
 }
 
@@ -1456,28 +1493,33 @@ impl<S : 'static + Service + SRef, D : SRef + 'static + SpawnSend<S::CommandOut>
   ) -> Result<Self::Handle> {
     let skip = Arc::new((Mutex::new(false),Condvar::new()));
     let skip2 = skip.clone();
-    let ato_finished = Arc::new(AtomicBool::new(false));
-    let ato_finished2 = ato_finished.clone();
-    let finished = Arc::new(Mutex::new(None));
+    let finished = (Arc::new(Mutex::new(None)),Arc::new(AtomicBool::new(false)));
     let finished2 = finished.clone();
+ 
     let service_ref = service.get_sendable();
-    let mut spawn_out_s = spawn_out.get_sendable();
-    let mut recv_s = recv.get_sendable();
+    let spawn_out_s = spawn_out.get_sendable();
+    let recv_s = recv.get_sendable();
     let ocins = ocin.map(|cin|cin.get_sendable());
     let join_handle = thread::Builder::new().spawn(move ||{
       let mut service = service_ref.to_ref();
       let mut spawn_out = spawn_out_s.to_ref();
       let mut recv = recv_s.to_ref();
-      let mut y = ThreadYieldPark(skip2);
+      let mut y = ThreadYieldPark { park_sync : skip2 };
       let mut err = Ok(());
       let mut ocin = ocins.map(|cin|cin.to_ref());
       spawn_loop!(service,spawn_out,ocin,recv,nb_loop,y,err,Err(Error("Thread park spawn service return would return when should loop".to_string(), ErrorKind::Bug, None)));
-      ato_finished.store(true,Ordering::Relaxed);
-      let mut data = finished.lock();
+      let mut data = finished.0.lock();
       *data = Some((service.get_sendable(),spawn_out.get_sendable(),recv.get_sendable(),err));
+      finished.1.store(true,Ordering::Relaxed);
       Ok(())
     })?;
-    return Ok(ThreadHandleParkRef(finished2,join_handle,skip,ato_finished2));
+    return Ok(ThreadHandleParkRef {
+      return_state : finished2.0,
+      th_join : join_handle,
+      park_sync : skip,
+      finished : finished2.1,
+      });
+
   }
 }
 
