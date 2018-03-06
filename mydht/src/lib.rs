@@ -95,7 +95,7 @@ macro_rules! nolocal(() => (
     Ok(NoChannel)
   }
   #[inline]
-  fn init_local_service(_proto : Self::LocalServiceProto, me : Self::PeerRef, with : Option<Self::PeerRef>, _read_tok : usize) -> Result<Self::LocalService> {
+  fn init_local_service(_proto : Self::LocalServiceProto, _me : Self::PeerRef, _with : Option<Self::PeerRef>, _read_tok : usize) -> Result<Self::LocalService> {
     Ok(NoService::new())
   }
   #[inline]

@@ -927,10 +927,6 @@ pub struct OptPeerGlobalDest<MC : MyDHTConf> {
 
 impl<MC : MyDHTConf> SRef for OptPeerGlobalDest<MC> where
   MainLoopSendIn<MC> : Send,
-  ApiWeakSend<MC> : Send,
-  ApiWeakUnyield<MC> : Send,
-//  GlobalWeakSend<MC> : Send,
-//  GlobalWeakUnyield<MC> : Send,
   {
   type Send = Self;
   #[inline]
@@ -941,10 +937,6 @@ impl<MC : MyDHTConf> SRef for OptPeerGlobalDest<MC> where
 
 impl<MC : MyDHTConf> SToRef<OptPeerGlobalDest<MC>> for OptPeerGlobalDest<MC> where
   MainLoopSendIn<MC> : Send,
-  ApiWeakSend<MC> : Send,
-  ApiWeakUnyield<MC> : Send,
-//  GlobalWeakSend<MC> : Send,
-//  GlobalWeakUnyield<MC> : Send,
   {
   #[inline]
   fn to_ref(self) -> OptPeerGlobalDest<MC> {

@@ -3,7 +3,6 @@ use peer::{
   PeerPriority,
   PeerMgmtMeths,
 };
-use std::cell::Cell;
 use rules::DHTRules;
 use procs::synch_transport::{
   SynchConnListenerCommandDest,
@@ -66,8 +65,6 @@ use transport::{
 use kvcache::{
   SlabCache,
   Cache,
-  KVCache,
-  RandCache,
 };
 use self::peermgmt::{
   PeerMgmtCommand,
@@ -87,7 +84,6 @@ use service::{
   Service,
   Spawner,
   SpawnSend,
-  SpawnHandle,
   SpawnWeakUnyield,
   SpawnChannel,
   MioChannel,

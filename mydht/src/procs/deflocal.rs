@@ -271,10 +271,6 @@ impl<MC : MyDHTConf> SToRef<GlobalDest<MC>> for  GlobalDest<MC> {
 
 impl<MC : MyDHTConf> SRef for GlobalDest<MC> where
   MainLoopSendIn<MC> : Send,
-  ApiWeakSend<MC> : Send,
-  ApiWeakUnyield<MC> : Send,
-  PeerStoreWeakSend<MC> : Send,
-  PeerStoreWeakUnyield<MC> : Send,
   {
   type Send = Self;
   #[inline]
@@ -285,10 +281,6 @@ impl<MC : MyDHTConf> SRef for GlobalDest<MC> where
 
 impl<MC : MyDHTConf> SToRef<GlobalDest<MC>> for GlobalDest<MC> where
   MainLoopSendIn<MC> : Send,
-  ApiWeakSend<MC> : Send,
-  ApiWeakUnyield<MC> : Send,
-  PeerStoreWeakSend<MC> : Send,
-  PeerStoreWeakUnyield<MC> : Send,
   {
   #[inline]
   fn to_ref(self) -> GlobalDest<MC> {
