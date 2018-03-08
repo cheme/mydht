@@ -40,6 +40,15 @@ path = "../mydht-base/"
 #path = "../../readwrite-comp/"
 git = "https://github.com/cheme/readwrite-comp.git"
 
+[dev-dependencies.igd]
+version = "~0.7.0"
+
+[dev-dependencies.libc]
+version = "~0.2"
+
+[dev-dependencies.ipnetwork]
+version = "~0.12.7"
+
 [dev-dependencies.mydht-basetest]
 path = "../mydht-basetest/"
 
