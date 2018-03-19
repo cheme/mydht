@@ -16,7 +16,6 @@ use mydhtresult::{ErrorKind};
 use std::fs::File;
 use std::io::{Seek,SeekFrom};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use num::traits::ToPrimitive;
 use utils;
 use utils::Proto;
 use self::send_variant::ProtoMessage as ProtoMessageSend;
@@ -90,8 +89,8 @@ pub fn write_attachment<W : Write> (w : &mut W, path : &Attachment) -> MDHTResul
   debug!("trynig nwriting att");
   // send over buff size
   let fsize = f.metadata().unwrap().len();
-  let nbframe = (fsize / (BUFF_SIZE).to_u64().unwrap()).to_usize().unwrap();
-  let lfrsize = (fsize - (BUFF_SIZE.to_u64().unwrap() * nbframe.to_u64().unwrap())).to_usize().unwrap();
+  let nbframe = (fsize / (BUFF_SIZE as u64)) as usize;
+  let lfrsize = (fsize - (BUFF_SIZE as u64 * nbframe as u64)) as usize;
   debug!("fsize{:?}",fsize);
   debug!("nwbfr{:?}",nbframe);
   debug!("frsiz{:?}",lfrsize);
@@ -131,8 +130,8 @@ pub fn read_attachment(s : &mut Read, mlen : usize)-> MDHTResult<Attachment> {
     return Err(Error("Attachment bigger than expected".to_string(), ErrorKind::SerializingError, None));
   }
 
-  let nbframe = (fsize / (BUFF_SIZE).to_u64().unwrap()).to_usize().unwrap();
-  let lfrsize = (fsize - (BUFF_SIZE.to_u64().unwrap() * nbframe.to_u64().unwrap())).to_usize().unwrap();
+  let nbframe = (fsize / (BUFF_SIZE as u64)) as usize;
+  let lfrsize = (fsize - (BUFF_SIZE as u64 * nbframe as u64)) as usize;
  
   // TODO change : buffer size in message is useless and dangerous
   debug!("bs{:?}",BUFF_SIZE);

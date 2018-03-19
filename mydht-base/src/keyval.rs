@@ -9,7 +9,6 @@ use serde::{
 };
 use serde::de::DeserializeOwned;
 use std::fmt;
-//use num::traits::ToPrimitive;
 
 /// Non serialize binary attached content. For now only a file, as store, since very limited usage.
 /// This is usefull depending on msg encoding implementation, obviously when implementation does

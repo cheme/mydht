@@ -6,23 +6,19 @@ authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
 
 [features]
-default = ["with-extra-test","rust-crypto"]
-openssl-impl = ["openssl"]
-rust-crypto-impl = ["rust-crypto"]
+default = ["with-extra-test"]
 with-extra-test = []
 nightly = []
 
 [dependencies]
 log = "~0.3.4"
 #env_logger = "~0.4.3"
-#uuid = "~0.5.1"
-num = "~0.1.27"
+uuid = "~0.6.1"
 rand = "~0.3.11"
 bincode = "~0.8.0"
 serde = { version = "~1.0.10", features = ["rc"]}
 serde_derive = "~1.0.10"
 serde_json = "~1.0.2"
-time = "~0.1.33"
 byteorder = "~1.1.0"
 mio = "~0.6.10"
 #bit-vec = "~0.4.2"
@@ -40,13 +36,6 @@ git = "https://github.com/cheme/bit-vec.git"
 #path = "../../../readwrite-comp/"
 git = "https://github.com/cheme/readwrite-comp.git"
 
-[dependencies.openssl] # currently only for hash_default... TODO rem
-version = "~0.9.15"
-optional = true
-
-[dependencies.rust-crypto]
-version = "~0.2.34"
-optional = true
 
 #[dependencies.striple]
 #version = "~0.0.1"
@@ -66,9 +55,6 @@ optional = true
 
 #[dependencies.rust-crypto]
 #git = "https://github.com/DaGenix/rust-crypto"
-
-#[dependencies.time]
-#git = "https://github.com/rust-lang/time.git"
 
 #[dependencies.rustc-serialize]
 #git = "https://github.com/rust-lang/rustc-serialize.git"

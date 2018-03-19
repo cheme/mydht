@@ -6,9 +6,7 @@ use kvstore::CachePolicy;
 //use transport::Transport;
 use procs::ClientMode;
 //use procs::ServerMode;
-use num;
 use std::cmp::min;
-use num::traits::ToPrimitive;
 use std::sync::Arc;
 use std::ops::Deref;
 //use std::rc::Rc;
@@ -42,14 +40,14 @@ pub trait DHTRules : Sync + Send + 'static {
   fn notfoundtreshold (&self, nbquer : u8, maxhop : u8, mode : &QueryMode) -> usize {
     match mode {
       &QueryMode::Asynch => {
-        let max = num::pow(nbquer.to_usize().unwrap(), maxhop.to_usize().unwrap());
+        let max = (nbquer as usize).pow(maxhop as u32);
         if max > 2 {
           (max / 3) * 2
         } else {
           max
         }
       },
-      _ => nbquer.to_usize().unwrap(),
+      _ => nbquer as usize,
     }
   }
   #[inline]

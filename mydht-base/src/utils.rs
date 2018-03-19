@@ -1,4 +1,9 @@
-extern crate time;
+extern crate uuid;
+use self::uuid::{
+  Uuid,
+  UuidVariant,
+  UuidVersion,
+};
 use serde::{Serializer,Serialize,Deserialize,Deserializer};
 use std::marker::PhantomData;
 use std::mem::replace;
@@ -8,41 +13,31 @@ use std::net::SocketAddrV4;
 use std::net::SocketAddrV6;
 use std::net::Ipv4Addr;
 use std::net::Ipv6Addr;
-use num::bigint::{BigUint,RandBigInt};
 use std::env;
 use std::path::{Path,PathBuf};
 use std::fs::{self,File};
 use std::io::Result as IoResult;
 use std::result::Result as StdResult;
-//use rand::Rng;
+use rand::Rng;
 use rand::thread_rng;
 use std::rc::Rc;
 use std::sync::{Arc,Mutex,Condvar};
 use std::fmt::{Formatter,Debug};
 use std::fmt::Error as FmtError;
 use std::time::Duration;
-use self::time::Timespec;
-#[cfg(not(feature="openssl-impl"))]
-#[cfg(feature="rust-crypto-impl")]
 use std::io::{
   Seek,
   SeekFrom,
   Read,
 };
-#[cfg(not(feature="openssl-impl"))]
-#[cfg(feature="rust-crypto-impl")]
-use self::crypto::sha2::Sha256;
-#[cfg(not(feature="openssl-impl"))]
-#[cfg(feature="rust-crypto-impl")]
-use self::crypto::digest::Digest;
-#[cfg(feature="openssl-impl")]
-use self::openssl::crypto::hash::{Hasher,Type};
 #[cfg(test)]
 use std::thread;
 use std::marker::Send;
 use std::borrow::Borrow;
 
-pub static NULL_TIMESPEC : Timespec = Timespec{ sec : 0, nsec : 0};
+pub fn null_timespec() -> Duration {
+  Duration::new(0, 0)
+}
 
 
 /// another object can be instantiated from this one.
@@ -313,16 +308,21 @@ pub fn create_tmp_file() -> IoResult<(PathBuf,File)> {
   let tmpdir = env::temp_dir();
   let mytmpdirpath = tmpdir.join(Path::new("./mydht"));
   try!(fs::create_dir_all(&mytmpdirpath));
-  let fname = random_uuid(64).to_string();
+  let fname = random_uuid().to_string();
   let fpath = mytmpdirpath.join(Path::new(&fname[..]));
   debug!("Creating tmp file : {:?}",fpath);
   let f = try!(File::create(&fpath)); 
   Ok((fpath, f))
 }
 
-fn random_uuid(hash_size : usize) -> BigUint {
-   let mut rng = thread_rng();
-   rng.gen_biguint(hash_size)
+fn random_uuid() -> Uuid {
+  // no direct v4 use to allow other source of Rng
+  let mut rng = thread_rng();
+  let mut bytes = [0; 16];
+  rng.fill_bytes(&mut bytes);
+  Uuid::from_bytes(&bytes[..]).unwrap()
+  //uuid.set_variant(UuidVariant::RFC4122);
+  //uuid.set_version(UuidVersion::Random);
 }
 
 
@@ -688,25 +688,26 @@ pub fn sa6(a: Ipv6Addr, p: u16) -> SocketAddr {
 
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct TimeSpecExt(pub Timespec);
+pub struct TimeSpecExt(pub Duration);
+
 impl Deref for TimeSpecExt {
-  type Target = Timespec;
+  type Target = Duration;
   #[inline]
-  fn deref<'a> (&'a self) -> &'a Timespec {
+  fn deref<'a> (&'a self) -> &'a Duration {
     &self.0
   }
 }
 impl Serialize for TimeSpecExt {
   fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
-    let pair = (self.0.sec,self.0.nsec);
+    let pair = (self.0.as_secs(),self.0.subsec_nanos());
     pair.serialize(s)
   }
 }
 
 impl<'de> Deserialize<'de> for TimeSpecExt {
   fn deserialize<D:Deserializer<'de>> (d : D) -> Result<TimeSpecExt, D::Error> {
-    let tisp : Result<(i64,i32), D::Error>= Deserialize::deserialize(d);
-    tisp.map(|(sec,nsec)| TimeSpecExt(Timespec{sec:sec,nsec:nsec}))
+    let tisp : Result<(u64,u32), D::Error>= Deserialize::deserialize(d);
+    tisp.map(|(sec,nsec)| TimeSpecExt(Duration::new(sec,nsec)))
   }
 }
 /*pub fn ref_and_then<T, U, F : FnOnce(&T) -> Option<U>>(o : &Option<T>, f : F) -> Option<U> {

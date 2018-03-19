@@ -6,12 +6,11 @@
 #[macro_use] extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
-extern crate num;
 extern crate rand;
+extern crate mio;
 extern crate bit_vec;
 extern crate byteorder;
 extern crate bincode;
-extern crate mio;
 extern crate readwrite_comp;
 /*
 #[macro_export]
