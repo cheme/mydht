@@ -55,7 +55,7 @@ use super::api::ApiReply;
 
 // TODO put in its own module
 pub struct WriteService<MC : MyDHTConf> {
-  stream : <MC::Transport as Transport>::WriteStream,
+  stream : <MC::Transport as Transport<MC::Poll>>::WriteStream,
   enc : MC::MsgEnc,
   from : MC::PeerRef,
   with : Option<MC::PeerRef>,
@@ -74,7 +74,7 @@ pub struct WriteService<MC : MyDHTConf> {
 pub struct WriteServiceSend<MC : MyDHTConf> 
   where MC::LocalServiceCommand : SRef,
         MC::GlobalServiceCommand : SRef {
-  stream : <MC::Transport as Transport>::WriteStream,
+  stream : <MC::Transport as Transport<MC::Poll>>::WriteStream,
   enc : MC::MsgEnc,
   from : PeerRefSend<MC>,
   with : Option<PeerRefSend<MC>>,
@@ -132,7 +132,7 @@ impl<MC : MyDHTConf> SToRef<WriteService<MC>> for WriteServiceSend<MC>
 
 impl<MC : MyDHTConf> WriteService<MC> {
   //pub fn new(token : usize, ws : <MC::Transport as Transport>::WriteStream, me : PeerRefSend<MC>, with : Option<PeerRefSend<MC>>, enc : MC::MsgEnc, peermgmt : MC::PeerMgmtMeths) -> Self {
-  pub fn new(token : usize, ws : <MC::Transport as Transport>::WriteStream, me : MC::PeerRef, with : Option<MC::PeerRef>, enc : MC::MsgEnc, peermgmt : MC::PeerMgmtMeths, shut_after_first : bool) -> Self {
+  pub fn new(token : usize, ws : <MC::Transport as Transport<MC::Poll>>::WriteStream, me : MC::PeerRef, with : Option<MC::PeerRef>, enc : MC::MsgEnc, peermgmt : MC::PeerMgmtMeths, shut_after_first : bool) -> Self {
     WriteService {
       stream : ws,
       enc : enc,

@@ -1,12 +1,15 @@
 
-use mio::{Poll,Token,Ready,PollOpt};
+//use mio::{Poll,Token,Ready,PollOpt};
 use std::ops::Deref;
 use std::str::FromStr;
 use std::io::Result as IoResult;
 use std::result::Result as StdResult;
 use std::io::Write;
 use std::io::Read;
+use std::time::Duration;
 
+#[cfg(feature="mio-transport")]
+extern crate mio;
 
 use mydhtresult::{
   Result,
@@ -21,22 +24,35 @@ use serde::{
 };
 use serde::de::DeserializeOwned;
 use std::fmt::Debug;
-use std::net::{SocketAddr};
-use std::net::Shutdown;
-use std::net::{TcpStream};
-use mio::net::TcpStream as MioStream;
-
+#[cfg(any(feature="blocking-transport",feature="mio-transport"))]
+use std::net::{
+  SocketAddr,
+  Shutdown,
+};
+#[cfg(feature="blocking-transport")]
+use std::net::TcpStream;
+#[cfg(feature="mio-transport")]
+use self::mio::net::TcpStream as MioStream;
+#[cfg(feature="mio-transport")]
+use self::mio::{
+  Poll as MioPoll,
+  Ready as MioReady,
+  Token as MioToken,
+  Events as MioEventsInner,
+  Event as MioEvent,
+  PollOpt,
+};
 
 /// entry discribing the read or write stream
-pub struct SlabEntry<T : Transport, RR, WR, WB, RP> {
+pub struct SlabEntry<PO, T : Transport<PO>, RR, WR, WB, RP> {
   /// state for the stream
-  pub state : SlabEntryState<T,RR,WR,WB,RP>,
+  pub state : SlabEntryState<PO,T,RR,WR,WB,RP>,
   /// corresponding read or write stream slab index
   pub os : Option<usize>,
   pub peer : Option<RP>,
 }
 
-pub enum SlabEntryState<T : Transport, RR, WR, WB,P> 
+pub enum SlabEntryState<PO, T : Transport<PO>, RR, WR, WB,P> 
 {
   /// RP is dest peer reference
   ReadStream(T::ReadStream,Option<P>),
@@ -68,6 +84,7 @@ impl<A : Sync + Send + Clone + Debug + 'static> Address for A {
 */
 
 
+#[cfg(any(feature="blocking-transport",feature="mio-transport"))]
 impl Serialize for SerSocketAddr {
   fn serialize<S:Serializer> (&self, s: S) -> StdResult<S::Ok, S::Error> {
 //    s.emit_str(&self.0.to_string()[..])
@@ -75,6 +92,7 @@ impl Serialize for SerSocketAddr {
   }
 }
 
+#[cfg(any(feature="blocking-transport",feature="mio-transport"))]
 impl<'de> Deserialize<'de> for SerSocketAddr {
   fn deserialize<D:Deserializer<'de>> (d : D) -> StdResult<SerSocketAddr, D::Error> {
 
@@ -86,6 +104,7 @@ impl<'de> Deserialize<'de> for SerSocketAddr {
   }
 }
 
+#[cfg(any(feature="blocking-transport",feature="mio-transport"))]
 impl Deref for SerSocketAddr {
   type Target = SocketAddr;
   fn deref<'a> (&'a self) -> &'a SocketAddr {
@@ -94,11 +113,13 @@ impl Deref for SerSocketAddr {
 }
 
 
+#[cfg(any(feature="blocking-transport",feature="mio-transport"))]
 /// serializable socket address
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub struct SerSocketAddr(pub SocketAddr);
 
 
+#[cfg(any(feature="blocking-transport",feature="mio-transport"))]
 impl Address for SerSocketAddr { 
  /* // TODO replace to to_byte
   fn write_as_bytes<W:Write> (&self, w : &mut W) -> IoResult<()> {
@@ -142,23 +163,101 @@ fn test_addr_socket () {
   assert!(SocketAddr::read_as_bytes (&mut cursor).unwrap() == s2);
 }
 */
-pub trait Registerable {
-  /// registration on main io loop when possible (if not return false)
-  fn register(&self, &Poll, Token, Ready, PollOpt) -> Result<bool>;
-  /// async reregister
-  fn reregister(&self, &Poll, Token, Ready, PollOpt) -> Result<bool>;
-
-  fn deregister(&self, poll: &Poll) -> Result<()>;
+pub type Token = usize;
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum Ready {
+  Readable,
+  Writable,
 }
+
+/// Registerable : register on a event loop of corresponding Poll.
+/// Edge register kind.
+pub trait Registerable<P> {
+  /// registration on main io loop when possible (if not return false)
+  fn register(&self, &P, Token, Ready) -> Result<bool>;
+  /// async reregister
+  fn reregister(&self, &P, Token, Ready) -> Result<bool>;
+
+  fn deregister(&self, poll: &P) -> Result<()>;
+}
+
+pub trait TriggerReady : Clone {
+  fn set_readiness(&self, ready: Ready) -> Result<()>;
+}
+
+pub trait Poll {
+  type Events : Events;
+  fn poll(&self, events: &mut Self::Events, timeout: Option<Duration>) -> Result<usize>;
+}
+
+#[cfg(feature="mio-transport")]
+impl Poll for MioPoll {
+  type Events = MioEvents;
+  fn poll(&self, events: &mut Self::Events, timeout: Option<Duration>) -> Result<usize> {
+    let r = MioPoll::poll(&self, &mut events.0, timeout)?;
+    events.1 = 0;
+    Ok(r)
+  }
+}
+
+#[cfg(feature="mio-transport")]
+pub struct MioEvents(pub MioEventsInner,pub usize);
+
+pub trait Events : Iterator<Item = Event> {
+  fn with_capacity(usize) -> Self;
+}
+
+#[cfg(feature="mio-transport")]
+impl Events for MioEvents {
+  fn with_capacity(s : usize) -> Self {
+    MioEvents(MioEventsInner::with_capacity(s),0)
+  }
+}
+
+#[cfg(feature="mio-transport")]
+impl Iterator for MioEvents {
+  type Item = Event;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    if let Some(event) = self.0.get(self.1) {
+      self.1 += 1;
+      if event.readiness().is_readable() {
+        Some(Event {
+          kind: Ready::Readable,
+          token: event.token().0,
+        })
+      } else if event.readiness().is_writable() {
+        Some(Event {
+          kind: Ready::Writable,
+          token: event.token().0,
+        })
+
+      } else {
+        // skip
+        self.next()
+      }
+    } else {
+      None
+    }
+  }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub struct Event {
+  pub kind: Ready,
+  pub token: Token
+}
+
+
 /// transport must be sync (in running type), it implies that it is badly named as transport must
 /// only contain enough information to instantiate needed component (even not sync) in the start
 /// method (plus connect with required info). Some sync may still be needed for connect (sync with
 /// instanciated component in start).
 /// TODO try remove Sync !!! is certainly here to be send between traits (not in use case until
 /// tunnel)
-pub trait Transport : Send + Sync + 'static + Registerable {
-  type ReadStream : ReadTransportStream;
-  type WriteStream : WriteTransportStream;
+pub trait Transport<PO> : Send + Sync + 'static + Registerable<PO> {
+  type ReadStream : ReadTransportStream + Registerable<PO>;
+  type WriteStream : WriteTransportStream + Registerable<PO>;
   type Address : Address;
  
 
@@ -181,14 +280,15 @@ pub trait Transport : Send + Sync + 'static + Registerable {
 
 // TODO add clone constraint with possibility to panic!("clone is not allowed : local send
 // threads are not possible")
-pub trait WriteTransportStream : Send + Write + 'static + Registerable {
+pub trait WriteTransportStream : Send + Write + 'static {
   // most of the time unneeded
   /// simply result in check connectivity false
   fn disconnect(&mut self) -> IoResult<()>;
 //  fn checkconnectivity(&self) -> bool;
 }
 
-pub trait ReadTransportStream : Send + Read + 'static + Registerable {
+pub trait ReadTransportStream : Send + Read + 'static {
+
 
   /// should end read loop
   fn disconnect(&mut self) -> IoResult<()>;
@@ -227,25 +327,28 @@ fn streamread(&mut self) -> IoResult<(Vec<u8>,Option<Attachment>)>;
 */
 }
 
-impl Registerable for TcpStream {
+#[cfg(feature="blocking-transport")]
+impl<PO> Registerable<PO> for TcpStream {
 
-  fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+  fn register(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
-  fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+  fn reregister(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
 
-  fn deregister(&self, poll: &Poll) -> Result<()> {
+  fn deregister(&self, _ : &PO) -> Result<()> {
     Ok(())
   }
 }
 
+#[cfg(feature="blocking-transport")]
 impl WriteTransportStream for TcpStream {
   fn disconnect(&mut self) -> IoResult<()> {
     self.shutdown(Shutdown::Write)
   }
 }
+#[cfg(feature="blocking-transport")]
 impl ReadTransportStream for TcpStream {
   fn disconnect(&mut self) -> IoResult<()> {
     self.shutdown(Shutdown::Read)
@@ -255,29 +358,43 @@ impl ReadTransportStream for TcpStream {
     false
   }
 }
-impl Registerable for MioStream {
+#[cfg(feature="mio-transport")]
+impl Registerable<MioPoll> for MioStream {
 
-  fn register(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
-    p.register(self, t, r, po)?;
+  fn register(&self, p : &MioPoll, t : Token, r : Ready) -> Result<bool> {
+    match r {
+      Ready::Readable =>
+        p.register(self, MioToken(t), MioReady::readable(), PollOpt::edge())?,
+      Ready::Writable =>
+        p.register(self, MioToken(t), MioReady::writable(), PollOpt::edge())?,
+    }
+
     Ok(true)
   }
-  fn reregister(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
-    p.reregister(self, t, r, po)?;
+  fn reregister(&self, p : &MioPoll, t : Token, r : Ready) -> Result<bool> {
+    match r {
+      Ready::Readable =>
+        p.reregister(self, MioToken(t), MioReady::readable(), PollOpt::edge())?,
+      Ready::Writable =>
+        p.reregister(self, MioToken(t), MioReady::writable(), PollOpt::edge())?,
+    }
     Ok(true)
   }
 
-  fn deregister(&self, poll: &Poll) -> Result<()> {
+  fn deregister(&self, poll: &MioPoll) -> Result<()> {
     poll.deregister(self)?;
     Ok(())
   }
 }
 
 
+#[cfg(feature="mio-transport")]
 impl WriteTransportStream for MioStream {
   fn disconnect(&mut self) -> IoResult<()> {
     self.shutdown(Shutdown::Write)
   }
 }
+#[cfg(feature="mio-transport")]
 impl ReadTransportStream for MioStream {
   fn disconnect(&mut self) -> IoResult<()> {
     self.shutdown(Shutdown::Read)

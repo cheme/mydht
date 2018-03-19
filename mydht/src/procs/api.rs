@@ -275,10 +275,10 @@ impl<MC : MyDHTConf> SToRef<ApiCommand<MC>> for ApiCommandSend<MC>
 /// so command need to be instantiate through methods
 /// This also filters non public method for dest services
 impl<MC : MyDHTConf> ApiCommand<MC> {
-  pub fn try_connect(ad : <MC::Transport as Transport>::Address) -> ApiCommand<MC> {
+  pub fn try_connect(ad : <MC::Transport as Transport<MC::Poll>>::Address) -> ApiCommand<MC> {
     ApiCommand::MainLoop(MainLoopCommand::TryConnect(ad,None))
   }
-  pub fn try_connect_reply(ad : <MC::Transport as Transport>::Address, ret : MC::ApiReturn) -> ApiCommand<MC> {
+  pub fn try_connect_reply(ad : <MC::Transport as Transport<MC::Poll>>::Address, ret : MC::ApiReturn) -> ApiCommand<MC> {
     ApiCommand::ServiceCommand(MCCommand::TryConnect(ad,None),0,ret)
   }
   pub fn call_shutdown_reply(_ret : MC::ApiReturn) -> ApiCommand<MC> {

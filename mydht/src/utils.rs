@@ -1,7 +1,6 @@
 
 #[cfg(feature="rust-crypto-impl")]
 extern crate crypto;
-extern crate time;
 #[cfg(feature="openssl-impl")]
 extern crate openssl;
 extern crate bincode;
@@ -9,7 +8,6 @@ extern crate bincode;
 
 // reexport from base
 pub use mydht_base::utils::*;
-pub use mydht_base::transport::SerSocketAddr;
 // TODO move
 pub use procs::{
   OptFrom,

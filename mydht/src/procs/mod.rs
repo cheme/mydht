@@ -61,6 +61,11 @@ use serde::de::{DeserializeOwned};
 use transport::{
   Transport,
   SlabEntry,
+  Registerable,
+  TriggerReady,
+  Poll,
+  Events,
+  Event,
 };
 use kvcache::{
   SlabCache,
@@ -86,7 +91,6 @@ use service::{
   SpawnSend,
   SpawnWeakUnyield,
   SpawnChannel,
-  MioChannel,
   MioSend,
   MioRecv,
   NoYield,
@@ -252,6 +256,7 @@ impl<MC : MyDHTConf> Service for MyDHTService<MC> {
 
 
 pub type RWSlabEntry<MC : MyDHTConf> = SlabEntry<
+  MC::Poll,
   MC::Transport,
   (ReadHandle<MC>,ReadSendIn<MC>),
   (WriteHandle<MC>,WriteSendIn<MC>),
@@ -594,12 +599,16 @@ pub trait MyDHTConf : 'static + Send + Sized
   type MainLoopChannelIn : SpawnChannel<MainLoopCommand<Self>>;
   /// TODO out mydht command
   type MainLoopChannelOut : SpawnChannel<MainLoopReply<Self>>;
+  type Events : Events;
+  type Poll : Poll<Events = Self::Events>;
+  type PollTReady : TriggerReady; 
+  type PollReg : Registerable<Self::Poll>;
   /// low level transport
-  type Transport : Transport;
+  type Transport : Transport<Self::Poll>;
   /// Message encoding
   type MsgEnc : MsgEnc<Self::Peer, Self::ProtoMsg> + Proto;
   /// Peer struct (with key and address)
-  type Peer : Peer<Address = <Self::Transport as Transport>::Address>;
+  type Peer : Peer<Address = <Self::Transport as Transport<Self::Poll>>::Address>;
   /// most of the time Arc, if not much threading or smal peer description, RcCloneOnSend can be use, or AllwaysCopy
   /// or Copy.
   type PeerRef : Ref<Self::Peer> + Serialize + DeserializeOwned + Clone;
@@ -613,7 +622,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   type PeerCache : Cache<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
   /// local cache for address under connection or to use as replacement for peer cache when NoAuth
   /// mode
-  type AddressCache : Cache<<Self::Transport as Transport>::Address,AddressCacheEntry>;
+  type AddressCache : Cache<<Self::Transport as Transport<Self::Poll>>::Address,AddressCacheEntry>;
   /// local cache for auth challenges
   type ChallengeCache : Cache<Vec<u8>,ChallengeEntry<Self>>;
   
@@ -735,7 +744,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   type PeerStoreServiceChannelIn : SpawnChannel<GlobalCommand<Self::PeerRef,KVStoreCommand<Self::Peer,Self::PeerRef,Self::Peer,Self::PeerRef>>>;
 
   type SynchListenerSpawn : Spawner<
-    SynchConnListener<Self::Transport>,
+    SynchConnListener<Self::Poll,Self::Transport>,
     SynchConnListenerCommandDest<Self>,
     DefaultRecv<SynchConnListenerCommandIn, NoRecv>
   >;
@@ -744,13 +753,15 @@ pub trait MyDHTConf : 'static + Send + Sized
   const NB_SYNCH_CONNECT : usize;
   // default to infinite as common use case is a pool of parked threads
   const SYNCH_CONNECT_NB_ITER : usize = 0;
-  type SynchConnectChannelIn : SpawnChannel<SynchConnectCommandIn<Self::Transport>>;
+  type SynchConnectChannelIn : SpawnChannel<SynchConnectCommandIn<Self::Poll,Self::Transport>>;
   type SynchConnectSpawn : Spawner<
-    SynchConnect<Self::Transport>,
+    SynchConnect<Self::Poll,Self::Transport>,
     SynchConnectDest<Self>,
-    <Self::SynchConnectChannelIn as SpawnChannel<SynchConnectCommandIn<Self::Transport>>>::Recv
+    <Self::SynchConnectChannelIn as SpawnChannel<SynchConnectCommandIn<Self::Poll,Self::Transport>>>::Recv
   >;
 
+  fn init_poll(&mut self) -> Result<Self::Poll>;
+  fn poll_reg() -> Result<(Self::PollTReady,Self::PollReg)>;
   fn init_synch_listener_spawn(&mut self) -> Result<Self::SynchListenerSpawn>;
   fn init_synch_connect_channel_in(&mut self) -> Result<Self::SynchConnectChannelIn>;
   fn init_synch_connect_spawn(&mut self) -> Result<Self::SynchConnectSpawn>;
@@ -763,7 +774,16 @@ pub trait MyDHTConf : 'static + Send + Sized
     DHTIn<Self>,
     <Self::MainLoopChannelOut as SpawnChannel<MainLoopReply<Self>>>::Recv
     )> {
-    let (s,r) = MioChannel(self.init_main_loop_channel_in()?).new()?;
+    let (s,r) = self.init_main_loop_channel_in()?.new()?;
+    let (tr,reg) = Self::poll_reg()?;
+    let r = MioRecv {
+      mpsc : r,
+      reg,
+    };
+    let s = MioSend {
+      mpsc : s,
+      set_ready : tr,
+    };
     let ro = self.start_loop_with_channel(s.clone(),r)?;
     Ok((DHTIn{
       main_loop : s,
@@ -868,13 +888,13 @@ pub trait ReaderBorrowable<MC : MyDHTConf> {
   /// reference to msg enc is here to allow transmitting content through special msg encoder (eg
   /// mydht-tunnel)
   #[inline]
-  fn put_read(&mut self, _read : <MC::Transport as Transport>::ReadStream, _shad : <MC::Peer as Peer>::ShadowRMsg, _token : usize, &mut MC::MsgEnc) {
+  fn put_read(&mut self, _read : <MC::Transport as Transport<MC::Poll>>::ReadStream, _shad : <MC::Peer as Peer>::ShadowRMsg, _token : usize, &mut MC::MsgEnc) {
   }
 }
 /// trait use to reregister in mainloop if message contains a borrowed readstream
 pub trait RegReaderBorrow<MC : MyDHTConf> {
   #[inline]
-  fn get_read(&self) -> Option<&<MC::Transport as Transport>::ReadStream> {
+  fn get_read(&self) -> Option<&<MC::Transport as Transport<MC::Poll>>::ReadStream> {
     None
   }
 }
@@ -984,13 +1004,13 @@ pub type PeerStoreWeakUnyield<MC : MyDHTConf> = <PeerStoreHandle<MC> as SpawnWea
 pub type PeerStoreHandleSend<MC : MyDHTConf> = HandleSend<PeerStoreWeakSend<MC>,PeerStoreWeakUnyield<MC>>;
 pub type SynchConnectHandle<MC : MyDHTConf> = <MC::SynchConnectSpawn as 
  Spawner<
-    SynchConnect<MC::Transport>,
+    SynchConnect<MC::Poll,MC::Transport>,
     SynchConnectDest<MC>,
-    <MC::SynchConnectChannelIn as SpawnChannel<SynchConnectCommandIn<MC::Transport>>>::Recv
+    <MC::SynchConnectChannelIn as SpawnChannel<SynchConnectCommandIn<MC::Poll,MC::Transport>>>::Recv
   >>::Handle;
 
 
 
-type MainLoopRecvIn<MC : MyDHTConf> = MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv>;
-type MainLoopSendIn<MC : MyDHTConf> = MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send>;
+type MainLoopRecvIn<MC : MyDHTConf> = MioRecv<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Recv,MC::PollReg>;
+type MainLoopSendIn<MC : MyDHTConf> = MioSend<<MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send,MC::PollTReady>;
 type MainLoopSendOut<MC : MyDHTConf> = <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply<MC>>>::Send;

@@ -10,11 +10,6 @@
 #[macro_use] extern crate log;
 extern crate byteorder;
 extern crate mydht_base;
-extern crate time;
-extern crate num;
-extern crate mio;
-use mio::{Poll,Token,Ready,PollOpt};
-use num::traits::ToPrimitive;
 //use self::byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::net::{TcpListener};
 use std::net::{TcpStream};
@@ -25,8 +20,7 @@ use mydht_base::mydhtresult::Result;
 use std::net::{SocketAddr};
 //use std::io::Write;
 //use std::io::Read;
-use time::Duration;
-use std::time::Duration as StdDuration;
+use std::time::Duration;
 //use std::thread::Thread;
 //use peer::{Peer};
 //use mydht_base::transport::{ReadTransportStream,WriteTransportStream};
@@ -34,6 +28,8 @@ use mydht_base::transport::{
   Transport,
   SerSocketAddr,
   Registerable,
+  Token,
+  Ready,
 };
 //use std::iter;
 //use utils;
@@ -66,19 +62,19 @@ impl Tcp {
 
   }
 }
-impl Registerable for Tcp {
-  fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+impl<PO> Registerable<PO> for Tcp {
+  fn register(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
-  fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+  fn reregister(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
 
-  fn deregister(&self, _poll: &Poll) -> Result<()> {
+  fn deregister(&self, _poll: &PO) -> Result<()> {
     Ok(())
   }
 }
-impl Transport for Tcp {
+impl<PO> Transport<PO> for Tcp {
   type ReadStream = TcpStream;
   type WriteStream = TcpStream;
   type Address = SerSocketAddr;
@@ -89,8 +85,8 @@ impl Transport for Tcp {
     debug!("  - From {:?}", s.local_addr());
     debug!("  - With {:?}", s.peer_addr());
     debug!("  - At {:?}", ad);
-    try!(s.set_read_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs)));
-    try!(s.set_write_timeout(self.streamtimeout.num_seconds().to_u64().map(StdDuration::from_secs)));
+    try!(s.set_read_timeout(Some(self.streamtimeout)));
+    try!(s.set_write_timeout(Some(self.streamtimeout)));
     if self.mult {
 //            try!(s.set_keepalive (self.streamtimeout.num_seconds().to_u32()));
         let rs = try!(s.try_clone());

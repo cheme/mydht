@@ -3,9 +3,15 @@
 
 extern crate mydht_tcp_loop;
 extern crate mydht_slab;
+use mio::{
+  Poll as MioPoll,
+  SetReadiness,
+  Registration,
+};
 use kvstore::StoragePriority;
 use transport::{
   Transport,
+  MioEvents,
 };
 use query::{
   //Query,
@@ -24,6 +30,7 @@ use utils::{
 use kvcache::KVCache;
 use service::{
   SpawnSend,
+  MioEvented,
   SpawnWeakUnyield,
 };
 
@@ -517,6 +524,10 @@ impl MyDHTConf for TestAllThConf {
   const LOOP_NAME : &'static str = "Conf test spawner threads";
   const EVENTS_SIZE : usize = 1024;
   const SEND_NB_ITER : usize = 1;
+  type Events = MioEvents;
+  type Poll = MioPoll;
+  type PollTReady = SetReadiness;
+  type PollReg = MioEvented<Registration>;
   type Route = TestRoute<Self>;
   type MainloopSpawn = ThreadPark;// -> failure to send into spawner cf command in of spawner need send so the mpsc channel recv could be send in impl -» need to change command in to commandin as ref :: toref
   //type MainloopSpawn = ThreadParkRef;// -> failure to send into spawner cf command in of spawner need send so the mpsc channel recv could be send in impl -» need to change command in to commandin as ref :: toref
@@ -532,7 +543,7 @@ impl MyDHTConf for TestAllThConf {
   type DHTRules = Arc<SimpleRules>;
   type Slab = Slab<RWSlabEntry<Self>>;
   type PeerCache = HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
-  type AddressCache = HashMap<<Self::Transport as Transport>::Address,AddressCacheEntry>;
+  type AddressCache = HashMap<<Self::Transport as Transport<Self::Poll>>::Address,AddressCacheEntry>;
   type ChallengeCache = HashMap<Vec<u8>,ChallengeEntry<Self>>;
   type PeerMgmtChannelIn = MpscChannel;
   type ReadChannelIn = MpscChannel;
@@ -577,6 +588,15 @@ impl MyDHTConf for TestAllThConf {
   type SynchConnectChannelIn = NoChannel;
   type SynchConnectSpawn = NoSpawn;
 
+
+  fn init_poll(&mut self) -> Result<Self::Poll> {
+    Ok(MioPoll::new()?)
+  }
+
+  fn poll_reg() -> Result<(Self::PollTReady,Self::PollReg)> {
+    let (reg,sr) = Registration::new2();
+    Ok((sr,MioEvented(reg)))
+  }
 
   fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>> {
     Ok(Box::new(
@@ -717,6 +737,10 @@ impl MyDHTConf for TestLocalConf {
   const LOOP_NAME : &'static str = "Conf test spawner local";
   const EVENTS_SIZE : usize = 1024;
   const SEND_NB_ITER : usize = 10;
+  type Events = MioEvents;
+  type Poll = MioPoll;
+  type PollTReady = SetReadiness;
+  type PollReg = MioEvented<Registration>;
   type Route = TestRoute<Self>;
   type MainloopSpawn = ThreadParkRef;
   type MainLoopChannelIn = MpscChannelRef;
@@ -730,7 +754,7 @@ impl MyDHTConf for TestLocalConf {
   type DHTRules = Arc<SimpleRules>;
   type Slab = Slab<RWSlabEntry<Self>>;
   type PeerCache = HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
-  type AddressCache = HashMap<<Self::Transport as Transport>::Address,AddressCacheEntry>;
+  type AddressCache = HashMap<<Self::Transport as Transport<Self::Poll>>::Address,AddressCacheEntry>;
   type ChallengeCache = HashMap<Vec<u8>,ChallengeEntry<Self>>;
   type PeerMgmtChannelIn = MpscChannelRef;
   type ReadChannelIn = LocalRcChannel;
@@ -758,6 +782,15 @@ impl MyDHTConf for TestLocalConf {
   type SynchConnectChannelIn = NoChannel;
   type SynchConnectSpawn = NoSpawn;
 
+  fn init_poll(&mut self) -> Result<Self::Poll> {
+    Ok(MioPoll::new()?)
+  }
+
+
+  fn poll_reg() -> Result<(Self::PollTReady,Self::PollReg)> {
+    let (reg,sr) = Registration::new2();
+    Ok((sr,MioEvented(reg)))
+  }
 
   fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>> {
     Ok(Box::new(

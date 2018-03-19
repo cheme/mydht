@@ -42,7 +42,6 @@ use byteorder::{
   ReadBytesExt,
   WriteBytesExt,
 };
-use num::traits::ToPrimitive;
 use utils::Proto;
 use service::{
   SpawnerYield,

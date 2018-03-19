@@ -11,14 +11,12 @@ with-extra-test = []
 
 [dependencies]
 log = "~0.3.4"
-num = "~0.1.27"
-time = "~0.1.33"
 byteorder = "~1.1.0"
-mio = "~0.6.10"
 
 
 [dependencies.mydht-base]
 path = "../mydht-base/"
+features = ["blocking-transport"]
 #git = "https://github.com/cheme/mydht-base.git"
 
 

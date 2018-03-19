@@ -6,7 +6,6 @@ use query::{
 };
 use rules::DHTRules as DHTRulesIf;
 //use peer::{PeerPriority};
-use num::traits::ToPrimitive;
 use procs::ClientMode;
 
 
@@ -99,11 +98,11 @@ impl DHTRulesIf for SimpleRules {
   }
 
   fn lifetime (&self, prio : QueryPriority) -> Duration {
-    Duration::from_secs(self.1.lifetime + (prio * self.1.lifetimeinc).to_u64().unwrap())
+    Duration::from_secs(self.1.lifetime + (prio * self.1.lifetimeinc) as u64  )
   }
 
   fn nbquery (&self, prio : QueryPriority) -> u8 {
-    1 + (self.1.nbqueryfact * prio.to_f32().unwrap()).to_u8().unwrap()
+    1 + (self.1.nbqueryfact * prio as f32) as u8
   }
 
   fn asynch_clean(&self) -> Option<Duration> {

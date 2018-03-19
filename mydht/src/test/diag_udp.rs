@@ -59,7 +59,6 @@ use peer::test::TestingRules;
 #[cfg(test)]
 use node::Node;
 use rules::simplerules::SimpleRules;
-use num::traits::ToPrimitive;
 use procs::ClientMode;
 
 #[cfg(test)]
@@ -85,7 +84,7 @@ fn initpeers_udp2 (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : 
   let mut transports = Vec::new();
 
   for i in 0 .. nbpeer {
-    let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), start_port + i.to_u16().unwrap());
+    let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), start_port + i as u16);
     let udp_transport = Udp::new(&addr,2048).unwrap(); // here udp with a json encoding with last sed over a few hop : we need a big buffer
     transports.push(udp_transport);
     nodes.push(Node {nodeid: "NodeID".to_string() + &(i + 1).to_string()[..], address : SerSocketAddr(addr)});

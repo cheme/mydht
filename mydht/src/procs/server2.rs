@@ -79,7 +79,7 @@ use mydhtresult::{
 
 // TODO put in its own module
 pub struct ReadService<MC : MyDHTConf> {
-  stream : Option<<MC::Transport as Transport>::ReadStream>,
+  stream : Option<<MC::Transport as Transport<MC::Poll>>::ReadStream>,
   is_auth : bool,
   enc : MC::MsgEnc,
 //  from : PeerRefSend<MC>,
@@ -101,7 +101,7 @@ pub struct ReadService<MC : MyDHTConf> {
 
 /// Note that local handle is not send : cannot restart if state suspend
 pub struct ReadServiceSend<MC : MyDHTConf> {
-  stream : Option<<MC::Transport as Transport>::ReadStream>,
+  stream : Option<<MC::Transport as Transport<MC::Poll>>::ReadStream>,
   is_auth : bool,
   enc : MC::MsgEnc,
   from : <MC::PeerRef as SRef>::Send,
@@ -192,7 +192,7 @@ impl<MC : MyDHTConf> SToRef<ReadService<MC>> for ReadServiceSend<MC> where
 impl<MC : MyDHTConf> ReadService<MC> {
   pub fn new(
     token :usize, 
-    rs : <MC::Transport as Transport>::ReadStream, 
+    rs : <MC::Transport as Transport<MC::Poll>>::ReadStream, 
     me : MC::PeerRef, with : Option<MC::PeerRef>, 
     enc : MC::MsgEnc, 
     peermgmt : MC::PeerMgmtMeths, 
@@ -508,7 +508,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
 /// Currently the channel in is not even use (Run send as first command)
 pub enum ReadCommand<MC : MyDHTConf> {
   Run,
-  ReadBorrowReturn(<MC::Transport as Transport>::ReadStream, Option<<MC::Peer as Peer>::ShadowRMsg>),
+  ReadBorrowReturn(<MC::Transport as Transport<MC::Poll>>::ReadStream, Option<<MC::Peer as Peer>::ShadowRMsg>),
 }
 
 impl<MC : MyDHTConf> Proto for ReadCommand<MC> {

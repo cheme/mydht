@@ -2,13 +2,20 @@
 //! testing.
 extern crate mydht_inefficientmap;
 extern crate mydht_slab;
-
+use mio::{
+  Poll as MioPoll,
+  Registration,
+  SetReadiness,
+};
 use std::borrow::Borrow;
 use mydhtresult::Result;
 use rules::{
   DHTRules,
 };
-use transport::Transport;
+use transport::{
+  Transport,
+  MioEvents,
+};
 use procs::{
   PeerCacheEntry,
   AddressCacheEntry,
@@ -97,6 +104,7 @@ use procs::noservice::{
   NoCommandReply,
 };
 use service::{
+  MioEvented,
   NoService,
   NoSpawn,
   //Service,
@@ -133,7 +141,6 @@ use kvstore::{
 use msgenc::json::Json;
 use peer::PeerMgmtMeths;
 use msgenc::MsgEnc;
-use num::traits::ToPrimitive;
 use procs::ClientMode;
 use procs::{
   MyDHTConf,
@@ -153,7 +160,7 @@ fn simu_aproxy_peer_discovery () {
   let nbpeer = 5;
   let mut rules = DHTRULES_DEFAULT.clone();
   rules.nbhopfact = nbpeer - 1;
-  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
+  let rcs = runningcontext1(nbpeer as usize,rules);
   let qconf = QueryConf {
     mode : QueryMode::AProxy,
 //    chunk : QueryChunk::None,
@@ -168,7 +175,7 @@ fn simu_amix_proxy_peer_discovery () {
   let nbpeer = 5;
   let mut rules = DHTRULES_DEFAULT.clone();
   rules.nbhopfact = nbpeer - 1;
-  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
+  let rcs = runningcontext1(nbpeer as usize,rules);
   let qconf = QueryConf {
     mode : QueryMode::AMix(9),
 //    chunk : QueryChunk::None,
@@ -183,7 +190,7 @@ fn simu_asynch_peer_discovery () {
   let nbpeer = 5;
   let mut rules = DHTRULES_DEFAULT.clone();
   rules.nbhopfact = nbpeer - 1;
-  let rcs = runningcontext1(nbpeer.to_usize().unwrap(),rules);
+  let rcs = runningcontext1(nbpeer as usize,rules);
   let qconf = QueryConf {
     mode : QueryMode::Asynch,
 //    chunk : QueryChunk::None,
@@ -337,7 +344,7 @@ fn simpeer2hopget () {
     }
 }
 
-fn finddistantpeer2<P : Peer, T : Transport<Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>> + Clone>
+fn finddistantpeer2<P : Peer, T : Transport<MioPoll,Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>> + Clone>
    (mut peers : Vec<(P, DHTIn<TestConf<P,T,E,TestingRules,SimpleRules>>)>, nbpeer : usize, qm : QueryMode, prio : QueryPriority, _map : &[&[usize]], find : bool, rules : SimpleRules)
   where  <P as KeyVal>::Key : Hash,
          <P as Peer>::Address : Hash,
@@ -583,7 +590,7 @@ struct TestConf<P,T,ENC,PM,DR> {
 
 impl<
   P : Peer,
-  T : Transport<Address = <P as Peer>::Address>,
+  T : Transport<MioPoll,Address = <P as Peer>::Address>,
   ENC : MsgEnc<P, KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>>,
   PM : PeerMgmtMeths<P>,
   DR : DHTRules + Clone,
@@ -594,6 +601,10 @@ where <P as KeyVal>::Key : Hash,
 {
   const SEND_NB_ITER : usize = 10;
 
+  type Events = MioEvents;
+  type Poll = MioPoll;
+  type PollTReady = SetReadiness;
+  type PollReg = MioEvented<Registration>;
   type MainloopSpawn = ThreadPark;
   type MainLoopChannelIn = MpscChannel;
   type MainLoopChannelOut = MpscChannel;
@@ -608,7 +619,7 @@ where <P as KeyVal>::Key : Hash,
 
   type PeerCache = InefficientmapBase2<Self::Peer, Self::PeerRef, PeerCacheEntry<Self::PeerRef>,
     HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>>;
-  type AddressCache = HashMap<<Self::Transport as Transport>::Address,AddressCacheEntry>;
+  type AddressCache = HashMap<<Self::Transport as Transport<Self::Poll>>::Address,AddressCacheEntry>;
   type ChallengeCache = HashMap<Vec<u8>,ChallengeEntry<Self>>;
   type PeerMgmtChannelIn = MpscChannel;
   type ReadChannelIn = MpscChannel;
@@ -648,6 +659,15 @@ where <P as KeyVal>::Key : Hash,
   const NB_SYNCH_CONNECT : usize = 3;
   type SynchConnectChannelIn = MpscChannel;
   type SynchConnectSpawn = ThreadPark;
+
+  fn init_poll(&mut self) -> Result<Self::Poll> {
+    Ok(MioPoll::new()?)
+  }
+  fn poll_reg() -> Result<(Self::PollTReady,Self::PollReg)> {
+    let (reg,sr) = Registration::new2();
+    Ok((sr,MioEvented(reg)))
+  }
+
 
 
   fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>> {
@@ -833,7 +853,7 @@ fn confinitpeers1(me : PeerTest, others : Vec<PeerTest>, transport : TransportTe
 /// Sim is not to be used in similar case as before : there is no guaranties all peers will be
 /// queried : in fact with  hashmap kvstore default implementation only a ratio of 2/3 peer will be
 /// queried by call to subset on peer connect discovery thus it is bad for test with single route.
-fn initpeers2<P : Peer, T : Transport<Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>>> (nodes : Vec<P>, transports : Vec<T>, map : &[&[usize]], meths : TestingRules, rules : DhtRules, enc : E, sim : Option<u64>) 
+fn initpeers2<P : Peer, T : Transport<MioPoll,Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>>> (nodes : Vec<P>, transports : Vec<T>, map : &[&[usize]], meths : TestingRules, rules : DhtRules, enc : E, sim : Option<u64>) 
   -> Vec<(P, DHTIn< TestConf<P,T,E,TestingRules,SimpleRules>  >)> 
   where  <P as KeyVal>::Key : Hash,
          <P as Peer>::Address : Hash,

@@ -30,6 +30,8 @@ use mydht_base::transport::{
   WriteTransportStream,
   SlabEntry,
   SlabEntryState,
+  Token,
+  Ready,
 };
 //use mydht_base::transport::{SpawnRecMode};
 //use std::io::Result as IoResult;
@@ -49,14 +51,15 @@ use mydht_base::mydhtresult::{
   ErrorLevel as MdhtErrorLevel,
 };
 use self::mio::{
-  Poll,
+  Poll as MioPoll,
   PollOpt,
   Events,
-  Token,
-  Ready,
+  Token as MioToken,
+  Ready as MioReady,
   Registration,
   SetReadiness,
 };
+
 use self::slab::{
   Slab,
 };
@@ -72,8 +75,8 @@ use std::sync::atomic::{
   Ordering,
 };
 
-const LISTENER : Token = Token(0);
-const MPSC_TEST : Token = Token(1);
+const LISTENER : Token = 0;
+const MPSC_TEST : Token = 1;
 const START_STREAM_IX : usize = 2;
 
 
@@ -99,16 +102,26 @@ impl<T> MpscRec<T> {
     }
   }
 }
-impl<T> Registerable for MpscRec<T> {
-  fn register(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
-    p.register(&self.reg,t,r,po)?;
+impl<T> Registerable<MioPoll> for MpscRec<T> {
+  fn register(&self, p : &MioPoll, t : Token, r : Ready) -> Result<bool> {
+    match r {
+      Ready::Readable =>
+        p.register(&self.reg, MioToken(t), MioReady::readable(), PollOpt::edge())?,
+      Ready::Writable =>
+        p.register(&self.reg, MioToken(t), MioReady::writable(), PollOpt::edge())?,
+    }
     Ok(true)
   }
-  fn reregister(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
-    p.reregister(&self.reg,t,r,po)?;
+  fn reregister(&self, p : &MioPoll, t : Token, r : Ready) -> Result<bool> {
+    match r {
+      Ready::Readable =>
+        p.reregister(&self.reg, MioToken(t), MioReady::readable(), PollOpt::edge())?,
+      Ready::Writable =>
+        p.reregister(&self.reg, MioToken(t), MioReady::writable(), PollOpt::edge())?,
+    }
     Ok(true)
   }
-  fn deregister(&self, poll: &Poll) -> Result<()> {
+  fn deregister(&self, poll: &MioPoll) -> Result<()> {
     poll.deregister(&self.reg)?;
     Ok(())
   }
@@ -120,7 +133,7 @@ pub struct MpscSend<T> {
 impl<T> MpscSend<T> {
   pub fn send(&self, t : T) -> Result<()> {
     self.mpsc.send(t)?;
-    self.set_ready.set_readiness(Ready::readable())?;
+    self.set_ready.set_readiness(MioReady::readable())?;
     Ok(())
   }
 }
@@ -138,12 +151,12 @@ pub fn channel_reg<T> () -> (MpscSend<T>,MpscRec<T>) {
 
 
 #[inline]
-fn spawn_loop_async<M : 'static + Send, TC, T : Transport, RR, WR, FR, FW>(transport : T, read_cl : FR, write_cl : FW, controller : TC, ended : Arc<AtomicUsize>, exp : Vec<u8>, connect_done : Arc<AtomicUsize>, cpp : Arc<CpuPool>) -> Result<MpscSend<M>> 
+fn spawn_loop_async<M : 'static + Send, TC, T : Transport<MioPoll>, RR, WR, FR, FW>(transport : T, read_cl : FR, write_cl : FW, controller : TC, ended : Arc<AtomicUsize>, exp : Vec<u8>, connect_done : Arc<AtomicUsize>, cpp : Arc<CpuPool>) -> Result<MpscSend<M>> 
 where 
   FR : 'static + Send + Fn(Option<RR>,Option<T::ReadStream>,&T,Arc<AtomicUsize>,Vec<u8>,Arc<CpuPool>) -> Result<RR>,
   FW : 'static + Send + Fn(Option<WR>,Option<T::WriteStream>,&T,Arc<CpuPool>) -> Result<WR>,
   //for<'a> TC : 'static + Send + Fn(M, &'a mut Slab<SlabEntry<T,RR,WR>>) -> Result<()>,
-  TC : 'static + Send + Fn(M, &mut Slab<SlabEntry<T,RR,WR,(),T::Address>>,&T,Arc<CpuPool>) -> Result<()>,
+  TC : 'static + Send + Fn(M, &mut Slab<SlabEntry<MioPoll,T,RR,WR,(),T::Address>>,&T,Arc<CpuPool>) -> Result<()>,
 {
 
   let (sender,receiver) = channel_reg();
@@ -153,36 +166,33 @@ where
 }
 
 /// currently only for full async (listener, read stream and write stream)
-fn loop_async<M, TC, T : Transport, RR, WR, FR, FW>(receiver : MpscRec<M>, transport : T,read_cl : FR, write_cl : FW, controller : TC,ended : Arc<AtomicUsize>, exp : Vec<u8>, connect_done : Arc<AtomicUsize>,cpp : Arc<CpuPool>) -> Result<()> 
+fn loop_async<M, TC, T : Transport<MioPoll>, RR, WR, FR, FW>(receiver : MpscRec<M>, transport : T,read_cl : FR, write_cl : FW, controller : TC,ended : Arc<AtomicUsize>, exp : Vec<u8>, connect_done : Arc<AtomicUsize>,cpp : Arc<CpuPool>) -> Result<()> 
 where 
   FR : Fn(Option<RR>,Option<T::ReadStream>,&T,Arc<AtomicUsize>,Vec<u8>,Arc<CpuPool>) -> Result<RR>,
   FW : Fn(Option<WR>,Option<T::WriteStream>,&T,Arc<CpuPool>) -> Result<WR>,
-  TC : Fn(M, &mut Slab<SlabEntry<T,RR,WR,(),T::Address>>, &T,Arc<CpuPool>) -> Result<()>,
+  TC : Fn(M, &mut Slab<SlabEntry<MioPoll,T,RR,WR,(),T::Address>>, &T,Arc<CpuPool>) -> Result<()>,
 {
 
 
 
-  let mut cache : Slab<SlabEntry<T,RR,WR,(),T::Address>> = Slab::new();
+  let mut cache : Slab<SlabEntry<MioPoll,T,RR,WR,(),T::Address>> = Slab::new();
   let mut events = Events::with_capacity(1024);
-  let poll = Poll::new()?;
+  let poll = MioPoll::new()?;
 
-  assert!(true == receiver.register(&poll, MPSC_TEST, Ready::readable(),
-                      PollOpt::edge())?);
-  assert!(true == transport.register(&poll, LISTENER, Ready::readable(),
-                      PollOpt::edge())?);
+  assert!(true == receiver.register(&poll, MPSC_TEST, Ready::Readable)?);
+  assert!(true == transport.register(&poll, LISTENER, Ready::Readable)?);
 //  let mut iter = 0;
   loop {
     poll.poll(&mut events, None).unwrap();
       for event in events.iter() {
           match event.token() {
-              LISTENER => {
+              MioToken(LISTENER) => {
                 try_breakloop!(transport.accept(), "Transport accept failure : {}", 
                 |(rs,ows) : (T::ReadStream,Option<T::WriteStream>)| -> Result<()> {
                   let read_token = {
                     let read_entry = cache.vacant_entry();
                     let read_token = read_entry.key();
-                    assert!(true == rs.register(&poll, Token(read_token + START_STREAM_IX), Ready::readable(),
-                      PollOpt::edge())?);
+                    assert!(true == rs.register(&poll, read_token + START_STREAM_IX, Ready::Readable)?);
                     read_entry.insert(SlabEntry {
                       state : SlabEntryState::ReadStream(rs,None),
                       os : None,
@@ -195,8 +205,7 @@ where
                     let write_token = {
                       let write_entry = cache.vacant_entry();
                       let write_token = write_entry.key();
-                      assert!(true == ws.register(&poll, Token(write_token + START_STREAM_IX), Ready::writable(),
-                        PollOpt::edge())?);
+                      assert!(true == ws.register(&poll, write_token + START_STREAM_IX, Ready::Writable)?);
                       write_entry.insert(SlabEntry {
                         state : SlabEntryState::WriteStream(ws,()),
                         os : Some(read_token),
@@ -212,7 +221,7 @@ where
                 });
               
               },
-              MPSC_TEST => {
+              MioToken(MPSC_TEST) => {
                 try_breakloop!(receiver.recv(),"Loop mpsc recv error : {:?}", |t| controller(t, &mut cache, &transport,cpp.clone()));
 //                assert!(true == receiver.reregister(&poll, MPSC_TEST, Ready::readable(),
 //                      PollOpt::edge())?);
@@ -259,7 +268,7 @@ where
 
 
 
-pub fn sync_tr_start<T : Transport,C>(transport : Arc<T>,c : C) -> Result<()> 
+pub fn sync_tr_start<T : Transport<()>,C>(transport : Arc<T>,c : C) -> Result<()> 
     where C : Send + 'static + Fn(T::ReadStream,Option<T::WriteStream>) -> Result<ReaderHandle>
 {
     thread::spawn(move || {
@@ -269,7 +278,7 @@ pub fn sync_tr_start<T : Transport,C>(transport : Arc<T>,c : C) -> Result<()>
     });
     Ok(())
 }
-pub fn connect_rw_with_optional<A : Address, T : Transport<Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_optional : bool, async : bool)
+pub fn connect_rw_with_optional<A : Address, T : Transport<(),Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_optional : bool, async : bool)
 {
 //  assert!(t1.do_spawn_rec().1 == true); // managed so we can receive multiple message : test removed due to hybrid transport lik tcp_loop where it is usefull to test those properties
   let mess_to = "hello world".as_bytes();
@@ -398,7 +407,7 @@ pub fn connect_rw_with_optional<A : Address, T : Transport<Address=A>> (t1 : T, 
 
 
 
-pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_connect_rs : bool, with_recv_ws : bool, variant : bool, async : bool)
+pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<(),Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_connect_rs : bool, with_recv_ws : bool, variant : bool, async : bool)
 {
   let mess_to = "hello world".as_bytes();
   let mess_to_2 = "hello2".as_bytes();
@@ -544,7 +553,7 @@ impl Address for LocalAdd {
  
 }
 
-pub fn reg_mpsc_recv_test<T : Transport>(t : T) {
+pub fn reg_mpsc_recv_test<T : Transport<MioPoll>>(t : T) {
 
   let transport_reg_r = |_ : Option<()>, _ : Option<T::ReadStream>, _ : &T,_,_,_| {Ok(())};
   let transport_reg_w = |_ : Option<()>, _ : Option<T::WriteStream>, _ : &T,_| {Ok(())};
@@ -553,7 +562,7 @@ pub fn reg_mpsc_recv_test<T : Transport>(t : T) {
   let sp_cix = current_ix.clone();
   let sp_nit = next_it.clone();
   let nbit = 3;
-  let controller = move |ix : usize, _ : &mut Slab<SlabEntry<T,(),(),(),T::Address>>, _ : &T,_| {
+  let controller = move |ix : usize, _ : &mut Slab<SlabEntry<MioPoll,T,(),(),(),T::Address>>, _ : &T,_| {
     let i = sp_cix.fetch_add(1,Ordering::Relaxed);
     assert_eq!(i, ix);
     if i == nbit -1 {
@@ -587,11 +596,11 @@ pub fn reg_mpsc_recv_test<T : Transport>(t : T) {
 
 }
  
-pub fn reg_connect_2<T : Transport>(fromadd : &T::Address, t : T, c0 : T, c1 : T) {
+pub fn reg_connect_2<T : Transport<MioPoll>>(fromadd : &T::Address, t : T, c0 : T, c1 : T) {
 
   let content = [5];
   
-  let controller = move |_ : (), _ : &mut Slab<SlabEntry<T,(),(),(),T::Address>>, _ : &T,_| { Ok(()) };
+  let controller = move |_ : (), _ : &mut Slab<SlabEntry<MioPoll,T,(),(),(),T::Address>>, _ : &T,_| { Ok(()) };
 
   let notused = Arc::new(AtomicUsize::new(0));
   let next_it = Arc::new(AtomicBool::new(false));
@@ -633,13 +642,13 @@ pub fn reg_connect_2<T : Transport>(fromadd : &T::Address, t : T, c0 : T, c1 : T
 
 
 /// test commands
-pub enum SimpleLoopCommand<T : Transport> {
+pub enum SimpleLoopCommand<PO,T : Transport<PO>> {
   ConnectWith(T::Address),
   SendTo(T::Address, Vec<u8>, usize),
   Expect(T::Address, Vec<u8>,Arc<AtomicUsize>),
 }
-struct WsState<'a,WS : WriteTransportStream> (&'a mut(Vec<u8>,usize,WS));
-impl<'a,WS : WriteTransportStream> WsState<'a,WS> {
+struct WsState<'a,WS : 'a> (&'a mut(Vec<u8>,usize,WS));
+impl<'a,WS : Write> WsState<'a,WS> {
   pub fn send(&mut self, bufsize : usize) -> Result<()> {
     let &mut WsState( &mut (ref mut c, ref mut i,ref mut ws)) = self;
 
@@ -673,8 +682,8 @@ impl<'a,WS : WriteTransportStream> WsState<'a,WS> {
 
 
 
-struct RsState<'a, RS : ReadTransportStream> (&'a mut(Vec<u8>,usize,RS));
-impl<'a,RS : ReadTransportStream> RsState<'a,RS> {
+struct RsState<'a, RS : 'a> (&'a mut(Vec<u8>,usize,RS));
+impl<'a,RS : Read> RsState<'a,RS> {
   pub fn recv(&mut self, bufsize : usize) -> Result<()> {
     let &mut RsState( &mut (ref mut c, ref mut i,ref mut rs)) = self;
     let clen = c.len();
@@ -695,8 +704,8 @@ impl<'a,RS : ReadTransportStream> RsState<'a,RS> {
     Ok(())
   }
 }
-struct SlabEntryInnerState<'a,A : 'a + Transport,B : 'a,C : 'a,D : 'a>(&'a mut SlabEntry<A,B,C,(),D>);
-impl<'a,T : Transport> SlabEntryInnerState<'a,T, (Vec<u8>,usize,T::ReadStream), (Vec<u8>,usize,T::WriteStream),T::Address> {
+struct SlabEntryInnerState<'a,PO : 'a,A : 'a + Transport<PO>,B : 'a,C : 'a,D : 'a>(&'a mut SlabEntry<PO,A,B,C,(),D>);
+impl<'a,PO,T : Transport<PO>> SlabEntryInnerState<'a,PO,T, (Vec<u8>,usize,T::ReadStream), (Vec<u8>,usize,T::WriteStream),T::Address> {
   /// non blocking send up to wouldblock
   pub fn send(&mut self, bufsize : usize) -> Result<()> {
     match self.0.state {
@@ -712,7 +721,7 @@ impl<'a,T : Transport> SlabEntryInnerState<'a,T, (Vec<u8>,usize,T::ReadStream), 
     }
   }*/
 }
-fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,CpuFuture<(),Error>,CpuFuture<T::WriteStream,Error>,(),T::Address>>, t : &T, cpupool : Arc<CpuPool>) -> Result<()> {
+fn simple_command_controller_cpupool<PO,T : Transport<PO>>(command : SimpleLoopCommand<PO,T>, cache : &mut Slab<SlabEntry<PO,T,CpuFuture<(),Error>,CpuFuture<T::WriteStream,Error>,(),T::Address>>, t : &T, cpupool : Arc<CpuPool>) -> Result<()> {
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
         let c = cache.iter().any(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
@@ -782,7 +791,7 @@ fn simple_command_controller_cpupool<T : Transport>(command : SimpleLoopCommand<
 }
 
 
-fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,JoinHandle<()>,(Sender<Vec<u8>>,JoinHandle<()>),(),T::Address>>, t : &T) -> Result<()> {
+fn simple_command_controller_threadpark<PO,T : Transport<PO>>(command : SimpleLoopCommand<PO,T>, cache : &mut Slab<SlabEntry<PO,T,JoinHandle<()>,(Sender<Vec<u8>>,JoinHandle<()>),(),T::Address>>, t : &T) -> Result<()> {
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
         let c = cache.iter().any(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
@@ -857,7 +866,7 @@ fn simple_command_controller_threadpark<T : Transport>(command : SimpleLoopComma
     Ok(()) 
 }
 
-fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,CoRHandle,(Rc<RefCell<Vec<u8>>>,CoRHandle),(),T::Address>>, t : &T,_ : Arc<CpuPool>) -> Result<()> {
+fn simple_command_controller_corout<PO,T : Transport<PO>>(command : SimpleLoopCommand<PO,T>, cache : &mut Slab<SlabEntry<PO,T,CoRHandle,(Rc<RefCell<Vec<u8>>>,CoRHandle),(),T::Address>>, t : &T,_ : Arc<CpuPool>) -> Result<()> {
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
         let c = cache.iter().any(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
@@ -912,7 +921,7 @@ fn simple_command_controller_corout<T : Transport>(command : SimpleLoopCommand<T
     Ok(()) 
 }
 
-fn corout_ows<T : Transport>(cstate : &mut SlabEntryState<T,CoRHandle,(Rc<RefCell<Vec<u8>>>,CoRHandle),(),T::Address>, content : Vec<u8>, bufsize : usize) {
+fn corout_ows<PO,T : Transport<PO>>(cstate : &mut SlabEntryState<PO,T,CoRHandle,(Rc<RefCell<Vec<u8>>>,CoRHandle),(),T::Address>, content : Vec<u8>, bufsize : usize) {
   let state = mem::replace(cstate,SlabEntryState::Empty);
   if let SlabEntryState::WriteStream(ws,_) = state {
     let st = corout_ows2(ws, content,bufsize);
@@ -951,7 +960,7 @@ fn corout_ows2<TW : 'static + Write>(mut ws : TW, content : Vec<u8>, bufsize : u
     (bc,cohandle)
 }
 
-fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cache : &mut Slab<SlabEntry<T,(Vec<u8>,usize,T::ReadStream),(Vec<u8>,usize,T::WriteStream),(),T::Address>>, t : &T,_ : Arc<CpuPool>) -> Result<()> {
+fn simple_command_controller<PO,T : Transport<PO>>(command : SimpleLoopCommand<PO,T>, cache : &mut Slab<SlabEntry<PO,T,(Vec<u8>,usize,T::ReadStream),(Vec<u8>,usize,T::WriteStream),(),T::Address>>, t : &T,_ : Arc<CpuPool>) -> Result<()> {
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
         let c = cache.iter().any(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
@@ -1021,7 +1030,7 @@ fn simple_command_controller<T : Transport>(command : SimpleLoopCommand<T>, cach
     };
     Ok(()) 
 }
-fn transport_reg_w_testing<T : Transport>(ocw : Option<(Vec<u8>,usize,T::WriteStream)>, ows : Option<T::WriteStream>, _ : &T,bufsize : usize) -> Result<(Vec<u8>,usize,T::WriteStream)> {
+fn transport_reg_w_testing<PO, T : Transport<PO>>(ocw : Option<(Vec<u8>,usize,T::WriteStream)>, ows : Option<T::WriteStream>, _ : &T,bufsize : usize) -> Result<(Vec<u8>,usize,T::WriteStream)> {
   let mut state = match ocw {
     Some(s) => s,
     None => match ows {
@@ -1032,7 +1041,7 @@ fn transport_reg_w_testing<T : Transport>(ocw : Option<(Vec<u8>,usize,T::WriteSt
   WsState(&mut state).send(bufsize)?;
   Ok(state)
 }
-fn transport_reg_r_testing<T : Transport>(ocr : Option<(Vec<u8>,usize,T::ReadStream)>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>) -> Result<(Vec<u8>,usize,T::ReadStream)> {
+fn transport_reg_r_testing<PO, T : Transport<PO>>(ocr : Option<(Vec<u8>,usize,T::ReadStream)>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>) -> Result<(Vec<u8>,usize,T::ReadStream)> {
   let mut state = match ocr {
     Some(s) => s,
     None => match ors {
@@ -1047,7 +1056,7 @@ fn transport_reg_r_testing<T : Transport>(ocr : Option<(Vec<u8>,usize,T::ReadStr
   Ok(state)
 }
 
-fn transport_corout_w_testing<T : Transport>(ocw : Option<(Rc<RefCell<Vec<u8>>>,CoRHandle)>, ows : Option<T::WriteStream>, _ : &T,bufsize : usize) -> Result<(Rc<RefCell<Vec<u8>>>,CoRHandle)> {
+fn transport_corout_w_testing<PO,T : Transport<PO>>(ocw : Option<(Rc<RefCell<Vec<u8>>>,CoRHandle)>, ows : Option<T::WriteStream>, _ : &T,bufsize : usize) -> Result<(Rc<RefCell<Vec<u8>>>,CoRHandle)> {
   match ocw {
     Some(mut s) => {
       if s.0.borrow().len() > 0 {
@@ -1119,7 +1128,7 @@ fn transport_threadpark_w_testing<W : 'static + Send + Write,T>(ocw : Option<(Se
 
 
 
-fn transport_corout_r_testing<T : Transport>(ocr : Option<CoRHandle>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>, expected : Vec<u8>) -> Result<CoRHandle> {
+fn transport_corout_r_testing<PO,T : Transport<PO>>(ocr : Option<CoRHandle>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>, expected : Vec<u8>) -> Result<CoRHandle> {
   match ocr {
     Some(mut s) => {
       s.resume(0).unwrap();
@@ -1141,7 +1150,7 @@ fn transport_corout_r_testing<T : Transport>(ocr : Option<CoRHandle>, ors : Opti
   co_handle.resume(0).unwrap();
   Ok(co_handle)
 }
-fn transport_cpupool_r_testing<T : Transport>(ocr : Option<CpuFuture<(),Error>>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>, expected : Vec<u8>, cpupool : Arc<CpuPool>) -> Result<CpuFuture<(),Error>> {
+fn transport_cpupool_r_testing<PO,T : Transport<PO>>(ocr : Option<CpuFuture<(),Error>>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>, expected : Vec<u8>, cpupool : Arc<CpuPool>) -> Result<CpuFuture<(),Error>> {
   match ocr {
     Some(s) => {
      // s.poll().unwrap(); // poll
@@ -1162,7 +1171,7 @@ fn transport_cpupool_r_testing<T : Transport>(ocr : Option<CpuFuture<(),Error>>,
   });
   Ok(cpufut)
 }
-fn transport_threadpark_r_testing<T : Transport>(ocr : Option<JoinHandle<()>>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>, expected : Vec<u8>) -> Result<JoinHandle<()>> {
+fn transport_threadpark_r_testing<PO,T : Transport<PO>>(ocr : Option<JoinHandle<()>>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>, expected : Vec<u8>) -> Result<JoinHandle<()>> {
   match ocr {
     Some(s) => {
       s.thread().unpark();
@@ -1184,7 +1193,7 @@ fn transport_threadpark_r_testing<T : Transport>(ocr : Option<JoinHandle<()>>, o
 }
   
 
-pub fn reg_rw_corout_testing<T : Transport>(_fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize) {
+pub fn reg_rw_corout_testing<T : Transport<MioPoll>>(_fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize) {
   let mut contents = Vec::with_capacity(nbmess);
   let mut all_r = vec![0;nbmess * content_size];
   for im in 0 .. nbmess {
@@ -1359,7 +1368,7 @@ impl<'a,W : Write> Write for WriteThreadparkPool<'a,W> {
 
 
 
-pub fn reg_rw_testing<T : Transport>(fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize,nbmess:usize) {
+pub fn reg_rw_testing<T : Transport<MioPoll>>(fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize,nbmess:usize) {
   let mut contents = Vec::with_capacity(nbmess);
   for im in 0 .. nbmess {
     let mut content = vec![0;content_size];
@@ -1395,7 +1404,7 @@ pub fn reg_rw_testing<T : Transport>(fromadd : T::Address, tfrom : T, toadd : T:
 }
 
 
-pub fn reg_rw_cpupool_testing<T : Transport>(_fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize, numcpu : usize) {
+pub fn reg_rw_cpupool_testing<T : Transport<MioPoll>>(_fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize, numcpu : usize) {
   assert!(numcpu > 1);
   let mut contents = Vec::with_capacity(nbmess);
   let mut all_r = vec![0;nbmess * content_size];
@@ -1431,7 +1440,7 @@ pub fn reg_rw_cpupool_testing<T : Transport>(_fromadd : T::Address, tfrom : T, t
   while ended_expect.load(Ordering::Relaxed) != 1 { }
 
 }
-pub fn reg_rw_threadpark_testing<T : Transport>(_fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize) {
+pub fn reg_rw_threadpark_testing<T : Transport<MioPoll>>(_fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize) {
 
   let mut contents = Vec::with_capacity(nbmess);
   let mut all_r = vec![0;nbmess * content_size];

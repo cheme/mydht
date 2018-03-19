@@ -108,19 +108,17 @@ use transport::{
   SlabEntry,
   SlabEntryState,
   Registerable,
+  Ready,
+  Token,
+  Poll,
+  Events,
+  Event,
 };
 use utils::{
   Proto,
   Ref,
   SRef,
   SToRef,
-};
-use mio::{
-  Events,
-  Poll,
-  Ready,
-  PollOpt,
-  Token
 };
 use super::server2::{
   ReadCommand,
@@ -144,8 +142,7 @@ macro_rules! register_state_r {($self:ident,$rs:ident,$os:expr,$entrystate:path,
       peer : None,
     });
     let sync_st = if let $entrystate(ref mut rs,_) = $self.slab_cache.get_mut(token).unwrap().state {
-      if rs.register(&$self.poll, Token(token + START_STREAM_IX), Ready::readable(),
-        PollOpt::edge())? {
+      if rs.register(&$self.poll, token + START_STREAM_IX, Ready::Readable)? {
         debug!("Asynch r transport successfully registered");
         false
       } else {
@@ -162,7 +159,7 @@ macro_rules! register_state_r {($self:ident,$rs:ident,$os:expr,$entrystate:path,
     token
   }
 }}
-macro_rules! register_state_w {($self:ident,$pollopt:expr,$rs:ident,$wb:expr,$os:expr,$entrystate:path) => {
+macro_rules! register_state_w {($self:ident,$rs:ident,$wb:expr,$os:expr,$entrystate:path) => {
   {
     let token = $self.slab_cache.insert(SlabEntry {
       state : $entrystate($rs,$wb),
@@ -170,8 +167,7 @@ macro_rules! register_state_w {($self:ident,$pollopt:expr,$rs:ident,$wb:expr,$os
       peer : None,
     });
     if let $entrystate(ref mut rs,ref mut infos) = $self.slab_cache.get_mut(token).unwrap().state {
-      if rs.register(&$self.poll, Token(token + START_STREAM_IX), Ready::writable(),
-        $pollopt )? {
+      if rs.register(&$self.poll, token + START_STREAM_IX, Ready::Writable )? {
         debug!("Asynch w transport successfully registered");
       } else {
         debug!("WTransport not registered, service configuration for read must run in separate thread and probably without pooling");
@@ -187,8 +183,8 @@ macro_rules! register_state_w {($self:ident,$pollopt:expr,$rs:ident,$wb:expr,$os
 }}
 
 
-const LISTENER : Token = Token(0);
-const LOOP_COMMAND : Token = Token(1);
+const LISTENER : Token = 0;
+const LOOP_COMMAND : Token = 1;
 /// Must be more than registered token (cf other constant) and more than atomic cache status for
 /// PeerCache const
 const START_STREAM_IX : usize = 2;
@@ -214,7 +210,7 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
   Start,
   SubCommand(MainLoopSubCommand<MC::Peer>),
 
-  TryConnect(<MC::Transport as Transport>::Address,Option<ApiQueryId>),
+  TryConnect(<MC::Transport as Transport<MC::Poll>>::Address,Option<ApiQueryId>),
   TrustedTryConnect(MC::PeerRef,Option<ApiQueryId>),
 //  ForwardServiceLocal(MC::LocalServiceCommand,usize),
   ForwardService(Option<Vec<MC::PeerRef>>,Option<Vec<(Option<<MC::Peer as KeyVal>::Key>,Option<<MC::Peer as Peer>::Address>)>>,FWConf,MCCommand<MC>),
@@ -242,9 +238,9 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
 //  GlobalApi(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>,MC::ApiReturn),
   ProxyApiReply(MCReply<MC>),
   /// Synch transport received conn
-  ConnectedR(<MC::Transport as Transport>::ReadStream, Option<<MC::Transport as Transport>::WriteStream>),
+  ConnectedR(<MC::Transport as Transport<MC::Poll>>::ReadStream, Option<<MC::Transport as Transport<MC::Poll>>::WriteStream>),
   /// Synch transport conn result
-  ConnectedW(usize,<MC::Transport as Transport>::WriteStream, Option<<MC::Transport as Transport>::ReadStream>),
+  ConnectedW(usize,<MC::Transport as Transport<MC::Poll>>::WriteStream, Option<<MC::Transport as Transport<MC::Poll>>::ReadStream>),
   FailConnect(usize),
 
 }
@@ -256,7 +252,7 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
        MC::LocalServiceReply : SRef {
   Start,
   SubCommand(MainLoopSubCommand<MC::Peer>),
-  TryConnect(<MC::Transport as Transport>::Address,Option<ApiQueryId>),
+  TryConnect(<MC::Transport as Transport<MC::Poll>>::Address,Option<ApiQueryId>),
   TrustedTryConnect(PeerRefSend<MC>,Option<ApiQueryId>),
 //  ForwardServiceLocal(<MC::LocalServiceCommand as SRef>::Send,usize),
   ForwardService(Option<Vec<PeerRefSend<MC>>>,Option<Vec<(Option<<MC::Peer as KeyVal>::Key>,Option<<MC::Peer as Peer>::Address>)>>,FWConf,<MCCommand<MC> as SRef>::Send),
@@ -276,8 +272,8 @@ pub enum MainLoopCommandSend<MC : MyDHTConf>
 //  GlobalApi(GlobalCommand<PeerRefSend<MC>,<MC::GlobalServiceCommand as SRef>::Send>,MC::ApiReturn),
   ProxyApiReply(<MCReply<MC> as SRef>::Send),
 //  ProxyApiGlobalReply(<MC::GlobalServiceReply as SRef>::Send),
-  ConnectedR(<MC::Transport as Transport>::ReadStream, Option<<MC::Transport as Transport>::WriteStream>),
-  ConnectedW(usize,<MC::Transport as Transport>::WriteStream, Option<<MC::Transport as Transport>::ReadStream>),
+  ConnectedR(<MC::Transport as Transport<MC::Poll>>::ReadStream, Option<<MC::Transport as Transport<MC::Poll>>::WriteStream>),
+  ConnectedW(usize,<MC::Transport as Transport<MC::Poll>>::WriteStream, Option<<MC::Transport as Transport<MC::Poll>>::ReadStream>),
   FailConnect(usize),
 }
 
@@ -398,8 +394,8 @@ pub struct MDHTState<MC : MyDHTConf> {
   peer_cache : MC::PeerCache,
   address_cache : MC::AddressCache,
   challenge_cache : MC::ChallengeCache,
-  events : Option<Events>,
-  poll : Poll,
+  events : Option<MC::Events>,
+  poll : MC::Poll,
   read_spawn : MC::ReadSpawn,
   read_channel_in : DefaultRecvChannel<ReadCommand<MC>, MC::ReadChannelIn>,
   write_spawn : MC::WriteSpawn,
@@ -435,7 +431,7 @@ pub struct MDHTState<MC : MyDHTConf> {
   synch_connect_channel_in : MC::SynchConnectChannelIn,
   synch_connect_handle_send : Vec<(
     SynchConnectHandle<MC>,
-    <MC::SynchConnectChannelIn as SpawnChannel<SynchConnectCommandIn<MC::Transport>>>::Send,
+    <MC::SynchConnectChannelIn as SpawnChannel<SynchConnectCommandIn<MC::Poll,MC::Transport>>>::Send,
     )>,
 }
 
@@ -443,11 +439,10 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
   pub fn init_state(conf : &mut MC,mlsend : &mut MainLoopSendIn<MC>) -> Result<MDHTState<MC>> {
     //pub fn init_state(conf : &mut MC,mlsend : &mut MainLoopSendIn<MC>) -> Result<MDHTState<MC>> {
-    let poll = Poll::new()?;
+    let poll = conf.init_poll()?;
     let transport = conf.init_transport()?;
     let route = conf.init_route()?;
-    let (transport, transport_synch) = if transport.register(&poll, LISTENER, Ready::readable(),
-    PollOpt::edge())? {
+    let (transport, transport_synch) = if transport.register(&poll, LISTENER, Ready::Readable)? {
       debug!("Asynch transport successfully registered");
       (Some(transport),None)
     } else {
@@ -455,7 +450,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       let atransport = Arc::new(transport);
       // start infinite listener loop
       conf.init_synch_listener_spawn()?.spawn(
-        SynchConnListener(atransport.clone()),
+        SynchConnListener(atransport.clone(),PhantomData),
         SynchConnListenerCommandDest(mlsend.clone()),
         None,
         DefaultRecv(NoRecv,SynchConnListenerCommandIn),
@@ -601,7 +596,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       let (s,r) = self.write_channel_in.new()?;
 
       // register writestream
-      let write_token = register_state_w!(self,PollOpt::edge(),ws,(s,r,false),None,SlabEntryState::WriteStream);
+      let write_token = register_state_w!(self,ws,(s,r,false),None,SlabEntryState::WriteStream);
 
       // register readstream for multiplex transport
       let ort = ors.map(|rs| -> Result<Option<usize>> {
@@ -663,7 +658,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         // spawn new
         let (s,r) = self.synch_connect_channel_in.new()?;
         let h = self.synch_connect_spawn.spawn(
-          SynchConnect(atr),
+          SynchConnect(atr,PhantomData),
           SynchConnectDest(self.mainloop_send.clone()),
           Some(SynchConnectCommandIn(connect_token,dest_address.clone())),
           r,
@@ -895,8 +890,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         let (write_token,_ort) = self.connect_with2(&address,false,None)?;
         sg.get_read().map(|rreg|{
           //          rreg.deregister(&self.poll).unwrap();
-          rreg.reregister(&self.poll, Token(write_token + START_STREAM_IX), Ready::readable(),
-                          PollOpt::edge()).unwrap();
+          rreg.reregister(&self.poll, write_token + START_STREAM_IX, Ready::Readable).unwrap();
           debug!("read reregister : {:?} , {:?}",write_token,thread::current().id());
         });
         if MC::AUTH_MODE != ShadowAuthType::NoAuth {
@@ -1181,7 +1175,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         ows.map(|ws| -> Result<()> {
           let (s,r) = self.write_channel_in.new()?;
           // connection done on listener so edge immediatly and state has_connect to true
-          let write_token = register_state_w!(self,PollOpt::edge(),ws,(s,r,true),Some(read_token),SlabEntryState::WriteStream);
+          let write_token = register_state_w!(self,ws,(s,r,true),Some(read_token),SlabEntryState::WriteStream);
           // update read reference
           self.slab_cache.get_mut(read_token).map(|r|r.os = Some(write_token));
           Ok(())
@@ -1264,15 +1258,14 @@ impl<MC : MyDHTConf> MDHTState<MC> {
    })
   }
 
-  fn inner_main_loop<S : SpawnerYield>(&mut self, receiver : &mut MainLoopRecvIn<MC>, mlsend : &mut <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply<MC>>>::Send, req: MainLoopCommand<MC>, async_yield : &mut S, events : &mut Events) -> Result<()> {
+  fn inner_main_loop<S : SpawnerYield>(&mut self, receiver : &mut MainLoopRecvIn<MC>, mlsend : &mut <MC::MainLoopChannelOut as SpawnChannel<MainLoopReply<MC>>>::Send, req: MainLoopCommand<MC>, async_yield : &mut S, events : &mut MC::Events) -> Result<()> {
 
     //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
     //(self.mainloop_send).send((MainLoopCommand::Start))?;
     // TODO start other service
     let (smgmt,_rmgmt) = self.peermgmt_channel_in.new()?; // TODO persistence bad for suspend -> put smgmt into self plus add handle to send 
 
-    assert!(true == receiver.register(&self.poll, LOOP_COMMAND, Ready::readable(),
-                      PollOpt::edge())?);
+    assert!(true == receiver.register(&self.poll, LOOP_COMMAND, Ready::Readable)?);
 
     self.call_inner_loop(req,mlsend,async_yield)?;
     loop {
@@ -1299,8 +1292,8 @@ impl<MC : MyDHTConf> MDHTState<MC> {
         self.peer_next_query = Instant::now() + Duration::from_millis(MC::PEER_POOL_DELAY_MS);
       }
       self.poll.poll(events, None)?;
-      for event in events.iter() {
-        match event.token() {
+      while let Some(event) = events.next() {
+        match event.token {
           LOOP_COMMAND => {
             loop {
               let ocin = receiver.recv()?;
@@ -1317,7 +1310,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           },
           LISTENER => {
               try_breakloop!(self.transport.as_ref().unwrap().accept(), "Transport accept failure : {}", 
-              |(rs,ows) : (<MC::Transport as Transport>::ReadStream,Option<<MC::Transport as Transport>::WriteStream>)| -> Result<()> {
+              |(rs,ows) : (<MC::Transport as Transport<MC::Poll>>::ReadStream,Option<<MC::Transport as Transport<MC::Poll>>::WriteStream>)| -> Result<()> {
 /*              let wad = if ows.is_some() {
                   Some(ad.clone())
               } else {
@@ -1331,7 +1324,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
 
                 let (s,r) = self.write_channel_in.new()?;
                 // connection done on listener so edge immediatly and state has_connect to true
-                let write_token = register_state_w!(self,PollOpt::edge(),ws,(s,r,true),Some(read_token),SlabEntryState::WriteStream);
+                let write_token = register_state_w!(self,ws,(s,r,true),Some(read_token),SlabEntryState::WriteStream);
                 // update read reference
                 self.slab_cache.get_mut(read_token).map(|r|r.os = Some(write_token));
                 Ok(())
@@ -1344,7 +1337,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             });
           },
           tok => {
-            let (sp_read, o_sp_write,os) =  if let Some(ca) = self.slab_cache.get_mut(tok.0 - START_STREAM_IX) {
+            let (sp_read, o_sp_write,os) =  if let Some(ca) = self.slab_cache.get_mut(tok - START_STREAM_IX) {
               let os = ca.os;
               match ca.state {
                 SlabEntryState::ReadStream(_,_) => {
@@ -1391,12 +1384,12 @@ impl<MC : MyDHTConf> MDHTState<MC> {
               (false,None,None)
             };
             if o_sp_write.is_some() {
-              self.write_stream_send(tok.0 - START_STREAM_IX, o_sp_write.unwrap(), <MC>::init_write_spawner_out()?, None)?;
+              self.write_stream_send(tok - START_STREAM_IX, o_sp_write.unwrap(), <MC>::init_write_spawner_out()?, None)?;
             }
             if sp_read {
     //(self.mainloop_send).send((MainLoopCommand::Start))?;
     //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;
-              self.start_read_stream_listener(tok.0 - START_STREAM_IX,os,smgmt.clone())?;
+              self.start_read_stream_listener(tok - START_STREAM_IX,os,smgmt.clone())?;
             }
 
 

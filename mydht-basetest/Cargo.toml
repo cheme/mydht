@@ -35,6 +35,7 @@ git = "https://github.com/cheme/readwrite-comp.git"
 
 [dependencies.mydht-base]
 path = "../mydht-base/"
+features = ["blocking-transport","mio-transport"]
 
 
 [dependencies.bit-vec]

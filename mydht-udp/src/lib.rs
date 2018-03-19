@@ -35,17 +35,15 @@
 #[macro_use] extern crate log;
 extern crate byteorder;
 extern crate mydht_base;
-extern crate time;
-extern crate num;
-extern crate mio;
 
-use mio::{Poll,Token,Ready,PollOpt};
 use mydht_base::transport::{
   Transport,
   ReadTransportStream,
   WriteTransportStream,
   SerSocketAddr,
   Registerable,
+  Token,
+  Ready,
 };
 //use super::{Attachment};
 use std::io::Result as IoResult;
@@ -166,19 +164,19 @@ impl Read for ReadUdpStream {
     }
   }
 }
-impl Registerable for Udp {
-  fn register(&self, _ : &Poll, _: Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+impl<PO> Registerable<PO> for Udp {
+  fn register(&self, _ : &PO, _: Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
-  fn reregister(&self, _ : &Poll, _: Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+  fn reregister(&self, _ : &PO, _: Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
-  fn deregister(&self, _poll: &Poll) -> Result<()> {
+  fn deregister(&self, _poll: &PO) -> Result<()> {
     Ok(())
   }
  
 }
-impl Transport for Udp {
+impl<PO> Transport<PO> for Udp {
   type ReadStream = ReadUdpStream;
   type WriteStream = UdpStream;
   type Address = SerSocketAddr;
@@ -219,26 +217,26 @@ impl Transport for Udp {
 }
 
 
-impl Registerable for UdpStream {
-  fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+impl<PO> Registerable<PO> for UdpStream {
+  fn register(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
-  fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+  fn reregister(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
-  fn deregister(&self, _poll: &Poll) -> Result<()> {
+  fn deregister(&self, _poll: &PO) -> Result<()> {
     Ok(())
   }
  
 }
-impl Registerable for ReadUdpStream {
-  fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+impl<PO> Registerable<PO> for ReadUdpStream {
+  fn register(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
-  fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+  fn reregister(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
-  fn deregister(&self, _poll: &Poll) -> Result<()> {
+  fn deregister(&self, _poll: &PO) -> Result<()> {
     Ok(())
   }
  

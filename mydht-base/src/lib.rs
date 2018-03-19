@@ -7,7 +7,6 @@
 extern crate serde;
 extern crate serde_json;
 extern crate rand;
-extern crate mio;
 extern crate bit_vec;
 extern crate byteorder;
 extern crate bincode;

@@ -8,6 +8,9 @@ authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 [features]
 default = ["with-extra-test"]
 with-extra-test = []
+blocking-transport = []
+with-coroutine = ["coroutine"]
+mio-transport = ["mio"]
 nightly = []
 
 [dependencies]
@@ -20,14 +23,20 @@ serde = { version = "~1.0.10", features = ["rc"]}
 serde_derive = "~1.0.10"
 serde_json = "~1.0.2"
 byteorder = "~1.1.0"
-mio = "~0.6.10"
 #bit-vec = "~0.4.2"
 #vec_map = "~0.8.0"
 
-coroutine = "~0.8.0"
 parking_lot = "~0.4.6"
 futures = "~0.1.15"
 futures-cpupool = "~0.1.5"
+
+[target.'cfg(not(wasm32))'.dependencies.mio]
+version = "~0.6.10"
+optional = true
+
+[target.'cfg(not(wasm32))'.dependencies.coroutine]
+version = "~0.8.0"
+optional = true
 
 [dependencies.bit-vec]
 git = "https://github.com/cheme/bit-vec.git"

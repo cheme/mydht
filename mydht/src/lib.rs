@@ -8,19 +8,16 @@
 extern crate readwrite_comp;
 extern crate serde;
 extern crate serde_json;
-extern crate time;
-extern crate num;
 extern crate bincode;
 extern crate byteorder;
 extern crate bit_vec;
 extern crate rand;
 extern crate futures;
 extern crate futures_cpupool;
-#[cfg(feature="mio-impl")]
-extern crate coroutine;
+#[cfg(test)]
+extern crate mio;
 #[cfg(test)]
 extern crate mydht_basetest;
-extern crate mio;
 
 #[macro_export]
 macro_rules! sref_self_mc{($ty:ident) => (

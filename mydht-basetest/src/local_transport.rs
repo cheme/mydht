@@ -26,7 +26,14 @@
 //! several frames (sync in transport with its rec)) we act like managed, and managed transport test should
 //! be used.
 
-use mio::{Poll,Token,Ready,PollOpt,SetReadiness,Registration};
+use mio::{
+  Poll as MioPoll,
+  Token as MioToken,
+  Ready as MioReady,
+  PollOpt,
+  SetReadiness,
+  Registration
+};
 use std::sync::mpsc::{Sender,Receiver};
 use std::mem::replace;
 use std::sync::mpsc;
@@ -46,6 +53,8 @@ use mydht_base::transport::{
   ReadTransportStream,
   WriteTransportStream,
   Registerable,
+  Token,
+  Ready,
 };
 #[cfg(test)]
 use transport as ttest;
@@ -195,60 +204,80 @@ pub struct AsynchLocalReadStream(LocalReadStream,Duration,Duration,Duration,Inst
 pub struct AsynchLocalWriteStream(LocalWriteStream,Duration,Duration,Duration,Instant,(SetReadiness,SetReadiness),Registration);
 
 pub struct LocalReadStream(Receiver<Arc<Vec<u8>>>,Vec<u8>,bool,bool);
-impl Registerable for LocalReadStream {
-  fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+impl<PO> Registerable<PO> for LocalReadStream {
+  fn register(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
-  fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+  fn reregister(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
 
-  fn deregister(&self, _poll: &Poll) -> Result<()> {
+  fn deregister(&self, _poll: &PO) -> Result<()> {
     Ok(())
   }
 }
-impl Registerable for LocalWriteStream {
-  fn register(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+impl<PO> Registerable<PO> for LocalWriteStream {
+  fn register(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
-  fn reregister(&self, _ : &Poll, _ : Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+  fn reregister(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
-  fn deregister(&self, _poll: &Poll) -> Result<()> {
+  fn deregister(&self, _poll: &PO) -> Result<()> {
     Ok(())
   }
 
 }
 
-impl Registerable for AsynchLocalReadStream {
-  fn register(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
-    p.register(&self.6,t,r,po)?;
+impl Registerable<MioPoll> for AsynchLocalReadStream {
+
+  fn register(&self, p : &MioPoll, t : Token, r : Ready) -> Result<bool> {
+    match r {
+      Ready::Readable =>
+        p.register(&self.6, MioToken(t), MioReady::readable(), PollOpt::edge())?,
+      Ready::Writable =>
+        p.register(&self.6, MioToken(t), MioReady::writable(), PollOpt::edge())?,
+    }
     Ok(true)
   }
-  fn reregister(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
-    p.reregister(&self.6,t,r,po)?;
+  fn reregister(&self, p : &MioPoll, t : Token, r : Ready) -> Result<bool> {
+    match r {
+      Ready::Readable =>
+        p.reregister(&self.6, MioToken(t), MioReady::readable(), PollOpt::edge())?,
+      Ready::Writable =>
+        p.reregister(&self.6, MioToken(t), MioReady::writable(), PollOpt::edge())?,
+    }
     Ok(true)
   }
- fn deregister(&self, p : &Poll) -> Result<()> {
+  fn deregister(&self, p : &MioPoll) -> Result<()> {
     p.deregister(&self.6)?;
     Ok(())
   }
 
 }
-impl Registerable for AsynchLocalWriteStream {
-  fn register(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
-    p.register(&self.6,t,r,po)?;
+impl Registerable<MioPoll> for AsynchLocalWriteStream {
+  fn register(&self, p : &MioPoll, t : Token, r : Ready) -> Result<bool> {
+    match r {
+      Ready::Readable =>
+        p.register(&self.6, MioToken(t), MioReady::readable(), PollOpt::edge())?,
+      Ready::Writable =>
+        p.register(&self.6, MioToken(t), MioReady::writable(), PollOpt::edge())?,
+    }
     Ok(true)
   }
-  fn reregister(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
-    p.reregister(&self.6,t,r,po)?;
+  fn reregister(&self, p : &MioPoll, t : Token, r : Ready) -> Result<bool> {
+    match r {
+      Ready::Readable =>
+        p.reregister(&self.6, MioToken(t), MioReady::readable(), PollOpt::edge())?,
+      Ready::Writable =>
+        p.reregister(&self.6, MioToken(t), MioReady::writable(), PollOpt::edge())?,
+    }
     Ok(true)
   }
- fn deregister(&self, p : &Poll) -> Result<()> {
+  fn deregister(&self, p : &MioPoll) -> Result<()> {
     p.deregister(&self.6)?;
     Ok(())
   }
-
 
 }
 
@@ -319,11 +348,11 @@ impl Write for AsynchLocalWriteStream {
       if now >= self.4 {
         self.4 = now + self.2;
         let r = self.0.write(buf);
-        trigger_registration(self.4, (self.5).0.clone(), Ready::writable());
+        trigger_registration(self.4, (self.5).0.clone(), MioReady::writable());
         if self.3 > self.2 {
-          trigger_registration(now + self.3 - self.2, (self.5).1.clone(), Ready::readable());
+          trigger_registration(now + self.3 - self.2, (self.5).1.clone(), MioReady::readable());
         } else {
-          (self.5).1.set_readiness(Ready::readable()).unwrap();
+          (self.5).1.set_readiness(MioReady::readable()).unwrap();
         }
         r
       } else {
@@ -341,30 +370,41 @@ impl Write for AsynchLocalWriteStream {
 
 pub struct LocalWriteStream(usize,usize,usize,Sender<(usize,usize,usize,Arc<Vec<u8>>)>,bool);
 
-impl Registerable for TransportTest {
+impl<PO> Registerable<PO> for TransportTest {
   /// TODO mio transport test (use registration)
-  fn register(&self, _ : &Poll, _: Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+  fn register(&self, _ : &PO, _: Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
-  fn reregister(&self, _ : &Poll, _: Token, _ : Ready, _ : PollOpt) -> Result<bool> {
+  fn reregister(&self, _ : &PO, _: Token, _ : Ready) -> Result<bool> {
     Ok(false)
   }
- fn deregister(&self, _ : &Poll) -> Result<()> {
+ fn deregister(&self, _ : &PO) -> Result<()> {
     Ok(())
   }
 
 
 }
-impl Registerable for AsynchTransportTest {
-  fn register(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
-    p.register(&self.6,t,r,po)?;
+impl Registerable<MioPoll> for AsynchTransportTest {
+
+  fn register(&self, p : &MioPoll, t : Token, r : Ready) -> Result<bool> {
+    match r {
+      Ready::Readable =>
+        p.register(&self.6, MioToken(t), MioReady::readable(), PollOpt::edge())?,
+      Ready::Writable =>
+        p.register(&self.6, MioToken(t), MioReady::writable(), PollOpt::edge())?,
+    }
     Ok(true)
   }
-  fn reregister(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
-    p.reregister(&self.6,t,r,po)?;
+  fn reregister(&self, p : &MioPoll, t : Token, r : Ready) -> Result<bool> {
+    match r {
+      Ready::Readable =>
+        p.reregister(&self.6, MioToken(t), MioReady::readable(), PollOpt::edge())?,
+      Ready::Writable =>
+        p.reregister(&self.6, MioToken(t), MioReady::writable(), PollOpt::edge())?,
+    }
     Ok(true)
   }
-  fn deregister(&self, p : &Poll) -> Result<()> {
+  fn deregister(&self, p : &MioPoll) -> Result<()> {
     p.deregister(&self.6)?;
     Ok(())
   }
@@ -372,7 +412,7 @@ impl Registerable for AsynchTransportTest {
 }
 
 /// default dospawn impl : it is a managed transport.
-impl Transport for TransportTest {
+impl<PO> Transport<PO> for TransportTest {
   /// chanel from transport receiving (loop on connection)
   type ReadStream = LocalReadStream;
   /// chanel to other transport
@@ -479,7 +519,7 @@ impl Transport for TransportTest {
 }
 
 // costy, should switch to cpupool futures?
-fn trigger_registration(t : Instant, sr : SetReadiness, r : Ready) {
+fn trigger_registration(t : Instant, sr : SetReadiness, r : MioReady) {
   thread::spawn(move || {
     while Instant::now() < t {
       // costy
@@ -488,14 +528,14 @@ fn trigger_registration(t : Instant, sr : SetReadiness, r : Ready) {
   });
 }
 
-impl Transport for AsynchTransportTest {
+impl Transport<MioPoll> for AsynchTransportTest {
   type ReadStream = AsynchLocalReadStream;
   type WriteStream = AsynchLocalWriteStream;
   type Address = LocalAdd;
 
 
   fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>)> {
-    let (_rs,_ows) = self.0.accept()?;
+//    let (_rs,_ows) = self.0.accept()?;
     panic!("No address any more from inner type : use fonction, but anyway need redesign cf errors in testing");
 /*    let rregistration = self.5.get_rregistration(ad.0,self.0.address);
     let oalws = match ows {
@@ -519,7 +559,7 @@ impl Transport for AsynchTransportTest {
   }
 
   fn connectwith(&self, address : &Self::Address) -> IoResult<(Self::WriteStream, Option<Self::ReadStream>)> {
-    let (ws,ors) = self.0.connectwith(address)?;
+    let (ws,ors) = <Transport<MioPoll,ReadStream = _,WriteStream = _, Address = _>>::connectwith(&self.0,address)?;
     let con_time = Instant::now() + self.1;
     let wregistration = self.5.get_wregistration(self.0.address,address.0);
     let oalrs = match ors {
@@ -530,11 +570,11 @@ impl Transport for AsynchTransportTest {
       None => None,
     };
     // connection handler
-    trigger_registration(con_time, self.5.get_lis_setready(address.0).clone(), Ready::readable());
+    trigger_registration(con_time, self.5.get_lis_setready(address.0).clone(), MioReady::readable());
     // connection our write 
-    trigger_registration(con_time, self.5.get_wsetready(self.0.address,address.0).clone(), Ready::writable());
+    trigger_registration(con_time, self.5.get_wsetready(self.0.address,address.0).clone(), MioReady::writable());
     // connection our read 
-    trigger_registration(con_time, self.5.get_rsetready(address.0,self.0.address).clone(), Ready::readable());
+    trigger_registration(con_time, self.5.get_rsetready(address.0,self.0.address).clone(), MioReady::readable());
     Ok((
         AsynchLocalWriteStream(ws,self.1,self.2,self.3, con_time, (self.5.get_wsetready(self.0.address,address.0).clone(),self.5.get_rsetready(self.0.address,address.0).clone()), wregistration),
         oalrs))

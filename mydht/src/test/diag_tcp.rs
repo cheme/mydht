@@ -43,8 +43,7 @@ use transport::{
 use std::net::{SocketAddrV4,Ipv4Addr};
 #[cfg(test)]
 use mydht_basetest::transport::connect_rw_with_optional;
-use time::Duration;
-use std::time::Duration as StdDuration;
+use std::time::Duration;
 use super::{
   initpeers2,
   DHTRULES_DEFAULT,
@@ -59,7 +58,6 @@ use node::Node;
 use peer::test::TestingRules;
 use query::{QueryMode};
 use rules::simplerules::SimpleRules;
-use num::traits::ToPrimitive;
 
 
 
@@ -70,10 +68,10 @@ fn initpeers_tcp2 (start_port : u16, nbpeer : usize, map : &[&[usize]], meths : 
   let mut transports = Vec::new();
 
   for i in 0 .. nbpeer {
-    let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), start_port + i.to_u16().unwrap());
+    let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), start_port + i as u16);
     let tcp_transport = Tcp::new(
       &addr,
-      Duration::seconds(5), // timeout
+      Duration::from_secs(5), // timeout
     //  Duration::seconds(5), // conn timeout
       true,//mult
     ).unwrap();
@@ -91,8 +89,8 @@ fn connect_rw () {
 
   let a1 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port));
   let a2 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
-  let tcp_transport_1 : Tcp = Tcp::new (&a1, Duration::seconds(5), true).unwrap();
-  let tcp_transport_2 : Tcp = Tcp::new (&a2, Duration::seconds(5), true).unwrap();
+  let tcp_transport_1 : Tcp = Tcp::new (&a1, Duration::from_secs(5), true).unwrap();
+  let tcp_transport_2 : Tcp = Tcp::new (&a2, Duration::from_secs(5), true).unwrap();
 
   connect_rw_with_optional(tcp_transport_1,tcp_transport_2,&a1,&a2,true,false);
 }
@@ -152,7 +150,7 @@ fn connect_rw_upnp () {
 
   let a1 = SerSocketAddr(utils::sa4(local_ip.clone(), start_port));
   let a2 = SerSocketAddr(utils::sa4(local_ip.clone(), start_port+1));
-  let gateway = igd::search_gateway_timeout(StdDuration::from_secs(5)).unwrap();
+  let gateway = igd::search_gateway_timeout(Duration::from_secs(5)).unwrap();
   let pub_ip = gateway.get_external_ip().unwrap();
   if let Some(a) = ip_addr_for_gateway(gateway.addr.ip()) {
     local_ip = a;
@@ -162,8 +160,8 @@ fn connect_rw_upnp () {
 
   let d1 = SerSocketAddr(utils::sa4(pub_ip.clone(), pub_port1));
   let d2 = SerSocketAddr(utils::sa4(pub_ip.clone(), pub_port2));
-  let tcp_transport_1 : Tcp = Tcp::new (&a1, Duration::seconds(5), true).unwrap();
-  let tcp_transport_2 : Tcp = Tcp::new (&a2, Duration::seconds(5), true).unwrap();
+  let tcp_transport_1 : Tcp = Tcp::new (&a1, Duration::from_secs(5), true).unwrap();
+  let tcp_transport_2 : Tcp = Tcp::new (&a2, Duration::from_secs(5), true).unwrap();
 
   connect_rw_with_optional(tcp_transport_1,tcp_transport_2,&d1,&d2,true,false);
 }
@@ -176,8 +174,8 @@ fn connect_rw_dup () {
 
   let a1 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port));
   let a2 = SerSocketAddr(utils::sa4(Ipv4Addr::new(127,0,0,1), start_port+1));
-  let tcp_transport_1 : Tcp = Tcp::new (&a1, Duration::seconds(5), false).unwrap();
-  let tcp_transport_2 : Tcp = Tcp::new (&a2, Duration::seconds(5), false).unwrap();
+  let tcp_transport_1 : Tcp = Tcp::new (&a1, Duration::from_secs(5), false).unwrap();
+  let tcp_transport_2 : Tcp = Tcp::new (&a2, Duration::from_secs(5), false).unwrap();
 
   connect_rw_with_optional(tcp_transport_1,tcp_transport_2,&a1,&a2,false,false);
 }
@@ -185,7 +183,7 @@ fn connect_rw_dup () {
 #[test]
 fn testpeer4hopget () {
     let n = 6;
-    let nbport = n.to_u16().unwrap();
+    let nbport = n as u16;
     let map : &[&[usize]] = &[&[2],&[3],&[4],&[5],&[6],&[]];
     let mut startport = 46450;
     // prio 2 with rules multiplying by 3 give 6 hops

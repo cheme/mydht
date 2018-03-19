@@ -15,10 +15,12 @@
 //! For peer reader, it would be its stream.
 //!
 
+#[cfg(feature="with-coroutine")]
 extern crate coroutine;
 extern crate parking_lot;
 extern crate futures_cpupool;
 extern crate futures;
+#[cfg(feature="mio-transport")]
 extern crate mio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use utils::{
@@ -26,16 +28,21 @@ use utils::{
   SRef,
   SToRef,
 };
+#[cfg(feature="mio-transport")]
 use self::mio::{
   Registration,
   SetReadiness,
-  Poll,
-  Token,
-  Ready,
+  Evented,
+  Poll as MioPoll,
+  Token as MioToken,
+  Ready as MioReady,
   PollOpt,
 };
 use transport::{
   Registerable,
+  TriggerReady,
+  Token,
+  Ready,
 };
 use std::sync::mpsc::{
   Receiver as MpscReceiver,
@@ -49,7 +56,9 @@ use self::futures::Async;
 use self::futures::Future;
 use self::futures::future::ok as okfuture;
 use self::futures::future::err as errfuture;
+#[cfg(feature="with-coroutine")]
 use self::coroutine::Error as CoroutError;
+#[cfg(feature="with-coroutine")]
 use self::coroutine::asymmetric::{
   Handle as CoRHandle,
   Coroutine as CoroutineC,
@@ -303,11 +312,12 @@ pub trait SpawnRecv<Command> : Sized {
 }
 
 /// mio registrable channel receiver
-pub struct MioRecv<R> {
-  mpsc : R,
-  reg : Registration,
+pub struct MioRecv<R,H> {
+  pub mpsc : R,
+  pub reg : H,
 }
-impl<C,R : SpawnRecv<C>> SpawnRecv<C> for MioRecv<R> {
+
+impl<C,R : SpawnRecv<C>,H> SpawnRecv<C> for MioRecv<R,H> {
   fn recv(&mut self) -> Result<Option<C>> {
     self.mpsc.recv()
   }
@@ -325,31 +335,68 @@ impl<C> SpawnRecv<C> for MpscReceiver<C> {
   }
 }
 
-impl<R> Registerable for MioRecv<R> {
-  fn register(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
-    p.register(&self.reg,t,r,po)?;
+#[cfg(feature="mio-transport")]
+#[derive(Clone)]
+pub struct MioEvented<H>(pub H);
+#[cfg(feature="mio-transport")]
+impl<H : Evented> Registerable<MioPoll> for MioEvented<H> {
+  fn register(&self, p : &MioPoll, t : Token, r : Ready) -> Result<bool> {
+    match r {
+      Ready::Readable =>
+        p.register(&self.0, MioToken(t), MioReady::readable(), PollOpt::edge())?,
+      Ready::Writable =>
+        p.register(&self.0, MioToken(t), MioReady::writable(), PollOpt::edge())?,
+    }
     Ok(true)
   }
-  fn reregister(&self, p : &Poll, t : Token, r : Ready, po : PollOpt) -> Result<bool> {
-    p.reregister(&self.reg,t,r,po)?;
+  fn reregister(&self, p : &MioPoll, t : Token, r : Ready) -> Result<bool> {
+    match r {
+      Ready::Readable =>
+        p.reregister(&self.0, MioToken(t), MioReady::readable(), PollOpt::edge())?,
+      Ready::Writable =>
+        p.reregister(&self.0, MioToken(t), MioReady::writable(), PollOpt::edge())?,
+    }
     Ok(true)
   }
-  fn deregister(&self, poll: &Poll) -> Result<()> {
-    poll.deregister(&self.reg)?;
+  fn deregister(&self, poll: &MioPoll) -> Result<()> {
+    poll.deregister(&self.0)?;
     Ok(())
   }
 }
+
+impl<PO,R,H : Registerable<PO>> Registerable<PO> for MioRecv<R,H> {
+  fn register(&self, p : &PO, t : Token, r : Ready) -> Result<bool> {
+    self.reg.register(p,t,r)
+  }
+  fn reregister(&self, p : &PO, t : Token, r : Ready) -> Result<bool> {
+    self.reg.reregister(p,t,r)
+  }
+  fn deregister(&self, p : &PO) -> Result<()> {
+    self.reg.deregister(p)
+  }
+}
+
 /// mio registerable channel sender
 #[derive(Clone)]
-pub struct MioSend<S> {
-  mpsc : S,
-  set_ready : SetReadiness,
+pub struct MioSend<S,T> {
+  pub mpsc : S,
+  pub set_ready : T,
 }
-impl<C,S : SpawnSend<C>> SpawnSend<C> for MioSend<S> {
+impl<C,S : SpawnSend<C>, T : TriggerReady> SpawnSend<C> for MioSend<S,T> {
   const CAN_SEND : bool = <S as SpawnSend<C>>::CAN_SEND;
   fn send(&mut self, t : C) -> Result<()> {
     self.mpsc.send(t)?;
-    self.set_ready.set_readiness(Ready::readable())?;
+    self.set_ready.set_readiness(Ready::Readable)?;
+    Ok(())
+  }
+}
+#[cfg(feature="mio-transport")]
+impl TriggerReady for SetReadiness {
+  fn set_readiness(&self, ready: Ready) -> Result<()> {
+    match ready {
+      Ready::Readable => SetReadiness::set_readiness(&self, MioReady::readable())?,
+      Ready::Writable => SetReadiness::set_readiness(&self, MioReady::writable())?,
+    }
     Ok(())
   }
 }
@@ -522,16 +569,18 @@ impl<C : Send> SpawnChannel<C> for MpscChannel {
   }
 }
 
+#[cfg(feature="mio-transport")]
 /// channel register on mio poll in service (service constrains Registrable on 
 /// This allows running mio loop as service, note that the mio loop is reading this channel, not
 /// the spawner loop (it can for commands like stop or restart yet it is not the current usecase
 /// (no need for service yield right now).
 pub struct MioChannel<CH>(pub CH);
 
+#[cfg(feature="mio-transport")]
 impl<C,CH : SpawnChannel<C>> SpawnChannel<C> for MioChannel<CH> {
-  type WeakSend = MioSend<CH::WeakSend>;
-  type Send = MioSend<CH::Send>;
-  type Recv = MioRecv<CH::Recv>;
+  type WeakSend = MioSend<CH::WeakSend,SetReadiness>;
+  type Send = MioSend<CH::Send,SetReadiness>;
+  type Recv = MioRecv<CH::Recv,Registration>;
   fn new(&mut self) -> Result<(Self::Send,Self::Recv)> {
     let (s,r) = self.0.new()?;
     let (reg,sr) = Registration::new2();
@@ -1020,11 +1069,13 @@ impl<S : Service + ServiceRestartable, D : SpawnSend<<S as Service>::CommandOut>
   }
 }
 
+#[cfg(feature="with-coroutine")]
 /// TODO move in its own crate or under feature in mydht : coroutine dependency in mydht-base is
 /// bad
 pub struct Coroutine;
 /// common send/recv for coroutine local usage (not Send, but clone)
 pub type LocalRc<C> = Rc<RefCell<VecDeque<C>>>;
+#[cfg(feature="with-coroutine")]
 /// not type alias as will move from this crate
 pub struct CoroutHandle<S,D,R>(Rc<RefCell<Option<(S,D,R,Result<()>)>>>,CoRHandle);
 //pub struct CoroutYield<'a>(&'a mut CoroutineC);
@@ -1051,6 +1102,7 @@ impl<'a,A : SpawnerYield> SpawnerYield for &'a mut A {
 }
 
 
+#[cfg(feature="with-coroutine")]
 impl SpawnerYield for CoroutineC {
   #[inline]
   fn spawn_yield(&mut self) -> YieldReturn {
@@ -1064,6 +1116,7 @@ impl SpawnerYield for CoroutineC {
 
 }
 
+#[cfg(feature="with-coroutine")]
 impl<S,D,R> SpawnUnyield for CoroutHandle<S,D,R> {
   #[inline]
   fn is_finished(&mut self) -> bool {
@@ -1080,6 +1133,7 @@ impl<S,D,R> SpawnUnyield for CoroutHandle<S,D,R> {
     Ok(())
   }
 }
+#[cfg(feature="with-coroutine")]
 impl<S,D,R> SpawnHandle<S,D,R> for CoroutHandle<S,D,R> {
   #[inline]
   fn unwrap_state(self) -> Result<(S,D,R,Result<()>)> {
@@ -1090,6 +1144,7 @@ impl<S,D,R> SpawnHandle<S,D,R> for CoroutHandle<S,D,R> {
   }
 }
 
+#[cfg(feature="with-coroutine")]
 impl<S,D,R> SpawnWeakUnyield for CoroutHandle<S,D,R> {
   type WeakUnyield = NoWeakUnyield;
   #[inline]
@@ -1125,6 +1180,7 @@ impl<C> SpawnRecv<C> for LocalRc<C> {
 }
 
 
+#[cfg(feature="with-coroutine")]
 impl<S : 'static + Service, D : 'static + SpawnSend<<S as Service>::CommandOut>,R : 'static + SpawnRecv<S::CommandIn>> 
   Spawner<S,D,R> for Coroutine {
   type Handle = CoroutHandle<S,D,R>;

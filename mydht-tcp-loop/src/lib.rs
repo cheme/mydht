@@ -2,8 +2,6 @@
 #[macro_use] extern crate log;
 extern crate byteorder;
 extern crate mydht_base;
-extern crate time;
-extern crate num;
 extern crate vec_map;
 extern crate mio;
 #[cfg(test)]
@@ -24,15 +22,17 @@ use std::time::Duration as StdDuration;
 use mydht_base::transport::{
   Transport,
   Registerable,
+  Token,
+  Ready,
 };
 use std::net::SocketAddr;
 //use self::mio::tcp::TcpSocket;
 use self::mio::net::TcpListener;
 use self::mio::net::TcpStream;
 //use self::mio::tcp;
-use self::mio::Token;
+use self::mio::Token as MioToken;
 use self::mio::Poll;
-use self::mio::Ready;
+use self::mio::Ready as MioReady;
 use self::mio::PollOpt;
 //use super::Attachment;
 //use std::sync::Mutex;
@@ -41,7 +41,9 @@ use self::mio::PollOpt;
 //use std::sync::PoisonError;
 //use std::os::unix::io::AsRawFd;
 //use std::os::unix::io::FromRawFd;
-use mydht_base::transport::{SerSocketAddr};
+use mydht_base::transport::{
+  SerSocketAddr
+};
 
 #[cfg(test)]
 use mydht_basetest::transport::{
@@ -84,7 +86,7 @@ impl Tcp {
 }
 
 
-impl Transport for Tcp {
+impl Transport<Poll> for Tcp {
   type ReadStream = TcpStream;
   type WriteStream = TcpStream;
   type Address = SerSocketAddr;
@@ -125,13 +127,26 @@ impl Transport for Tcp {
 
 }
 
-impl Registerable for Tcp {
-  fn register(&self, poll : &Poll, token: Token, interest: Ready, opts: PollOpt) -> Result<bool> {
-    poll.register(&self.listener,token,interest,opts)?;
+impl Registerable<Poll> for Tcp {
+  fn register(&self, poll : &Poll, token: Token, interest: Ready) -> Result<bool> {
+
+    match interest {
+      Ready::Readable =>
+        poll.register(&self.listener, MioToken(token), MioReady::readable(), PollOpt::edge())?,
+      Ready::Writable =>
+        poll.register(&self.listener, MioToken(token), MioReady::writable(), PollOpt::edge())?,
+    }
+
     Ok(true)
   }
-  fn reregister(&self, poll : &Poll, token: Token, interest: Ready, opts: PollOpt) -> Result<bool> {
-    poll.reregister(&self.listener,token,interest,opts)?;
+  fn reregister(&self, poll : &Poll, token: Token, interest: Ready) -> Result<bool> {
+    match interest {
+      Ready::Readable =>
+        poll.reregister(&self.listener, MioToken(token), MioReady::readable(), PollOpt::edge())?,
+      Ready::Writable =>
+        poll.reregister(&self.listener, MioToken(token), MioReady::writable(), PollOpt::edge())?,
+    }
+
     Ok(true)
   }
   fn deregister(&self, poll : &Poll) -> Result<()> {
