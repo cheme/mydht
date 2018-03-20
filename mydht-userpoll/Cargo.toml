@@ -1,0 +1,10 @@
+[package]
+name = "mydht-userpoll"
+version = "0.1.0"
+authors = ["cheme <emericchevalier.pro@gmail.com>"]
+
+
+[dependencies.mydht-base]
+path = "../mydht-base/"
+default-features = false
+
