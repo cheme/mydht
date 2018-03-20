@@ -42,6 +42,9 @@ pub enum SynchConnListenerCommandOut<PO,T : Transport<PO>> {
 }
 pub struct SynchConnListenerCommandDest<MC : MyDHTConf>(pub MainLoopSendIn<MC>);
 pub struct SynchConnListener<PO,T> (pub Arc<T>,pub PhantomData<PO>);
+// force send until we putt Poll into an inner type of transport
+// (currently expose for non polled transport (ability to implement trait for any type)
+unsafe impl<PO,T> Send for SynchConnListener<PO,T> where T : Send {}
 impl<PO, T : Transport<PO>> Service for SynchConnListener<PO,T> {
   type CommandIn = SynchConnListenerCommandIn;
   type CommandOut = SynchConnListenerCommandOut<PO,T>;
@@ -84,7 +87,8 @@ pub enum SynchConnectCommandOut<PO,T : Transport<PO>> {
 }
 pub struct SynchConnectDest<MC : MyDHTConf>(pub MainLoopSendIn<MC>);
 pub struct SynchConnect<PO,T> (pub Arc<T>,pub PhantomData<PO>);
-
+// same thing as for SynchConnListener
+unsafe impl<PO,T> Send for SynchConnect<PO,T> where T : Send {}
 impl<PO,T : Transport<PO>> Service for SynchConnect<PO,T> {
   type CommandIn = SynchConnectCommandIn<PO,T>;
   type CommandOut = SynchConnectCommandOut<PO,T>;

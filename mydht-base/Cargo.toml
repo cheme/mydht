@@ -6,7 +6,8 @@ authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
 
 [features]
-default = ["with-extra-test"]
+default = ["with-extra-test","blocking-transport","with-coroutine","mio-transport"]
+#default = ["with-extra-test"]
 with-extra-test = []
 blocking-transport = []
 with-coroutine = ["coroutine"]

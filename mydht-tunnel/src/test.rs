@@ -1,6 +1,13 @@
 extern crate mydht_tcp_loop;
 extern crate sized_windows_lim;
 extern crate mydht_basetest;
+extern crate mio;
+
+use self::mio::{
+  Poll as MioPoll,
+  SetReadiness,
+  Registration,
+};
 use tunnel::info::error::{
   MultipleErrorInfo,
   MultipleErrorMode,
@@ -28,6 +35,8 @@ use self::mydht_basetest::shadow::{
 };
 use mydht::transportif::{
   Transport,
+  SerSocketAddr,
+  MioEvents,
 };
 
 use super::{
@@ -88,7 +97,6 @@ use mydht::utils::{
   new_oneresult,
   replace_wait_one_result,
   sa4,
-  SerSocketAddr,
 };
 use mydht::dhtimpl::{
   SimpleRules,
@@ -103,6 +111,7 @@ use mydht::dhtif::{
 };
 use mydht::service::{
   Service,
+  MioEvented,
   SpawnerYield,
   SpawnSend,
 };
@@ -344,6 +353,12 @@ impl MyDHTTunnelConf for TunnelConf {
   const INIT_ROUTE_LENGTH : usize = 0;
   /// when testing value should be change
   const INIT_ROUTE_BIAS : usize = 0;
+
+  type Events = MioEvents;
+  type Poll = MioPoll;
+  type PollTReady = SetReadiness;
+  type PollReg = MioEvented<Registration>;
+ 
   type PeerKey = <Self::Peer as KeyVal>::Key;
   type Peer = Node;
   type PeerRef = ArcRef<Node>;
@@ -372,8 +387,21 @@ impl MyDHTTunnelConf for TunnelConf {
 
   type CacheSSW = HashMap<Vec<u8>,SSWCache<Self>>;
   type CacheSSR = HashMap<Vec<u8>,SSRCache<Self>>;
-  type CacheErW = HashMap<Vec<u8>,(ErrorWriter,<Self::Transport as Transport>::Address)>;
+  type CacheErW = HashMap<Vec<u8>,(ErrorWriter,<Self::Transport as Transport<Self::Poll>>::Address)>;
   type CacheErR = HashMap<Vec<u8>,Vec<MultipleErrorInfo>>;
+
+
+  fn init_poll(&mut self) -> Result<Self::Poll> {
+    Ok(MioPoll::new()?)
+  }
+
+  fn poll_reg() -> Result<(Self::PollTReady,Self::PollReg)> {
+    let (reg,sr) = Registration::new2();
+    Ok((sr,MioEvented(reg)))
+  }
+
+
+
 // peer name, listener port, is_multiplexed, node in kvstore, and dest for query
 //pub struct TunnelConf(pub String, pub SerSocketAddr, pub bool, pub Vec<Node>, pub Node);
   fn init_ref_peer(&mut self) -> Result<Self::PeerRef> {

@@ -239,7 +239,21 @@ pub mod kvstoreif{
   pub use mydht_base::kvstore::{KVStore, KVStoreRel};
 }
 pub mod transportif{
-  pub use transport::{Transport,TransportStream,Address};
+  pub use mydht_base::transport::SerSocketAddr;
+  pub use transport::{
+    Transport,
+    TransportStream,
+    Address,
+    Registerable,
+    TriggerReady,
+    Poll,
+    Events,
+    Event,
+  };
+  #[cfg(feature="mio-transport")]
+  pub use transport::{
+    MioEvents,
+  };
 }
 pub mod msgencif{
   pub use msgenc::{MsgEnc};

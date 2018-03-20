@@ -115,6 +115,11 @@ use mydht::utils::{
 use mydht::transportif::{
   Transport,
   Address,
+  Registerable,
+  TriggerReady,
+  Poll,
+  Events,
+  Event,
 };
 use mydht::{
   MyDHTConf,
@@ -176,7 +181,7 @@ use mydht::service::{
 
   Blocker,
   RestartOrError,
-  Coroutine,
+  //Coroutine,
  // RestartSameThread,
  // ThreadBlock,
   ThreadPark,
@@ -255,11 +260,18 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
   const TUN_CACHE_KEY_LENGTH : usize = 128;
   const INIT_ROUTE_LENGTH : usize;
   const INIT_ROUTE_BIAS : usize;
+
+  type Events : Events;
+  type Poll : Poll<Events = Self::Events>;
+  type PollTReady : TriggerReady; 
+  type PollReg : Registerable<Self::Poll> + Send;
+
+
   type TransportAddress : Address + Hash;
-  type Transport : Transport<Address = Self::TransportAddress>;
+  type Transport : Transport<Self::Poll, Address = Self::TransportAddress>;
   // constraint for hash type
   type PeerKey : Hash + Serialize + DeserializeOwned + Debug + Eq + Clone + 'static + Send + Sync;
-  type Peer : Peer<Key = Self::PeerKey,Address = <Self::Transport as Transport>::Address>;
+  type Peer : Peer<Key = Self::PeerKey,Address = <Self::Transport as Transport<Self::Poll>>::Address>;
   type PeerRef : Ref<Self::Peer> + Serialize + DeserializeOwned + Clone + Debug
     // This send trait should be remove if spawner moved to this level
     + Send;
@@ -323,6 +335,9 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
 
   //type GenTunnelTraits : GenTunnelTraits + Send;
 
+  fn init_poll(&mut self) -> Result<Self::Poll>;
+  fn poll_reg() -> Result<(Self::PollTReady,Self::PollReg)>;
+
   fn init_ref_peer(&mut self) -> Result<Self::PeerRef>;
   fn init_transport(&mut self) -> Result<Self::Transport>;
   fn init_inner_service(Self::InnerServiceProto, Self::PeerRef) -> Result<Self::InnerService>;
@@ -358,7 +373,7 @@ pub struct MyDHTTunnel<MC : MyDHTTunnelConf> {
 /// TODO this is overdoing it (plus having the readstream could be confusing : reading for it
 /// before mainloop switch state would block the service reading) : borrow could simply reference read service token and mainloop
 /// handle it before proxying to write
-type ReadBorrowStream<MC : MyDHTTunnelConf> = (<MC::Transport as Transport>::ReadStream,<MC::Peer as Peer>::ShadowRMsg,usize);
+type ReadBorrowStream<MC : MyDHTTunnelConf> = (<MC::Transport as Transport<MC::Poll>>::ReadStream,<MC::Peer as Peer>::ShadowRMsg,usize);
 
 pub enum ReadMsgState<MC : MyDHTTunnelConf> {
   /// no reply : simply use in service and drop service reply
@@ -845,7 +860,7 @@ pub enum LocalTunnelCommand<MC : MyDHTTunnelConf> {
 
 impl<MC : MyDHTTunnelConf> RegReaderBorrow<MyDHTTunnelConfType<MC>> for GlobalTunnelCommand<MC> {
 
-  fn get_read(&self) -> Option<&<MC::Transport as Transport>::ReadStream> {
+  fn get_read(&self) -> Option<&<MC::Transport as Transport<MC::Poll>>::ReadStream> {
     match *self {
       GlobalTunnelCommand::TunnelReplyOnce(_,_,_,_,(ref rs,_,_)) |
       GlobalTunnelCommand::TunnelProxyOnce(_,(ref rs,_,_)) => Some(rs),
@@ -878,7 +893,7 @@ impl<MC : MyDHTTunnelConf> ReaderBorrowable<MyDHTTunnelConfType<MC>> for LocalTu
     }
   }
   #[inline]
-  fn put_read(&mut self, read : <MC::Transport as Transport>::ReadStream, shad : <MC::Peer as Peer>::ShadowRMsg, token : usize, wr : &mut TunnelWriterReader<MC>) {
+  fn put_read(&mut self, read : <MC::Transport as Transport<MC::Poll>>::ReadStream, shad : <MC::Peer as Peer>::ShadowRMsg, token : usize, wr : &mut TunnelWriterReader<MC>) {
     match *self {
       LocalTunnelCommand::Inner(..) => (),
       LocalTunnelCommand::LocalFromRead(_,ReadMsgState::NoReply) => (),
@@ -903,7 +918,7 @@ pub enum LocalTunnelReply<MC : MyDHTTunnelConf> {
 // TODO  DestFromReader(MC::InnerCommand),
 }
 
-pub type MovableRead<MC : MyDHTTunnelConf> = (<MC::Transport as Transport>::ReadStream, <MC::Peer as Peer>::ShadowRMsg);
+pub type MovableRead<MC : MyDHTTunnelConf> = (<MC::Transport as Transport<MC::Poll>>::ReadStream, <MC::Peer as Peer>::ShadowRMsg);
 pub enum GlobalTunnelCommand<MC : MyDHTTunnelConf> {
   Inner(MC::InnerCommand),
   NewOnline(MC::PeerRef),
@@ -1244,6 +1259,12 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
   type MainLoopChannelIn = MpscChannel;
   type MainLoopChannelOut = MpscChannel;
 
+  type Events = MC::Events;
+  type Poll = MC::Poll;
+  type PollTReady = MC::PollTReady;
+  type PollReg = MC::PollReg;
+ 
+
   type Transport = <MC as MyDHTTunnelConf>::Transport;
   type ProtoMsg = TunnelMessaging<MC>;
   type MsgEnc = TunnelWriterReader<MC>;
@@ -1295,6 +1316,15 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
   const NB_SYNCH_CONNECT : usize = 0;
   type SynchConnectChannelIn = NoChannel;
   type SynchConnectSpawn = NoSpawn;
+
+  fn init_poll(&mut self) -> Result<Self::Poll> {
+    self.conf.init_poll()
+  }
+
+
+  fn poll_reg() -> Result<(Self::PollTReady,Self::PollReg)> {
+    MC::poll_reg() 
+  }
 
   fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>> {
     self.conf.init_peer_kvstore()

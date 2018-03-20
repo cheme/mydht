@@ -602,7 +602,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   type Events : Events;
   type Poll : Poll<Events = Self::Events>;
   type PollTReady : TriggerReady; 
-  type PollReg : Registerable<Self::Poll>;
+  type PollReg : Registerable<Self::Poll> + Send;
   /// low level transport
   type Transport : Transport<Self::Poll>;
   /// Message encoding
