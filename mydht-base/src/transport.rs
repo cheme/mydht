@@ -181,7 +181,7 @@ pub trait Registerable<P> {
   fn deregister(&self, poll: &P) -> Result<()>;
 }
 
-pub trait TriggerReady : Clone + Send {
+pub trait TriggerReady : Clone {
   fn set_readiness(&self, ready: Ready) -> Result<()>;
 }
 
