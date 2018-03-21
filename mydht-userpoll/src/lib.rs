@@ -23,6 +23,9 @@ use std::time::Duration;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
+#[cfg(test)]
+mod test;
+
 pub struct UserPoll {
   // rbt (slab allocated) containing fd of file to poll -> using std::collection::BTreeMap probably over fD for now
   items : BTreeMap<FD,UserItem>,
@@ -140,12 +143,19 @@ pub trait UserEventable {
 }
 
 #[derive(Clone)]
-pub struct UserSetReadiness {
+pub struct UserRegistration {
   fd : FD,
   state : Topics,// useless ?
 }
+#[derive(Clone)]
+pub struct UserSetReadiness {
+  // link to userregistration
+}
 
-impl UserEventable for UserSetReadiness {
+fn poll_reg () -> (UserSetReadiness, UserRegistration) {
+  unimplemented!()
+}
+impl UserEventable for UserRegistration {
   #[inline]
   fn put_fd(&mut self, fd : FD) {
     self.fd = fd
@@ -165,9 +175,37 @@ impl UserEventable for UserSetReadiness {
   }
 
 }
+impl Registerable<UserPoll> for UserRegistration {
+  fn register(&self, poll : &UserPoll, t : Token, r : Ready) -> Result<bool> {
+    unimplemented!()
+  }
+  fn reregister(&self, poll : &UserPoll, t : Token, r : Ready) -> Result<bool> {
+    unimplemented!()
+  }
 
+  fn deregister(&self, poll: &UserPoll) -> Result<()> {
+    unimplemented!()
+  }
+
+
+}
+/*impl Registerable<UserPoll> for UserEventable {
+  fn register(&self, poll : &UserPoll, t : Token, r : Ready) -> Result<bool> {
+    unimplemented!()
+  }
+  fn reregister(&self, poll : &UserPoll, t : Token, r : Ready) -> Result<bool> {
+    unimplemented!()
+  }
+
+  fn deregister(&self, poll: &UserPoll) -> Result<()> {
+    unimplemented!()
+  }
+
+}*/
 impl TriggerReady for UserSetReadiness {
   fn set_readiness(&self, ready: Ready) -> Result<()> {
     unimplemented!()
   }
 }
+
+

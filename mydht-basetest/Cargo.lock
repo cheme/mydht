@@ -173,6 +173,7 @@ dependencies = [
  "bincode 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "bit-vec 0.4.1 (git+https://github.com/cheme/bit-vec.git)",
  "byteorder 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "coroutine 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-cpupool 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.9 (registry+https://github.com/rust-lang/crates.io-index)",
