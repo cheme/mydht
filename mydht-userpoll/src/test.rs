@@ -15,7 +15,6 @@ use mydht_base::service::{
   SpawnSend,
   SpawnRecv,
   SpawnUnyield,
-  SpawnHandle,
   LocalRcChannel,
   MioSend,
   MioRecv,
@@ -26,7 +25,6 @@ use mydht_base::mydhtresult::{
 use super::{
   UserPoll,
   UserEvents,
-  UserEventable,
   poll_reg,
 };
 
@@ -41,7 +39,7 @@ fn test_dummy () {
 #[test]
 fn two_services_talking () {
   // user poll
-  let mut poll = UserPoll::new(1);
+  let poll = UserPoll::new(1);
 
   // mesg -> talk1 -> talk2 -> assert in loop
   let mut spawner = RestartOrError;
@@ -75,7 +73,6 @@ fn two_services_talking () {
   assert_eq!(true, bet_r.register(&poll, tok2.clone(),Ready::Readable).unwrap());
 
 
-
   let (out_s, out_r) = LocalRcChannel.new().unwrap();
   let (sr,reg) = poll_reg();
   let out_s = MioSend {
@@ -106,13 +103,13 @@ fn two_services_talking () {
     poll.poll(events, None).unwrap();
     while let Some(event) = events.next() {
       match event.token {
-        tok1 => {
+        t if t == tok1 => {
           handle1.unyield().unwrap();
         },
-        tok2 => {
+        t if t == tok2 => {
           handle2.unyield().unwrap();
         },
-        tokassert => {
+        t if t == tokassert => {
           while let Some(v) = out_r.recv().unwrap() {
             assert_eq!(v, assert_val[assert_state]);
             assert_state += 1;
@@ -120,6 +117,9 @@ fn two_services_talking () {
           if assert_state >= assert_val.len() {
             return;
           }
+        },
+        t => {
+          panic!("unknown token {:?}",t);
         },
       }
     }

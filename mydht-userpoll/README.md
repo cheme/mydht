@@ -7,7 +7,7 @@ mydht-userpoll
 MyDHT compatible simple poll in user space.
 
 To be use to replace mio for synch transport or asynch transport where mio usage is not possible (wasm).
--> edge poll and no threads -> can be seen as a queue
+-> edge poll and no threads -> can be seen as a glue code for specific single threaded case
 
 Build
 -----

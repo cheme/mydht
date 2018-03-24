@@ -1,6 +1,6 @@
 extern crate mydht_base;
 
-
+use std::usize::MAX as MAX_USIZE;
 use mydht_base::transport::{
   Token,
   Ready,
@@ -12,8 +12,6 @@ use mydht_base::transport::{
   
 };
 
-use mydht_base::service::{
-};
 
 use mydht_base::mydhtresult::{
   Result,
@@ -22,37 +20,37 @@ use mydht_base::mydhtresult::{
 };
 
 use std::time::Duration;
-use std::cmp::Ordering;
+//use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 #[cfg(test)]
 mod test;
 
-pub struct UserPoll {
+// we do not want to manage a file descriptor pool so we got unique fd for userpoll to use in
+// constructor. If two userpoll are build upon identic fd, the registration of a registrable will
+// fail
+#[derive(Clone)]
+pub struct UserPoll(Rc<RefCell<UserPollInner>>,FD);
+
+struct UserPollInner {
   // rbt (slab allocated) containing fd of file to poll -> using std::collection::BTreeMap probably over fD for now
-  // TODO change Registerable to use &mut Poll and remove this RefCell!!
   // A nice operation would be add useritem and return first FD available (then init fd in user
   // item)
-  items : RefCell<BTreeMap<FD,UserItem>>,
-  // we do not want to manage a file descriptor pool so we got unique fd for userpoll to use in
-  // constructor. If two userpoll are build upon identic fd, the registration of a registrable will
-  // fail
-  fd : FD,
-  // TODO change if to rem ref cell or if not possible put in items refcell
-  last_new_fd : RefCell<FD>,
+  items : BTreeMap<FD,UserItem>,
+  ev_queue : VecDeque<Event>,
+  last_new_fd : FD,
 }
 
 /// info register in poll for something to poll
-/// TODO compare on fd
 struct UserItem {
-  fd : FD, // TODO remove??
   token : FD,
   // Topics to listen to
   topics : Topics,
 }
-impl Ord for UserItem {
+/*impl Ord for UserItem {
   fn cmp(&self, other: &Self) -> Ordering {
     unimplemented!()
   }
@@ -68,14 +66,17 @@ impl PartialEq<UserItem> for UserItem {
   fn eq(&self, other: &UserItem) -> bool {
     unimplemented!()
   }
-}
+}*/
 impl Poll for UserPoll {
   type Events = UserEvents;
-  fn poll(&self, events: &mut Self::Events, timeout: Option<Duration>) -> Result<usize> {
-    unimplemented!()
+  fn poll(&self, events: &mut Self::Events, _timeout: Option<Duration>) -> Result<usize> {
+    let queue = &mut self.0.borrow_mut().ev_queue;
+    let ql = queue.len();
+    let nb_mov = std::cmp::max(events.size_limit, ql);
+    events.content = queue.split_off(ql - nb_mov);
+    Ok(events.content.len())
   }
 }
-
 impl UserPoll {
   // TODO could use service Yield, but means that we need to unyield accordingly from any call to
   // setreadiness (kind encumber that : mio impl suspend thread which is certainly similar as threadblock service
@@ -83,74 +84,95 @@ impl UserPoll {
   // similar code as threadblock in a wait function that we will pragma with something else for js
   // latter and even latter integrate with the current (mainloop) service yield)
   pub fn new(fd : FD) -> Self {
-    UserPoll {
-      items : RefCell::new(BTreeMap::new()),
-      fd,
-      last_new_fd : RefCell::new(FD_UNDEFINED),
-    }
+    UserPoll(Rc::new(RefCell::new(
+      UserPollInner {
+        items : BTreeMap::new(),
+        ev_queue : VecDeque::new(), // TODO capacity init??
+        last_new_fd : FD_UNDEFINED,
+    })),fd)
   }
   fn ctl_add<E : UserEventable>(&self, e : &E, t : Token, r : Ready) -> Result<()> {
-    let mut xistingfd = e.get_fd(self.fd);
+    let xistingfd = e.get_fd(self.1);
     if xistingfd == FD_UNDEFINED {
       // new fd
       let newfd = self.new_fd(t,r)?;
-      e.put_fd(self.fd, newfd);
+      e.put_fd(self.1, newfd, self);
     } else {
-      self.items.borrow_mut().get_mut(&xistingfd).unwrap().topics.add(r);
+      self.0.borrow_mut().items.get_mut(&xistingfd).unwrap().topics.add(r);
     }
     Ok(())
   }
   fn new_fd(&self, token : Token, r : Ready) -> Result<usize> {
     let mut topics = Topics::empty();
     topics.add(r);
-    let mut new_fd = self.last_new_fd.borrow().clone();
+    let mut new_fd = self.0.borrow().last_new_fd.clone();
     let mut i = 0;
     while {
       new_fd = inc_l(new_fd);
-      i += 1; // panic on full by usize overflow TODO if i == max return full error to avoid optim
-      if i == 10000 {// TODO rep max value
+      i += 1;
+      if i == MAX_USIZE {
         return Err(
           Error("Full poll : reach max fd for this poll".to_string(), ErrorKind::IOError, None))
       }
-      self.items.borrow().get(&new_fd).is_some()
+      self.0.borrow().items.get(&new_fd).is_some()
     } {}
-    *self.last_new_fd.borrow_mut() = new_fd;
+    self.0.borrow_mut().last_new_fd = new_fd;
     let ui = UserItem {
-      fd : new_fd,
       token,
       topics,
     };
 
-    self.items.borrow_mut().insert(new_fd,ui);
+    self.0.borrow_mut().items.insert(new_fd,ui);
     Ok(new_fd)
 
   }
   fn ctl_rem<E : UserEventable>(&self, e : &E) -> Result<()> {
-    let fdp = e.get_fd(self.fd).clone();
-    e.rem_fd(self.fd);
-    self.items.borrow_mut().remove(&fdp);
+    let fdp = e.get_fd(self.1).clone();
+    e.rem_fd(self.1);
+    self.0.borrow_mut().items.remove(&fdp);
     Ok(())
   }
 }
+impl UserPollInner {
+  fn trigger_event(&mut self, fd_eventable : &FD, ready : Ready) -> Result<()> {
+    if let Some(item) = self.items.get(fd_eventable) {
+      // check reg :
+      if item.topics.contains(ready) {
+        self.ev_queue.push_front(Event {
+          kind : ready,
+          token : item.token,
+        })
+      }
+    }
+    Ok(())
+
+  }
+}
+
+
 #[inline]
 fn inc_l(v : usize) -> usize {
-  if v == 10000 { // TODO find usize max when internet conn
+  if v == MAX_USIZE {
     1
   } else {
     v + 1
   }
 }
 pub struct UserEvents {
+  size_limit : usize,
   // pbably array of UserSetReadiness
   // copied from the poll Queue (need lock if multith, here currently monoth)
   // Note that if Ready are multiple on topics (guess not) we could have more events than capacity.
-  content : Vec<Event>,
+  content : VecDeque<Event>,
 }
 
 impl Events for UserEvents {
   fn with_capacity(s : usize) -> Self {
     UserEvents {
-      content : Vec::with_capacity(s)
+      size_limit : s,
+      // no with capacity as its copyied from a split_off (could be optional) 
+      content : VecDeque::new()
+
     }
   }
 }
@@ -158,7 +180,7 @@ impl Events for UserEvents {
 impl Iterator for UserEvents {
   type Item = Event;
   fn next(&mut self) -> Option<Self::Item> {
-    unimplemented!()
+    self.content.pop_back()
   }
 }
 
@@ -172,14 +194,14 @@ pub struct Topics(u8);
 
 impl Topics {
   #[inline]
-  fn add(&mut self,t : Ready) {
+  pub fn add(&mut self,t : Ready) {
     match t {
       Ready::Readable => self.0 |= 1,
       Ready::Writable => self.0 |= 2,
     }
   }
   #[inline]
-  fn contains(&self,t : Ready) -> bool {
+  pub fn contains(&self,t : Ready) -> bool {
     match t {
       Ready::Readable => (self.0 | 1 == self.0),
       Ready::Writable => (self.0 | 2 == self.0),
@@ -187,14 +209,14 @@ impl Topics {
   }
 
   #[inline]
-  fn remove(&mut self, t : Ready) {
+  pub fn remove(&mut self, t : Ready) {
     match t {
       Ready::Readable => self.0 &= !1,
       Ready::Writable => self.0 &= !2,
     }
   }
   #[inline]
-  fn empty() -> Topics {
+  pub fn empty() -> Topics {
     Topics(0)
   }
 }
@@ -223,24 +245,21 @@ fn topics_test () {
 /// Trait to implement in order to join this kind of loop
 pub trait UserEventable {
   /// when joining get the internal descriptor that userpoll gave us
-  fn put_fd(&self, FD, FD);
+  fn put_fd(&self, FD, FD, &UserPoll);
   //fn put_fd(&mut self, FD);
   fn get_fd(&self, FD) -> FD;
   fn rem_fd(&self, FD);
 
-  /// change event state (note that we only look at one event : pragmatic limitation)
-  /// looks like some costy rc cell usage to come (just a get mut to it would be better interface
-  /// if that is the case).
-  fn event(&mut self, e : Ready);
-  fn poll_event(&mut self) -> Topics;
 }
 
 pub type UserRegistration = Rc<RefCell<UserRegistrationInner>>;
 #[derive(Clone)]
 pub struct UserRegistrationInner {
-  // TODO Btree map bad
-  fds : BTreeMap<FD,FD>,
+  // TODO Btree map bad check operation when finish and switch (likely to be generally small)
+  // plus first fd (userpoll fd seems unused
+  fds : BTreeMap<FD,(FD,Rc<RefCell<UserPollInner>>)>,
 }
+// TODO change to single struct
 #[derive(Clone)]
 pub struct UserSetReadiness {
   // link to userregistration
@@ -257,28 +276,21 @@ pub fn poll_reg () -> (UserSetReadiness, UserRegistration) {
 }
 impl UserEventable for UserRegistration {
   #[inline]
-  fn put_fd(&self, fd_poll : FD, fd_self : FD) {
-    self.borrow_mut().fds.insert(fd_poll,fd_self);
+  fn put_fd(&self, fd_poll : FD, fd_self : FD, poll : &UserPoll) {
+    self.borrow_mut().fds.insert(fd_poll,(fd_self,poll.0.clone()));
   }
   #[inline]
   fn get_fd(&self,fd_poll : FD) -> FD {
-    self.borrow().fds.get(&fd_poll).unwrap_or(&FD_UNDEFINED).clone()
+    self.borrow().fds.get(&fd_poll).map(|a|a.0.clone()).unwrap_or(FD_UNDEFINED)
   }
   #[inline]
   fn rem_fd(&self, fd_poll : FD) {
     self.borrow_mut().fds.remove(&fd_poll);
   }
-  #[inline]
-  fn event(&mut self, e : Ready) {
-    unimplemented!()
-  }
-  #[inline]
-  fn poll_event(&mut self) -> Topics {
-    unimplemented!()
-    // TODO put state to init
-  }
 
 }
+
+
 impl Registerable<UserPoll> for UserRegistration {
   fn register(&self, poll : &UserPoll, t : Token, r : Ready) -> Result<bool> {
     poll.ctl_add(self, t, r)?;
@@ -310,9 +322,10 @@ impl Registerable<UserPoll> for UserRegistration {
 }*/
 impl TriggerReady for UserSetReadiness {
   fn set_readiness(&self, ready: Ready) -> Result<()> {
-//    if self.reg.borrow(). TODO iter on registration and post ready to poll : TODO ref to poll to
-//    add on register -> pbbly also some RcRefCell
-    unimplemented!()
+    for (_fd_poll,&(ref fd_self,ref poll_inner)) in self.reg.borrow().fds.iter() {
+      poll_inner.borrow_mut().trigger_event(fd_self,ready)?;
+    }
+    Ok(())
   }
 }
 
