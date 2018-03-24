@@ -41,7 +41,7 @@ fn test_dummy () {
 #[test]
 fn two_services_talking () {
   // user poll
-  let mut poll = UserPoll::new();
+  let mut poll = UserPoll::new(1);
 
   // mesg -> talk1 -> talk2 -> assert in loop
   let mut spawner = RestartOrError;
