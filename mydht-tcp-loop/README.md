@@ -15,8 +15,4 @@ Use [cargo](http://crates.io) tool to build and test.
 Status
 ------
 
-Currently not working, need some testing and real use.
-Coroutine is currently broken (need some redesign).
-
-DO NOT USE
-
+Ok
