@@ -45,18 +45,17 @@ fn two_services_talking () {
   let mut spawner = RestartOrError;
   let (inp_s, inp_r) = LocalRcChannel.new().unwrap();
 
-  let (sr,reg) = poll_reg();
+  let (sr,reg1) = poll_reg();
   let mut inp_s = MioSend {
     mpsc : inp_s,
     set_ready : sr,
   };
   let tok1 = 1;
-  assert_eq!(true, reg.register(&poll, tok1.clone(),Ready::Readable).unwrap());
   // TODO transform miochannel to do this code (create a trait behind poll_reg for it : trait would
   // replace poll_reg fn in mydhtcnof)
   let inp_r = MioRecv {
     mpsc : inp_r,
-    reg : reg,
+    reg : reg1.clone(),
   };
 
   let (bet_s, bet_r) = LocalRcChannel.new().unwrap();
@@ -97,6 +96,9 @@ fn two_services_talking () {
   inp_s.send(2).unwrap();
   inp_s.send(3).unwrap();
  
+  // register after send to check init_state impl
+  assert_eq!(true, reg1.register(&poll, tok1.clone(),Ready::Readable).unwrap());
+
   let mut assert_state = 0;
   let assert_val = [1,2,0];
   loop {

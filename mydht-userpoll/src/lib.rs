@@ -72,7 +72,7 @@ impl Poll for UserPoll {
   fn poll(&self, events: &mut Self::Events, _timeout: Option<Duration>) -> Result<usize> {
     let queue = &mut self.0.borrow_mut().ev_queue;
     let ql = queue.len();
-    let nb_mov = std::cmp::max(events.size_limit, ql);
+    let nb_mov = std::cmp::min(events.size_limit, ql);
     events.content = queue.split_off(ql - nb_mov);
     Ok(events.content.len())
   }
@@ -100,6 +100,7 @@ impl UserPoll {
     } else {
       self.0.borrow_mut().items.get_mut(&xistingfd).unwrap().topics.add(r);
     }
+
     Ok(())
   }
   fn new_fd(&self, token : Token, r : Ready) -> Result<usize> {
@@ -145,7 +146,6 @@ impl UserPollInner {
       }
     }
     Ok(())
-
   }
 }
 
@@ -294,6 +294,9 @@ impl UserEventable for UserRegistration {
 impl Registerable<UserPoll> for UserRegistration {
   fn register(&self, poll : &UserPoll, t : Token, r : Ready) -> Result<bool> {
     poll.ctl_add(self, t, r)?;
+    // set as ready initially
+    let xistingfd = self.get_fd(poll.1);
+    poll.0.borrow_mut().trigger_event(&xistingfd,r)?;
     Ok(true)
   }
   fn reregister(&self, poll : &UserPoll, t : Token, r : Ready) -> Result<bool> {
