@@ -67,8 +67,15 @@ extern {
   /// tell sender to suspend send until ok (asynch send is good for it not sure about webrtc :
   /// could add a layer for it but not for now).
   fn read(_chan : *mut c_void, _buf : *mut u8, _buflen : usize) -> usize;
+  
+  /// fn to call to give context back (eg js without worker)
+  fn suspend(_self : *mut c_void);
 }
 
+#[no_mangle]
+pub extern "C" fn restore(_self: *mut c_void) {
+  unimplemented!("restore a suspended context");
+}
 /*alternate impl for alloc dealloc kept for testing : issue when using cipher
  * : memory corruption : TODO try to identify -> only after deciphering successfully a pic and
  * changing password (not using dalloc do no solve it)
