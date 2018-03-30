@@ -33,7 +33,7 @@ mod test;
 // constructor. If two userpoll are build upon identic fd, the registration of a registrable will
 // fail
 #[derive(Clone)]
-pub struct UserPoll(Rc<RefCell<UserPollInner>>,FD);
+pub struct UserPoll(Rc<RefCell<UserPollInner>>,FD,bool);
 
 struct UserPollInner {
   // rbt (slab allocated) containing fd of file to poll -> using std::collection::BTreeMap probably over fD for now
@@ -72,6 +72,10 @@ impl Poll for UserPoll {
   fn poll(&self, events: &mut Self::Events, _timeout: Option<Duration>) -> Result<usize> {
     let queue = &mut self.0.borrow_mut().ev_queue;
     let ql = queue.len();
+    if self.2 && ql == 0 {
+      // suspend
+      return Err(Error("".to_string(), ErrorKind::ExpectedError, None));
+    }
     let nb_mov = std::cmp::min(events.size_limit, ql);
     events.content = queue.split_off(ql - nb_mov);
     Ok(events.content.len())
@@ -83,13 +87,13 @@ impl UserPoll {
   // our use case is a js worker as service spawner and is not for initial use : TODO plug a some
   // similar code as threadblock in a wait function that we will pragma with something else for js
   // latter and even latter integrate with the current (mainloop) service yield)
-  pub fn new(fd : FD) -> Self {
+  pub fn new(fd : FD, suspendable : bool) -> Self {
     UserPoll(Rc::new(RefCell::new(
       UserPollInner {
         items : BTreeMap::new(),
         ev_queue : VecDeque::new(), // TODO capacity init??
         last_new_fd : FD_UNDEFINED,
-    })),fd)
+    })),fd,suspendable)
   }
   fn ctl_add<E : UserEventable>(&self, e : &E, t : Token, r : Ready) -> Result<()> {
     let xistingfd = e.get_fd(self.1);

@@ -435,7 +435,7 @@ pub fn start_service(id_listen : Vec<u8>) -> RestartSameThread<TestService, NoSe
   let address = ByteAddress(id_listen);
   let service = TestService {
     count : 0,
-    event_loop : UserPoll::new(POLL_FD),
+    event_loop : UserPoll::new(POLL_FD,true),
     events : UserEvents::with_capacity(EVENTS_POLL_SIZE),
   };
   RestartOrError.spawn(
