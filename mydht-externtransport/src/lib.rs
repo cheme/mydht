@@ -5,6 +5,10 @@ extern crate mydht_userpoll;
 extern crate serde;
 #[macro_use] extern crate serde_derive;
 
+use std::ffi::{
+  CStr,
+  CString,
+};
 use std::mem;
 use std::io::Write;
 use std::io::Read;
@@ -12,8 +16,25 @@ use std::io::Result as IoResult;
 
 use mydht_base::mydhtresult::{
   Result,
+  Error,
+  ErrorKind,
 };
 
+use mydht_base::utils::{
+  Proto,
+};
+use mydht_base::service::{
+  Service,
+  ServiceRestartable,
+  Spawner,
+  SpawnerYield,
+  RestartOrError,
+  RestartSameThread,
+  NoSend,
+  DefaultRecv,
+  YieldReturn,
+  NoRecv,
+};
 use mydht_base::transport::{
   Token,
   Ready,
@@ -30,6 +51,7 @@ use mydht_base::transport::{
 
 use mydht_userpoll::{
   UserPoll,
+  UserEvents,
   UserRegistration,
   UserSetReadiness,
   poll_reg,
@@ -41,48 +63,38 @@ use std::os::raw::{
 };
 use std::marker::PhantomData;
 
-extern {
-  /// ask for a listener. In our webrtc case it is an asynchronous process were we connect through
-  /// websocket to the user server, publishing our connection id.
-  /// token will be use latter for registration
-  /// TODO on call forget _poll pointer (should deallocate later)
-  /// should callback on 'start_with_listener' or similar function
-  /// TODO if challenge with websocket server will need more parameters (currently no challenge and
-  /// unsafe registering)
-  fn query_listener(_id : *mut u8, _idlen : usize, _transport : *mut c_void);
-  /// this should only be called when there is a ready event on the poll, it returns the port for the channel
-  fn next_pending_connected(_id : *mut u8, _idlen : usize) -> u16;
-
-  /// connect to dest
-  /// TODO callback on a set_ready with channel id see 'connect_success' and 'connect_fail' (chan
-  /// pointer is for call back and to identify the chan at a js level)
-  fn query_new_channel(_dest_id : *mut u8, _idlen : usize, _transport : *mut c_void, _chan : *mut c_void);
-  /// when rust go a new channel he send it back for set_readiness (here we do not build a
-  /// connection, it already xist : we simply send the channel pointer
-  fn read_channel_reg(_dest_id : *mut u8, _idlen : usize, _chan_id : u16, _chan : *mut c_void);
-  // no call back here at some point need an association table between pointer chan and actuall
-  // chanel
-  fn close_channel(_chan : *mut c_void);
-
-  /// TODO add returned possible error code
-  /// call back with a set write ready when content send ( when buff full we return 0 from write
-  /// meaning that rust should io not ready error on it)
-  fn write(_chan : *mut c_void, _content : *mut u8, _contentlen : usize) -> usize;
-  /// return possible error code as call back (same as write), flush the buffer!!
-  fn flush_write(_chan : *mut c_void);
-  /// read buff of on message receive in the corresponding channel persistence
-  /// (copy array) -> TODO on js some congestion mechanism : check webrtc data if there is a way to
-  /// tell sender to suspend send until ok (asynch send is good for it not sure about webrtc :
-  /// could add a layer for it but not for now).
-  fn read(_chan : *mut c_void, _buf : *mut u8, _buflen : usize) -> usize;
-  
-  /// fn to call to give context back (eg js without worker)
-  fn suspend(_self : *mut c_void);
-}
+// reexport on main when targetting wasm seems ko so using a macro
+#[macro_export]
+macro_rules! extern_func (() => {
+use std::mem;
+use std::slice;
+use mydht_base::service::{
+  Service,
+  ServiceRestartable,
+  Spawner,
+  SpawnerYield,
+  RestartOrError,
+  RestartSameThread,
+  NoSend,
+  DefaultRecv,
+  YieldReturn,
+  NoRecv,
+  SpawnUnyield,
+};
 
 #[no_mangle]
-pub extern "C" fn restore(_self: *mut c_void) {
-  unimplemented!("restore a suspended context");
+pub extern "C" fn restore(handle : *mut c_void) {
+  let mut typed_handle =
+   unsafe { Box::from_raw(
+      handle as *mut RestartSameThread<TestService, NoSend, RestartOrError, DefaultRecv<(),NoRecv>>
+    )};
+  mem::forget(&typed_handle);
+  typed_handle.unyield().unwrap(); // TODO correct erro mgmt with a test if is_finished before
+  mem::forget(&handle);
+  // nedd to send it back otherwhise memory is wiped
+  unsafe {
+    yield_loop(Box::into_raw(typed_handle) as *mut c_void);
+  }
 }
 /*alternate impl for alloc dealloc kept for testing : issue when using cipher
  * : memory corruption : TODO try to identify -> only after deciphering successfully a pic and
@@ -119,6 +131,22 @@ pub extern "C" fn dealloc(ptr: *mut c_void, cap: usize) {
     let _buf = Vec::from_raw_parts(ptr, 0, cap);
   }
 }
+
+#[no_mangle]
+pub extern "C" fn start(id : *mut u8, idlen : usize) {
+
+ let idvec = unsafe {
+    slice::from_raw_parts(id, idlen)
+ }.to_vec();
+
+ let mut handle = Box::new(start_service(idvec));
+ mem::forget(&handle);
+ unsafe {
+   yield_loop(Box::into_raw(handle) as *mut c_void);
+   query_listener(id, idlen);
+ }
+}
+
 /// reply to a query_listener call
 /// Note that this function should be redefine
 #[no_mangle]
@@ -163,6 +191,51 @@ pub extern "C" fn forget_readiness(_set_readiness : *mut c_void) {
 pub extern "C" fn trigger_write(_set_readiness : *mut c_void, _eventlooptoken : usize) {
   unimplemented!("TODO cast to UserSetReadiness and trigger")
 }
+
+});
+
+extern {
+
+  pub fn wasm_log(_ : *const c_char, _ : LogType);
+  /// ask for a listener. In our webrtc case it is an asynchronous process were we connect through
+  /// websocket to the user server, publishing our connection id.
+  /// token will be use latter for registration
+  /// TODO on call forget _poll pointer (should deallocate later)
+  /// should callback on 'start_with_listener' or similar function
+  /// TODO if challenge with websocket server will need more parameters (currently no challenge and
+  /// unsafe registering)
+  pub fn query_listener(_id : *mut u8, _idlen : usize);
+  pub fn yield_loop(_transport : *mut c_void);
+  /// this should only be called when there is a ready event on the poll, it returns the port for the channel
+  pub fn next_pending_connected(_id : *mut u8, _idlen : usize) -> u16;
+
+  /// connect to dest
+  /// TODO callback on a set_ready with channel id see 'connect_success' and 'connect_fail' (chan
+  /// pointer is for call back and to identify the chan at a js level)
+  pub fn query_new_channel(_dest_id : *mut u8, _idlen : usize, _transport : *mut c_void, _chan : *mut c_void);
+  /// when rust go a new channel he send it back for set_readiness (here we do not build a
+  /// connection, it already xist : we simply send the channel pointer
+  pub fn read_channel_reg(_dest_id : *mut u8, _idlen : usize, _chan_id : u16, _chan : *mut c_void);
+  // no call back here at some point need an association table between pointer chan and actuall
+  // chanel
+  pub fn close_channel(_chan : *mut c_void);
+
+  /// TODO add returned possible error code
+  /// call back with a set write ready when content send ( when buff full we return 0 from write
+  /// meaning that rust should io not ready error on it)
+  pub fn write(_chan : *mut c_void, _content : *mut u8, _contentlen : usize) -> usize;
+  /// return possible error code as call back (same as write), flush the buffer!!
+  pub fn flush_write(_chan : *mut c_void);
+  /// read buff of on message receive in the corresponding channel persistence
+  /// (copy array) -> TODO on js some congestion mechanism : check webrtc data if there is a way to
+  /// tell sender to suspend send until ok (asynch send is good for it not sure about webrtc :
+  /// could add a layer for it but not for now).
+  pub fn read(_chan : *mut c_void, _buf : *mut u8, _buflen : usize) -> usize;
+  
+  /// fn to call to give context back (eg js without worker)
+  pub fn suspend(_self : *mut c_void);
+}
+
 
 // TODO P as poll might be a bad idea : direct use of UserPoll more correct??
 // TODO make it registerable!!
@@ -317,3 +390,71 @@ impl Read for ExtChannel {
       unimplemented!("TODO with read ext read from buffer of on message receive and ior should block if empty");
     }
 }
+
+
+
+
+pub struct TestService {
+  count : usize,
+  event_loop : UserPoll,
+  events : UserEvents,
+}
+
+impl ServiceRestartable for TestService { }
+impl Service for TestService {
+  type CommandIn = ();
+  type CommandOut = ();
+
+  fn call<S : SpawnerYield>(&mut self, _req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+    log_js(format!("service count : {}", self.count), LogType::Log);
+    self.count += 1;
+    loop {
+      let nb = self.event_loop.poll(&mut self.events, None)?;
+      if nb == 0 {
+        if let YieldReturn::Return = async_yield.spawn_yield() {
+          // yield
+          return Err(Error("".to_string(), ErrorKind::ExpectedError, None));
+        }
+      }
+      while let Some(event) = self.events.next() {
+        log_js(format!("got event : {:?}", event), LogType::Log);
+      }
+    }
+ 
+    Ok(())
+  }
+
+}
+
+//const EVENTS_POLL_SIZE = 100;
+const EVENTS_POLL_SIZE : usize = 5;
+
+const POLL_FD : usize = 1;
+
+pub fn start_service(id_listen : Vec<u8>) -> RestartSameThread<TestService, NoSend, RestartOrError, DefaultRecv<(),NoRecv>> {
+  let address = ByteAddress(id_listen);
+  let service = TestService {
+    count : 0,
+    event_loop : UserPoll::new(POLL_FD),
+    events : UserEvents::with_capacity(EVENTS_POLL_SIZE),
+  };
+  RestartOrError.spawn(
+    service,
+    NoSend,
+    None,
+    DefaultRecv(NoRecv,()),
+    0
+  ).unwrap()
+    // TODO some error sending to js
+}
+
+#[repr(u8)]
+pub enum LogType { Log = 0, Error = 1, Alert = 2, }
+
+fn log_js(m : String, t : LogType) {
+  let m = CString::new(m.into_bytes()).unwrap(); // warn panic on internal \0
+  unsafe {
+    wasm_log(m.as_ptr(), t)
+  }
+}
+

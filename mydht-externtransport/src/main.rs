@@ -1,8 +1,15 @@
 //! wasm for a transport module
+use std::os::raw::{
+  c_char,
+  c_void,
+};
 
-extern crate mydht_externtransport;
+#[macro_use] extern crate mydht_externtransport;
+extern crate mydht_base;
+use mydht_externtransport::*;
 
-pub use mydht_externtransport::*;
+// reexport with a macro (for wasm) 
+extern_func!();
 
 fn main() {
    // placeholder 

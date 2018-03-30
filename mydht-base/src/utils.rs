@@ -46,6 +46,12 @@ pub fn null_timespec() -> Duration {
 pub trait Proto {
   fn get_new(&self) -> Self;
 }
+impl Proto for () {
+  #[inline]
+  fn get_new(&self) -> Self {
+    ()
+  }
+}
 
 /// Type with an associated type being Send and which is possible to switch to its original type
 /// Copy of content may be involved in the precess.
