@@ -263,7 +263,8 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
 
   type Events : Events;
   type Poll : Poll<Events = Self::Events>;
-  type PollTReady : TriggerReady; 
+  // send constraint for spawner : to remove if spawner expose in this trait
+  type PollTReady : Send + TriggerReady; 
   type PollReg : Registerable<Self::Poll> + Send;
 
 

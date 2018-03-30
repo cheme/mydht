@@ -66,7 +66,7 @@ pub enum SlabEntryState<PO, T : Transport<PO>, RR, WR, WB,P>
 }
 
 
-pub trait Address : Eq + Sync + Send + Clone + Debug + Serialize + DeserializeOwned + 'static {
+pub trait Address : Eq + Send + Clone + Debug + Serialize + DeserializeOwned + 'static {
 /*  /// for tunnel (otherwhise rust serialize is use on peer)
   fn write_as_bytes<W:Write> (&self, &mut W) -> IoResult<()>;
   /// for tunnel (otherwhise rust serialize is use on peer)
@@ -253,8 +253,6 @@ pub struct Event {
 /// only contain enough information to instantiate needed component (even not sync) in the start
 /// method (plus connect with required info). Some sync may still be needed for connect (sync with
 /// instanciated component in start).
-/// TODO try remove Sync !!! is certainly here to be send between traits (not in use case until
-/// tunnel)
 pub trait Transport<PO> : Send + 'static + Registerable<PO> {
   type ReadStream : ReadTransportStream + Registerable<PO>;
   type WriteStream : WriteTransportStream + Registerable<PO>;
@@ -313,18 +311,6 @@ pub trait ReadTransportStream : Send + Read + 'static {
   // but could use an enum like ThContext).
   // fn completeInit(&mut self, Option<CoroutineRef>);
 
-}
-
-/// Transport stream
-pub trait TransportStream : Send + Sync + 'static + Write + Read {
-/* 
-/// write to someone 
-fn streamwrite(&mut self, &[u8], Option<&Attachment>) -> IoResult<()>;
-*/
-/*
-/// read from someone 
-fn streamread(&mut self) -> IoResult<(Vec<u8>,Option<Attachment>)>;
-*/
 }
 
 #[cfg(feature="blocking-transport")]
