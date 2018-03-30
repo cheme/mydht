@@ -118,6 +118,7 @@ pub struct ReadServiceSend<MC : MyDHTConf> {
 }
 
 impl<MC : MyDHTConf> SRef for ReadService<MC> where
+  <MC::Transport as Transport<MC::Poll>>::ReadStream : Send,
   MC::LocalServiceSpawn : Send,
   MC::LocalServiceChannelIn : Send,
   <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send : Send,
@@ -154,6 +155,7 @@ impl<MC : MyDHTConf> SRef for ReadService<MC> where
 }
 
 impl<MC : MyDHTConf> SToRef<ReadService<MC>> for ReadServiceSend<MC> where
+  <MC::Transport as Transport<MC::Poll>>::ReadStream : Send,
   MC::LocalServiceSpawn : Send,
   MC::LocalServiceChannelIn : Send,
   <MC::PeerMgmtChannelIn as SpawnChannel<PeerMgmtCommand<MC>>>::Send : Send,
@@ -517,14 +519,18 @@ impl<MC : MyDHTConf> Proto for ReadCommand<MC> {
   }
 }
 
-impl<MC : MyDHTConf> SRef for ReadCommand<MC> {
+impl<MC : MyDHTConf> SRef for ReadCommand<MC> where
+  <MC::Transport as Transport<MC::Poll>>::ReadStream : Send,
+{
   type Send = ReadCommand<MC>;
   fn get_sendable(self) -> Self::Send {
     self
   }
 }
 
-impl<MC : MyDHTConf> SToRef<ReadCommand<MC>> for ReadCommand<MC> {
+impl<MC : MyDHTConf> SToRef<ReadCommand<MC>> for ReadCommand<MC> where
+  <MC::Transport as Transport<MC::Poll>>::ReadStream : Send,
+{
   fn to_ref(self) -> ReadCommand<MC> {
       self
   }

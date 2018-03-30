@@ -21,7 +21,7 @@ pub type Attachment = PathBuf; // TODO change to Path !!! to allow copy ....
 
 
 //pub trait Key : fmt::Debug + Hash + Eq + Clone + Send + Sync + Ord + 'static{}
-pub trait Key : Serialize + DeserializeOwned + fmt::Debug + Eq + Clone + 'static + Send + Sync {
+pub trait Key : Send + Serialize + DeserializeOwned + fmt::Debug + Eq + Clone + 'static + Send + Sync {
 //  fn key_encode(&self) -> MDHTResult<Vec<u8>>;
 // TODO 
 //fn as_ref<KR : KeyRef<Key = Self>>(&'a self) -> KR;
@@ -69,13 +69,12 @@ pub trait GettableAttachments {
 
 }
 /// KeyVal is the basis for DHT content, a value with key.
-// TODO rem 'static and add it only when needed (Arc) : method as_static??
 // TODO rem Serialize from trait, + remove encode_kv and decode_kv : MsgEnc do not use serialize,
 // its implementation does!!
 //pub trait KeyVal : fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment + 'static {
-pub trait KeyVal : Serialize + DeserializeOwned + fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment + 'static {
+pub trait KeyVal : Send + Serialize + DeserializeOwned + fmt::Debug + Clone + Eq + SettableAttachment + 'static {
   /// Key type of KeyVal
-  type Key : Key + Send + Sync; //aka key // Ord , Hash ... might be not mandatory but issue currently
+  type Key : Key; //aka key // Ord , Hash ... might be not mandatory but issue currently
   /// return size of attachment to download, default implementation return 0 (safe) as a way to
   /// disable attachment by default
   fn attachment_expected_size(&self) -> usize {

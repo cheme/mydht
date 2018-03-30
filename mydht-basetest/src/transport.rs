@@ -151,12 +151,13 @@ pub fn channel_reg<T> () -> (MpscSend<T>,MpscRec<T>) {
 
 
 #[inline]
-fn spawn_loop_async<M : 'static + Send, TC, T : Transport<MioPoll>, RR, WR, FR, FW>(transport : T, read_cl : FR, write_cl : FW, controller : TC, ended : Arc<AtomicUsize>, exp : Vec<u8>, connect_done : Arc<AtomicUsize>, cpp : Arc<CpuPool>) -> Result<MpscSend<M>> 
+fn spawn_loop_async<M : 'static + Send, TC, T, RR, WR, FR, FW>(transport : T, read_cl : FR, write_cl : FW, controller : TC, ended : Arc<AtomicUsize>, exp : Vec<u8>, connect_done : Arc<AtomicUsize>, cpp : Arc<CpuPool>) -> Result<MpscSend<M>> 
 where 
   FR : 'static + Send + Fn(Option<RR>,Option<T::ReadStream>,&T,Arc<AtomicUsize>,Vec<u8>,Arc<CpuPool>) -> Result<RR>,
   FW : 'static + Send + Fn(Option<WR>,Option<T::WriteStream>,&T,Arc<CpuPool>) -> Result<WR>,
   //for<'a> TC : 'static + Send + Fn(M, &'a mut Slab<SlabEntry<T,RR,WR>>) -> Result<()>,
   TC : 'static + Send + Fn(M, &mut Slab<SlabEntry<MioPoll,T,RR,WR,(),T::Address>>,&T,Arc<CpuPool>) -> Result<()>,
+  T : Send + Transport<MioPoll>,
 {
 
   let (sender,receiver) = channel_reg();
@@ -166,7 +167,7 @@ where
 }
 
 /// currently only for full async (listener, read stream and write stream)
-fn loop_async<M, TC, T : Transport<MioPoll>, RR, WR, FR, FW>(receiver : MpscRec<M>, transport : T,read_cl : FR, write_cl : FW, controller : TC,ended : Arc<AtomicUsize>, exp : Vec<u8>, connect_done : Arc<AtomicUsize>,cpp : Arc<CpuPool>) -> Result<()> 
+fn loop_async<M, TC, T : Send + Transport<MioPoll>, RR, WR, FR, FW>(receiver : MpscRec<M>, transport : T,read_cl : FR, write_cl : FW, controller : TC,ended : Arc<AtomicUsize>, exp : Vec<u8>, connect_done : Arc<AtomicUsize>,cpp : Arc<CpuPool>) -> Result<()> 
 where 
   FR : Fn(Option<RR>,Option<T::ReadStream>,&T,Arc<AtomicUsize>,Vec<u8>,Arc<CpuPool>) -> Result<RR>,
   FW : Fn(Option<WR>,Option<T::WriteStream>,&T,Arc<CpuPool>) -> Result<WR>,
@@ -268,7 +269,7 @@ where
 
 
 
-pub fn sync_tr_start<T : Sync + Transport<()>,C>(transport : Arc<T>,c : C) -> Result<()> 
+pub fn sync_tr_start<T : Sync + Send + Transport<()>,C>(transport : Arc<T>,c : C) -> Result<()> 
     where C : Send + 'static + Fn(T::ReadStream,Option<T::WriteStream>) -> Result<ReaderHandle>
 {
     thread::spawn(move || {
@@ -278,7 +279,11 @@ pub fn sync_tr_start<T : Sync + Transport<()>,C>(transport : Arc<T>,c : C) -> Re
     });
     Ok(())
 }
-pub fn connect_rw_with_optional<A : Address, T : Sync + Transport<(),Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_optional : bool, async : bool)
+pub fn connect_rw_with_optional<A : Address, T > (t1 : T, t2 : T, a1 : &A, a2 : &A, with_optional : bool, async : bool)
+where 
+ T : Sync + Send + Transport<(),Address=A>,
+ T::ReadStream : Send,
+ T::WriteStream : Send,
 {
 //  assert!(t1.do_spawn_rec().1 == true); // managed so we can receive multiple message : test removed due to hybrid transport lik tcp_loop where it is usefull to test those properties
   let mess_to = "hello world".as_bytes();
@@ -407,7 +412,11 @@ pub fn connect_rw_with_optional<A : Address, T : Sync + Transport<(),Address=A>>
 
 
 
-pub fn connect_rw_with_optional_non_managed<A : Address, T : Sync + Transport<(),Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_connect_rs : bool, with_recv_ws : bool, variant : bool, async : bool)
+pub fn connect_rw_with_optional_non_managed<A : Address, T> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_connect_rs : bool, with_recv_ws : bool, variant : bool, async : bool)
+where
+  T : Sync + Send + Transport<(),Address=A>,
+  T::ReadStream : Send,
+  T::WriteStream : Send,
 {
   let mess_to = "hello world".as_bytes();
   let mess_to_2 = "hello2".as_bytes();
@@ -553,7 +562,7 @@ impl Address for LocalAdd {
  
 }
 
-pub fn reg_mpsc_recv_test<T : Transport<MioPoll>>(t : T) {
+pub fn reg_mpsc_recv_test<T : Send + Transport<MioPoll>>(t : T) {
 
   let transport_reg_r = |_ : Option<()>, _ : Option<T::ReadStream>, _ : &T,_,_,_| {Ok(())};
   let transport_reg_w = |_ : Option<()>, _ : Option<T::WriteStream>, _ : &T,_| {Ok(())};
@@ -596,7 +605,7 @@ pub fn reg_mpsc_recv_test<T : Transport<MioPoll>>(t : T) {
 
 }
  
-pub fn reg_connect_2<T : Transport<MioPoll>>(fromadd : &T::Address, t : T, c0 : T, c1 : T) {
+pub fn reg_connect_2<T : Send + Transport<MioPoll>>(fromadd : &T::Address, t : T, c0 : T, c1 : T) {
 
   let content = [5];
   
@@ -721,7 +730,10 @@ impl<'a,PO,T : Transport<PO>> SlabEntryInnerState<'a,PO,T, (Vec<u8>,usize,T::Rea
     }
   }*/
 }
-fn simple_command_controller_cpupool<PO,T : Transport<PO>>(command : SimpleLoopCommand<PO,T>, cache : &mut Slab<SlabEntry<PO,T,CpuFuture<(),Error>,CpuFuture<T::WriteStream,Error>,(),T::Address>>, t : &T, cpupool : Arc<CpuPool>) -> Result<()> {
+fn simple_command_controller_cpupool<PO,T : Transport<PO>>(command : SimpleLoopCommand<PO,T>, cache : &mut Slab<SlabEntry<PO,T,CpuFuture<(),Error>,CpuFuture<T::WriteStream,Error>,(),T::Address>>, t : &T, cpupool : Arc<CpuPool>) -> Result<()> 
+where
+  T::WriteStream : Send,
+{
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
         let c = cache.iter().any(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
@@ -791,7 +803,9 @@ fn simple_command_controller_cpupool<PO,T : Transport<PO>>(command : SimpleLoopC
 }
 
 
-fn simple_command_controller_threadpark<PO,T : Transport<PO>>(command : SimpleLoopCommand<PO,T>, cache : &mut Slab<SlabEntry<PO,T,JoinHandle<()>,(Sender<Vec<u8>>,JoinHandle<()>),(),T::Address>>, t : &T) -> Result<()> {
+fn simple_command_controller_threadpark<PO,T : Transport<PO>>(command : SimpleLoopCommand<PO,T>, cache : &mut Slab<SlabEntry<PO,T,JoinHandle<()>,(Sender<Vec<u8>>,JoinHandle<()>),(),T::Address>>, t : &T) -> Result<()> 
+where T::WriteStream : Send,
+{
     match command {
       SimpleLoopCommand::ConnectWith(ad) => {
         let c = cache.iter().any(|(_,e)|e.peer.as_ref() == Some(&ad) && match e.state {
@@ -1150,7 +1164,9 @@ fn transport_corout_r_testing<PO,T : Transport<PO>>(ocr : Option<CoRHandle>, ors
   co_handle.resume(0).unwrap();
   Ok(co_handle)
 }
-fn transport_cpupool_r_testing<PO,T : Transport<PO>>(ocr : Option<CpuFuture<(),Error>>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>, expected : Vec<u8>, cpupool : Arc<CpuPool>) -> Result<CpuFuture<(),Error>> {
+fn transport_cpupool_r_testing<PO,T : Transport<PO>>(ocr : Option<CpuFuture<(),Error>>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>, expected : Vec<u8>, cpupool : Arc<CpuPool>) -> Result<CpuFuture<(),Error>> 
+ where T::ReadStream : Send, 
+{
   match ocr {
     Some(s) => {
      // s.poll().unwrap(); // poll
@@ -1171,7 +1187,9 @@ fn transport_cpupool_r_testing<PO,T : Transport<PO>>(ocr : Option<CpuFuture<(),E
   });
   Ok(cpufut)
 }
-fn transport_threadpark_r_testing<PO,T : Transport<PO>>(ocr : Option<JoinHandle<()>>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>, expected : Vec<u8>) -> Result<JoinHandle<()>> {
+fn transport_threadpark_r_testing<PO,T : Transport<PO>>(ocr : Option<JoinHandle<()>>, ors : Option<T::ReadStream>, _ : &T, bufsize : usize, contentsize : usize, ended : Arc<AtomicUsize>, expected : Vec<u8>) -> Result<JoinHandle<()>> 
+where T::ReadStream : Send,
+{
   match ocr {
     Some(s) => {
       s.thread().unpark();
@@ -1193,7 +1211,7 @@ fn transport_threadpark_r_testing<PO,T : Transport<PO>>(ocr : Option<JoinHandle<
 }
   
 
-pub fn reg_rw_corout_testing<T : Transport<MioPoll>>(_fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize) {
+pub fn reg_rw_corout_testing<T : Send + Transport<MioPoll>>(_fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize) {
   let mut contents = Vec::with_capacity(nbmess);
   let mut all_r = vec![0;nbmess * content_size];
   for im in 0 .. nbmess {
@@ -1368,7 +1386,7 @@ impl<'a,W : Write> Write for WriteThreadparkPool<'a,W> {
 
 
 
-pub fn reg_rw_testing<T : Transport<MioPoll>>(fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize,nbmess:usize) {
+pub fn reg_rw_testing<T : Send + Transport<MioPoll>>(fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize,nbmess:usize) {
   let mut contents = Vec::with_capacity(nbmess);
   for im in 0 .. nbmess {
     let mut content = vec![0;content_size];
@@ -1404,7 +1422,10 @@ pub fn reg_rw_testing<T : Transport<MioPoll>>(fromadd : T::Address, tfrom : T, t
 }
 
 
-pub fn reg_rw_cpupool_testing<T : Transport<MioPoll>>(_fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize, numcpu : usize) {
+pub fn reg_rw_cpupool_testing<T : Send + Transport<MioPoll>>(_fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize, numcpu : usize) where
+  T::ReadStream : Send,
+  T::WriteStream : Send,
+{
   assert!(numcpu > 1);
   let mut contents = Vec::with_capacity(nbmess);
   let mut all_r = vec![0;nbmess * content_size];
@@ -1440,7 +1461,10 @@ pub fn reg_rw_cpupool_testing<T : Transport<MioPoll>>(_fromadd : T::Address, tfr
   while ended_expect.load(Ordering::Relaxed) != 1 { }
 
 }
-pub fn reg_rw_threadpark_testing<T : Transport<MioPoll>>(_fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize) {
+pub fn reg_rw_threadpark_testing<T : Send + Transport<MioPoll>>(_fromadd : T::Address, tfrom : T, toadd : T::Address, tto : T, content_size : usize, read_buf_size : usize, write_buf_size : usize, nbmess : usize) where 
+  T::ReadStream : Send,
+  T::WriteStream : Send,
+{
 
   let mut contents = Vec::with_capacity(nbmess);
   let mut all_r = vec![0;nbmess * content_size];

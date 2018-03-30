@@ -87,7 +87,10 @@ pub struct WriteServiceSend<MC : MyDHTConf>
 }
 
 impl<MC : MyDHTConf> SRef for WriteService<MC>
-  where MC::LocalServiceCommand : SRef,
+  where
+        <MC::Transport as Transport<MC::Poll>>::ReadStream : Send,
+        <MC::Transport as Transport<MC::Poll>>::WriteStream : Send,
+        MC::LocalServiceCommand : SRef,
         MC::GlobalServiceCommand : SRef {
   type Send = WriteServiceSend<MC>;
   fn get_sendable(self) -> Self::Send {
@@ -109,7 +112,10 @@ impl<MC : MyDHTConf> SRef for WriteService<MC>
 }
 
 impl<MC : MyDHTConf> SToRef<WriteService<MC>> for WriteServiceSend<MC>
-  where MC::LocalServiceCommand : SRef,
+  where
+        <MC::Transport as Transport<MC::Poll>>::ReadStream : Send,
+        <MC::Transport as Transport<MC::Poll>>::WriteStream : Send,
+        MC::LocalServiceCommand : SRef,
         MC::GlobalServiceCommand : SRef {
   fn to_ref(self) -> WriteService<MC> {
     let WriteServiceSend {

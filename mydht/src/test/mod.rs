@@ -344,10 +344,12 @@ fn simpeer2hopget () {
     }
 }
 
-fn finddistantpeer2<P : Peer, T : Transport<MioPoll,Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>> + Clone>
+fn finddistantpeer2<P : Peer, T : Send + Transport<MioPoll,Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>> + Clone>
    (mut peers : Vec<(P, DHTIn<TestConf<P,T,E,TestingRules,SimpleRules>>)>, nbpeer : usize, qm : QueryMode, prio : QueryPriority, _map : &[&[usize]], find : bool, rules : SimpleRules)
   where  <P as KeyVal>::Key : Hash,
          <P as Peer>::Address : Hash,
+      T::ReadStream : Send,
+      T::WriteStream : Send,
 {
     let queryconf = QueryConf {
       mode : qm.clone(), 
@@ -590,14 +592,15 @@ struct TestConf<P,T,ENC,PM,DR> {
 
 impl<
   P : Peer,
-  T : Transport<MioPoll,Address = <P as Peer>::Address>,
+  T : Send + Transport<MioPoll,Address = <P as Peer>::Address>,
   ENC : MsgEnc<P, KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>>,
   PM : PeerMgmtMeths<P>,
   DR : DHTRules + Clone,
   > MyDHTConf for TestConf<P,T,ENC,PM,DR> 
 where <P as KeyVal>::Key : Hash,
       <P as Peer>::Address : Hash,
-
+      T::ReadStream : Send,
+      T::WriteStream : Send,
 {
   const SEND_NB_ITER : usize = 10;
 
@@ -853,10 +856,12 @@ fn confinitpeers1(me : PeerTest, others : Vec<PeerTest>, transport : TransportTe
 /// Sim is not to be used in similar case as before : there is no guaranties all peers will be
 /// queried : in fact with  hashmap kvstore default implementation only a ratio of 2/3 peer will be
 /// queried by call to subset on peer connect discovery thus it is bad for test with single route.
-fn initpeers2<P : Peer, T : Transport<MioPoll,Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>>> (nodes : Vec<P>, transports : Vec<T>, map : &[&[usize]], meths : TestingRules, rules : DhtRules, enc : E, sim : Option<u64>) 
+fn initpeers2<P : Peer, T : Send + Transport<MioPoll,Address = <P as Peer>::Address>,E : MsgEnc<P,KVStoreProtoMsgWithPeer<P,ArcRef<P>,P,ArcRef<P>>>> (nodes : Vec<P>, transports : Vec<T>, map : &[&[usize]], meths : TestingRules, rules : DhtRules, enc : E, sim : Option<u64>) 
   -> Vec<(P, DHTIn< TestConf<P,T,E,TestingRules,SimpleRules>  >)> 
   where  <P as KeyVal>::Key : Hash,
          <P as Peer>::Address : Hash,
+      T::ReadStream : Send,
+      T::WriteStream : Send,
   {
   let mut i = 0;// TODO redesign with zip of map and nodes iter
   let mut result : Vec<(P, DHTIn<TestConf<P,T,E,TestingRules,SimpleRules>>, Vec<P>)> = transports.into_iter().map(|t|{

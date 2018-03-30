@@ -280,7 +280,10 @@ impl OptFrom<TestMessage> for TestMessage {
   }
 }
 // TODO delete?
-impl<MC : MyDHTTunnelConf> OptFrom<MCCommand<MyDHTTunnelConfType<MC>>> for TestMessage {
+impl<MC : MyDHTTunnelConf> OptFrom<MCCommand<MyDHTTunnelConfType<MC>>> for TestMessage where
+//  <MC::Transport as Transport<MC::Poll>>::ReadStream : Send,
+//  <MC::Transport as Transport<MC::Poll>>::WriteStream : Send,
+{
   fn can_from(m : &MCCommand<MyDHTTunnelConfType<MC>>) -> bool {
     match *m {
       MCCommand::Local(..) | MCCommand::Global(..) => true,
@@ -296,7 +299,10 @@ impl<MC : MyDHTTunnelConf> OptFrom<MCCommand<MyDHTTunnelConfType<MC>>> for TestM
   }
 }
 // TODO delete?
-impl<MC : MyDHTTunnelConf> Into<MCCommand<MyDHTTunnelConfType<MC>>> for TestMessage {
+impl<MC : MyDHTTunnelConf> Into<MCCommand<MyDHTTunnelConfType<MC>>> for TestMessage where
+//  <MC::Transport as Transport<MC::Poll>>::ReadStream : Send,
+//  <MC::Transport as Transport<MC::Poll>>::WriteStream : Send,
+{
   fn into(self) -> MCCommand<MyDHTTunnelConfType<MC>> {
     match self {
       TestMessage::TouchQ(aid) => unimplemented!(),
@@ -367,6 +373,9 @@ impl MyDHTTunnelConf for TunnelConf {
   type InnerService = TestService<Self>;
   type InnerServiceProto = Self::PeerRef;
   type Transport = Tcp;
+  type RSSend = <Tcp as Transport<MioPoll>>::ReadStream;
+  type WSSend = <Tcp as Transport<MioPoll>>::WriteStream;
+  //type RSSend = <Tcp as Transport<MioPoll>;
   type TransportAddress = SerSocketAddr;
   type MsgEnc = Json;
   type PeerMgmtMeths = TestingRules;

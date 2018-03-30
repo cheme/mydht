@@ -201,6 +201,7 @@ impl ExtTransport {
       listener_id,
       mult,
       reg,
+      state : TransportState::Querying,
     };
 
     unimplemented!("TODO call query");

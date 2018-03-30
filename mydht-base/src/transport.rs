@@ -253,7 +253,7 @@ pub struct Event {
 /// only contain enough information to instantiate needed component (even not sync) in the start
 /// method (plus connect with required info). Some sync may still be needed for connect (sync with
 /// instanciated component in start).
-pub trait Transport<PO> : Send + 'static + Registerable<PO> {
+pub trait Transport<PO> : 'static + Registerable<PO> {
   type ReadStream : ReadTransportStream + Registerable<PO>;
   type WriteStream : WriteTransportStream + Registerable<PO>;
   type Address : Address;
@@ -278,14 +278,14 @@ pub trait Transport<PO> : Send + 'static + Registerable<PO> {
 
 // TODO add clone constraint with possibility to panic!("clone is not allowed : local send
 // threads are not possible")
-pub trait WriteTransportStream : Send + Write + 'static {
+pub trait WriteTransportStream : Write + 'static {
   // most of the time unneeded
   /// simply result in check connectivity false
   fn disconnect(&mut self) -> IoResult<()>;
 //  fn checkconnectivity(&self) -> bool;
 }
 
-pub trait ReadTransportStream : Send + Read + 'static {
+pub trait ReadTransportStream : Read + 'static {
 
 
   /// should end read loop

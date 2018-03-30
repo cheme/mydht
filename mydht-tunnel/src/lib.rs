@@ -114,6 +114,8 @@ use mydht::utils::{
 };
 use mydht::transportif::{
   Transport,
+  ReadTransportStream,
+  WriteTransportStream,
   Address,
   Registerable,
   TriggerReady,
@@ -269,7 +271,10 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
 
 
   type TransportAddress : Address + Hash;
-  type Transport : Transport<Self::Poll, Address = Self::TransportAddress>;
+  // technical until we got spawner in type and do not require to assert send constraint in trait
+  type RSSend : Send + ReadTransportStream + Registerable<Self::Poll>;
+  type WSSend : Send + WriteTransportStream + Registerable<Self::Poll>;
+  type Transport : Send + Transport<Self::Poll, Address = Self::TransportAddress, ReadStream = Self::RSSend, WriteStream = Self::WSSend>;
   // constraint for hash type
   type PeerKey : Hash + Serialize + DeserializeOwned + Debug + Eq + Clone + 'static + Send + Sync;
   type Peer : Peer<Key = Self::PeerKey,Address = <Self::Transport as Transport<Self::Poll>>::Address>;
@@ -1247,7 +1252,10 @@ impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
 /// implement MyDHTConf for MDHTTunnelConf
 /// TODO lot should be parameterized in TunnelConf but for now we hardcode as much as possible
 /// similarily no SRef or Ref at the time (message containing reader and other
-impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> {
+impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> where
+//  <MC::Transport as Transport<MC::Poll>>::ReadStream : Send,
+//  <MC::Transport as Transport<MC::Poll>>::WriteStream : Send,
+{
   /// test without auth first TODO some
   /// testing with, but the tunnel itself do a kind of auth (with possible replay attack)
   const AUTH_MODE : ShadowAuthType = ShadowAuthType::NoAuth;

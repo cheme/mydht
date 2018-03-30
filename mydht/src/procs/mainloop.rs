@@ -238,6 +238,8 @@ pub enum MainLoopCommand<MC : MyDHTConf> {
 //  GlobalApi(GlobalCommand<MC::PeerRef,MC::GlobalServiceCommand>,MC::ApiReturn),
   ProxyApiReply(MCReply<MC>),
   /// Synch transport received conn
+  /// TODO consider splitting MainLoopCommand : sending stream is quite technical and involve
+  /// additional constraints
   ConnectedR(<MC::Transport as Transport<MC::Poll>>::ReadStream, Option<<MC::Transport as Transport<MC::Poll>>::WriteStream>),
   /// Synch transport conn result
   ConnectedW(usize,<MC::Transport as Transport<MC::Poll>>::WriteStream, Option<<MC::Transport as Transport<MC::Poll>>::ReadStream>),
@@ -311,7 +313,10 @@ impl<MC : MyDHTConf> Clone for MainLoopCommand<MC>
 }
 
 impl<MC : MyDHTConf> SRef for MainLoopCommand<MC>
- where MC::GlobalServiceCommand : SRef,
+ where 
+       <MC::Transport as Transport<MC::Poll>>::ReadStream : Send,
+       <MC::Transport as Transport<MC::Poll>>::WriteStream : Send,
+       MC::GlobalServiceCommand : SRef,
        MC::LocalServiceCommand : SRef,
        MC::GlobalServiceReply : SRef,
        MC::LocalServiceReply : SRef {
@@ -350,7 +355,10 @@ impl<MC : MyDHTConf> SRef for MainLoopCommand<MC>
 }
 
 impl<MC : MyDHTConf> SToRef<MainLoopCommand<MC>> for MainLoopCommandSend<MC>
- where MC::GlobalServiceCommand : SRef,
+ where
+       <MC::Transport as Transport<MC::Poll>>::ReadStream : Send,
+       <MC::Transport as Transport<MC::Poll>>::WriteStream : Send,
+       MC::GlobalServiceCommand : SRef,
        MC::LocalServiceCommand : SRef,
        MC::GlobalServiceReply : SRef,
        MC::LocalServiceReply : SRef {

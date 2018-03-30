@@ -242,6 +242,8 @@ pub mod transportif{
   pub use mydht_base::transport::SerSocketAddr;
   pub use transport::{
     Transport,
+    WriteTransportStream,
+    ReadTransportStream,
     Address,
     Registerable,
     TriggerReady,

@@ -226,7 +226,10 @@ pub enum ApiCommandSend<MC : MyDHTConf>
 }
 
 impl<MC : MyDHTConf> SRef for ApiCommand<MC> 
-  where MC::GlobalServiceCommand : SRef,
+  where 
+        <MC::Transport as Transport<MC::Poll>>::ReadStream : Send,
+        <MC::Transport as Transport<MC::Poll>>::WriteStream : Send,
+        MC::GlobalServiceCommand : SRef,
         MC::LocalServiceCommand : SRef,
         MC::GlobalServiceReply : SRef,
         MC::LocalServiceReply : SRef {
@@ -248,7 +251,10 @@ impl<MC : MyDHTConf> SRef for ApiCommand<MC>
 }
 
 impl<MC : MyDHTConf> SToRef<ApiCommand<MC>> for ApiCommandSend<MC> 
-  where MC::GlobalServiceCommand : SRef,
+  where
+        <MC::Transport as Transport<MC::Poll>>::ReadStream : Send,
+        <MC::Transport as Transport<MC::Poll>>::WriteStream : Send,
+        MC::GlobalServiceCommand : SRef,
         MC::LocalServiceCommand : SRef,
         MC::GlobalServiceReply : SRef,
         MC::LocalServiceReply : SRef {

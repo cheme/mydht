@@ -11,6 +11,9 @@ use utils::{
   SRef,
   SToRef,
 };
+use transport::{
+  Transport,
+};
 use super::mainloop::{
   MainLoopCommand,
   MainLoopCommandSend,
@@ -40,7 +43,10 @@ impl<MC : MyDHTConf> Clone for PeerMgmtCommand<MC>
 }
 
 impl<MC : MyDHTConf> SRef for PeerMgmtCommand<MC> 
-  where MC::GlobalServiceCommand : SRef,
+  where
+        <MC::Transport as Transport<MC::Poll>>::ReadStream : Send,
+        <MC::Transport as Transport<MC::Poll>>::WriteStream : Send,
+        MC::GlobalServiceCommand : SRef,
         MC::LocalServiceCommand : SRef,
         MC::GlobalServiceReply : SRef,
         MC::LocalServiceReply : SRef {
@@ -65,7 +71,10 @@ pub enum PeerMgmtCommandSend<MC : MyDHTConf>
 }
 
 impl<MC : MyDHTConf> SToRef<PeerMgmtCommand<MC>> for PeerMgmtCommandSend<MC> 
-  where MC::GlobalServiceCommand : SRef,
+  where
+        <MC::Transport as Transport<MC::Poll>>::ReadStream : Send,
+        <MC::Transport as Transport<MC::Poll>>::WriteStream : Send,
+        MC::GlobalServiceCommand : SRef,
         MC::LocalServiceCommand : SRef,
         MC::GlobalServiceReply : SRef,
         MC::LocalServiceReply : SRef {
