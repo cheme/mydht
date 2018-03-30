@@ -255,7 +255,7 @@ pub struct Event {
 /// instanciated component in start).
 /// TODO try remove Sync !!! is certainly here to be send between traits (not in use case until
 /// tunnel)
-pub trait Transport<PO> : Send + Sync + 'static + Registerable<PO> {
+pub trait Transport<PO> : Send + 'static + Registerable<PO> {
   type ReadStream : ReadTransportStream + Registerable<PO>;
   type WriteStream : WriteTransportStream + Registerable<PO>;
   type Address : Address;

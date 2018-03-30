@@ -2,12 +2,15 @@
 
 extern crate mydht_base;
 extern crate mydht_userpoll;
+extern crate serde;
+#[macro_use] extern crate serde_derive;
 
+use std::mem;
 use std::io::Write;
 use std::io::Read;
 use std::io::Result as IoResult;
 
-use mydht_base::mdhtresult::{
+use mydht_base::mydhtresult::{
   Result,
 };
 
@@ -21,7 +24,8 @@ use mydht_base::transport::{
   Event,
   WriteTransportStream,
   ReadTransportStream,
-  
+  Transport,
+  Address,
 };
 
 use mydht_userpoll::{
@@ -31,6 +35,10 @@ use mydht_userpoll::{
   poll_reg,
 };
 
+use std::os::raw::{
+  c_char,
+  c_void,
+};
 use std::marker::PhantomData;
 
 extern {
@@ -183,7 +191,7 @@ pub enum TransportState {
   ReadError,
 }
 
-impl<P> ExtTransport<P> {
+impl ExtTransport {
   
   pub fn new(listener_id : Vec<u8>, mult : bool) -> (Self,UserSetReadiness) {
 
@@ -193,7 +201,7 @@ impl<P> ExtTransport<P> {
       listener_id,
       mult,
       reg,
-    }
+    };
 
     unimplemented!("TODO call query");
 
@@ -201,10 +209,14 @@ impl<P> ExtTransport<P> {
   }
 }
 
-impl Transport for ExtTransport {
+#[derive(Serialize,Deserialize,Debug, PartialEq, Eq, Clone, Hash)]
+pub struct ByteAddress(Vec<u8>);
+impl Address for ByteAddress {}
+
+impl Transport<UserPoll> for ExtTransport {
   type ReadStream = ExtChannel;
   type WriteStream = ExtChannel;
-  type Address = Vec<u8>;
+  type Address = ByteAddress;
 
 
   fn accept(&self) -> Result<(Self::ReadStream, Option<Self::WriteStream>)> {
@@ -248,30 +260,30 @@ impl Transport for ExtTransport {
 
 impl Registerable<UserPoll> for ExtTransport {
   #[inline]
-  fn register(&self, poll : &Poll, token: Token, interest: Ready) -> Result<bool> {
+  fn register(&self, poll : &UserPoll, token: Token, interest: Ready) -> Result<bool> {
     self.reg.register(poll,token,interest)
   }
   #[inline]
-  fn reregister(&self, poll : &Poll, token: Token, interest: Ready) -> Result<bool> {
+  fn reregister(&self, poll : &UserPoll, token: Token, interest: Ready) -> Result<bool> {
     self.reg.reregister(poll,token,interest)
   }
   #[inline]
-  fn deregister(&self, poll : &Poll) -> Result<()> {
+  fn deregister(&self, poll : &UserPoll) -> Result<()> {
     self.reg.deregister(poll)
   }
 }
 
 impl Registerable<UserPoll> for ExtChannel {
   #[inline]
-  fn register(&self, poll : &Poll, token: Token, interest: Ready) -> Result<bool> {
+  fn register(&self, poll : &UserPoll, token: Token, interest: Ready) -> Result<bool> {
     self.reg.register(poll,token,interest)
   }
   #[inline]
-  fn reregister(&self, poll : &Poll, token: Token, interest: Ready) -> Result<bool> {
+  fn reregister(&self, poll : &UserPoll, token: Token, interest: Ready) -> Result<bool> {
     self.reg.reregister(poll,token,interest)
   }
   #[inline]
-  fn deregister(&self, poll : &Poll) -> Result<()> {
+  fn deregister(&self, poll : &UserPoll) -> Result<()> {
     self.reg.deregister(poll)
   }
 }

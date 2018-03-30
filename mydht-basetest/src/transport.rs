@@ -268,7 +268,7 @@ where
 
 
 
-pub fn sync_tr_start<T : Transport<()>,C>(transport : Arc<T>,c : C) -> Result<()> 
+pub fn sync_tr_start<T : Sync + Transport<()>,C>(transport : Arc<T>,c : C) -> Result<()> 
     where C : Send + 'static + Fn(T::ReadStream,Option<T::WriteStream>) -> Result<ReaderHandle>
 {
     thread::spawn(move || {
@@ -278,7 +278,7 @@ pub fn sync_tr_start<T : Transport<()>,C>(transport : Arc<T>,c : C) -> Result<()
     });
     Ok(())
 }
-pub fn connect_rw_with_optional<A : Address, T : Transport<(),Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_optional : bool, async : bool)
+pub fn connect_rw_with_optional<A : Address, T : Sync + Transport<(),Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_optional : bool, async : bool)
 {
 //  assert!(t1.do_spawn_rec().1 == true); // managed so we can receive multiple message : test removed due to hybrid transport lik tcp_loop where it is usefull to test those properties
   let mess_to = "hello world".as_bytes();
@@ -407,7 +407,7 @@ pub fn connect_rw_with_optional<A : Address, T : Transport<(),Address=A>> (t1 : 
 
 
 
-pub fn connect_rw_with_optional_non_managed<A : Address, T : Transport<(),Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_connect_rs : bool, with_recv_ws : bool, variant : bool, async : bool)
+pub fn connect_rw_with_optional_non_managed<A : Address, T : Sync + Transport<(),Address=A>> (t1 : T, t2 : T, a1 : &A, a2 : &A, with_connect_rs : bool, with_recv_ws : bool, variant : bool, async : bool)
 {
   let mess_to = "hello world".as_bytes();
   let mess_to_2 = "hello2".as_bytes();
