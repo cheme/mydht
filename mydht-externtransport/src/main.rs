@@ -6,6 +6,7 @@ use std::os::raw::{
 
 #[macro_use] extern crate mydht_externtransport;
 extern crate mydht_base;
+extern crate mydht_userpoll;
 use mydht_externtransport::*;
 
 // reexport with a macro (for wasm) 

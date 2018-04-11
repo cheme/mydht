@@ -3,12 +3,21 @@ name = "mydht-externtransport"
 version = "0.1.0"
 authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
+[features]
+default = ["jstest"]
+jstest = ["slab"]
+
 [dependencies.mydht-base]
 path = "../mydht-base/"
 default-features = false
 
 [dependencies.mydht-userpoll]
 path = "../mydht-userpoll/"
+
+[dependencies.slab]
+version = "~0.4.0"
+optional = true
+
 
 [dependencies]
 serde = { version = "~1.0.10", features = ["rc"]}
