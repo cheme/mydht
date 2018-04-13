@@ -5,12 +5,15 @@ extern crate mydht_base;
 extern crate mydht_userpoll;
 extern crate serde;
 #[macro_use] extern crate serde_derive;
-
+use std::cmp::min;
 use std::slice;
 use std::cell::RefCell;
 use std::cell::Cell;
 use slab::Slab;
-use std::collections::VecDeque;
+use std::collections::{
+  VecDeque,
+  HashMap,
+};
 use std::borrow::Borrow;
 use std::ffi::{
   CStr,
@@ -79,6 +82,7 @@ use std::marker::PhantomData;
 #[derive(Clone,Debug)]
 pub enum TestCommand {
   ConnectWith(Vec<u8>),
+  SendTo(Vec<u8>, Vec<u8>),
   None,
 }
 
@@ -188,6 +192,26 @@ pub extern "C" fn test_connect_to(sender : *mut c_void, id : *mut u8, idlen : us
     )};
   sendchan.send(TestCommand::ConnectWith(destid.to_vec())).unwrap();
   mem::forget(sendchan);
+}
+
+#[cfg(feature = "jstest")]
+#[no_mangle]
+pub extern "C" fn test_send_to(sender : *mut c_void, id : *mut u8, idlen : usize, data : *mut u8, datalen : usize) {
+  let destid = unsafe {
+    slice::from_raw_parts(id, idlen)
+  }.to_vec();
+
+  let dataf = unsafe {
+    slice::from_raw_parts(data, datalen)
+  }.to_vec();
+
+  let mut sendchan =
+   unsafe { Box::from_raw(
+      sender as *mut LocalRcC
+    )};
+  sendchan.send(TestCommand::SendTo(destid,dataf)).unwrap();
+  mem::forget(sendchan);
+  // data is drop as dest id 
 }
 
 
@@ -301,20 +325,20 @@ extern {
   /// connect to dest
   /// TODO callback on a set_ready with channel id see 'connect_success' and 'connect_fail' (chan
   /// pointer is for call back and to identify the chan at a js level)
-  pub fn query_new_channel(_transport_id : *mut c_void, _dest_id : *mut u8, _idlen : usize, _chan_trigger : *mut c_void, _chan_state : *mut c_void, _chan_counter : *mut c_void);
+  /// chan_trigger w null if undefined
+  pub fn query_new_channel(_transport_id : *mut c_void, _dest_id : *mut u8, _idlen : usize, _chan_trigger_r : *mut c_void, _chan_trigger_w : *mut c_void, _chan_state : *mut c_void, _chan_counter : *mut c_void);
   /// when rust go a new channel he send it back for set_readiness (here we do not build a
   /// connection, it already xist : we simply send the channel pointer
-  pub fn read_channel_reg(_transport_id : *mut c_void, _dest_id : *mut u8, _idlen : usize, _chan_id : u16, _chan_trigger : *mut c_void, _chan_state : *mut c_void);
+  /// TODO right now the write trigger is useless as it is already in connected state
+  pub fn read_channel_reg(_transport_id : *mut c_void, _dest_id : *mut u8, _idlen : usize, _chan_id : u16, _chan_trigger_r : *mut c_void, _chan_trigger_w : *mut c_void, _chan_state : *mut c_void);
   // no call back here at some point need an association table between pointer chan and actuall
   // chanel
   pub fn close_channel(_chan : *mut c_void);
 
-  /// TODO add returned possible error code
-  /// call back with a set write ready when content send ( when buff full we return 0 from write
-  /// meaning that rust should io not ready error on it)
-  pub fn write(_chan : *mut c_void, _content : *mut u8, _contentlen : usize) -> usize;
+  /// See SendResult for returned code, all data is expected to be written
+  pub fn write(_transport_id : *mut c_void, _dest_id : *mut u8, _idlen : usize, _chan_counter : u16, _content : *mut u8, _contentlen : usize) -> u8;
   /// return possible error code as call back (same as write), flush the buffer!!
-  pub fn flush_write(_chan : *mut c_void);
+  pub fn flush_write(_transport_id : *mut c_void, _chan : u16);
   /// read buff of on message receive in the corresponding channel persistence
   /// (copy array) -> TODO on js some congestion mechanism : check webrtc data if there is a way to
   /// tell sender to suspend send until ok (asynch send is good for it not sure about webrtc :
@@ -332,7 +356,6 @@ pub struct ExtTransport {
   pub listener_id : usize,
   mult : bool,
   reg : UserRegistration,
-  slab : Slab<SlabEntry>,
   state : TState,
 }
 
@@ -350,6 +373,12 @@ pub struct ExtChannel {
   state : TState,
 }
 
+impl ExtChannel {
+  fn set_reg(&mut self, reg : UserRegistration) {
+    self.reg = reg;
+  }
+}
+
 pub type TState = Box<Rc<Cell<TransportState>>>;
 
 #[derive(Copy,Clone,Eq,PartialEq,Debug)]
@@ -365,7 +394,7 @@ pub enum TransportState {
 
 impl ExtTransport {
   
-  pub fn new(listener_id : usize, slab : Slab<SlabEntry>, mult : bool) -> (Self,UserSetReadiness,TState) {
+  pub fn new(listener_id : usize, mult : bool) -> (Self,UserSetReadiness,TState) {
 
     let state = Box::new(Rc::new(Cell::new(TransportState::Querying)));
 
@@ -374,7 +403,6 @@ impl ExtTransport {
       listener_id,
       mult,
       reg,
-      slab,
       state : state.clone(),
     };
 
@@ -403,16 +431,11 @@ impl Transport<UserPoll> for ExtTransport {
         slice::from_raw_parts(*id_out, *id_len_out)
       }.to_vec();
 
-      let chan_count = unsafe { *chan_out };
       let (usr,reg) = poll_reg();
-      let trig_ch = Box::new(usr);
       let state = Box::new(Rc::new(Cell::new(TransportState::Connected)));
-      unsafe {
-        let h_trig_ch = Box::into_raw(trig_ch) as *mut c_void;
-        let h_state_ch = Box::into_raw(state.clone()) as *mut c_void;
-        read_channel_reg(void_id,*id_out,*id_len_out,chan_count,h_trig_ch,h_state_ch);
-      }
-      
+      let chan_count = unsafe { *chan_out };
+      let trig_ch = Box::new(usr);
+      let h_state_ch = Box::into_raw(state.clone()) as *mut c_void;
       let rs = ExtChannel {
         listener_id : self.listener_id.clone(),
         dest_id,
@@ -421,11 +444,27 @@ impl Transport<UserPoll> for ExtTransport {
         // init at 0, option would be redundant with state
         count : Box::new(Rc::new(Cell::new(chan_count))),
       };
-      let ows = if self.mult {
-        Some(rs.clone())
+      let (ows,usr_w) = if self.mult {
+        let mut ws = rs.clone();
+        let (usr,reg) = poll_reg();
+        ws.reg = reg;
+        (Some(ws),Some(usr))
       } else {
-        None
+        (None,None)
       };
+
+
+      unsafe {
+        let h_trig_ch = Box::into_raw(trig_ch) as *mut c_void;
+        let h_trig_chw = if let Some(usr_w) = usr_w {
+          let trig_chw = Box::new(usr_w);
+          Box::into_raw(trig_chw) as *mut c_void
+        } else {
+          0 as *mut c_void
+        };
+        read_channel_reg(void_id,*id_out,*id_len_out,chan_count,h_trig_ch,h_trig_chw, h_state_ch);
+      }
+      
       Ok((rs,ows))
     } else {
       // mydht would block
@@ -454,6 +493,14 @@ impl Transport<UserPoll> for ExtTransport {
       // init at 0, option would be redundant with state
       count : Box::new(Rc::new(Cell::new(0))),
     };
+    let (orstream,usr_r) = if self.mult {
+      let (usr,reg) = poll_reg();
+      let mut rstream = stream.clone();
+      rstream.reg = reg;
+      (Some(rstream),Some(usr))
+    } else {
+      (None,None)
+    };
 
     let mut destid = p.0.clone();
     let destlen = destid.len();
@@ -463,19 +510,20 @@ impl Transport<UserPoll> for ExtTransport {
     unsafe {
       let ptrid = destid.as_mut_ptr();
       let h_usr = Box::into_raw(busr) as *mut c_void;
+      let h_usr_r = if let Some(usr_r) = usr_r {
+        let busw = Box::new(usr_r);
+        Box::into_raw(busw) as *mut c_void
+      } else {
+        0 as *mut c_void
+      };
       let h_count = Box::into_raw(bcount) as *mut c_void;
       let h_state = Box::into_raw(bstate) as *mut c_void;
       let h_transport = stream.listener_id.clone() as *mut c_void;
-      query_new_channel(h_transport, ptrid as *mut u8, destlen, h_usr, h_state, h_count);
+      query_new_channel(h_transport, ptrid as *mut u8, destlen, h_usr_r, h_usr, h_state, h_count);
     }
     mem::forget(destid);
     //mem::forget(busr);
     //mem::forget(bcount);
-    let orstream = if self.mult {
-      Some(stream.clone())
-    } else {
-      None
-    };
     Ok((stream,orstream))
 
   }
@@ -528,9 +576,63 @@ impl ReadTransportStream for ExtChannel {
   }
 }
 
+#[repr(u8)]
+pub enum SendResult { 
+  Success = 0, 
+  WouldBlock = 1, 
+  InvalidStateError = 2, 
+  NetworkError = 3, 
+  TypeError = 4, 
+  UnknownResult = 5, 
+}
+impl std::convert::From<u8> for SendResult {
+  fn from(i : u8) -> SendResult {
+    match i {
+      0 => SendResult::Success,
+      1 => SendResult::WouldBlock,
+      2 => SendResult::InvalidStateError,
+      3 => SendResult::NetworkError,
+      4 => SendResult::TypeError,
+      _ => SendResult::UnknownResult,
+    }
+  }
+}
+
 impl Write for ExtChannel {
     fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
-      unimplemented!("TODO with write ext, on 0 Io error should block (asynch tr and full) : only error when the channel got a error state (check state)");
+      match self.state.get() {
+        TransportState::Querying => {
+          Err(IoError::new(IoErrorKind::WouldBlock,""))
+        },
+        TransportState::Connected => {
+          let buf_len = buf.len();
+          let dest_len = self.dest_id.len();
+          
+          match unsafe { write(
+              self.listener_id as *mut c_void,
+              self.dest_id.as_ptr() as *mut u8,
+              dest_len,
+              self.count.get(),
+              buf.as_ptr() as *mut u8,
+              buf_len).into() } {
+            SendResult::Success => Ok(buf_len),
+            SendResult::WouldBlock =>
+              Err(IoError::new(IoErrorKind::WouldBlock,"")),
+            SendResult::InvalidStateError 
+            | SendResult::NetworkError
+            | SendResult::TypeError 
+            | SendResult::UnknownResult => {
+              let t_state : &Cell<TransportState> = (*self.state).borrow();
+              t_state.set(TransportState::WriteError);
+              Err(IoError::new(IoErrorKind::NotConnected,""))
+            },
+          }
+        },
+        _ => {
+          //generic error TODO beter error kind when states definition gets more stable 
+          Err(IoError::new(IoErrorKind::NotConnected,"Wrong ext channel state"))
+        },
+      }
     }
     fn flush(&mut self) -> IoResult<()> {
       unimplemented!("TODO nothing or flush js write buffer : currently not");
@@ -551,13 +653,22 @@ pub struct TestService {
   count : usize,
   event_loop : UserPoll,
   events : UserEvents,
+  slab : Slab<SlabEntry>,
+  // limitiation to one active sending channel (for testing see test command sendTo)
+  dests : HashMap<Vec<u8>,Token>,
+  prev_conn : bool,
   con_queue : VecDeque<TestCommand>,
+  // a max size for call to write : only to test under different configs
+  write_buf : usize,
+  read_buf : Vec<u8>,
 }
 
 #[cfg(feature = "jstest")]
 impl ServiceRestartable for TestService { }
+
 #[cfg(feature = "jstest")]
 impl Service for TestService {
+
   type CommandIn = TestCommand;
   type CommandOut = ();
 
@@ -567,21 +678,36 @@ impl Service for TestService {
         log_js(format!("got connect query to : {:?}", &destid), LogType::Log);
         let add = ByteAddress(destid);
         let (ws,ors) = self.transport.connectwith(&add)?;
+        self.insert_channels(ws,ors,false)?;
 
-        // TODO register and store
         return Ok(());
-        /*match self.transport.connectwith(&add) {
-          Ok((ws,ors)) => {
-        // TODO register and store
-        return Ok(());
-          },
-          Err(ref e) if e.kind() == IoErrorKind::WouldBlock => {
-            log_js(format!("queuing connect to : {:?}", &add), LogType::Log);
-            self.con_queue.push_back(TestCommand::ConnectWith(add.0));
-            return Ok(());
-          },
-          Err(e) => return Err(e.into()),
-        };*/
+      },
+      TestCommand::SendTo(destid,data) => {
+        log_js(format!("got send to : {:?}", &destid), LogType::Log);
+        if let Some(tok) = self.dests.get(&destid) {
+          if let Some(&mut SlabEntry::Write(ref mut w,ref mut queue,ref mut last_ix)) = self.slab.get_mut(*tok) {
+            // Should be restartable : write on wouldblock put data and ix in slab (vec of vec
+            // for multiple call to sendto): on event we
+            // restart write from event loop : make function nice for it : params identical
+            queue.push_back(data);
+            log_js(format!("send to queueu : {:?}", queue.len()), LogType::Log);
+            write_data(self.write_buf, w, queue, last_ix)?;
+              
+          }
+
+          return Ok(());
+        }
+        // else
+        log_js(format!("connecting on send call to : {:?}", &destid), LogType::Log);
+        // Testing code, relies on asumption of single thread immediate (asynch) transport
+        // connection, very likely to infinite loop with other implementations (still a trig
+        // on prev_conn to ensure a single call)
+        self.prev_conn = true;
+        self.call(TestCommand::ConnectWith(destid.clone()), async_yield)?;
+        if self.prev_conn {
+          self.prev_conn = false;
+          self.call(TestCommand::SendTo(destid,data), async_yield)?;
+        }
       },
       TestCommand::None => (),// poll
     }
@@ -598,13 +724,34 @@ impl Service for TestService {
       while let Some(event) = self.events.next() {
         log_js(format!("got event : {:?}", event), LogType::Log);
         // TODO on listener ready empty conn_queue!!
-        match self.transport.slab.get(event.token) {
-          Some(&SlabEntry::Listener) => {
-            let (rs,owrs) = self.transport.accept()?;
-            log_js(format!("receive a transport"), LogType::Log);
-            // TODO register and store
+        let is_listener = match self.slab.get_mut(event.token) {
+          Some(&mut SlabEntry::Listener) => true,
+          Some(&mut SlabEntry::Read(ref mut rs)) => {
+            if event.kind == Ready::Readable {
+              log_js(format!("reach read"),LogType::Error);
+// TODO do read            unimplemented!("reach read");
+            }
+
+
+            false
           },
-          None => log_js(format!("no slab entry for event : {:?}", event), LogType::Error),
+          Some(&mut SlabEntry::Write(ref mut w,ref mut queue,ref mut last_ix)) => {
+            if event.kind == Ready::Writable {
+              log_js(format!("restart writing, queue {}", queue.len()),LogType::Error);
+              write_data(self.write_buf, w, queue, last_ix)?;
+            }
+            false
+          },
+          None => {
+            log_js(format!("no slab entry for event : {:?}", event), LogType::Error);
+            false
+          },
+        };
+        if is_listener {
+          let (rs,owrs) = self.transport.accept()?;
+
+          self.insert_channels(rs,owrs,true)?;
+          log_js(format!("receive a transport"), LogType::Log);
         }
       }
     }
@@ -614,6 +761,53 @@ impl Service for TestService {
 
 }
 
+/// write as much data as possible (restartable on would_block error) until yield or finished
+fn write_data<W : Write> (buf_l : usize, stream : &mut W, queue : &mut VecDeque<Vec<u8>>, last_ix : &mut usize) -> Result<usize> {
+
+  let mut tot_write = 0;
+  while queue.len() != 0 {
+    {
+      let data = queue.get_mut(0).unwrap();
+      while *last_ix != data.len() {
+        let e = min(data.len(), *last_ix + buf_l);
+        let i = stream.write(&data[*last_ix..e])?;
+        *last_ix += i;
+        tot_write += i;
+      }
+    }
+    queue.pop_front();
+    *last_ix = 0;
+  }
+
+  Ok(tot_write)
+}
+
+#[cfg(feature = "jstest")]
+impl TestService {
+  fn insert_channels(&mut self, mc : ExtChannel, oc : Option<ExtChannel>, is_read : bool) -> Result<()> {
+    let (or,ow) = if is_read {
+      (Some(mc),oc)
+    } else {
+      (oc,Some(mc))
+    };
+
+    or.map(|r|{
+      let ix = self.slab.insert(SlabEntry::Read(r));
+      self.slab[ix].register(&self.event_loop, &mut self.dests, ix)
+      // bad code : does not remove content on error
+    }).unwrap_or(Ok(false))?;
+
+    ow.map(|w|{
+      let ix = self.slab.insert(SlabEntry::Write(w,VecDeque::new(),0));
+      self.slab[ix].register(&self.event_loop, &mut self.dests, ix)
+      // bad code : does not remove content on error
+    }).unwrap_or(Ok(false))?;
+
+    Ok(())
+  }
+}
+
+
 //const EVENTS_POLL_SIZE = 100;
 const EVENTS_POLL_SIZE : usize = 5;
 
@@ -621,11 +815,32 @@ const POLL_FD : usize = 1;
 #[cfg(feature = "jstest")]
 pub enum SlabEntry {
   Listener,
+  Read(ExtChannel),
+  Write(ExtChannel,VecDeque<Vec<u8>>,usize),
+}
+
+#[cfg(feature = "jstest")]
+impl SlabEntry {
+  fn register(&self, poll : &UserPoll, dests : &mut HashMap<Vec<u8>,Token>, tok : Token) -> Result<bool> {
+    let is_reg = match self {
+      SlabEntry::Listener => false,
+      SlabEntry::Read(ref r) => r.register(poll,tok,Ready::Readable)?,
+      SlabEntry::Write(ref w,_,_) => {
+        // limit of one sending connection between two peers
+        dests.insert(w.dest_id.clone(),tok);
+        w.register(poll,tok,Ready::Writable)?
+      },
+    };
+    Ok(is_reg)
+  }
 }
 
 #[cfg(feature = "jstest")]
 pub fn start_service(id : *mut u8, idlen : usize) {
 
+  // TODO parameterize bufs for testing
+  let write_buf_len = 7;
+  let read_buf_len = 13;
   let id_listen = unsafe {
     slice::from_raw_parts(id, idlen)
   }.to_vec();
@@ -637,7 +852,7 @@ pub fn start_service(id : *mut u8, idlen : usize) {
   let mut slabcache = Slab::new();
   let ttoken = slabcache.insert(SlabEntry::Listener);
   // use ptr on inp chan as js id (more compact than vec)
-  let (transport, transport_trigger, transport_state) = ExtTransport::new(hptr, slabcache, true); 
+  let (transport, transport_trigger, transport_state) = ExtTransport::new(hptr, true); 
   let event_loop = UserPoll::new(POLL_FD,true);
   assert!(transport.register(&event_loop, ttoken, Ready::Readable).unwrap());
 
@@ -645,15 +860,20 @@ pub fn start_service(id : *mut u8, idlen : usize) {
     transport,
     count : 0,
     event_loop,
+    slab : slabcache,
+    dests : HashMap::new(),
+    prev_conn : false,
     events : UserEvents::with_capacity(EVENTS_POLL_SIZE),
     con_queue : VecDeque::new(),
+    write_buf : write_buf_len,
+    read_buf : vec![0;read_buf_len],
   };
   let handle = RestartOrError.spawn(
     service,
     NoSend,
     None,
     DefaultRecv(sr,TestCommand::None),
-    0
+    0,
   ).unwrap();
 
   let handle = Box::new(handle);
@@ -667,6 +887,7 @@ pub fn start_service(id : *mut u8, idlen : usize) {
   }
 
 }
+
 
 #[repr(u8)]
 pub enum LogType { Log = 0, Error = 1, Alert = 2, }
