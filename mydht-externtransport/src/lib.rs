@@ -30,6 +30,7 @@ use mydht_base::mydhtresult::{
   Result,
   Error,
   ErrorKind,
+  ErrorLevel,
 };
 
 use mydht_base::utils::{
@@ -82,7 +83,7 @@ use std::marker::PhantomData;
 #[derive(Clone,Debug)]
 pub enum TestCommand {
   ConnectWith(Vec<u8>),
-  SendTo(Vec<u8>, Vec<u8>),
+  SendTo(Vec<u8>, Vec<u8>,bool),
   None,
 }
 
@@ -134,7 +135,11 @@ pub extern "C" fn restore(handle : *mut c_void) {
    unsafe { Box::from_raw(
       handle as *mut RestartSameThread<TestService, NoSend, RestartOrError, RecMain>
     )};
-  typed_handle.unyield().unwrap(); // TODO correct erro mgmt with a test if is_finished before
+  assert!(!typed_handle.is_finished());
+  match typed_handle.unyield() {
+    Ok(()) => (),
+    Err(e) => log_js(format!("Unyield error : {:?}", e), LogType::Error),
+  };
   mem::forget(typed_handle);
 }
 /*alternate impl for alloc dealloc kept for testing : issue when using cipher
@@ -209,7 +214,7 @@ pub extern "C" fn test_send_to(sender : *mut c_void, id : *mut u8, idlen : usize
    unsafe { Box::from_raw(
       sender as *mut LocalRcC
     )};
-  sendchan.send(TestCommand::SendTo(destid,dataf)).unwrap();
+  sendchan.send(TestCommand::SendTo(destid,dataf,true)).unwrap();
   mem::forget(sendchan);
   // data is drop as dest id 
 }
@@ -276,7 +281,6 @@ fn change_state_and_trigger(trigger : *mut c_void, state : *mut c_void, new_stat
 pub extern "C" fn receive_connect(trigger : *mut c_void) {
   let t_trig = unsafe { Box::from_raw(trigger as *mut UserSetReadiness) };
   t_trig.set_readiness(Ready::Readable);
-
   mem::forget(t_trig);
 }
 
@@ -291,17 +295,22 @@ pub extern "C" fn write_error(_id : *mut u8, _idlen : usize, _write_set_readines
 
 
 #[no_mangle]
-pub extern "C" fn trigger_read(_set_readiness : *mut c_void, _eventlooptoken : usize) {
-  unimplemented!()
+pub extern "C" fn trigger_read(trigger : *mut c_void) {
+  let t_trig = unsafe { Box::from_raw(trigger as *mut UserSetReadiness) };
+  t_trig.set_readiness(Ready::Readable);
+  mem::forget(t_trig);
 }
 #[no_mangle]
-pub extern "C" fn forget_readiness(_set_readiness : *mut c_void) {
-  unimplemented!("rc -1 on the poll by dropping object");
+pub extern "C" fn forget_readiness(trigger : *mut c_void) {
+  //rc -1 on the poll by dropping object (not using mem forget seems enough
+  unsafe { Box::from_raw(trigger as *mut UserSetReadiness) };
 }
 
 #[no_mangle]
-pub extern "C" fn trigger_write(_set_readiness : *mut c_void, _eventlooptoken : usize) {
-  unimplemented!("TODO cast to UserSetReadiness and trigger")
+pub extern "C" fn trigger_write(trigger : *mut c_void) {
+  let t_trig = unsafe { Box::from_raw(trigger as *mut UserSetReadiness) };
+  t_trig.set_readiness(Ready::Writable);
+  mem::forget(t_trig);
 }
 
 });
@@ -336,14 +345,15 @@ extern {
   pub fn close_channel(_chan : *mut c_void);
 
   /// See SendResult for returned code, all data is expected to be written
-  pub fn write(_transport_id : *mut c_void, _dest_id : *mut u8, _idlen : usize, _chan_counter : u16, _content : *mut u8, _contentlen : usize) -> u8;
+  pub fn write(_transport_id : *mut c_void, _dest_id : *mut u8, _idlen : usize, _chan_counter : u16, _content : *mut u8, _contentlen : usize) -> SendResult;
   /// return possible error code as call back (same as write), flush the buffer!!
   pub fn flush_write(_transport_id : *mut c_void, _chan : u16);
   /// read buff of on message receive in the corresponding channel persistence
   /// (copy array) -> TODO on js some congestion mechanism : check webrtc data if there is a way to
   /// tell sender to suspend send until ok (asynch send is good for it not sure about webrtc :
   /// could add a layer for it but not for now).
-  pub fn read(_chan : *mut c_void, _buf : *mut u8, _buflen : usize) -> usize;
+  /// Return size read if 0 or > 0 or error code if less than 0
+  pub fn read(_transport_id : *mut c_void, _dest_id : *mut u8, _idlen : usize, _chan_counter : u16, _buf : *mut u8, _buflen : usize) -> isize;
   
   /// fn to call to give context back (eg js without worker)
   pub fn suspend(_self : *mut c_void);
@@ -576,15 +586,34 @@ impl ReadTransportStream for ExtChannel {
   }
 }
 
+pub enum RecvResult { 
+  Success(usize),
+  WouldBlock, 
+  InvalidStateError, 
+  UnknownResult,
+}
+
+impl std::convert::From<isize> for RecvResult {
+  fn from(i : isize) -> RecvResult {
+    match i {
+      -1 => RecvResult::WouldBlock,
+      -2 => RecvResult::InvalidStateError,
+      s if s < 0 => RecvResult::UnknownResult,
+      s => RecvResult::Success(s as usize),
+    }
+  }
+}
+
 #[repr(u8)]
 pub enum SendResult { 
-  Success = 0, 
-  WouldBlock = 1, 
-  InvalidStateError = 2, 
-  NetworkError = 3, 
-  TypeError = 4, 
-  UnknownResult = 5, 
+  Success = 0,
+  WouldBlock = 1,
+  InvalidStateError = 2,
+  NetworkError = 3,
+  TypeError = 4,
+  UnknownResult = 5,
 }
+
 impl std::convert::From<u8> for SendResult {
   fn from(i : u8) -> SendResult {
     match i {
@@ -628,19 +657,54 @@ impl Write for ExtChannel {
             },
           }
         },
-        _ => {
+        s => {
           //generic error TODO beter error kind when states definition gets more stable 
-          Err(IoError::new(IoErrorKind::NotConnected,"Wrong ext channel state"))
+          Err(IoError::new(IoErrorKind::NotConnected,format!("Wrong ext channel state (on write) : {:?}",s)))
         },
       }
     }
     fn flush(&mut self) -> IoResult<()> {
-      unimplemented!("TODO nothing or flush js write buffer : currently not");
+
+      // currently nothing to do
+      Ok(())
     }
 }
 impl Read for ExtChannel {
     fn read(&mut self, buf: &mut [u8]) -> IoResult<usize> {
-      unimplemented!("TODO with read ext read from buffer of on message receive and ior should block if empty");
+      match self.state.get() {
+        TransportState::Querying => {
+          Err(IoError::new(IoErrorKind::WouldBlock,""))
+        },
+        TransportState::Connected => {
+          let buf_len = buf.len();
+          let dest_len = self.dest_id.len();
+          match unsafe { read(
+              self.listener_id as *mut c_void,
+              self.dest_id.as_ptr() as *mut u8,
+              dest_len,
+              self.count.get(),
+              buf.as_ptr() as *mut u8,
+              buf_len).into() } {
+            RecvResult::WouldBlock =>
+              Err(IoError::new(IoErrorKind::WouldBlock,"")),
+            RecvResult::UnknownResult
+            | RecvResult::InvalidStateError => {
+              // probably useless code (state would change on error callback and we end up in error on
+              // previous match state), might be usefull for disconnect while running wasm code
+              let t_state : &Cell<TransportState> = (*self.state).borrow();
+              t_state.set(TransportState::ReadError);
+              Err(IoError::new(IoErrorKind::NotConnected,""))
+            },
+            RecvResult::Success(r) => {
+              Ok(r)
+            },
+          }
+        },
+        s => {
+          //generic error TODO beter error kind when states definition gets more stable
+          Err(IoError::new(IoErrorKind::NotConnected,format!("Wrong ext channel state (on read) : {:?}",s)))
+        },
+      }
     }
 }
 
@@ -656,7 +720,6 @@ pub struct TestService {
   slab : Slab<SlabEntry>,
   // limitiation to one active sending channel (for testing see test command sendTo)
   dests : HashMap<Vec<u8>,Token>,
-  prev_conn : bool,
   con_queue : VecDeque<TestCommand>,
   // a max size for call to write : only to test under different configs
   write_buf : usize,
@@ -667,12 +730,8 @@ pub struct TestService {
 impl ServiceRestartable for TestService { }
 
 #[cfg(feature = "jstest")]
-impl Service for TestService {
-
-  type CommandIn = TestCommand;
-  type CommandOut = ();
-
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+impl TestService {
+  fn call_inner<S : SpawnerYield>(&mut self, req: TestCommand, async_yield : &mut S) -> Result<()> {
     match req {
       TestCommand::ConnectWith(destid) => {
         log_js(format!("got connect query to : {:?}", &destid), LogType::Log);
@@ -682,7 +741,7 @@ impl Service for TestService {
 
         return Ok(());
       },
-      TestCommand::SendTo(destid,data) => {
+      TestCommand::SendTo(destid,data,prev_conn) => {
         log_js(format!("got send to : {:?}", &destid), LogType::Log);
         if let Some(tok) = self.dests.get(&destid) {
           if let Some(&mut SlabEntry::Write(ref mut w,ref mut queue,ref mut last_ix)) = self.slab.get_mut(*tok) {
@@ -690,7 +749,7 @@ impl Service for TestService {
             // for multiple call to sendto): on event we
             // restart write from event loop : make function nice for it : params identical
             queue.push_back(data);
-            log_js(format!("send to queueu : {:?}", queue.len()), LogType::Log);
+            log_js(format!("send to queue : {:?}", queue.len()), LogType::Log);
             write_data(self.write_buf, w, queue, last_ix)?;
               
           }
@@ -702,12 +761,11 @@ impl Service for TestService {
         // Testing code, relies on asumption of single thread immediate (asynch) transport
         // connection, very likely to infinite loop with other implementations (still a trig
         // on prev_conn to ensure a single call)
-        self.prev_conn = true;
         self.call(TestCommand::ConnectWith(destid.clone()), async_yield)?;
-        if self.prev_conn {
-          self.prev_conn = false;
-          self.call(TestCommand::SendTo(destid,data), async_yield)?;
+        if prev_conn {
+          self.call(TestCommand::SendTo(destid,data,false), async_yield)?;
         }
+        return Ok(());
       },
       TestCommand::None => (),// poll
     }
@@ -726,10 +784,12 @@ impl Service for TestService {
         // TODO on listener ready empty conn_queue!!
         let is_listener = match self.slab.get_mut(event.token) {
           Some(&mut SlabEntry::Listener) => true,
-          Some(&mut SlabEntry::Read(ref mut rs)) => {
+          Some(&mut SlabEntry::Read(ref mut rs, ref mut dest)) => {
             if event.kind == Ready::Readable {
-              log_js(format!("reach read"),LogType::Error);
-// TODO do read            unimplemented!("reach read");
+              log_js(format!("reach read"),LogType::Log);
+              let destlen = dest.len();
+              read_data(&mut self.read_buf[..],rs,dest)?;
+              log_js(format!("suspend read {:?}",&dest[destlen..]),LogType::Log);
             }
 
 
@@ -737,7 +797,7 @@ impl Service for TestService {
           },
           Some(&mut SlabEntry::Write(ref mut w,ref mut queue,ref mut last_ix)) => {
             if event.kind == Ready::Writable {
-              log_js(format!("restart writing, queue {}", queue.len()),LogType::Error);
+              log_js(format!("restart writing, queue {}", queue.len()),LogType::Log);
               write_data(self.write_buf, w, queue, last_ix)?;
             }
             false
@@ -748,7 +808,15 @@ impl Service for TestService {
           },
         };
         if is_listener {
-          let (rs,owrs) = self.transport.accept()?;
+          let (rs,owrs) = match self.transport.accept() {
+            Ok(i) => i,
+            Err(e) => if e.level() == ErrorLevel::Ignore {
+              // do not suspend need to check other events
+              continue;
+            } else {
+              return Err(e.into())
+            },
+          };
 
           self.insert_channels(rs,owrs,true)?;
           log_js(format!("receive a transport"), LogType::Log);
@@ -758,29 +826,80 @@ impl Service for TestService {
  
     Ok(())
   }
+}
+
+#[cfg(feature = "jstest")]
+impl Service for TestService {
+
+  type CommandIn = TestCommand;
+  type CommandOut = ();
+
+  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+    match self.call_inner(req, async_yield) {
+      Ok(r) => Ok(r),
+      Err(e) => {
+        if e.level() != ErrorLevel::Ignore {
+          log_js(format!("Call error : {:?}", e), LogType::Error);
+        }
+        Err(e)
+      },
+    }
+  }
 
 }
 
+#[cfg(feature = "jstest")]
 /// write as much data as possible (restartable on would_block error) until yield or finished
-fn write_data<W : Write> (buf_l : usize, stream : &mut W, queue : &mut VecDeque<Vec<u8>>, last_ix : &mut usize) -> Result<usize> {
+fn write_data<W : Write> (buf_l : usize, stream : &mut W, queue : &mut VecDeque<Vec<u8>>, last_ix : &mut usize) -> Result<()> {
 
-  let mut tot_write = 0;
   while queue.len() != 0 {
     {
       let data = queue.get_mut(0).unwrap();
       while *last_ix != data.len() {
         let e = min(data.len(), *last_ix + buf_l);
-        let i = stream.write(&data[*last_ix..e])?;
+   //     let i = stream.write(&data[*last_ix..e])?;
+        let i = match stream.write(&data[*last_ix..e]) {
+          Ok(i) => i,
+          Err(e) => if e.kind() == IoErrorKind::WouldBlock {
+            // do not suspend (in mydht it is inner service that is suspended
+            return Ok(())
+          } else {
+            return Err(e.into())
+          },
+        };
         *last_ix += i;
-        tot_write += i;
       }
     }
     queue.pop_front();
     *last_ix = 0;
   }
 
-  Ok(tot_write)
+  Ok(())
 }
+
+#[cfg(feature = "jstest")]
+/// read as much data as possible (restartable on would_block error) until yield or finished
+/// For test purpose : could return fat vec
+fn read_data<R : Read> (buf : &mut[u8], stream : &mut R, result : &mut Vec<u8>) -> Result<()> {
+
+  // would block if 0 on first read (closer to mydht), no would block should be manage js side ??
+  let mut nb_read = 1;
+  while nb_read > 0 {
+    nb_read = match stream.read(buf) {
+      Ok(i) => i,
+      Err(e) => if e.kind() == IoErrorKind::WouldBlock {
+        return Ok(())
+      } else {
+        return Err(e.into())
+      },
+    };
+ 
+    result.append(&mut buf[..nb_read].to_vec());
+  }
+
+  Ok(())
+}
+
 
 #[cfg(feature = "jstest")]
 impl TestService {
@@ -792,7 +911,7 @@ impl TestService {
     };
 
     or.map(|r|{
-      let ix = self.slab.insert(SlabEntry::Read(r));
+      let ix = self.slab.insert(SlabEntry::Read(r,Vec::new()));
       self.slab[ix].register(&self.event_loop, &mut self.dests, ix)
       // bad code : does not remove content on error
     }).unwrap_or(Ok(false))?;
@@ -815,7 +934,7 @@ const POLL_FD : usize = 1;
 #[cfg(feature = "jstest")]
 pub enum SlabEntry {
   Listener,
-  Read(ExtChannel),
+  Read(ExtChannel,Vec<u8>),
   Write(ExtChannel,VecDeque<Vec<u8>>,usize),
 }
 
@@ -824,7 +943,7 @@ impl SlabEntry {
   fn register(&self, poll : &UserPoll, dests : &mut HashMap<Vec<u8>,Token>, tok : Token) -> Result<bool> {
     let is_reg = match self {
       SlabEntry::Listener => false,
-      SlabEntry::Read(ref r) => r.register(poll,tok,Ready::Readable)?,
+      SlabEntry::Read(ref r,_) => r.register(poll,tok,Ready::Readable)?,
       SlabEntry::Write(ref w,_,_) => {
         // limit of one sending connection between two peers
         dests.insert(w.dest_id.clone(),tok);
@@ -862,7 +981,6 @@ pub fn start_service(id : *mut u8, idlen : usize) {
     event_loop,
     slab : slabcache,
     dests : HashMap::new(),
-    prev_conn : false,
     events : UserEvents::with_capacity(EVENTS_POLL_SIZE),
     con_queue : VecDeque::new(),
     write_buf : write_buf_len,
