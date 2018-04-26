@@ -84,6 +84,7 @@ use std::marker::PhantomData;
 pub enum TestCommand {
   ConnectWith(Vec<u8>),
   SendTo(Vec<u8>, Vec<u8>,bool),
+  ExpectFrom(Vec<u8>,Vec<u8>),
   None,
 }
 
@@ -218,6 +219,26 @@ pub extern "C" fn test_send_to(sender : *mut c_void, id : *mut u8, idlen : usize
   mem::forget(sendchan);
   // data is drop as dest id 
 }
+#[cfg(feature = "jstest")]
+#[no_mangle]
+pub extern "C" fn test_expect_from(sender : *mut c_void, id : *mut u8, idlen : usize, data : *mut u8, datalen : usize) {
+  let destid = unsafe {
+    slice::from_raw_parts(id, idlen)
+  }.to_vec();
+
+  let dataf = unsafe {
+    slice::from_raw_parts(data, datalen)
+  }.to_vec();
+
+  let mut sendchan =
+   unsafe { Box::from_raw(
+      sender as *mut LocalRcC
+    )};
+  sendchan.send(TestCommand::ExpectFrom(destid,dataf)).unwrap();
+  mem::forget(sendchan);
+  // data is drop as dest id 
+}
+
 
 
 
@@ -342,7 +363,7 @@ extern {
   pub fn read_channel_reg(_transport_id : *mut c_void, _dest_id : *mut u8, _idlen : usize, _chan_id : u16, _chan_trigger_r : *mut c_void, _chan_trigger_w : *mut c_void, _chan_state : *mut c_void);
   // no call back here at some point need an association table between pointer chan and actuall
   // chanel
-  pub fn close_channel(_chan : *mut c_void);
+  pub fn close_channel(_transport_id : *mut c_void, _dest_id : *mut u8, _idlen : usize, _chan_counter : u16);
 
   /// See SendResult for returned code, all data is expected to be written
   pub fn write(_transport_id : *mut c_void, _dest_id : *mut u8, _idlen : usize, _chan_counter : u16, _content : *mut u8, _contentlen : usize) -> SendResult;
@@ -355,8 +376,6 @@ extern {
   /// Return size read if 0 or > 0 or error code if less than 0
   pub fn read(_transport_id : *mut c_void, _dest_id : *mut u8, _idlen : usize, _chan_counter : u16, _buf : *mut u8, _buflen : usize) -> isize;
   
-  /// fn to call to give context back (eg js without worker)
-  pub fn suspend(_self : *mut c_void);
 }
 
 
@@ -387,6 +406,18 @@ impl ExtChannel {
   fn set_reg(&mut self, reg : UserRegistration) {
     self.reg = reg;
   }
+  fn close(&mut self) {
+  // done before transport call back
+  self.state.set(TransportState::Closed);
+  let dest_len = self.dest_id.len();
+  unsafe { close_channel(
+    self.listener_id as *mut c_void,
+    self.dest_id.as_ptr() as *mut u8,
+    dest_len,
+    self.count.get()) };
+}
+
+
 }
 
 pub type TState = Box<Rc<Cell<TransportState>>>;
@@ -573,12 +604,14 @@ impl Registerable<UserPoll> for ExtChannel {
 
 impl WriteTransportStream for ExtChannel {
   fn disconnect(&mut self) -> IoResult<()> {
-    unimplemented!("TODO change state and call channel close"); 
+    self.close();
+    Ok(())
   }
 }
 impl ReadTransportStream for ExtChannel {
   fn disconnect(&mut self) -> IoResult<()> {
-    unimplemented!("TODO change state and call channel close"); 
+    self.close();
+    Ok(())
   }
   /// TODO remove
   fn rec_end_condition(&self) -> bool {
@@ -720,10 +753,10 @@ pub struct TestService {
   slab : Slab<SlabEntry>,
   // limitiation to one active sending channel (for testing see test command sendTo)
   dests : HashMap<Vec<u8>,Token>,
-  con_queue : VecDeque<TestCommand>,
   // a max size for call to write : only to test under different configs
   write_buf : usize,
   read_buf : Vec<u8>,
+  expect : HashMap<Vec<u8>,(Vec<u8>,usize)>,
 }
 
 #[cfg(feature = "jstest")]
@@ -767,6 +800,14 @@ impl TestService {
         }
         return Ok(());
       },
+      TestCommand::ExpectFrom(destid,mut data) => {
+        log_js(format!("got expect from : {:?}", &destid), LogType::Log);
+        if self.expect.contains_key(&destid) {
+          self.expect.get_mut(&destid).unwrap().0.append(&mut data);
+        } else {
+          self.expect.insert(destid, (data,0));
+        }
+      },
       TestCommand::None => (),// poll
     }
     log_js(format!("service count : {}", self.count), LogType::Log);
@@ -781,15 +822,29 @@ impl TestService {
       }
       while let Some(event) = self.events.next() {
         log_js(format!("got event : {:?}", event), LogType::Log);
-        // TODO on listener ready empty conn_queue!!
         let is_listener = match self.slab.get_mut(event.token) {
           Some(&mut SlabEntry::Listener) => true,
           Some(&mut SlabEntry::Read(ref mut rs, ref mut dest)) => {
+            // Warn currently dest is never clear (not sure we want to manage it for testing)
             if event.kind == Ready::Readable {
               log_js(format!("reach read"),LogType::Log);
               let destlen = dest.len();
               read_data(&mut self.read_buf[..],rs,dest)?;
-              log_js(format!("suspend read {:?}",&dest[destlen..]),LogType::Log);
+              if let Some(&mut (ref expect, ref mut ixexpect)) = self.expect.get_mut(&rs.dest_id) {
+                let s_read = dest.len() - destlen;
+                let n_ixexpect = min(*ixexpect + s_read, expect.len());
+                let n_expect = &expect[*ixexpect..n_ixexpect];
+                log_js(format!("suspend read expect {:?} {:?}",&dest[destlen..] == n_expect, &dest[destlen..]),LogType::Log);
+                // TODO call back js test function for testing from test js fw
+                assert!(&dest[destlen..] == n_expect);
+                *ixexpect = n_ixexpect;
+                if *ixexpect == expect.len() {
+                  // TODO call back js test function for testing from test js fw
+                  log_js(format!("Expect success"),LogType::Log);
+                }
+              } else {
+                log_js(format!("suspend read no expect {:?}",&dest[destlen..]),LogType::Log);
+              }
             }
 
 
@@ -982,9 +1037,9 @@ pub fn start_service(id : *mut u8, idlen : usize) {
     slab : slabcache,
     dests : HashMap::new(),
     events : UserEvents::with_capacity(EVENTS_POLL_SIZE),
-    con_queue : VecDeque::new(),
     write_buf : write_buf_len,
     read_buf : vec![0;read_buf_len],
+    expect : HashMap::new(),
   };
   let handle = RestartOrError.spawn(
     service,

@@ -1,63 +1,65 @@
 webrtctransport.run("ZA==")
 undefined
-webrtctransport.js:28 got instance
-webrtctransport.js:29 {instance: Instance, module: Module}
-webrtctransport.js:30 {memory: Memory, restore: ƒ, alloc: ƒ, dealloc: ƒ, start: ƒ, …}
-webrtctransport.js:105 Webassembly : service count : 0
-webrtctransport.js:105 Webassembly : got event : Event { kind: Readable, token: 0 }
-webrtctransport.js:105 Webassembly : service count : 1
-webrtctransport.js:105 Webassembly : got event : Event { kind: Readable, token: 0 }
+webrtctransport.js:27 got instance
+webrtctransport.js:28 
+{instance: Instance, module: Module}
+webrtctransport.js:29 
+{memory: Memory, restore: ƒ, alloc: ƒ, dealloc: ƒ, start: ƒ, …}
+webrtctransport.js:121 Webassembly : service count : 0
+webrtctransport.js:121 Webassembly : got event : Event { kind: Readable, token: 0 }
+webrtctransport.js:121 Webassembly : service count : 1
+webrtctransport.js:121 Webassembly : got event : Event { kind: Readable, token: 0 }
 index.js:163 Unmanaged message from server : 1,2,3
 webrtctransport.run("YWlh")
-webrtctransport.js:105 Webassembly : service count : 0
-webrtctransport.js:105 Webassembly : got event : Event { kind: Readable, token: 0 }
+webrtctransport.js:121 Webassembly : service count : 0
+webrtctransport.js:121 Webassembly : got event : Event { kind: Readable, token: 0 }
 undefined
-webrtctransport.js:105 Webassembly : service count : 1
-webrtctransport.js:105 Webassembly : got event : Event { kind: Readable, token: 0 }
+webrtctransport.js:121 Webassembly : service count : 1
+webrtctransport.js:121 Webassembly : got event : Event { kind: Readable, token: 0 }
 index.js:163 Unmanaged message from server : 1,2,3
+webrtctransport.testExpectFrom(198280,"ZA==","some data");
+webrtctransport.js:121 Webassembly : got expect from : [100]
+webrtctransport.js:121 Webassembly : service count : 2
+undefined
 webrtctransport.testSend(196912,"YWlh","some data");
-webrtctransport.js:105 Webassembly : got send to : [97, 105, 97]
-webrtctransport.js:105 Webassembly : connecting on send call to : [97, 105, 97]
-webrtctransport.js:105 Webassembly : got connect query to : [97, 105, 97]
-webrtctransport.js:105 Webassembly : connect with state : Connected
-webrtctransport.js:105 Webassembly : got send to : [97, 105, 97]
-webrtctransport.js:105 Webassembly : send to queue : 1
-webrtctransport.js:105 Webassembly : service count : 2
-webrtctransport.js:105 Webassembly : got event : Event { kind: Readable, token: 1 }
-webrtctransport.js:105 Webassembly : reach read
-webrtctransport.js:105 Webassembly : suspend read []
-webrtctransport.js:105 Webassembly : got event : Event { kind: Writable, token: 2 }
-webrtctransport.js:105 Webassembly : restart writing, queue 1
+webrtctransport.js:121 Webassembly : got send to : [97, 105, 97]
+webrtctransport.js:121 Webassembly : connecting on send call to : [97, 105, 97]
+webrtctransport.js:121 Webassembly : got connect query to : [97, 105, 97]
+webrtctransport.js:121 Webassembly : connect with state : Connected
+webrtctransport.js:121 Webassembly : got send to : [97, 105, 97]
+webrtctransport.js:121 Webassembly : send to queue : 1
+webrtctransport.js:121 Webassembly : service count : 2
+webrtctransport.js:121 Webassembly : got event : Event { kind: Readable, token: 1 }
+webrtctransport.js:121 Webassembly : reach read
+webrtctransport.js:121 Webassembly : suspend read no expect []
+webrtctransport.js:121 Webassembly : got event : Event { kind: Writable, token: 2 }
+webrtctransport.js:121 Webassembly : restart writing, queue 1
 undefined
 index.js:17 ice state change
 index.js:397 received candidate when no offer has been made, storing
-2index.js:17 ice state change
+2
+index.js:17 ice state change
 index.js:17 ice state change
 index.js:443 Send channel state is: open
-webrtctransport.js:105 Webassembly : service count : 3
-webrtctransport.js:105 Webassembly : got event : Event { kind: Writable, token: 2 }
-webrtctransport.js:105 Webassembly : restart writing, queue 1
+webrtctransport.js:121 Webassembly : service count : 3
+webrtctransport.js:121 Webassembly : got event : Event { kind: Writable, token: 2 }
+webrtctransport.js:121 Webassembly : restart writing, queue 1
 index.js:443 Send channel state is: open
-webrtctransport.js:105 Webassembly : service count : 2
-webrtctransport.js:105 Webassembly : got event : Event { kind: Readable, token: 0 }
-webrtctransport.js:105 Webassembly : receive a transport
-webrtctransport.js:105 Webassembly : got event : Event { kind: Readable, token: 1 }
-webrtctransport.js:105 Webassembly : reach read
-webrtctransport.js:319 read : -1
-webrtctransport.js:105 Webassembly : suspend read []
-webrtctransport.js:105 Webassembly : got event : Event { kind: Writable, token: 2 }
-webrtctransport.js:105 Webassembly : restart writing, queue 0
-index.js:461 MessageEvent {isTrusted: true, data: ArrayBuffer(7), origin: "", lastEventId: "", source: null, …}
-webrtctransport.js:105 Webassembly : service count : 3
-webrtctransport.js:105 Webassembly : got event : Event { kind: Readable, token: 1 }
-webrtctransport.js:105 Webassembly : reach read
-webrtctransport.js:319 read : 7
-webrtctransport.js:319 read : -1
-webrtctransport.js:105 Webassembly : suspend read [115, 111, 109, 101, 32, 100, 97]
-index.js:461 MessageEvent {isTrusted: true, data: ArrayBuffer(2), origin: "", lastEventId: "", source: null, …}
-webrtctransport.js:105 Webassembly : service count : 4
-webrtctransport.js:105 Webassembly : got event : Event { kind: Readable, token: 1 }
-webrtctransport.js:105 Webassembly : reach read
-webrtctransport.js:319 read : 2
-webrtctransport.js:319 read : -1
-webrtctransport.js:105 Webassembly : suspend read [116, 97]
+webrtctransport.js:121 Webassembly : service count : 3
+webrtctransport.js:121 Webassembly : got event : Event { kind: Readable, token: 0 }
+webrtctransport.js:121 Webassembly : receive a transport
+webrtctransport.js:121 Webassembly : got event : Event { kind: Readable, token: 1 }
+webrtctransport.js:121 Webassembly : reach read
+webrtctransport.js:347 read : -1
+webrtctransport.js:121 Webassembly : suspend read expect true []
+webrtctransport.js:121 Webassembly : got event : Event { kind: Writable, token: 2 }
+webrtctransport.js:121 Webassembly : restart writing, queue 0
+index.js:461 
+MessageEvent {isTrusted: true, data: ArrayBuffer(7), origin: "", lastEventId: "", source: null, …}
+webrtctransport.js:121 Webassembly : service count : 4
+webrtctransport.js:121 Webassembly : got event : Event { kind: Readable, token: 1 }
+webrtctransport.js:121 Webassembly : reach read
+webrtctransport.js:347 read : 7
+webrtctransport.js:347 read : -1
+webrtctransport.js:121 Webassembly : suspend read expect true [115, 111, 109, 101, 32, 100, 97]
+﻿
