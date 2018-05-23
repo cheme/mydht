@@ -19,7 +19,7 @@ use std::ops::Deref;
 /// two).
 /// TODO heavy refacto (lot of useless method with new procs)
 /// TODO consider removing Sync or Send, and switch to Ref<DHTRules>
-pub trait DHTRules : Sync + Send + 'static {
+pub trait DHTRules : 'static + Send {
   /// Max number of hop for the query, the method is currently called in main peermgmt process, therefore it must be fast (a mapping, not a db access).
   fn nbhop (&self, QueryPriority) -> u8;
   /// Number of peers to transmit to at each hop, the method is currently called in main peermgmt process, therefore it must be fast (a mapping not a db access).
@@ -195,9 +195,11 @@ macro_rules! deref_impl {() => {
 
 }}
 
-impl<DR : DHTRules> DHTRules for Arc<DR> {
+
+impl<DR : DHTRules + Sync> DHTRules for Arc<DR> {
   deref_impl!();
 }
+
 /*impl<DR : DHTRules> DHTRules for Rc<DR> {
   deref_impl!();
 }*/

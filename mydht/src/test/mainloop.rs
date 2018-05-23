@@ -540,7 +540,7 @@ impl MyDHTConf for TestAllThConf {
   type PeerRef = ArcRef<Self::Peer>;
   //type PeerRef = RcRef<Self::Peer>;
   type PeerMgmtMeths = TestingRules;
-  type DHTRules = Arc<SimpleRules>;
+  type DHTRules = SimpleRules;
   type Slab = Slab<RWSlabEntry<Self>>;
   type PeerCache = HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
   type AddressCache = HashMap<<Self::Transport as Transport<Self::Poll>>::Address,AddressCacheEntry>;
@@ -692,8 +692,8 @@ impl MyDHTConf for TestAllThConf {
   fn init_peermgmt_proto(&mut self) -> Result<Self::PeerMgmtMeths> {
     Ok(TestingRules::new_no_delay())
   }
-  fn init_dhtrules_proto(&mut self) -> Result<Self::DHTRules> {
-    Ok(Arc::new(SimpleRules::new(DHTRULES_DEFAULT)))
+  fn init_dhtrules(&mut self) -> Result<Self::DHTRules> {
+    Ok(SimpleRules::new(DHTRULES_DEFAULT))
   }
 
   fn init_global_service(&mut self) -> Result<Self::GlobalService> {
@@ -730,6 +730,7 @@ impl MyDHTConf for TestAllThConf {
   }
 }
 
+
 service_conf_test!(TestLocalConf,test_connect_all_local,48883,ApiResultSend,MCReplySend);
 
 impl MyDHTConf for TestLocalConf {
@@ -751,7 +752,7 @@ impl MyDHTConf for TestLocalConf {
   type PeerRef = RcRef<Self::Peer>;
   //type PeerRef = ArcRef<Self::Peer>;
   type PeerMgmtMeths = TestingRules;
-  type DHTRules = Arc<SimpleRules>;
+  type DHTRules = SimpleRules;
   type Slab = Slab<RWSlabEntry<Self>>;
   type PeerCache = HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
   type AddressCache = HashMap<<Self::Transport as Transport<Self::Poll>>::Address,AddressCacheEntry>;
@@ -884,8 +885,8 @@ impl MyDHTConf for TestLocalConf {
   fn init_peermgmt_proto(&mut self) -> Result<Self::PeerMgmtMeths> {
     Ok(TestingRules::new_no_delay())
   }
-  fn init_dhtrules_proto(&mut self) -> Result<Self::DHTRules> {
-    Ok(Arc::new(SimpleRules::new(DHTRULES_DEFAULT)))
+  fn init_dhtrules(&mut self) -> Result<Self::DHTRules> {
+    Ok(SimpleRules::new(DHTRULES_DEFAULT))
   }
 
   fn init_global_service(&mut self) -> Result<Self::GlobalService> {
@@ -921,6 +922,196 @@ impl MyDHTConf for TestLocalConf {
   }
 }
 
+service_conf_test!(TestLocalRestorableConf,test_connect_all_local_restorable,48886,ApiResultSend,MCReplySend);
+
+impl MyDHTConf for TestLocalRestorableConf {
+
+  const LOOP_NAME : &'static str = "Conf test spawner local not restorable";
+  const EVENTS_SIZE : usize = 1024;
+  const SEND_NB_ITER : usize = 10;
+  type Events = MioEvents; // TODO switch to local poll when running ok
+  type Poll = MioPoll;
+  type PollTReady = SetReadiness;
+  type PollReg = MioEvented<Registration>;
+  type Route = TestRoute<Self>;
+  type MainloopSpawn = ThreadParkRef;
+  type MainLoopChannelIn = MpscChannelRef;
+  type MainLoopChannelOut = MpscChannelRef;
+  type Transport = Tcp;
+  type MsgEnc = Json;
+  type Peer = Node;
+  type PeerRef = RcRef<Self::Peer>;
+  //type PeerRef = ArcRef<Self::Peer>;
+  type PeerMgmtMeths = TestingRules;
+  type DHTRules = SimpleRules;
+  type Slab = Slab<RWSlabEntry<Self>>;
+  type PeerCache = HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
+  type AddressCache = HashMap<<Self::Transport as Transport<Self::Poll>>::Address,AddressCacheEntry>;
+  type ChallengeCache = HashMap<Vec<u8>,ChallengeEntry<Self>>;
+  type PeerMgmtChannelIn = MpscChannelRef;
+  type ReadChannelIn = LocalRcChannel;
+  type ReadSpawn = Coroutine;
+  type WriteDest = NoSend;
+  type WriteChannelIn = LocalRcChannel;
+  type WriteSpawn = Coroutine;
+  type ProtoMsg = TestMessage<Self>;
+  type LocalServiceCommand = TestCommand<Self>;
+  type LocalServiceReply = TestReply;
+  localproxyglobal!();
+  type GlobalService = TestService<Self>;
+  type GlobalServiceSpawn = ThreadParkRef;
+  type GlobalServiceChannelIn = MpscChannelRef;
+  type ApiReturn = OneResult<(Vec<ApiResultSend<Self>>,usize,usize)>;
+  type ApiService = Api<Self,HashMap<ApiQueryId,(OneResult<(Vec<ApiResultSend<Self>>,usize,usize)>,Instant)>>;
+  type ApiServiceSpawn = RestartOrError;
+  type ApiServiceChannelIn = LocalRcChannel;
+  type PeerStoreQueryCache = SimpleCacheQuery<Self::Peer,Self::PeerRef,Self::PeerRef,HashMapQuery<Self::Peer,Self::PeerRef,Self::PeerRef>>;
+  type PeerStoreServiceSpawn = ThreadParkRef;
+  type PeerStoreServiceChannelIn = MpscChannelRef;
+  type PeerKVStore = SimpleCache<Self::Peer,HashMap<<Self::Peer as KeyVal>::Key,Self::Peer>>;
+  type SynchListenerSpawn = NoSpawn;
+  const NB_SYNCH_CONNECT : usize = 0;
+  type SynchConnectChannelIn = NoChannel;
+  type SynchConnectSpawn = NoSpawn;
+
+  fn init_poll(&mut self) -> Result<Self::Poll> {
+    Ok(MioPoll::new()?)
+  }
+
+
+  fn poll_reg() -> Result<(Self::PollTReady,Self::PollReg)> {
+    let (reg,sr) = Registration::new2();
+    Ok((sr,MioEvented(reg)))
+  }
+
+  fn init_peer_kvstore(&mut self) -> Result<Box<Fn() -> Result<Self::PeerKVStore> + Send>> {
+    Ok(Box::new(
+      ||{
+        Ok(SimpleCache::new(None))
+      }
+    ))
+  }
+  fn do_peer_query_forward_with_discover(&self) -> bool {
+    false
+  }
+  fn init_peer_kvstore_query_cache(&mut self) -> Result<Box<Fn() -> Result<Self::PeerStoreQueryCache> + Send>> {
+    Ok(Box::new(
+      ||{
+        // non random id
+        Ok(SimpleCacheQuery::new(false))
+      }
+    ))
+  }
+  fn init_peerstore_channel_in(&mut self) -> Result<Self::PeerStoreServiceChannelIn> {
+    Ok(MpscChannelRef)
+  }
+  fn init_peerstore_spawner(&mut self) -> Result<Self::PeerStoreServiceSpawn> {
+    Ok(ThreadParkRef)
+  }
+  fn init_ref_peer(&mut self) -> Result<Self::PeerRef> {
+     let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), self.1 as u16);
+     let val = Node {nodeid: self.0.clone(), address : SerSocketAddr(addr)};
+     Ok(RcRef::new(val))
+    // Ok(RcRef::new(val))
+  }
+  fn get_main_spawner(&mut self) -> Result<Self::MainloopSpawn> {
+    //Ok(Blocker)
+    Ok(ThreadParkRef)
+//      Ok(ThreadParkRef)
+  }
+  fn init_main_loop_slab_cache(&mut self) -> Result<Self::Slab> {
+    Ok(Slab::new())
+  }
+  fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache> {
+    Ok(HashMap::new())
+  }
+  fn init_main_loop_address_cache(&mut self) -> Result<Self::AddressCache> {
+    Ok(HashMap::new())
+  }
+ 
+  fn init_main_loop_challenge_cache(&mut self) -> Result<Self::ChallengeCache> {
+    Ok(HashMap::new())
+  }
+  fn init_main_loop_channel_in(&mut self) -> Result<Self::MainLoopChannelIn> {
+    Ok(MpscChannelRef)
+    //Ok(MpscChannelRef)
+  }
+  fn init_main_loop_channel_out(&mut self) -> Result<Self::MainLoopChannelOut> {
+    Ok(MpscChannelRef)
+  }
+  fn init_read_spawner(&mut self) -> Result<Self::ReadSpawn> {
+    Ok(Coroutine)
+    //Ok(Blocker)
+  }
+  fn init_write_spawner(&mut self) -> Result<Self::WriteSpawn> {
+    Ok(Coroutine)
+  }
+  fn init_global_spawner(&mut self) -> Result<Self::GlobalServiceSpawn> {
+    Ok(ThreadParkRef)
+    //Ok(Blocker)
+  }
+  fn init_write_spawner_out() -> Result<Self::WriteDest> {
+    Ok(NoSend)
+  }
+  fn init_read_channel_in(&mut self) -> Result<Self::ReadChannelIn> {
+    Ok(LocalRcChannel)
+  }
+  fn init_write_channel_in(&mut self) -> Result<Self::WriteChannelIn> {
+    Ok(LocalRcChannel)
+  }
+  fn init_peermgmt_channel_in(&mut self) -> Result<Self::PeerMgmtChannelIn> {
+    Ok(MpscChannelRef)
+  }
+
+
+  fn init_enc_proto(&mut self) -> Result<Self::MsgEnc> {
+    Ok(Json)
+  }
+
+  fn init_transport(&mut self) -> Result<Self::Transport> {
+
+    let addr = utils::sa4(Ipv4Addr::new(127,0,0,1), self.1 as u16);
+    Ok(Tcp::new(&addr, None, self.2)?)
+  }
+  fn init_peermgmt_proto(&mut self) -> Result<Self::PeerMgmtMeths> {
+    Ok(TestingRules::new_no_delay())
+  }
+  fn init_dhtrules(&mut self) -> Result<Self::DHTRules> {
+    Ok(SimpleRules::new(DHTRULES_DEFAULT))
+  }
+
+  fn init_global_service(&mut self) -> Result<Self::GlobalService> {
+    Ok(TestService(PhantomData))
+  }
+
+  fn init_global_channel_in(&mut self) -> Result<Self::GlobalServiceChannelIn> {
+    Ok(MpscChannelRef)
+  }
+
+  fn init_route(&mut self) -> Result<Self::Route> {
+    Ok(TestRoute(PhantomData))
+  }
+
+  fn init_api_service(&mut self) -> Result<Self::ApiService> {
+    Ok(Api(HashMap::new(),Duration::from_millis(3000),0,PhantomData))
+  }
+
+  fn init_api_channel_in(&mut self) -> Result<Self::ApiServiceChannelIn> {
+    Ok(LocalRcChannel)
+  }
+  fn init_api_spawner(&mut self) -> Result<Self::ApiServiceSpawn> {
+    Ok(RestartOrError)
+  }
+  fn init_synch_listener_spawn(&mut self) -> Result<Self::SynchListenerSpawn> {
+    Ok(NoSpawn)
+  }
+   fn init_synch_connect_spawn(&mut self) -> Result<Self::SynchConnectSpawn> {
+    Ok(NoSpawn)
+  }
+  fn init_synch_connect_channel_in(&mut self) -> Result<Self::SynchConnectChannelIn> {
+    Ok(NoChannel)
+  }
+}
 
 /*mod test_dummy_all_block_thread {
   use super::*;
@@ -1010,8 +1201,8 @@ impl MyDHTConf for TestLocalConf {
     fn init_peermgmt_proto(&mut self) -> Result<Self::PeerMgmtMeths> {
       Ok(TestingRules::new_no_delay())
     }
-    fn init_dhtrules_proto(&mut self) -> Result<Self::DHTRules> {
-      Ok(Arc::new(SimpleRules::new(DHTRULES_DEFAULT)))
+    fn init_dhtrules(&mut self) -> Result<Self::DHTRules> {
+      Ok(SimpleRules::new(DHTRULES_DEFAULT))
     }
 
  

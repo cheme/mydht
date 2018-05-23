@@ -848,7 +848,7 @@ pub trait MyDHTConf : 'static + Send + Sized
   fn init_write_channel_in(&mut self) -> Result<Self::WriteChannelIn>;
   fn init_enc_proto(&mut self) -> Result<Self::MsgEnc>;
   fn init_peermgmt_proto(&mut self) -> Result<Self::PeerMgmtMeths>;
-  fn init_dhtrules_proto(&mut self) -> Result<Self::DHTRules>;
+  fn init_dhtrules(&mut self) -> Result<Self::DHTRules>;
   /// Transport initialization
   fn init_transport(&mut self) -> Result<Self::Transport>;
   fn init_route(&mut self) -> Result<Self::Route>;

@@ -508,7 +508,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       init_store : conf.init_peer_kvstore()?,
       init_cache : conf.init_peer_kvstore_query_cache()?,
       store : None,
-      dht_rules : conf.init_dhtrules_proto()?,
+      dht_rules : conf.init_dhtrules()?,
       query_cache : None,
       discover : conf.do_peer_query_forward_with_discover(),
       _ph : PhantomData,

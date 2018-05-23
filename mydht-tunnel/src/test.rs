@@ -379,7 +379,7 @@ impl MyDHTTunnelConf for TunnelConf {
   type TransportAddress = SerSocketAddr;
   type MsgEnc = Json;
   type PeerMgmtMeths = TestingRules;
-  type DHTRules = Arc<SimpleRules>;
+  type DHTRules = SimpleRules;
   type ProtoMsg = TestMessage;
   type PeerCache = HashMap<<Self::Peer as KeyVal>::Key,PeerCacheEntry<Self::PeerRef>>;
   type AddressCache = HashMap<<Self::Peer as Peer>::Address,AddressCacheEntry>;
@@ -449,8 +449,8 @@ impl MyDHTTunnelConf for TunnelConf {
     Ok(TestingRules)
   }
 
-  fn init_dhtrules_proto(&mut self) -> Result<Self::DHTRules> {
-    Ok(Arc::new(SimpleRules::new(DHTRULES_DEFAULT)))
+  fn init_dhtrules(&mut self) -> Result<Self::DHTRules> {
+    Ok(SimpleRules::new(DHTRULES_DEFAULT))
   }
   fn init_enc_proto(&mut self) -> Result<Self::MsgEnc> {
     Ok(Json)

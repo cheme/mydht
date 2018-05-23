@@ -781,7 +781,7 @@ where <P as KeyVal>::Key : Hash,
   fn init_peermgmt_proto(&mut self) -> Result<Self::PeerMgmtMeths> {
     Ok(self.peer_mgmt.clone())
   }
-  fn init_dhtrules_proto(&mut self) -> Result<Self::DHTRules> {
+  fn init_dhtrules(&mut self) -> Result<Self::DHTRules> {
     Ok(self.rules.clone())
   }
 
@@ -793,7 +793,7 @@ where <P as KeyVal>::Key : Hash,
       init_store : self.init_peer_kvstore()?,
       init_cache : self.init_peer_kvstore_query_cache()?,
       store : None,
-      dht_rules : self.init_dhtrules_proto()?,
+      dht_rules : self.init_dhtrules()?,
       query_cache : None,
       discover : self.do_peer_query_forward_with_discover(),
       _ph : PhantomData,

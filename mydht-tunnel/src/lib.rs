@@ -349,7 +349,7 @@ pub trait MyDHTTunnelConf : 'static + Send + Sized {
   fn init_inner_service(Self::InnerServiceProto, Self::PeerRef) -> Result<Self::InnerService>;
   fn init_inner_service_proto(&mut self) -> Result<Self::InnerServiceProto>;
   fn init_peermgmt_proto(&mut self) -> Result<Self::PeerMgmtMeths>;
-  fn init_dhtrules_proto(&mut self) -> Result<Self::DHTRules>;
+  fn init_dhtrules(&mut self) -> Result<Self::DHTRules>;
   fn init_enc_proto(&mut self) -> Result<Self::MsgEnc>;
   fn init_route(&mut self) -> Result<Self::Route>;
   fn init_main_loop_peer_cache(&mut self) -> Result<Self::PeerCache>;
@@ -1431,8 +1431,8 @@ impl<MC : MyDHTTunnelConf> MyDHTConf for MyDHTTunnelConfType<MC> where
   fn init_peermgmt_proto(&mut self) -> Result<Self::PeerMgmtMeths> {
     self.conf.init_peermgmt_proto()
   }
-  fn init_dhtrules_proto(&mut self) -> Result<Self::DHTRules> {
-    self.conf.init_dhtrules_proto()
+  fn init_dhtrules(&mut self) -> Result<Self::DHTRules> {
+    self.conf.init_dhtrules()
   }
 
   fn init_global_service(&mut self) -> Result<Self::GlobalService> {
