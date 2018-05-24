@@ -207,7 +207,21 @@ impl<'a,W : Write, Y : SpawnerYield> Write for WriteYield<'a,W,Y> {
 /// state later (for instance if a register async stream token is available again in a epoll).
 /// This depend on the inner implementation : if it could suspend on error and restart latter
 /// with same state parameter.
-pub trait ServiceRestartable {}
+pub trait ServiceRestartable : Service {
+  /// same as standard service call without the need to have a request.
+  ///
+  /// If there is nothing to restart the service can reply without a `CommandOut`.
+  ///
+  /// Note that a restartable service must manage its suspended state also in standard service
+  /// `call`
+  /// (`restart` is only call if `spawn` (presumably after a `unyield`) do not have a request. 
+  ///
+  /// For restartable service which are restartable because they do not yield, this function will
+  /// simply return Ok(None), that is its default implementation.
+  fn restart<S : SpawnerYield>(&mut self, _async_yield : &mut S) -> Result<Option<Self::CommandOut>> {
+    Ok(None)
+  }
+}
 
 /// TODO duration before restart (in conjonction with nb loop)
 /// The service struct can have an inner State (mutable in call).
@@ -889,12 +903,26 @@ impl<'a, C> SpawnSend<C> for &'a mut VecDeque<C> {
 pub struct Blocker;
 
 
+macro_rules! spawn_loop {
+  ($service:ident,$spawn_out:ident,$ocin:ident,$r:ident,$nb_loop:ident,$yield_build:ident,$result:ident,$return_build:expr) => {
+    spawn_loop_inner!($service,$spawn_out,$ocin,$r,$nb_loop,$yield_build,$result,$return_build, {None})
+}}
+macro_rules! spawn_loop_restartable {
+  ($service:ident,$spawn_out:ident,$ocin:ident,$r:ident,$nb_loop:ident,$yield_build:ident,$result:ident,$return_build:expr) => {
+    spawn_loop_inner!($service,$spawn_out,$ocin,$r,$nb_loop,$yield_build,$result,$return_build, {
+      match $service.restart(&mut $yield_build) {
+        Ok(Some(r)) => Some(Ok(r)),
+        _ => None,
+      }
+    })
+}}
+
 // TODO make it a function returning result of type parameter
-macro_rules! spawn_loop {($service:ident,$spawn_out:ident,$ocin:ident,$r:ident,$nb_loop:ident,$yield_build:ident,$result:ident,$return_build:expr) => {
+macro_rules! spawn_loop_inner {($service:ident,$spawn_out:ident,$ocin:ident,$r:ident,$nb_loop:ident,$yield_build:ident,$result:ident,$return_build:expr, $restart_code:expr) => {
+  let mut ores : Option<Result<_>> = None;
   loop {
-    match $ocin {
-      Some(cin) => {
-        match $service.call(cin, &mut $yield_build) {
+    if let Some(res) = ores {
+      match res {
           Ok(r) => {
             if D::CAN_SEND {
               $spawn_out.send(r)?;
@@ -920,10 +948,19 @@ macro_rules! spawn_loop {($service:ident,$spawn_out:ident,$ocin:ident,$r:ident,$
             break;
           }
         }
+    }
+    ores = None;
+    match $ocin {
+      Some(cin) => {
+        ores = Some($service.call(cin, &mut $yield_build));
       },
       None => {
         $ocin = $r.recv()?;
         if $ocin.is_none() {
+          ores = $restart_code;
+          if ores.is_some() {
+            continue;
+          }
           if let YieldReturn::Return = $yield_build.spawn_yield() {
             return $return_build;
           } else {
@@ -1055,7 +1092,7 @@ impl<S : Service + ServiceRestartable, D : SpawnSend<<S as Service>::CommandOut>
   ) -> Result<Self::Handle> {
     let mut yiel = NoYield(YieldReturn::Return);
     let mut err = Ok(());
-    spawn_loop!(service,spawn_out,ocin,recv,nb_loop,yiel,err,
+    spawn_loop_restartable!(service,spawn_out,ocin,recv,nb_loop,yiel,err,
         Ok(RestartSameThread::ToRestart(
               RestartSpawn {
                 spawner : RestartOrError,

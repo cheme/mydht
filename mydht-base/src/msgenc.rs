@@ -39,7 +39,7 @@ where <P as Peer>::Address : 'a;
 
   fn decode_from<R : Read,ER : ExtRead,S : SpawnerYield>(&mut self, &mut R, &mut ER, &mut S) -> MDHTResult<ProtoMessage<P>>;
 
-  fn encode_msg_into<'a,W : Write,EW : ExtWrite,S : SpawnerYield> (&mut self, w : &mut W, &mut EW, &mut S, mesg : &mut M) -> MDHTResult<()>;
+  fn encode_msg_into<W : Write,EW : ExtWrite,S : SpawnerYield> (&mut self, w : &mut W, &mut EW, &mut S, mesg : &mut M) -> MDHTResult<()>;
 
   fn attach_into<W : Write,EW : ExtWrite,S : SpawnerYield> (&mut self, &mut W, &mut EW, &mut S, &Attachment) -> MDHTResult<()>;
 
@@ -59,7 +59,7 @@ pub mod send_variant {
     PING(&'a P,Vec<u8>,Vec<u8>), // TODO vec to &[u8]?? ort at least &Vec<u8> : yes TODO with challenge as ref refacto
     /// reply contain peer for update of distant peer info, for instance its listener address for a
     /// tcp transport.
-    PONG(&'a P,Vec<u8>,Vec<u8>,Option<Vec<u8>>),
+    PONG(&'a P,&'a Vec<u8>,Vec<u8>,Option<Vec<u8>>),
   }
 
 }

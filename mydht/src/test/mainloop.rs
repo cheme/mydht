@@ -131,7 +131,7 @@ use service::{
   Blocker,
   RestartOrError,
   Coroutine,
- // RestartSameThread,
+  RestartSameThread,
  // ThreadBlock,
   ThreadPark,
   ThreadParkRef,
@@ -922,8 +922,10 @@ impl MyDHTConf for TestLocalConf {
   }
 }
 
+#[cfg(feature="restartable")]
 service_conf_test!(TestLocalRestorableConf,test_connect_all_local_restorable,48886,ApiResultSend,MCReplySend);
 
+#[cfg(feature="restartable")]
 impl MyDHTConf for TestLocalRestorableConf {
 
   const LOOP_NAME : &'static str = "Conf test spawner local not restorable";
@@ -950,10 +952,10 @@ impl MyDHTConf for TestLocalRestorableConf {
   type ChallengeCache = HashMap<Vec<u8>,ChallengeEntry<Self>>;
   type PeerMgmtChannelIn = MpscChannelRef;
   type ReadChannelIn = LocalRcChannel;
-  type ReadSpawn = Coroutine;
+  type ReadSpawn = RestartOrError;
   type WriteDest = NoSend;
   type WriteChannelIn = LocalRcChannel;
-  type WriteSpawn = Coroutine;
+  type WriteSpawn = RestartOrError;
   type ProtoMsg = TestMessage<Self>;
   type LocalServiceCommand = TestCommand<Self>;
   type LocalServiceReply = TestReply;
@@ -1040,11 +1042,11 @@ impl MyDHTConf for TestLocalRestorableConf {
     Ok(MpscChannelRef)
   }
   fn init_read_spawner(&mut self) -> Result<Self::ReadSpawn> {
-    Ok(Coroutine)
+    Ok(RestartOrError)
     //Ok(Blocker)
   }
   fn init_write_spawner(&mut self) -> Result<Self::WriteSpawn> {
-    Ok(Coroutine)
+    Ok(RestartOrError)
   }
   fn init_global_spawner(&mut self) -> Result<Self::GlobalServiceSpawn> {
     Ok(ThreadParkRef)

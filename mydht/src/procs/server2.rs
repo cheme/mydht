@@ -58,6 +58,9 @@ use keyval::{
   SettableAttachment,
   SettableAttachments,
 };
+
+#[cfg(feature="restartable")]
+use service::ServiceRestartable;
 use service::{
   send_with_handle,
   Service,
@@ -503,6 +506,17 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
     Ok(ReadReply::NoReply)
   }
 }
+
+#[cfg(feature="restartable")]
+impl<MC : MyDHTConf> ServiceRestartable for ReadService<MC> {
+  fn restart<S : SpawnerYield>(&mut self, _async_yield : &mut S) -> Result<Option<Self::CommandOut>> {
+    unimplemented!()
+//    Ok(None)
+  }
+}
+
+
+
 /// command for readservice
 /// TODO a command to close read service cleanly (on peer refused for instance)
 /// TODO a command to send weakchannel of write : probably some issue with threading here as a once

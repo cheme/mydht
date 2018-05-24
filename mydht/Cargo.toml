@@ -15,6 +15,7 @@ with-extra-test = []
 api-direct-sender = []
 mio-transport = []
 nightly = []
+restartable = []
 
 [dependencies]
 log = "~0.3.4"

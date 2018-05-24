@@ -38,6 +38,15 @@ use msgenc::send_variant::{
 };
 
 
+#[cfg(feature="restartable")]
+use service::ServiceRestartable;
+
+#[cfg(feature="restartable")]
+use std::io::{
+  Cursor,
+  Read,
+};
+
 use service::{
   Service,
   SpawnerYield,
@@ -69,6 +78,54 @@ pub struct WriteService<MC : MyDHTConf> {
   /// store message when not available (while authenticating or other)
   /// and when the input could not be use (would change message ordering)
   buff_msgs : VecDeque<MCCommand<MC>>,
+  /// Service state that is not required if service is not restartable.
+  /// Restartable state (empty val if feature restartable is not activated).
+  state : WriteRestartableState,
+  /// idem
+  call : RestartableFunction,
+}
+
+
+
+#[cfg(not(feature="restartable"))]
+pub type WriteRestartableState = ();
+
+
+#[cfg(feature="restartable")]
+pub struct WriteRestartableState {
+  progress : usize, // TODO smaller u (u8 or u16 probably)
+  buffed_message : Cursor<Vec<u8>>, // TODO optional?
+  tmp_buff_ix_st : usize,
+  tmp_buff_ix_end : usize,
+  // TODO make size configurable
+  tmp_buff : [u8;128],
+}
+
+#[cfg(feature="restartable")]
+fn initial_w_state() -> (WriteRestartableState,RestartableFunction) {
+
+  (WriteRestartableState {
+    progress : 0,
+    buffed_message : Cursor::new(Vec::new()),
+    tmp_buff_ix_st : 0,
+    tmp_buff_ix_end : 0,
+    tmp_buff : [0;128],
+  },
+  RestartableFunction::Nothing)
+}
+#[cfg(not(feature="restartable"))]
+fn initial_w_state() -> (WriteRestartableState,RestartableFunction) { ((),()) }
+
+#[cfg(not(feature="restartable"))]
+pub type RestartableFunction = ();
+
+#[cfg(feature="restartable")]
+pub enum RestartableFunction {
+  Ping,
+  Pong(Option<Vec<u8>>,Option<Vec<u8>>),
+  // more exactly forward_proto function
+  Service,
+  Nothing,
 }
 
 pub struct WriteServiceSend<MC : MyDHTConf> 
@@ -84,6 +141,8 @@ pub struct WriteServiceSend<MC : MyDHTConf>
   shad_msg : Option<<MC::Peer as Peer>::ShadowWMsg>,
   shut_after_first : bool,
   buff_msgs : VecDeque<MCCommandSend<MC>>,
+  state : WriteRestartableState,
+  call : RestartableFunction,
 }
 
 impl<MC : MyDHTConf> SRef for WriteService<MC>
@@ -99,14 +158,14 @@ impl<MC : MyDHTConf> SRef for WriteService<MC>
       from,
       with,
       buff_msgs,
-      peermgmt, token, read_token, shad_msg, shut_after_first,
+      peermgmt, token, read_token, shad_msg, shut_after_first, state, call,
     } = self;
     WriteServiceSend {
       stream, enc,
       from : from.get_sendable(),
       with : with.map(|w|w.get_sendable()),
       buff_msgs : buff_msgs.into_iter().map(|c|c.get_sendable()).collect(),
-      peermgmt, token, read_token, shad_msg, shut_after_first,
+      peermgmt, token, read_token, shad_msg, shut_after_first, state, call,
     }
   }
 }
@@ -123,14 +182,14 @@ impl<MC : MyDHTConf> SToRef<WriteService<MC>> for WriteServiceSend<MC>
       from,
       with,
       buff_msgs,
-      peermgmt, token, read_token, shad_msg, shut_after_first,
+      peermgmt, token, read_token, shad_msg, shut_after_first, state, call,
     } = self;
     WriteService {
       stream, enc,
       from : from.to_ref(),
       with : with.map(|w|w.to_ref()),
       buff_msgs : buff_msgs.into_iter().map(|c|c.to_ref()).collect(),
-      peermgmt, token, read_token, shad_msg, shut_after_first,
+      peermgmt, token, read_token, shad_msg, shut_after_first, state, call,
     }
   }
 }
@@ -139,6 +198,7 @@ impl<MC : MyDHTConf> SToRef<WriteService<MC>> for WriteServiceSend<MC>
 impl<MC : MyDHTConf> WriteService<MC> {
   //pub fn new(token : usize, ws : <MC::Transport as Transport>::WriteStream, me : PeerRefSend<MC>, with : Option<PeerRefSend<MC>>, enc : MC::MsgEnc, peermgmt : MC::PeerMgmtMeths) -> Self {
   pub fn new(token : usize, ws : <MC::Transport as Transport<MC::Poll>>::WriteStream, me : MC::PeerRef, with : Option<MC::PeerRef>, enc : MC::MsgEnc, peermgmt : MC::PeerMgmtMeths, shut_after_first : bool) -> Self {
+    let (state,call) = initial_w_state();
     WriteService {
       stream : ws,
       enc : enc,
@@ -150,6 +210,8 @@ impl<MC : MyDHTConf> WriteService<MC> {
       shad_msg : None,
       shut_after_first,
       buff_msgs : VecDeque::new(),
+      state,
+      call,
     }
   }
 }
@@ -174,42 +236,158 @@ pub fn get_shad_auth<MC : MyDHTConf>(from : &MC::PeerRef,with : &Option<MC::Peer
   }
 }
 
+/// Warning even if label are in syntax, they must be consecutive
+#[cfg(not(feature="restartable"))]
+macro_rules! state_switch_secq {
+  ( $self:ident, $rec_call:expr, $( $label:expr,$elemt:block ) , * ) => {
+    {
+    $($elemt)*
+    }
+  }
+}
+#[cfg(feature="restartable")]
+macro_rules! state_switch_secq {
+  ( $self:ident, $rec_call:expr, $( $label:expr, $elemt:block ) , * ) => {
+    {
+      match ($self.state.progress) {
+        $(
+          $label => {
+            $elemt
+            $self.state.progress += 1;
+            $rec_call
+          },
+        )*
+        _ => unreachable!(),
+      }
+    }
+  }
+}
+
+
+#[cfg(not(feature="restartable"))]
+macro_rules! get_dest {($self:ident) => { &mut $self.stream }}
+#[cfg(feature="restartable")]
+macro_rules! get_dest {($self:ident) => { &mut $self.state.buffed_message }}
+
+
+
+
+impl<MC : MyDHTConf> WriteService<MC> {
+
+  fn pong_inner<S : SpawnerYield>(&mut self, chal : Option<Vec<u8>>, option_chal2 : Option<Vec<u8>>, async_yield : &mut S) -> Result<()> {
+    state_switch_secq!(self, self.pong_inner(None,None,async_yield), 0, {
+        let sig = self.peermgmt.signmsg(self.from.borrow(), &chal.as_ref().unwrap()[..]);
+        {
+        let ch = &chal.unwrap();
+        let pmess : ProtoMessage<MC::Peer> = ProtoMessage::PONG(self.from.borrow(),ch,sig,option_chal2);
+        // once shadower
+        let mut shad = get_shad_auth::<MC>(&self.from,&self.with);
+        shad.write_header(&mut WriteYield(get_dest!(self),async_yield))?;
+
+        self.enc.encode_into(get_dest!(self), &mut shad, async_yield, &pmess)?;
+        if let Some(ref att) = self.from.borrow().get_attachment() {
+          self.enc.attach_into(get_dest!(self), &mut shad, async_yield, att)?;
+        }
+
+        shad.write_end(&mut WriteYield(get_dest!(self),async_yield))?;
+        shad.flush_into(&mut WriteYield(get_dest!(self),async_yield))?;
+        } // end limit pmess from borrow
+    },1,{
+      self.empty_buffed_message(async_yield)?;
+        // debuf message here (service could get stuck on yield while containing msg otherwhise)
+        // Warning pretty bad design : the fact that we got buf is related to the fact that we
+        // initiate auth so it is the pong where we validate dest (second pong).
+        // If we where to send message and the auth was initiated by other peer, this received pong
+        // is the pong where he auth us but we did not auth him and it would be broken (sending msg
+        // before full auth). This is probably something that will happen when mainloop will handle 
+        // under connection/auth state and send msg (challenge cache is already here).
+        // TODO indeed mainloop now have challenge_cache : time to move to a more straight forward
+        // design where the under connect buffs of message is handle in mainloop. (next_msg would
+        // become this buff msg).
+        // TODO also refacto so we got a third auth message (split PONG is good for code readability).
+        self.debuff_msgs(async_yield)?;
+
+        return Ok(());
+    }
+    )
+  }
+  #[cfg(not(feature="restartable"))]
+  fn pong<S : SpawnerYield>(&mut self, rp : MC::PeerRef, chal : Vec<u8>, read_token : usize, option_chal2 : Option<Vec<u8>>, async_yield : &mut S) -> Result<()> {
+        self.read_token = Some(read_token);
+        // update dest : this ensure that on after auth with is initialized! Remember that with may
+        // contain initializing shared secret for message shadow.
+        self.with = Some(rp);
+        self.pong_inner(Some(chal),option_chal2,async_yield)
+  }
+
+
+  #[cfg(feature="restartable")]
+  fn pong<S : SpawnerYield>(&mut self, rp : MC::PeerRef, chal : Vec<u8>, read_token : usize, option_chal2 : Option<Vec<u8>>, async_yield : &mut S) -> Result<()> {
+
+
+        self.read_token = Some(read_token);
+        // update dest : this ensure that on after auth with is initialized! Remember that with may
+        // contain initializing shared secret for message shadow.
+        self.with = Some(rp);
+        self.call = RestartableFunction::Pong(Some(chal.clone()),option_chal2.clone());
+        self.pong_inner(Some(chal),option_chal2,async_yield)
+  }
+       
+
+// &mut self.stream
+// ->  &mut self.state.buffed_message : note that could yield but will not
+  #[cfg(not(feature="restartable"))]
+  #[inline]
+  fn clear_restartable_state(&mut self) {}
+
+  #[cfg(feature="restartable")]
+  fn clear_restartable_state(&mut self) {
+    // init state 
+    self.state.buffed_message.set_position(0);
+    self.state.tmp_buff_ix_st = 0;
+    self.state.tmp_buff_ix_end = 0;
+    self.state.buffed_message.get_mut().clear();
+  }
+
+  #[cfg(feature="restartable")]
+  fn empty_buffed_message<S : SpawnerYield>(&mut self, async_yield : &mut S) -> Result<()> {
+    {
+      let mut dest = WriteYield(&mut self.stream, async_yield);
+      loop {
+        if self.state.tmp_buff_ix_st < self.state.tmp_buff_ix_end {
+          let w = dest.write(&self.state.tmp_buff[self.state.tmp_buff_ix_st..self.state.tmp_buff_ix_end])?;
+          self.state.tmp_buff_ix_st += w;
+        } else {
+          self.state.tmp_buff_ix_st = 0;
+          self.state.tmp_buff_ix_end = 0;
+          let r = self.state.buffed_message.read(&mut self.state.tmp_buff[..])?;
+          if (r == 0) {
+            break;
+          }
+          self.state.tmp_buff_ix_end = r;
+        }
+      }
+    }
+    self.clear_restartable_state();
+    Ok(())
+  }
+  #[cfg(not(feature="restartable"))]
+  #[inline]
+  fn empty_buffed_message<S : SpawnerYield>(&mut self, _async_yield : &mut S) -> Result<()> { Ok(()) }
+
+
+}
+
+
 impl<MC : MyDHTConf> Service for WriteService<MC> {
   type CommandIn = WriteCommand<MC>;
   type CommandOut = WriteReply<MC>;
 
   fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
     match req {
-      WriteCommand::Write => {
-        let mut stream = WriteYield(&mut self.stream, async_yield);
-        // for initial testing only TODO replace by deser
-        let buf = &[1,2,3,4];
-//        let mut w = WriteYield(&mut self.stream, async_yield);
-        stream.write_all(buf).unwrap(); // unwrap for testing only (thread without error catching
-      },
       WriteCommand::Pong(rp,chal,read_token,option_chal2) => {
-        self.read_token = Some(read_token);
-        // update dest : this ensure that on after auth with is initialized! Remember that with may
-        // contain initializing shared secret for message shadow.
-        self.with = Some(rp);
-        let sig = self.peermgmt.signmsg(self.from.borrow(), &chal[..]);
-        {
-        let pmess : ProtoMessage<MC::Peer> = ProtoMessage::PONG(self.from.borrow(),chal,sig,option_chal2);
-        // once shadower
-        let mut shad = get_shad_auth::<MC>(&self.from,&self.with);
-        shad.write_header(&mut WriteYield(&mut self.stream,async_yield))?;
-
-        self.enc.encode_into(&mut self.stream, &mut shad, async_yield, &pmess)?;
-        if let Some(ref att) = self.from.borrow().get_attachment() {
-          self.enc.attach_into(&mut self.stream, &mut shad, async_yield, att)?;
-        }
-
-        shad.write_end(&mut WriteYield(&mut self.stream,async_yield))?;
-        shad.flush_into(&mut WriteYield(&mut self.stream,async_yield))?;
-        } // end limit pmess from borrow
-        // debuf message here (service could get stuck on yield while containing msg otherwhise)
-        self.debuff_msgs(async_yield)?;
-
+        self.clear_restartable_state(); // useless ?? here for error case but on error restarting makes no sens (comm is desynch)
+        self.pong(rp,chal,read_token,option_chal2,async_yield)?;
       },
       WriteCommand::Ping(chal) => {
         debug!("Client service sending ping command");
@@ -251,6 +429,39 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
     Ok(WriteReply::NoRep)
   }
 }
+
+
+
+#[cfg(feature="restartable")]
+impl<MC : MyDHTConf> ServiceRestartable for WriteService<MC> {
+  fn restart<S : SpawnerYield>(&mut self, async_yield : &mut S) -> Result<Option<Self::CommandOut>> {
+    let mut ch = None;
+    let mut och = None;
+    // to avoid this extraction we should move call and other content a same level in service
+    // struct, then switch all inner function to not refer call, and then pass everything to inner
+    // function as ref : TODO maybe after achieving stable state
+    match self.call {
+      RestartableFunction::Ping => unimplemented!(),
+      RestartableFunction::Pong(ref chal,ref option_chal2) => {
+        ch = chal.clone();
+        och = option_chal2.clone();
+      },
+      RestartableFunction::Service => unimplemented!(),
+      RestartableFunction::Nothing => (),
+    }
+    match self.call {
+      RestartableFunction::Ping => unimplemented!(),
+      RestartableFunction::Pong(..) => {
+        self.pong_inner(ch,och,async_yield)?;
+        Ok(Some(WriteReply::NoRep))
+      },
+      RestartableFunction::Service => unimplemented!(),
+      RestartableFunction::Nothing => Ok(None),
+    }
+
+  }
+}
+
 
 impl<MC : MyDHTConf> WriteService<MC> {
 
@@ -311,8 +522,6 @@ impl<MC : MyDHTConf> WriteService<MC> {
 }
 /// command for readservice
 pub enum WriteCommand<MC : MyDHTConf> {
-  /// TODO remove this!!!
-  Write,
   /// ping TODO chal as Ref<Vec<u8>>
   Ping(Vec<u8>),
   /// pong a peer with challenge and read token last is second challenge if needed (needed when
@@ -336,7 +545,6 @@ pub enum WriteCommandSend<MC : MyDHTConf>
   where MC::LocalServiceCommand : SRef,
         MC::GlobalServiceCommand : SRef,
   {
-  Write,
   /// Vec<u8> being chalenge store in mainloop process
   Ping(Vec<u8>),
   /// pong a peer with challenge and read token
@@ -348,7 +556,6 @@ pub enum WriteCommandSend<MC : MyDHTConf>
 impl<MC : MyDHTConf> Clone for WriteCommand<MC> {
   fn clone(&self) -> Self {
     match *self {
-      WriteCommand::Write => WriteCommand::Write,
       WriteCommand::Ping(ref chal) => WriteCommand::Ping(chal.clone()),
       WriteCommand::Pong(ref pr,ref v,s,ref v2) => WriteCommand::Pong(pr.clone(),v.clone(),s,v2.clone()),
       WriteCommand::Service(ref p) => WriteCommand::Service(p.clone()),
@@ -363,7 +570,6 @@ impl<MC : MyDHTConf> SRef for WriteCommand<MC>
   type Send = WriteCommandSend<MC>;
   fn get_sendable(self) -> Self::Send {
     match self {
-      WriteCommand::Write => WriteCommandSend::Write,
       WriteCommand::Ping(chal) => WriteCommandSend::Ping(chal),
       WriteCommand::Pong(pr,v,s,v2) => WriteCommandSend::Pong(pr.get_sendable(),v,s,v2),
       WriteCommand::Service(p) => WriteCommandSend::Service(p.get_sendable()),
@@ -377,7 +583,6 @@ impl<MC : MyDHTConf> SToRef<WriteCommand<MC>> for WriteCommandSend<MC>
   {
   fn to_ref(self) -> WriteCommand<MC> {
     match self {
-      WriteCommandSend::Write => WriteCommand::Write,
       WriteCommandSend::Ping(chal) => WriteCommand::Ping(chal),
       WriteCommandSend::Pong(pr,v,s,v2) => WriteCommand::Pong(pr.to_ref(),v,s,v2),
       WriteCommandSend::Service(p) => WriteCommand::Service(p.to_ref()),

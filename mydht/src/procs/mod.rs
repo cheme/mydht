@@ -552,7 +552,10 @@ pub type PeerRefSend<MC:MyDHTConf> = <MC::PeerRef as SRef>::Send;
 pub trait MyDHTConf : 'static + Send + Sized
 {
 //  where <Self::PeerRef as Ref<Self::Peer>>::Send : Borrow<Self::Peer> {
-
+  /// Restartable feature implies that this value is set to true (panic otherwhise), but 
+  /// non restartable build could also use it with true to ensure compatibility with build
+  /// requiring the restartable feature.
+  const RESTARTABLE_SERVICE : bool = false;
   /// defaults to Public, as the most common use case TODO remove default value??  
   const AUTH_MODE : ShadowAuthType = ShadowAuthType::Public;
   /// Toggle routing of message, if disabled api message are send directly and apireply are send to
