@@ -59,7 +59,7 @@ pub mod send_variant {
     PING(&'a P,Vec<u8>,Vec<u8>), // TODO vec to &[u8]?? ort at least &Vec<u8> : yes TODO with challenge as ref refacto
     /// reply contain peer for update of distant peer info, for instance its listener address for a
     /// tcp transport.
-    PONG(&'a P,&'a Vec<u8>,Vec<u8>,Option<Vec<u8>>),
+    PONG(&'a P,&'a Vec<u8>,Vec<u8>,Option<&'a Vec<u8>>),
   }
 
 }
