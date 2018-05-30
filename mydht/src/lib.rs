@@ -2,6 +2,8 @@
 #![feature(fn_traits)]
 #![feature(associated_type_defaults)]
 
+#![feature(generators, generator_trait)] // TODO check if their is a way to gate it behind feature restartable
+
 #[macro_use] extern crate log;
 #[macro_use] extern crate mydht_base;
 #[macro_use] extern crate serde_derive;
