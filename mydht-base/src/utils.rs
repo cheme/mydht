@@ -1,7 +1,21 @@
 extern crate uuid;
 extern crate rust_proto;
+extern crate immut_send;
 
 pub use self::rust_proto::Proto;
+
+pub use self::immut_send::{
+  SRef,
+  SToRef,
+  Ref,
+  ser::SerRef,
+  arc::ArcRef,
+  rc::{
+    RcRef,
+    ToRcRef,
+  },
+  clone::CloneRef,
+};
 
 use self::uuid::{
   Uuid,
@@ -41,252 +55,6 @@ use std::borrow::Borrow;
 
 pub fn null_timespec() -> Duration {
   Duration::new(0, 0)
-}
-
-/// Type with an associated type being Send and which is possible to switch to its original type
-/// Copy of content may be involved in the precess.
-pub trait SRef: Sized {
-  type Send: SToRef<Self>;
-  fn get_sendable(self) -> Self::Send;
-}
-pub trait SToRef<T: SRef>: Send + Sized {
-  //  type Ref : Ref<T,Send=Self>;
-  fn to_ref(self) -> T;
-}
-
-/// trait to allow variant of Reference in mydht. Most of the time if threads are involved (depends on
-/// Spawner used) and Peer struct is big enough we use Arc.
-/// Note that Ref is semantically wrong it should be val. The ref here expect inner immutability.
-///
-/// Principal use case is using Rc which is not sendable.
-/// TODO name should change to Immut
-pub trait Ref<T>: SRef + Borrow<T> {
-  //type Ref<'a,T>;
-  fn new(t: T) -> Self;
-  // only possible with associated lifetime, for now borrow is fine if we do not compose enum : see
-  // numerous clone of voting machine type https://github.com/rust-lang/rust/issues/44265
-  //fn get_ref(t) -> Self::Ref;
-}
-#[derive(Debug)]
-/// Tech struct for impl
-pub struct SerRef<T, R>(pub R, PhantomData<T>);
-impl<T, R> SerRef<T, R> {
-  #[inline]
-  pub fn new(r: R) -> Self {
-    SerRef(r, PhantomData)
-  }
-}
-impl<T: Serialize, R: Ref<T>> Serialize for SerRef<T, R> {
-  fn serialize<S: Serializer>(&self, serializer: S) -> StdResult<S::Ok, S::Error> {
-    self.0.borrow().serialize(serializer)
-  }
-}
-
-impl<'de, T: Deserialize<'de>, R: Ref<T>> Deserialize<'de> for SerRef<T, R> {
-  fn deserialize<D>(deserializer: D) -> StdResult<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    let t = T::deserialize(deserializer)?;
-    Ok(SerRef::new(<R as Ref<T>>::new(t)))
-  }
-}
-
-//pub trait ToRef<T, RT : Ref<T>> : Send + Sized + Borrow<T> {
-/*pub trait ToRef<T, RT : Ref<T>> : Send + Sized + Borrow<T> {
-//  type Ref : Ref<T,Send=Self>;
-  fn to_ref(self) -> RT;
-  fn clone_to_ref(&self) -> RT;
-}*/
-
-/// Arc is used to share peer or key val between threads
-/// useless if no threads in spawners.
-#[derive(Clone, Eq, PartialEq, Debug)]
-pub struct ArcRef<T>(Arc<T>);
-
-/// ArcRef as any Ref is seen as read only, quite unsafe
-unsafe impl<T> Sync for ArcRef<T> {}
-/// ArcRef as any Ref is seen as read only, quite unsafe
-unsafe impl<T: Send> Send for ArcRef<T> {}
-
-impl<T> Borrow<T> for ArcRef<T> {
-  #[inline]
-  fn borrow(&self) -> &T {
-    self.0.borrow()
-  }
-}
-
-impl<T: Clone + Send> SRef for ArcRef<T> {
-  type Send = ArcRef<T>;
-  #[inline]
-  fn get_sendable(self) -> Self::Send {
-    self
-  }
-}
-impl<T: Clone + Send> Ref<T> for ArcRef<T> {
-  #[inline]
-  fn new(t: T) -> Self {
-    ArcRef(Arc::new(t))
-  }
-}
-impl<T: Clone + Send> SToRef<ArcRef<T>> for ArcRef<T> {
-  #[inline]
-  fn to_ref(self) -> ArcRef<T> {
-    self
-  }
-}
-
-impl<T: Serialize> Serialize for ArcRef<T> {
-  fn serialize<S: Serializer>(&self, serializer: S) -> StdResult<S::Ok, S::Error> {
-    let a: &T = self.borrow();
-    a.serialize(serializer)
-  }
-}
-
-impl<'de, T: Clone + Send + Deserialize<'de>> Deserialize<'de> for ArcRef<T> {
-  fn deserialize<D>(deserializer: D) -> StdResult<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    let t: T = T::deserialize(deserializer)?;
-    Ok(<Self as Ref<T>>::new(t))
-  }
-}
-
-/* 
-impl<T : Clone + Send + Sync> ToRef<T,ArcRef<T>> for ArcRef<T> {
-  #[inline]
-  fn to_ref(self) -> ArcRef<T> {
-    self
-  }
-  #[inline]
-  fn clone_to_ref(&self) -> ArcRef<T> {
-    self.clone()
-  }
-
-}*/
-
-/// Rc is used locally (the content size is not meaningless), a copy of the content is done if
-/// threads are used.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct RcRef<T>(Rc<T>);
-
-#[derive(Clone, Eq, PartialEq)]
-pub struct ToRcRef<T>(T);
-
-impl<T> Borrow<T> for RcRef<T> {
-  #[inline]
-  fn borrow(&self) -> &T {
-    self.0.borrow()
-  }
-}
-
-impl<T: Send + Clone> SRef for RcRef<T> {
-  type Send = ToRcRef<T>;
-  #[inline]
-  fn get_sendable(self) -> Self::Send {
-    match Rc::try_unwrap(self.0) {
-      Ok(content) => ToRcRef(content),
-      Err(rcref) => ToRcRef((&*rcref).clone()),
-    }
-  }
-}
-impl<T: Send + Clone> Ref<T> for RcRef<T> {
-  #[inline]
-  fn new(t: T) -> Self {
-    RcRef(Rc::new(t))
-  }
-}
-
-impl<T: Send + Clone> SToRef<RcRef<T>> for ToRcRef<T> {
-  #[inline]
-  fn to_ref(self) -> RcRef<T> {
-    RcRef(Rc::new(self.0))
-  }
-  /*
-  #[inline]
-  fn clone_to_ref(&self) -> RcRef<T> {
-    RcRef(Rc::new(self.0.clone()))
-  }*/
-}
-
-impl<T: Send + Clone> Borrow<T> for ToRcRef<T> {
-  #[inline]
-  fn borrow(&self) -> &T {
-    self.0.borrow()
-  }
-}
-
-impl<T: Serialize> Serialize for RcRef<T> {
-  fn serialize<S: Serializer>(&self, serializer: S) -> StdResult<S::Ok, S::Error> {
-    let a: &T = self.borrow();
-    a.serialize(serializer)
-  }
-}
-
-impl<'de, T: Clone + Send + Deserialize<'de>> Deserialize<'de> for RcRef<T> {
-  fn deserialize<D>(deserializer: D) -> StdResult<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    let t: T = T::deserialize(deserializer)?;
-    Ok(<Self as Ref<T>>::new(t))
-  }
-}
-
-/// Content is already send and cloned as neededtsttststststs
-/// location : only for small contents
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct CloneRef<T>(T);
-
-impl<T> Borrow<T> for CloneRef<T> {
-  #[inline]
-  fn borrow(&self) -> &T {
-    &self.0
-  }
-}
-
-impl<T: Send + Clone> SRef for CloneRef<T> {
-  type Send = CloneRef<T>;
-  #[inline]
-  fn get_sendable(self) -> Self::Send {
-    self
-  }
-}
-impl<T: Send + Clone> Ref<T> for CloneRef<T> {
-  #[inline]
-  fn new(t: T) -> Self {
-    CloneRef(t)
-  }
-}
-
-impl<T: Send + Clone> SToRef<CloneRef<T>> for CloneRef<T> {
-  #[inline]
-  fn to_ref(self) -> CloneRef<T> {
-    CloneRef(self.0)
-  }
-  /*  #[inline]
-  fn clone_to_ref(&self) -> CloneRef<T> {
-    CloneRef(self.0.clone())
-  }
-*/
-}
-
-impl<T: Serialize> Serialize for CloneRef<T> {
-  fn serialize<S: Serializer>(&self, serializer: S) -> StdResult<S::Ok, S::Error> {
-    let a: &T = self.borrow();
-    a.serialize(serializer)
-  }
-}
-
-impl<'de, T: Clone + Send + Deserialize<'de>> Deserialize<'de> for CloneRef<T> {
-  fn deserialize<D>(deserializer: D) -> StdResult<Self, D::Error>
-  where
-    D: Deserializer<'de>,
-  {
-    let t: T = T::deserialize(deserializer)?;
-    Ok(<Self as Ref<T>>::new(t))
-  }
 }
 
 pub fn is_in_tmp_dir(f: &Path) -> bool {

@@ -73,3 +73,10 @@ git = "https://github.com/cheme/readwrite-comp.git"
 #version = "~0.0.1"
 git = "https://github.com/cheme/rust-proto.git"
 #path = "../rust-proto/"
+
+[dependencies.immut-send]
+#version = "~0.0.1"
+git = "https://github.com/cheme/immut-send.git"
+#path = "../immut-send/"
+features = ["with-serde"]
+
