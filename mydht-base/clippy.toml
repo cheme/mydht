@@ -1,0 +1,2 @@
+blacklisted-names = ["foo", "bar", "baz", "quux"] # default (cf clippy_lints/src/utils/conf.rs)
+cyclomatic-complexity-threshold = 25 # just for testing (default value)

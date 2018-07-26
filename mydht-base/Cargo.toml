@@ -27,7 +27,7 @@ byteorder = "~1.1.0"
 #bit-vec = "~0.4.2"
 #vec_map = "~0.8.0"
 
-parking_lot = "~0.4.6"
+parking_lot = "~0.6.3"
 futures = "~0.1.15"
 futures-cpupool = "~0.1.5"
 
@@ -69,4 +69,7 @@ git = "https://github.com/cheme/readwrite-comp.git"
 #[dependencies.rustc-serialize]
 #git = "https://github.com/rust-lang/rustc-serialize.git"
 
-
+[dependencies.rust-proto]
+#version = "~0.0.1"
+git = "https://github.com/cheme/rust-proto.git"
+#path = "../rust-proto/"

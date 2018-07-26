@@ -1,4 +1,3 @@
-
 use std::fmt::Result as FmtResult;
 use std::fmt::{Display,Formatter};
 use std::error::Error as ErrorTrait;
@@ -25,28 +24,30 @@ impl From<AddrError> for Error {
 impl Into<IoError> for Error {
   #[inline]
   fn into(self) -> IoError {
-//    IoError::new(e.description().to_string(), ErrorKind::ExternalLib, Some(Box::new(e)))
+    //    IoError::new(e.description().to_string(), ErrorKind::ExternalLib, Some(Box::new(e)))
     IoError::new(IoErrorKind::Other, self.to_string()) // not that good
   }
 }
 pub trait Into<T> {
-    fn into(self) -> T;
+  fn into(self) -> T;
 }
-
 
 impl From<BinError> for Error {
   #[inline]
-  fn from(e : BinError) -> Error {
-    Error(e.description().to_string(), ErrorKind::SerializingError, Some(Box::new(e)))
+  fn from(e: BinError) -> Error {
+    Error(
+      e.description().to_string(),
+      ErrorKind::SerializingError,
+      Some(Box::new(e)),
+    )
   }
 }
-
 
 /// TODO refactor (String in error replace by &'static str plus array of params)
 #[derive(Debug)]
 pub struct Error(pub String, pub ErrorKind, pub Option<Box<ErrorTrait>>);
 
-#[derive(Debug,Clone,Eq,PartialEq,Copy)]
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
 pub enum ErrorLevel {
   /// end program
   Panic,
@@ -62,13 +63,10 @@ pub enum ErrorLevel {
 
 impl Error {
   // TODO may be useless and costy
-  pub fn new_from<E : ErrorTrait + 'static> (msg : String, kind : ErrorKind, orig : Option<E>) -> Error {
+  pub fn new_from<E: ErrorTrait + 'static>(msg: String, kind: ErrorKind, orig: Option<E>) -> Error {
     match orig {
-      Some (e) => {
-    Error(msg, kind, Some(Box::new(e)))
-      },
-      None => 
-    Error(msg, kind, None),
+      Some(e) => Error(msg, kind, Some(Box::new(e))),
+      None => Error(msg, kind, None),
     }
   }
 
@@ -79,13 +77,12 @@ impl Error {
 unsafe impl Send for Error {}
 
 impl ErrorTrait for Error {
-  
   fn description(&self) -> &str {
     &self.0
   }
   fn cause(&self) -> Option<&ErrorTrait> {
     match self.2 {
-      Some(ref berr) => Some (&(**berr)),
+      Some(ref berr) => Some(&(**berr)),
       None => None,
     }
   }
@@ -93,18 +90,22 @@ impl ErrorTrait for Error {
 
 impl From<IoError> for Error {
   #[inline]
-  fn from(e : IoError) -> Error {
+  fn from(e: IoError) -> Error {
     if let IoErrorKind::WouldBlock = e.kind() {
       Error("".to_string(), ErrorKind::ExpectedError, None)
     } else {
-      Error(e.description().to_string(), ErrorKind::IOError, Some(Box::new(e)))
+      Error(
+        e.description().to_string(),
+        ErrorKind::IOError,
+        Some(Box::new(e)),
+      )
     }
   }
 }
 
 impl<T> From<PoisonError<T>> for Error {
   #[inline]
-  fn from(e : PoisonError<T>) -> Error {
+  fn from(e: PoisonError<T>) -> Error {
     let msg = format!("Poison Error on a mutex {}", e);
     Error(msg, ErrorKind::MutexError, None)
   }
@@ -120,39 +121,34 @@ impl<T: Send + Reflect> From<SendError<T>> for Error {
 */
 impl<T> From<SendError<T>> for Error {
   #[inline]
-  fn from(e : SendError<T>) -> Error {
-    Error(e.to_string(), ErrorKind::ChannelSendError,None)
+  fn from(e: SendError<T>) -> Error {
+    Error(e.to_string(), ErrorKind::ChannelSendError, None)
   }
 }
 impl From<RecvError> for Error {
   #[inline]
-  fn from(e : RecvError) -> Error {
-    Error(e.to_string(), ErrorKind::ChannelRecvError,None)
+  fn from(e: RecvError) -> Error {
+    Error(e.to_string(), ErrorKind::ChannelRecvError, None)
   }
 }
 
-
-
-
-
 impl Display for Error {
-
-  fn fmt(&self, ftr : &mut Formatter) -> FmtResult {
-    let kind = format!("{:?} : ",self.1);
+  fn fmt(&self, ftr: &mut Formatter) -> FmtResult {
+    let kind = format!("{:?} : ", self.1);
     try!(ftr.write_str(&kind));
     try!(ftr.write_str(&self.0));
     match self.2 {
       Some(ref tr) => {
         let trace = format!(" - trace : {}", tr);
         try!(ftr.write_str(&trace[..]));
-      },
+      }
       None => (),
     };
     Ok(())
   }
 }
 
-#[derive(Debug,Eq,PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum ErrorKind {
   SerializingError,
   MissingFile,
@@ -174,9 +170,7 @@ pub enum ErrorKind {
 impl ErrorKind {
   fn level(&self) -> ErrorLevel {
     match *self {
-      ErrorKind::MissingStartConf 
-        | ErrorKind::Bug
-        => ErrorLevel::Panic,
+      ErrorKind::MissingStartConf | ErrorKind::Bug => ErrorLevel::Panic,
       ErrorKind::ExpectedError => ErrorLevel::Ignore,
       ErrorKind::ChannelFinishedDest => ErrorLevel::Ignore,
       _ => ErrorLevel::ShutAction,
@@ -197,7 +191,6 @@ pub enum ErrorCrit {
   /// reconnect and/or pout offline in route).
   Alive,
 }
- 
-/// Result type internal to mydht
-pub type Result<R> = StdResult<R,Error>;
 
+/// Result type internal to mydht
+pub type Result<R> = StdResult<R, Error>;

@@ -1,9 +1,10 @@
-
 #![feature(box_patterns)]
 #![feature(refcell_replace_swap)]
 
-#[macro_use] extern crate log;
-#[macro_use] extern crate serde_derive;
+#[macro_use]
+extern crate log;
+#[macro_use]
+extern crate serde_derive;
 extern crate serde;
 extern crate serde_json;
 extern crate rand;
@@ -21,8 +22,6 @@ macro_rules! static_buff {
   )
 }
 */
-
-
 
 #[macro_export]
 macro_rules! sref_self(($ty:ident) => (
@@ -43,8 +42,6 @@ macro_rules! sref_self(($ty:ident) => (
 
 ));
 
-
-
 #[macro_export]
 /// a try which use a wrapping type
 macro_rules! tryfor(($ty:ident, $expr:expr) => (
@@ -55,61 +52,62 @@ macro_rules! tryfor(($ty:ident, $expr:expr) => (
 
 #[macro_export]
 /// same as try for mydht result which panic for panic level and break loop for ignore level
-macro_rules! try_breakloop { ($x:expr, $arg:tt, $inner:expr) => ({
-//  let mut iter = 0;
-  loop {
-    let a = match $x {
-      Ok(r) => r,
-      Err(e) => if e.level() == MdhtErrorLevel::Ignore {
-        break;
-      } else if e.level() == MdhtErrorLevel::Panic {
-        panic!($arg,e);
-      } else {
-        return Err(e)
-      },
-    };
-    $inner(a)?;
-  }
-  });
+macro_rules! try_breakloop {
+  ($x:expr, $arg:tt, $inner:expr) => {{
+    //  let mut iter = 0;
+    loop {
+      let a = match $x {
+        Ok(r) => r,
+        Err(e) => if e.level() == MdhtErrorLevel::Ignore {
+          break;
+        } else if e.level() == MdhtErrorLevel::Panic {
+          panic!($arg, e);
+        } else {
+          return Err(e);
+        },
+      };
+      $inner(a)?;
+    }
+  }};
 }
 
 #[macro_export]
 /// same as try for mydht result which panic for panic level and skip iter loop for ignore level
-macro_rules! try_infiniteloop { ($x:expr, $arg:tt, $inner:expr) => ({
-  loop {
-    let a = match $x {
-      Ok(r) => r,
-      Err(e) => if e.level() == MdhtErrorLevel::Ignore {
-        continue;
-      } else if e.level() == MdhtErrorLevel::Panic {
-        panic!($arg,e);
-      } else {
-        return Err(e)
-      },
-    };
-    $inner(a)?;
-  }
-  });
+macro_rules! try_infiniteloop {
+  ($x:expr, $arg:tt, $inner:expr) => {{
+    loop {
+      let a = match $x {
+        Ok(r) => r,
+        Err(e) => if e.level() == MdhtErrorLevel::Ignore {
+          continue;
+        } else if e.level() == MdhtErrorLevel::Panic {
+          panic!($arg, e);
+        } else {
+          return Err(e);
+        },
+      };
+      $inner(a)?;
+    }
+  }};
 }
 
 #[macro_export]
 /// level try, panic on panic, None on ignore, Some on Success and return Err in parent function for
 /// other levels.
-macro_rules! try_ignore { ($x:expr, $arg:tt) => ({
+macro_rules! try_ignore {
+  ($x:expr, $arg:tt) => {{
     match $x {
       Ok(r) => Some(r),
       Err(e) => if e.level() == MdhtErrorLevel::Ignore {
         None
       } else if e.level() == MdhtErrorLevel::Panic {
-        panic!($arg,e);
+        panic!($arg, e);
       } else {
-        return Err(e)
+        return Err(e);
       },
     }
-  });
+  }};
 }
-
-
 
 #[macro_export]
 /// Automatic define for KeyVal without attachment
@@ -150,8 +148,6 @@ macro_rules! noshadow_msg(() => (
   }
 ));
 
-
-
 #[macro_export]
 /// derive Keyval implementation for simple enum over * KeyVal
 /// $kv is enum name
@@ -171,9 +167,9 @@ macro_rules! derive_enum_keyval(($kv:ident {$($para:ident => $tra:ident , )*}, $
   pub enum $k {
     $( $st(<$skv as KeyVal>::Key), )*
   }
-  
+
   // TODO split macro then use it splitted in wotstore  (for impl only)
-  
+
   impl KeyVal for $kv {
     type Key = $k;
 #[inline]
@@ -279,7 +275,6 @@ macro_rules! derive_enum_setattach_inner(($kvt:ty , $kv:ident, $kt:ty, $k:ident,
 
 ));
 
-
 #[macro_export]
 /// derive kvstore to multiple independant kvstore implementation
 /// $kstore is kvstore name
@@ -290,8 +285,8 @@ macro_rules! derive_enum_setattach_inner(($kvt:ty , $kv:ident, $kt:ty, $k:ident,
 /// $ksub is substorename for this kind of key : use for impl (keyval may differ if some in the
 /// same storage)
 /// $st is the enum name to use for this variant : use for impl
-macro_rules! derive_kvstore(($kstore:ident, $kv:ident, $k:ident, 
-  {$($ksubs:ident => $sts:ty,)*}, 
+macro_rules! derive_kvstore(($kstore:ident, $kv:ident, $k:ident,
+  {$($ksubs:ident => $sts:ty,)*},
   {$($st:ident =>  $ksub:ident ,)*}
   ) => (
   pub struct $kstore {
@@ -312,7 +307,7 @@ macro_rules! derive_kvstore(($kstore:ident, $kv:ident, $k:ident,
       }
     }
     #[inline]
- 
+
     fn get_val(& self, k : &$k) -> Option<$kv> {
       match k {
         $( &$k::$st(ref sk) =>
@@ -335,23 +330,18 @@ macro_rules! derive_kvstore(($kstore:ident, $kv:ident, $k:ident,
   }
 ));
 
-
-
-
-pub mod utils;
 pub mod keyval;
-pub mod kvstore;
-pub mod simplecache;
-pub mod peer;
 pub mod kvcache;
-pub mod transport;
-pub mod mydhtresult;
+pub mod kvstore;
 pub mod msgenc;
-pub mod query;
+pub mod mydhtresult;
+pub mod peer;
 pub mod procs;
+pub mod query;
 pub mod rules;
+pub mod simplecache;
+pub mod transport;
+pub mod utils;
 //pub mod route;
 pub mod route2;
 pub mod service;
-#[cfg(feature="tunnel-impl")]
-pub mod tunnel;

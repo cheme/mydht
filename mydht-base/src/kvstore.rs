@@ -3,54 +3,51 @@ use std::sync::{Arc};
 use keyval::{KeyVal,Key};
 use std::time::Duration;
 
-
 /// cache policies apply to queries to know how long they may cache before we consider current
 /// result ok. Currently our cache policies are only an expiration date.
-#[derive(Debug,Copy,Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct CachePolicy(pub Duration);
 
 impl<'de> Deserialize<'de> for CachePolicy {
-    fn deserialize<D:Deserializer<'de>> (d : D) -> Result<CachePolicy, D::Error> {
-        //d.deserialize_i64().and_then(|sec| d.deserialize_i32().map(|nsec| CachePolicy(Timespec{sec : sec, nsec : nsec})))
-        let (sec,nsec) = <(u64,u32)>::deserialize(d)?;
-        Ok(CachePolicy(Duration::new(sec, nsec)))
-    }
+  fn deserialize<D: Deserializer<'de>>(d: D) -> Result<CachePolicy, D::Error> {
+    //d.deserialize_i64().and_then(|sec| d.deserialize_i32().map(|nsec| CachePolicy(Timespec{sec : sec, nsec : nsec})))
+    let (sec, nsec) = <(u64, u32)>::deserialize(d)?;
+    Ok(CachePolicy(Duration::new(sec, nsec)))
+  }
 }
 
 impl Serialize for CachePolicy {
-    fn serialize<S:Serializer> (&self, s: S) -> Result<S::Ok, S::Error> {
+  fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
     //    s.serialize_i64(self.0.sec).and_then(|_| s.serialize_i32(self.0.nsec))
-//        self.0.sec.serialize(s)?;
-        (self.0.as_secs(),self.0.subsec_nanos()).serialize(s)
-    }
+    //        self.0.sec.serialize(s)?;
+    (self.0.as_secs(), self.0.subsec_nanos()).serialize(s)
+  }
 }
 
-
-
 /// Storage for `KeyVal`
-pub trait KVStore<V : KeyVal> {
+pub trait KVStore<V: KeyVal> {
   /// Add value, pair is boolean for do persistent local store, and option for do cache value for
-  /// CachePolicy duration // TODO return MDHTResult<()> 
-  fn add_val(& mut self, V, Option<CachePolicy>);
+  /// CachePolicy duration // TODO return MDHTResult<()>
+  fn add_val(&mut self, V, Option<CachePolicy>);
   /*  #[inline]
   fn add_val(& mut self, kv : Arc<V>, op : (bool, Option<CachePolicy>)){
     self.c_add_val(kv.get_key(), kv,op)
   }*/
   /// Get value
-  fn get_val(& self, &V::Key) -> Option<V>;
+  fn get_val(&self, &V::Key) -> Option<V>;
   /// get vals (subset) from store, it is better if they are random, note that not all store allows it thus returning Optional result.
   /// it should not return same vals every time and could be close to an iterator over the store
   /// (random access to values is fine, every time the n first value is not).
   /// Self is mutable as it may change inner iterator or buffer content
   fn get_next_vals(&mut self, usize) -> Option<Vec<V>>;
- 
-  fn has_val(& self, &V::Key) -> bool;
+
+  fn has_val(&self, &V::Key) -> bool;
   /*  #[inline]
   fn get_val(& self, k : &V::Key) -> Option<Arc<V>>{
     self.c_get_val(k)
   }*/
   /// Remove value // TODO return MDHTResult
-  fn remove_val(& mut self, &V::Key);
+  fn remove_val(&mut self, &V::Key);
   /*  #[inline]
   fn remove_val(& mut self, k : &V::Key){
     self.remove_val(k)
@@ -58,25 +55,23 @@ pub trait KVStore<V : KeyVal> {
 
   /// Do periodic time consuming action. Typically serialize (eg on kvmanager shutdown) // TODO
   /// return MDHTResult<bool>
-  fn commit_store(& mut self) -> bool;
+  fn commit_store(&mut self) -> bool;
 }
-
 
 /// A KVStore for keyval containing two key (a pair of key as keyval) and with request over one of
 /// the key only. Typically this kind of store is easy to map over a relational table db.
-pub trait KVStoreRel<K1 : Key, K2 : Key, V : KeyVal<Key=(K1,K2)>> : KVStore<V> {
-  fn get_vals_from_left(& self, &K1) -> Vec<V>;
-  fn get_vals_from_right(& self, &K2) -> Vec<V>;
+pub trait KVStoreRel<K1: Key, K2: Key, V: KeyVal<Key = (K1, K2)>>: KVStore<V> {
+  fn get_vals_from_left(&self, &K1) -> Vec<V>;
+  fn get_vals_from_right(&self, &K2) -> Vec<V>;
 }
 
 // TODO retest this with new compiler version
-pub trait KVStoreRel2<V : KeyVal<Key=(Self::K1,Self::K2)>> : KVStore<V> {
-  type K1 : Key;
-  type K2 : Key;
-  fn get_vals_from_left(& self, &Self::K1) -> Vec<Arc<V>>;
-  fn get_vals_from_right(& self, &Self::K2) -> Vec<Arc<V>>;
+pub trait KVStoreRel2<V: KeyVal<Key = (Self::K1, Self::K2)>>: KVStore<V> {
+  type K1: Key;
+  type K2: Key;
+  fn get_vals_from_left(&self, &Self::K1) -> Vec<Arc<V>>;
+  fn get_vals_from_right(&self, &Self::K2) -> Vec<Arc<V>>;
 }
- 
 
 /* TODO this trait as non transient and previous one as transient (so it will be easier to combine
  * non transient with transient store (previous is kind of cache)
@@ -86,18 +81,18 @@ pub trait KVStoreRel2<V : KeyVal<Key=(Self::K1,Self::K2)>> : KVStore<V> {
   fn remove_val(& mut self, &V::Key);
 } */
 
-#[derive(Deserialize,Serialize,Debug,Clone,Copy)]
+#[derive(Deserialize, Serialize, Debug, Clone, Copy)]
 /// Storage priority (closely related to rules implementation)
 /// TODO delet as currently we run it local only
 pub enum StoragePriority {
   /// local only
   Local,
   /// depend on rules, but typically mean propagate low up to nb hop
-  PropagateL(usize), 
+  PropagateL(usize),
   /// depend on rules, but typically mean propagate high up to nb hop
   PropagateH(usize),
   /// do not store but could cache
-  Trensiant, 
+  Trensiant,
   /// never store
   NoStore,
   /// allways store
@@ -108,5 +103,4 @@ pub enum StoragePriority {
 pub type BoxedStore<V> = Box<KVStore<V>>;
 
 /// A boxed store for relations
-pub type BoxedStoreRel<K1,K2,V> = Box<KVStoreRel<K1,K2,V>>;
-
+pub type BoxedStoreRel<K1, K2, V> = Box<KVStoreRel<K1, K2, V>>;

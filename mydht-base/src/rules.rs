@@ -19,25 +19,25 @@ use std::ops::Deref;
 /// two).
 /// TODO heavy refacto (lot of useless method with new procs)
 /// TODO consider removing Sync or Send, and switch to Ref<DHTRules>
-pub trait DHTRules : 'static + Send {
+pub trait DHTRules: 'static + Send {
   /// Max number of hop for the query, the method is currently called in main peermgmt process, therefore it must be fast (a mapping, not a db access).
-  fn nbhop (&self, QueryPriority) -> u8;
+  fn nbhop(&self, QueryPriority) -> u8;
   /// Number of peers to transmit to at each hop, the method is currently called in main peermgmt process, therefore it must be fast (a mapping not a db access).
-  fn nbquery (&self, QueryPriority) -> u8;
+  fn nbquery(&self, QueryPriority) -> u8;
 
   /// if reply true not found is replied (faster reply than timeout)
   /// TODO rename ? In storeprop it also define result : the result is imediatly return if there is no not
   /// found reply, because timeout will occurs for all peers at aproximately the same time for a partial
   /// result (not as many result as queried). If not found reply is activated, result to query is
   /// returned only when it got enough results (found and not found).
-  fn notfoundreply (&self, mode : &QueryMode) -> bool;
+  fn notfoundreply(&self, mode: &QueryMode) -> bool;
 
   /// Number of no reply requires to consider no result, default implementation is suitable for
   /// many transports, but some may require some tunning depending on network to avoid timeout (for
   /// exemple asynch that is here by default (depth ^ nb_proxy) * 2 / 3 (2 / 3 is a lot it should
   /// be log of depth).
   /// both u8 are result of nbhop and nbquery from rules.
-  fn notfoundtreshold (&self, nbquer : u8, maxhop : u8, mode : &QueryMode) -> usize {
+  fn notfoundtreshold(&self, nbquer: u8, maxhop: u8, mode: &QueryMode) -> usize {
     match mode {
       &QueryMode::Asynch => {
         let max = (nbquer as usize).pow(maxhop as u32);
@@ -46,36 +46,34 @@ pub trait DHTRules : 'static + Send {
         } else {
           max
         }
-      },
+      }
       _ => nbquer as usize,
     }
   }
   #[inline]
-  fn nb_proxy_with_nb_res<P : Peer>(&self, qm : &QueryMsg<P>) -> (u8,usize) {
+  fn nb_proxy_with_nb_res<P: Peer>(&self, qm: &QueryMsg<P>) -> (u8, usize) {
     let nb_proxy = min(qm.nb_forw, qm.nb_res as u8);
-    let nb_for = if qm.nb_res  > qm.nb_forw as usize {
+    let nb_for = if qm.nb_res > qm.nb_forw as usize {
       (qm.nb_res / qm.nb_forw as usize) + 1
     } else {
       1
     };
-    (nb_proxy,nb_for)
+    (nb_proxy, nb_for)
   }
   /// delay between to cleaning of cache query
-  fn asynch_clean(&self) -> Option<Duration>; 
+  fn asynch_clean(&self) -> Option<Duration>;
   /// get the lifetime of a query (before clean and possibly no results).
-  fn lifetime (&self, prio : QueryPriority) -> Duration;
+  fn lifetime(&self, prio: QueryPriority) -> Duration;
   /// get the storage rules (a pair with persistent storage as bool plus cache storage as possible
   /// duration), depending on we beeing query originator, query priority, query storage priority
-  fn do_store (&self, islocal : bool, qprio : QueryPriority) -> (bool,Option<CachePolicy>); // wether you need to store the keyval or not
+  fn do_store(&self, islocal: bool, qprio: QueryPriority) -> (bool, Option<CachePolicy>); // wether you need to store the keyval or not
   /// Most of the time return one, as when proxying we want to decrease by one hop the number of
   /// hop, but sometimes we may by random  this nbhop to be 0 (this way a received query with
   /// seemingly remaining number of hop equal to max number of hop mode may not be send by the
   /// query originator
-  fn nbhop_dec (&self) -> u8;
+  fn nbhop_dec(&self) -> u8;
   /// function defining tunnel length of tunnel querymode
   fn tunnel_length(&self, QueryPriority) -> u8;
-
-
 
   /// Define if we require authentication, this way Ping/Pong challenge exchange could be skip and peers is
   /// immediatly stored.
@@ -99,7 +97,7 @@ pub trait DHTRules : 'static + Send {
   /// small timeout in transport and only after n timeout are seen as offline) or 0
   /// - fourth is optional duration for non multiplexed
   fn server_mode_conf(&self) -> (usize, usize, usize, Option<Duration>);
-  
+
   /// Define how to handle accept for incomming peers.
   /// - return false if light : in this case accept is run from reception thread directly in
   /// reception processing and authentication if needed is done afterward (no useless auth).
@@ -128,7 +126,7 @@ pub trait DHTRules : 'static + Send {
   /// second one is for keyval (query),
   /// third one is for pool (currently used to refresh n nodes) : most of the time light but could
   /// be more smarter than random
-  fn is_routing_heavy(&self) -> (bool,bool,bool);
+  fn is_routing_heavy(&self) -> (bool, bool, bool);
 }
 
 macro_rules! deref_impl {() => {
@@ -145,7 +143,7 @@ macro_rules! deref_impl {() => {
   fn notfoundreply (&self, mode : &QueryMode) -> bool {
     self.deref().notfoundreply(mode)
   }
- 
+
   #[inline]
   fn notfoundtreshold (&self, nbquer : u8, maxhop : u8, mode : &QueryMode) -> usize {
     self.deref().notfoundtreshold(nbquer,maxhop,mode)
@@ -195,12 +193,10 @@ macro_rules! deref_impl {() => {
 
 }}
 
-
-impl<DR : DHTRules + Sync> DHTRules for Arc<DR> {
+impl<DR: DHTRules + Sync> DHTRules for Arc<DR> {
   deref_impl!();
 }
 
 /*impl<DR : DHTRules> DHTRules for Rc<DR> {
   deref_impl!();
 }*/
-

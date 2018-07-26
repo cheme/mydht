@@ -1,4 +1,3 @@
-
 //! KeyVal common traits
 use std::path::{PathBuf};
 use serde::{
@@ -19,32 +18,28 @@ use std::fmt;
 /// content.
 pub type Attachment = PathBuf; // TODO change to Path !!! to allow copy ....
 
-
 //pub trait Key : fmt::Debug + Hash + Eq + Clone + Send + Sync + Ord + 'static{}
-pub trait Key : Send + Serialize + DeserializeOwned + fmt::Debug + Eq + Clone + 'static + Send + Sync {
-//  fn key_encode(&self) -> MDHTResult<Vec<u8>>;
-// TODO 
-//fn as_ref<KR : KeyRef<Key = Self>>(&'a self) -> KR;
+pub trait Key:
+  Send + Serialize + DeserializeOwned + fmt::Debug + Eq + Clone + 'static + Send + Sync
+{
+  //  fn key_encode(&self) -> MDHTResult<Vec<u8>>;
+  // TODO
+  //fn as_ref<KR : KeyRef<Key = Self>>(&'a self) -> KR;
 }
 
 // TODO get keyref in keyval as parametric function (keyref could not be associated type as not
 // 'static).
 // TODO without associated lifetime, passing lifetime to all keyval is to heavy and conversion
 // trait is to hacky
-pub trait KeyRef : Serialize + fmt::Debug + Eq + Clone {
-}
+pub trait KeyRef: Serialize + fmt::Debug + Eq + Clone {}
 
-impl<'a> KeyRef for &'a [u8] {
-}
+impl<'a> KeyRef for &'a [u8] {}
 
-impl<'a> KeyRef for &'a str {
-}
+impl<'a> KeyRef for &'a str {}
 
-impl<'a, K : Key> KeyRef for &'a K {
-}
+impl<'a, K: Key> KeyRef for &'a K {}
 
-impl<'a, K1 : KeyRef, K2 : KeyRef> KeyRef for (K1,K2) {
-}
+impl<'a, K1: KeyRef, K2: KeyRef> KeyRef for (K1, K2) {}
 
 /*
 impl<'a, K : Key> AsKeyRef<'a> for &'a K {
@@ -56,8 +51,8 @@ impl<'a, K : Key> AsKeyRef<'a> for &'a K {
 */
 
 // TODO remove for 'as_key_ref'
-impl<K : Serialize + DeserializeOwned + fmt::Debug + Eq + Clone + 'static + Send + Sync> Key for K {
- /* fn key_encode(&self) -> MDHTResult<Vec<u8>> {
+impl<K: Serialize + DeserializeOwned + fmt::Debug + Eq + Clone + 'static + Send + Sync> Key for K {
+  /* fn key_encode(&self) -> MDHTResult<Vec<u8>> {
     Ok(try!(bincode::encode(self, bincode::SizeLimit::Infinite)))
   }*/
 }
@@ -66,15 +61,16 @@ pub trait GettableAttachments {
   /// TODO switch to iter
   fn get_attachments(&self) -> Vec<&Attachment>;
   fn get_nb_attachments(&self) -> usize;
-
 }
 /// KeyVal is the basis for DHT content, a value with key.
 // TODO rem Serialize from trait, + remove encode_kv and decode_kv : MsgEnc do not use serialize,
 // its implementation does!!
 //pub trait KeyVal : fmt::Debug + Clone + Send + Sync + Eq + SettableAttachment + 'static {
-pub trait KeyVal : Send + Serialize + DeserializeOwned + fmt::Debug + Clone + Eq + SettableAttachment + 'static {
+pub trait KeyVal:
+  Send + Serialize + DeserializeOwned + fmt::Debug + Clone + Eq + SettableAttachment + 'static
+{
   /// Key type of KeyVal
-  type Key : Key; //aka key // Ord , Hash ... might be not mandatory but issue currently
+  type Key: Key; //aka key // Ord , Hash ... might be not mandatory but issue currently
   /// return size of attachment to download, default implementation return 0 (safe) as a way to
   /// disable attachment by default
   fn attachment_expected_size(&self) -> usize {
@@ -97,7 +93,7 @@ pub trait KeyVal : Send + Serialize + DeserializeOwned + fmt::Debug + Clone + Eq
   */
   /// optional attachment
   fn get_attachment(&self) -> Option<&Attachment>;
-/*
+  /*
   /// default serialize encode of keyval is used at least to store localy without attachment,
   /// it could be specialize with the three next variant (or just call from).
   fn encode_dist_with_att<S:Serializer> (&self, s: &mut S) -> Result<(), S::Error>;
@@ -115,14 +111,14 @@ pub trait KeyVal : Send + Serialize + DeserializeOwned + fmt::Debug + Clone + Eq
   /// Second boolean indicates if attachment must be added in the encoding (or just a reference
   /// kept).
   /// Default implementation encode through encode trait.
-  fn encode_kv<S:Serializer> (&self, s: S, _ : bool, _ : bool) -> Result<S::Ok, S::Error> {
+  fn encode_kv<S: Serializer>(&self, s: S, _: bool, _: bool) -> Result<S::Ok, S::Error> {
     self.serialize(s)
   }
   /// First boolean indicates if the encoding is locally used (not send to other peers).
   /// Second boolean indicates if attachment must be added in the encoding (or just a reference
   /// kept).
   /// Default implementation decode through encode trait.
-  fn decode_kv<'de,D:Deserializer<'de>> (d : D, _ : bool, _ : bool) -> Result<Self, D::Error> {
+  fn decode_kv<'de, D: Deserializer<'de>>(d: D, _: bool, _: bool) -> Result<Self, D::Error> {
     Self::deserialize(d)
   }
 }
@@ -151,9 +147,8 @@ impl<KV : KeyVal> Deserialize for KV {
 /// ``` impl<KV : Keyval> KeyVal for AsKeyValIf<KV> ```
 /// It also make trivial in most case (no attachment support) the implementation.
 pub trait SettableAttachment {
-
   /// optional attachment
-  fn set_attachment(& mut self, &Attachment) -> bool {
+  fn set_attachment(&mut self, &Attachment) -> bool {
     // default to no attachment support
     false
   }
@@ -162,7 +157,7 @@ pub trait SettableAttachments {
   // TODO replace by iter over getable attachments
   fn attachment_expected_sizes(&self) -> Vec<usize>;
   /// optional attachment
-  fn set_attachments(& mut self, &[Attachment]) -> bool;
+  fn set_attachments(&mut self, &[Attachment]) -> bool;
 }
 
 /*
@@ -229,7 +224,7 @@ impl<AKV : AsKeyValIf + Serialize + Deserialize> KeyVal for AKV
 
 */
 /// Specialization of Keyval for FileStore
-pub trait FileKeyVal : KeyVal {
+pub trait FileKeyVal: KeyVal {
   /// initiate from a file (usefull for loading)
   fn from_path(PathBuf) -> Option<Self>;
   /// name of the file
@@ -239,5 +234,3 @@ pub trait FileKeyVal : KeyVal {
     self.get_attachment().unwrap()
   }
 }
-
-
