@@ -14,6 +14,10 @@ use super::mainloop::{
   MainLoopCommand,
   MainLoopSubCommand,
 };
+use transport::{
+  LoopResult,
+  LoopError,
+};
 use super::api::{
   ApiCommand,
   ApiQueryId,
@@ -55,6 +59,7 @@ use query::{
 };
 use mydhtresult::{
   Result,
+  Error,
 };
 use kvstore::{
   KVStore,
@@ -65,7 +70,7 @@ use service::{
   SpawnSend,
   SpawnChannel,
   SpawnerYield,
-  SpawnSendWithHandle,
+  channels::SpawnSendWithHandle,
 };
 use super::{
   MainLoopSendIn,
@@ -657,12 +662,14 @@ impl<
   type CommandOut = GlobalReply<P,RP,KVStoreCommand<P,RP,V,VR>,KVStoreReply<VR>>;
   //    KVStoreReply<P,V,RP>;
 
-  fn call<Y : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut Y) -> Result<Self::CommandOut> {
+  fn call<Y : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut Y) -> LoopResult<Self::CommandOut> {
     if self.store.is_none() {
-      self.store = Some(self.init_store.call(())?);
+      let s : LoopResult<_> = self.init_store.call(()).map_err(|err|err.into());
+      self.store = Some(s?);
     }
     if self.query_cache.is_none() {
-      self.query_cache = Some(self.init_cache.call(())?);
+      let c : LoopResult<_> = self.init_cache.call(()).map_err(|err|err.into());
+      self.query_cache = Some(c?);
     }
 
     let store = self.store.as_mut().unwrap();
@@ -949,7 +956,7 @@ impl<MC : MyDHTConf> SToRef<OptPeerGlobalDest<MC>> for OptPeerGlobalDest<MC> whe
 
 impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>>> for OptPeerGlobalDest<MC> {
   const CAN_SEND : bool = true;
-  fn send(&mut self, r : GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>>) -> Result<()> {
+  fn send(&mut self, r : GlobalReply<MC::Peer,MC::PeerRef,KVStoreCommand<MC::Peer,MC::PeerRef,MC::Peer,MC::PeerRef>,KVStoreReply<MC::PeerRef>>) -> LoopResult<()> {
     match r {
       GlobalReply::Mult(cmds) => {
         for cmd in cmds.into_iter() {

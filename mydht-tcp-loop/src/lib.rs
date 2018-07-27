@@ -42,7 +42,8 @@ use self::mio::PollOpt;
 //use std::os::unix::io::AsRawFd;
 //use std::os::unix::io::FromRawFd;
 use mydht_base::transport::{
-  SerSocketAddr
+  SerSocketAddr,
+  LoopResult,
 };
 
 #[cfg(test)]
@@ -128,7 +129,7 @@ impl Transport<Poll> for Tcp {
 }
 
 impl Registerable<Poll> for Tcp {
-  fn register(&self, poll : &Poll, token: Token, interest: Ready) -> Result<bool> {
+  fn register(&self, poll : &Poll, token: Token, interest: Ready) -> LoopResult<bool> {
 
     match interest {
       Ready::Readable =>
@@ -139,7 +140,7 @@ impl Registerable<Poll> for Tcp {
 
     Ok(true)
   }
-  fn reregister(&self, poll : &Poll, token: Token, interest: Ready) -> Result<bool> {
+  fn reregister(&self, poll : &Poll, token: Token, interest: Ready) -> LoopResult<bool> {
     match interest {
       Ready::Readable =>
         poll.reregister(&self.listener, MioToken(token), MioReady::readable(), PollOpt::edge())?,
@@ -149,7 +150,7 @@ impl Registerable<Poll> for Tcp {
 
     Ok(true)
   }
-  fn deregister(&self, poll : &Poll) -> Result<()> {
+  fn deregister(&self, poll : &Poll) -> LoopResult<()> {
     poll.deregister(&self.listener)?;
     Ok(())
   }

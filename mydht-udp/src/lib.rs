@@ -44,6 +44,7 @@ use mydht_base::transport::{
   Registerable,
   Token,
   Ready,
+  LoopResult,
 };
 //use super::{Attachment};
 use std::io::Result as IoResult;
@@ -165,18 +166,19 @@ impl Read for ReadUdpStream {
   }
 }
 impl<PO> Registerable<PO> for Udp {
-  fn register(&self, _ : &PO, _: Token, _ : Ready) -> Result<bool> {
+  fn register(&self, _ : &PO, _: Token, _ : Ready) -> LoopResult<bool> {
     Ok(false)
   }
-  fn reregister(&self, _ : &PO, _: Token, _ : Ready) -> Result<bool> {
+  fn reregister(&self, _ : &PO, _: Token, _ : Ready) -> LoopResult<bool> {
     Ok(false)
   }
-  fn deregister(&self, _poll: &PO) -> Result<()> {
+  fn deregister(&self, _poll: &PO) -> LoopResult<()> {
     Ok(())
   }
- 
 }
+ 
 impl<PO> Transport<PO> for Udp {
+ 
   type ReadStream = ReadUdpStream;
   type WriteStream = UdpStream;
   type Address = SerSocketAddr;
@@ -194,7 +196,7 @@ impl<PO> Transport<PO> for Udp {
       Ok((ReadUdpStream(r), None))
     } else {
       error!("Datagram on udp transport with size {:?} over buff {:?}, lost datagram", size, self.buffsize);
-      Err(Error("Udp Oversized datagram".to_string(), ErrorKind::ExpectedError, None))
+      Err(ErrorKind::ExpectedError.into())
     }
    
   }
@@ -218,25 +220,25 @@ impl<PO> Transport<PO> for Udp {
 
 
 impl<PO> Registerable<PO> for UdpStream {
-  fn register(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
+  fn register(&self, _ : &PO, _ : Token, _ : Ready) -> LoopResult<bool> {
     Ok(false)
   }
-  fn reregister(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
+  fn reregister(&self, _ : &PO, _ : Token, _ : Ready) -> LoopResult<bool> {
     Ok(false)
   }
-  fn deregister(&self, _poll: &PO) -> Result<()> {
+  fn deregister(&self, _poll: &PO) -> LoopResult<()> {
     Ok(())
   }
  
 }
 impl<PO> Registerable<PO> for ReadUdpStream {
-  fn register(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
+  fn register(&self, _ : &PO, _ : Token, _ : Ready) -> LoopResult<bool> {
     Ok(false)
   }
-  fn reregister(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
+  fn reregister(&self, _ : &PO, _ : Token, _ : Ready) -> LoopResult<bool> {
     Ok(false)
   }
-  fn deregister(&self, _poll: &PO) -> Result<()> {
+  fn deregister(&self, _poll: &PO) -> LoopResult<()> {
     Ok(())
   }
  

@@ -30,6 +30,7 @@ use mydht_base::transport::{
   Registerable,
   Token,
   Ready,
+  LoopResult,
 };
 //use std::iter;
 //use utils;
@@ -63,14 +64,13 @@ impl Tcp {
   }
 }
 impl<PO> Registerable<PO> for Tcp {
-  fn register(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
+  fn register(&self, _ : &PO, _ : Token, _ : Ready) -> LoopResult<bool> {
     Ok(false)
   }
-  fn reregister(&self, _ : &PO, _ : Token, _ : Ready) -> Result<bool> {
+  fn reregister(&self, _ : &PO, _ : Token, _ : Ready) -> LoopResult<bool> {
     Ok(false)
   }
-
-  fn deregister(&self, _poll: &PO) -> Result<()> {
+  fn deregister(&self, _poll: &PO) -> LoopResult<()> {
     Ok(())
   }
 }

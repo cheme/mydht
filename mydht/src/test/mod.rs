@@ -14,7 +14,6 @@ use rules::{
 };
 use transport::{
   Transport,
-  MioEvents,
 };
 use procs::{
   PeerCacheEntry,
@@ -103,23 +102,32 @@ use query::{
 use procs::noservice::{
   NoCommandReply,
 };
-use service::{
+#[cfg(feature="mio-transport")]
+use service::eventloop::mio::{
+  MioEvents,
   MioEvented,
-  NoService,
-  NoSpawn,
+};
+ 
+use service::{
+  noservice::NoService,
+  spawn::void::{
+    NoSpawn,
+  },
   //Service,
   //MioChannel,
   //SpawnChannel,
-  MpscChannel,
+  channels::{
+    mpsc::MpscChannel,
+    void::NoChannel,
+    void::NoSend,
+  },
 //  MpscChannelRef,
-  NoChannel,
   //NoRecv,
   //LocalRcChannel,
   //SpawnerYield,
   SpawnSend,
  // LocalRc,
  // MpscSender,
-  NoSend,
 
   //Spawner,
   //Blocker,
@@ -127,7 +135,7 @@ use service::{
   //Coroutine,
   //RestartSameThread,
  // ThreadBlock,
-  ThreadPark,
+  spawn::threadpark::ThreadPark,
  // ThreadParkRef,
 
   //CpuPool,
@@ -145,11 +153,14 @@ use procs::ClientMode;
 use procs::{
   MyDHTConf,
 };
+//#[cfg(and(feature="with-extra-test",feature="mio-transport"))]
 #[cfg(feature="with-extra-test")]
 mod diag_tcp;
+//#[cfg(and(feature="with-extra-test",feature="mio-transport"))]
 #[cfg(feature="with-extra-test")]
 mod diag_udp;
 
+#[cfg(feature="mio-transport")]
 mod mainloop;
 pub use mydht_basetest::local_transport::*;
 pub use mydht_basetest::transport::*;

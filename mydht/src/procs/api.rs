@@ -44,6 +44,7 @@ use super::{
 };
 use transport::{
   Transport,
+  LoopResult,
 };
 use super::deflocal::{
   GlobalCommand,
@@ -79,14 +80,15 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
   type CommandIn = ApiCommand<MC>;
   type CommandOut = ApiReply<MC>;
 
-  fn call<S : SpawnerYield>(&mut self, req : Self::CommandIn, _async_yield : &mut S) -> Result<Self::CommandOut> {
+  fn call<S : SpawnerYield>(&mut self, req : Self::CommandIn, _async_yield : &mut S) -> LoopResult<Self::CommandOut> {
     Ok(match req {
       ApiCommand::MainLoop(mlc) => {
         ApiReply::ProxyMainloop(mlc)
       },
       ApiCommand::Failure(qid) => {
         let rem = if let Some(q) = self.0.get_val_mut_c(&qid) {
-          q.0.api_return(ApiResult::NoResult)?
+          let apir : LoopResult<_> = q.0.api_return(ApiResult::NoResult).map_err(|err|err.into());
+          apir?
         } else {
           false
         };
@@ -99,7 +101,8 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
         let rem = if let Some(q) = self.0.get_val_mut_c(&qid) {
           let mut r = false;
           for _ in 0..nb {
-            r = q.0.api_return(ApiResult::NoResult)?;
+            let apir : LoopResult<_> = q.0.api_return(ApiResult::NoResult).map_err(|err|err.into());
+            r = apir?;
           }
           r
         } else {
@@ -142,7 +145,8 @@ impl<MC : MyDHTConf,QC : KVCache<ApiQueryId,(MC::ApiReturn,Instant)>> Service fo
       ApiCommand::ServiceReply(lsr) => {
         if let Some(qid) = lsr.get_api_reply() {
           let rem = if let Some(q) = self.0.get_val_mut_c(&qid) {
-            q.0.api_return(ApiResult::ServiceReply(lsr))?
+            let apir : LoopResult<_> = q.0.api_return(ApiResult::ServiceReply(lsr)).map_err(|err|err.into());
+            apir?
           } else {
             false
           };
@@ -430,7 +434,7 @@ impl<MC : MyDHTConf> SToRef<ApiDest<MC>> for ApiDest<MC> where
 
 impl<MC : MyDHTConf> SpawnSend<ApiReply<MC>> for ApiDest<MC> {
   const CAN_SEND : bool = true;
-  fn send(&mut self, c : ApiReply<MC>) -> Result<()> {
+  fn send(&mut self, c : ApiReply<MC>) -> LoopResult<()> {
     match c {
       ApiReply::Done => (),
 //      ApiReply::Failure(wc) => self.main_loop.send(ic)?,
@@ -544,7 +548,7 @@ pub trait ApiRepliable {
 
 impl<MC : MyDHTConf> SpawnSend<ApiCommand<MC>> for DHTIn<MC> {
   const CAN_SEND : bool = <MC::MainLoopChannelIn as SpawnChannel<MainLoopCommand<MC>>>::Send::CAN_SEND;
-  fn send(&mut self, c : ApiCommand<MC>) -> Result<()> {
+  fn send(&mut self, c : ApiCommand<MC>) -> LoopResult<()> {
     match c {
       ApiCommand::MainLoop(ic) => self.main_loop.send(ic)?,
       ApiCommand::Failure(..) => unreachable!(),

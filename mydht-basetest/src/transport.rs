@@ -32,6 +32,7 @@ use mydht_base::transport::{
   SlabEntryState,
   Token,
   Ready,
+  LoopResult,
 };
 //use mydht_base::transport::{SpawnRecMode};
 //use std::io::Result as IoResult;
@@ -95,15 +96,15 @@ impl<T> MpscRec<T> {
     match self.mpsc.try_recv() {
       Ok(t) => Ok(t),
       Err(e) => if let TryRecvError::Empty = e {
-        Err(Error("".to_string(), MdhtErrorKind::ExpectedError,None))
+        Err(MdhtErrorKind::ExpectedError.into())
       } else {
-        Err(Error(format!("{}",e), MdhtErrorKind::ChannelRecvError,Some(Box::new(e))))
+        Err(e.into())
       },
     }
   }
 }
 impl<T> Registerable<MioPoll> for MpscRec<T> {
-  fn register(&self, p : &MioPoll, t : Token, r : Ready) -> Result<bool> {
+  fn register(&self, p : &MioPoll, t : Token, r : Ready) -> LoopResult<bool> {
     match r {
       Ready::Readable =>
         p.register(&self.reg, MioToken(t), MioReady::readable(), PollOpt::edge())?,
@@ -112,7 +113,7 @@ impl<T> Registerable<MioPoll> for MpscRec<T> {
     }
     Ok(true)
   }
-  fn reregister(&self, p : &MioPoll, t : Token, r : Ready) -> Result<bool> {
+  fn reregister(&self, p : &MioPoll, t : Token, r : Ready) -> LoopResult<bool> {
     match r {
       Ready::Readable =>
         p.reregister(&self.reg, MioToken(t), MioReady::readable(), PollOpt::edge())?,
@@ -121,7 +122,7 @@ impl<T> Registerable<MioPoll> for MpscRec<T> {
     }
     Ok(true)
   }
-  fn deregister(&self, poll: &MioPoll) -> Result<()> {
+  fn deregister(&self, poll: &MioPoll) -> LoopResult<()> {
     poll.deregister(&self.reg)?;
     Ok(())
   }

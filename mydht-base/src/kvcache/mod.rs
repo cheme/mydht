@@ -49,11 +49,7 @@ pub trait RandCache<K, V: Clone>: KVCache<K, V> {
   fn exact_rand(&mut self, min_no_repeat: usize, nb_tot: usize) -> Result<Vec<V>> {
     let c_len = self.len_c();
     if c_len < min_no_repeat {
-      return Err(Error(
-        "Unchecked call to cache exact_rand, insufficient value".to_string(),
-        ErrorKind::Bug,
-        None,
-      ));
+      return Err(ErrorKind::Bug("Unchecked call to cache exact_rand, insufficient value".to_string()).into());
     }
     let nb_ret = min(nb_tot, c_len);
     let mult_nb_ret = (nb_ret / min_no_repeat) * min_no_repeat;

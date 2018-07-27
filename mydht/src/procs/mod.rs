@@ -59,6 +59,7 @@ use serde::{Serialize};
 use serde::de::{DeserializeOwned};
 //use num::traits::ToPrimitive;
 use transport::{
+  LoopResult,
   Transport,
   SlabEntry,
   Registerable,
@@ -85,21 +86,25 @@ pub use procs::api::{
 };
 pub use mydht_base::procs::*;
 use service::{
-  HandleSend,
   Service,
   Spawner,
   SpawnSend,
   SpawnWeakUnyield,
   SpawnChannel,
-  MioSend,
-  MioRecv,
-  NoYield,
+  spawn::void::NoYield,
   YieldReturn,
   SpawnerYield,
-  DefaultRecv,
-  NoRecv,
-  NoSend,
-  send_with_handle,
+  channels::{
+    MioSend,
+    MioRecv,
+    HandleSend,
+    DefaultRecv,
+    send_with_handle,
+    void::{
+      NoSend,
+      NoRecv,
+    },
+  },
 };
 
 pub use self::mainloop::{
@@ -239,8 +244,9 @@ impl<MC : MyDHTConf> Service for MyDHTService<MC> {
   type CommandIn = MainLoopCommand<MC>;
   type CommandOut = MainLoopReply<MC>;
 
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut S) -> Result<Self::CommandOut> {
-    let mut state = MDHTState::init_state(&mut self.0, &mut self.3)?;
+  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut S) -> LoopResult<Self::CommandOut> {
+    let state_res : LoopResult<_> = MDHTState::init_state(&mut self.0, &mut self.3).map_err(|err|err.into());
+    let mut state = state_res?;
     let mut yield_spawn = NoYield(YieldReturn::Loop);
 //    (self.3).send((MainLoopCommand::Start))?;
     //(self.mainloop_send).send(super::server2::ReadReply::MainLoop(MainLoopCommand::Start))?;

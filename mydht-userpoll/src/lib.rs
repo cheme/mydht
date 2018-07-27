@@ -1,23 +1,7 @@
-extern crate mydht_base;
+extern crate service_pre;
 
 use std::usize::MAX as MAX_USIZE;
-use mydht_base::transport::{
-  Token,
-  Ready,
-  Registerable,
-  TriggerReady,
-  Poll,
-  Events,
-  Event,
-  
-};
 
-
-use mydht_base::mydhtresult::{
-  Result,
-  Error,
-  ErrorKind,
-};
 
 use std::time::Duration;
 //use std::cmp::Ordering;
@@ -25,6 +9,20 @@ use std::collections::BTreeMap;
 use std::collections::VecDeque;
 use std::cell::RefCell;
 use std::rc::Rc;
+use service_pre::error::{
+  Result,
+  ErrorKind,
+};
+use service_pre::eventloop::{
+  Token,
+  Ready,
+  Registerable,
+  TriggerReady,
+  Poll,
+  Events,
+  Event,
+};
+
 
 #[cfg(test)]
 mod test;
@@ -74,7 +72,7 @@ impl Poll for UserPoll {
     let ql = queue.len();
     if self.2 && ql == 0 {
       // suspend
-      return Err(Error("".to_string(), ErrorKind::ExpectedError, None));
+      return Err(ErrorKind::Yield.into());
     }
     let nb_mov = std::cmp::min(events.size_limit, ql);
     events.content = queue.split_off(ql - nb_mov);
@@ -116,8 +114,7 @@ impl UserPoll {
       new_fd = inc_l(new_fd);
       i += 1;
       if i == MAX_USIZE {
-        return Err(
-          Error("Full poll : reach max fd for this poll".to_string(), ErrorKind::IOError, None))
+        return Err("Full poll : reach max fd for this poll".into())
       }
       self.0.borrow().items.get(&new_fd).is_some()
     } {}

@@ -7,7 +7,7 @@ authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
 [features]
 #default = ["openssl-impl","rust-crypto-impl"]
-default = ["rust-crypto-impl","with-extra-test","openssl-impl","mio-transport"]
+default = ["rust-crypto-impl","with-extra-test","openssl-impl","mio-transport","service-pre/mio-transport","service-pre/with-coroutine"]
 #default = ["rust-crypto-impl","openssl-impl"]
 openssl-impl = ["openssl"]
 rust-crypto-impl = ["rust-crypto"]
@@ -51,7 +51,10 @@ optional = true
 version = "~0.2.34"
 optional = true
 
-
+[dependencies.service-pre]
+#version = "~0.0.1"
+git = "https://github.com/cheme/service-pre.git"
+#path = "../../service-pre/"
 
 [dev-dependencies.mydht-base]
 path = "../mydht-base/"

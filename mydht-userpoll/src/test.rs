@@ -1,26 +1,29 @@
 
-use mydht_base::transport::{
-  Registerable,
-  Ready,
-  Poll,
-  Events,
-};
-use mydht_base::service::{
+use service_pre::{
   Spawner,
   SpawnerYield,
-  RestartOrError,
+  spawn::restart::RestartOrError,
   Service,
   ServiceRestartable,
   SpawnChannel,
   SpawnSend,
   SpawnRecv,
   SpawnUnyield,
-  LocalRcChannel,
-  MioSend,
-  MioRecv,
-};
-use mydht_base::mydhtresult::{
-  Result,
+  channels::{
+    rc::LocalRcChannel,
+    MioSend,
+    MioRecv,
+  },
+  error::{
+    Result,
+    ErrorKind,
+  },
+  eventloop::{
+    Poll,
+    Registerable,
+    Ready,
+    Events,
+  },
 };
 use super::{
   UserPoll,
@@ -39,7 +42,7 @@ fn test_dummy () {
 #[test]
 fn two_services_talking () {
   // user poll
-  let poll = UserPoll::new(1);
+  let poll = UserPoll::new(1,false);
 
   // mesg -> talk1 -> talk2 -> assert in loop
   let mut spawner = RestartOrError;

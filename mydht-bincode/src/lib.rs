@@ -18,7 +18,14 @@ use readwrite_comp::{
 use serde::{Serialize};
 use serde::de::{DeserializeOwned};
 //use rustc_serialize::{Serialize,Decodable};
-use mydht_base::msgenc::MsgEnc;
+use mydht_base::msgenc::{
+  MsgEnc,
+  SpawnerYield,
+};
+use mydht_base::transport::{
+  ReadYield,
+  WriteYield,
+};
 use mydht_base::utils::Proto;
 use mydht_base::keyval::{KeyVal,Attachment};
 use mydht_base::peer::{Peer};
@@ -26,27 +33,22 @@ use mydht_base::msgenc::ProtoMessage;
 //use std::collections::BTreeMap;
 use std::io::Write;
 use std::io::Read;
-use mydht_base::service::{
-  SpawnerYield,
-  ReadYield,
-  WriteYield,
-};
 use mydht_base::msgenc::write_attachment;
 use mydht_base::msgenc::read_attachment;
 use mydht_base::mydhtresult::Result as MDHTResult;
 use mydht_base::mydhtresult::{Error,ErrorKind};
 use mydht_base::msgenc::send_variant::ProtoMessage as ProtoMessageSend;
 use bincode::Infinite;
-use std::error::Error as StdError;
 
 //use std::marker::Reflect;
 use bincode::Error as BinError;
 
 pub struct BinErr(BinError);
+
 impl From<BinErr> for Error {
   #[inline]
   fn from(e : BinErr) -> Error {
-    Error(e.0.description().to_string(), ErrorKind::SerializingError, Some(Box::new(e.0)))
+    Error::with_chain(e.0, ErrorKind::Serializing("mydht bincode error".to_string()))
   }
 }
 

@@ -29,6 +29,9 @@ use peer::{
 use std::borrow::Borrow;
 use transport::{
   Transport,
+  LoopResult,
+  LoopError,
+  LoopErrorKind,
 };
 use msgenc::{
   ProtoMessage,
@@ -62,12 +65,14 @@ use keyval::{
 #[cfg(feature="restartable")]
 use service::ServiceRestartable;
 use service::{
-  send_with_handle,
+  channels::{
+    send_with_handle,
+    SpawnSendWithHandle,
+  },
   Service,
   YieldReturn,
   Spawner,
   SpawnSend,
-  SpawnSendWithHandle,
   SpawnHandle,
   SpawnChannel,
   SpawnerYield,
@@ -238,7 +243,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
   type CommandIn = ReadCommand<MC>;
   type CommandOut = ReadReply<MC>;
 
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> LoopResult<Self::CommandOut> {
     if let ReadCommand::ReadBorrowReturn(st,osh) = req {
       self.stream = Some(st);
       self.shad_msg = osh;
@@ -248,7 +253,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
     if self.stream.is_none() {
       // borrowed stream
       match async_yield.spawn_yield() {
-        YieldReturn::Return => return Err(Error("Would block".to_string(), ErrorKind::ExpectedError,None)),
+        YieldReturn::Return => return Err(LoopErrorKind::Yield.into()),
         YieldReturn::Loop => (), 
       }
       // go back to command call for a possible ReadBorrowReturn
@@ -275,11 +280,11 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
             },*/
 
           };
-          shad.read_header(&mut ReadYield(stream,async_yield))?;
+          shad.read_header(&mut ReadYield(stream,async_yield)).map_err::<LoopError,_>(|err|err.into())?;
  
           // read in single pass
           // TODO specialize ping pong messages with MaxSize. - 
-          let msg : ProtoMessage<MC::Peer> = self.enc.decode_from(stream, &mut shad, async_yield)?;
+          let msg : ProtoMessage<MC::Peer> = self.enc.decode_from(stream, &mut shad, async_yield).map_err::<LoopError,_>(|err|err.into())?;
 
 
           match msg {
@@ -288,10 +293,10 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
               // attachment probably useless but if it is possible...
               let atsize = p.attachment_expected_size();
               if atsize > 0 {
-                let att = self.enc.attach_from(stream, &mut shad, async_yield, atsize)?;
+                let att = self.enc.attach_from(stream, &mut shad, async_yield, atsize).map_err::<LoopError,_>(|err|err.into())?;
                 p.set_attachment(&att);
               }
-              shad.read_end(&mut ReadYield(stream,async_yield))?;
+              shad.read_end(&mut ReadYield(stream,async_yield)).map_err::<LoopError,_>(|err|err.into())?;
               // check sig
               if !self.peermgmt.checkmsg(&p,&chal[..],&sig[..]) {
                 // send refuse peer with token to mainloop 
@@ -320,7 +325,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
               debug!("a pong received from {:?}", withpeer.get_key_ref());
               let atsize = withpeer.attachment_expected_size();
               if atsize > 0 {
-                let att = self.enc.attach_from(stream, &mut shad, async_yield, atsize)?;
+                let att = self.enc.attach_from(stream, &mut shad, async_yield, atsize).map_err::<LoopError,_>(|err|err.into())?;
                 withpeer.set_attachment(&att);
               }
               shad.read_end(&mut ReadYield(stream,async_yield))?;
@@ -394,15 +399,15 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
           }*/
           let shad = self.shad_msg.as_mut().unwrap();
 
-          shad.read_header(&mut ReadYield(stream,async_yield))?;
+          shad.read_header(&mut ReadYield(stream,async_yield)).map_err::<LoopError,_>(|err|err.into())?;
 
-          let mut pmess : MC::ProtoMsg = self.enc.decode_msg_from(stream, shad, async_yield)?;
+          let mut pmess : MC::ProtoMsg = self.enc.decode_msg_from(stream, shad, async_yield).map_err::<LoopError,_>(|err|err.into())?;
 
           let atts_s = pmess.attachment_expected_sizes();
           if atts_s.len() > 0 {
             let mut atts = Vec::with_capacity(atts_s.len());
             for atsize in atts_s {
-              let att = self.enc.attach_from(stream, shad, async_yield, atsize)?;
+              let att = self.enc.attach_from(stream, shad, async_yield, atsize).map_err::<LoopError,_>(|err|err.into())?;
               atts.push(att);
             }
             pmess.set_attachments(&atts[..]);
@@ -451,7 +456,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
             // try send in
             send_with_handle(send, local_handle, mess)?
           } else {
-            let service = MC::init_local_service(self.local_service_proto.clone(),self.from.clone(),self.with.clone(),self.token)?;
+            let service = MC::init_local_service(self.local_service_proto.clone(),self.from.clone(),self.with.clone(),self.token).map_err::<LoopError,_>(|err|err.into())?;
             let (send,recv) = self.local_channel_in.new()?;
             let sender = LocalDest {
               read : self.read_dest_proto.clone(),
@@ -468,7 +473,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
               let nlocal_handle = if res.is_err() {
                 // TODO log try restart ???
                 // reinit service, reuse receiver as may not be empty (do not change our send)
-                let service = MC::init_local_service(self.local_service_proto.clone(),self.from.clone(),self.with.clone(),self.token)?;
+                let service = MC::init_local_service(self.local_service_proto.clone(),self.from.clone(),self.with.clone(),self.token).map_err::<LoopError,_>(|err|err.into())?;
                 // TODO reinit channel and sender plus empty receiver in sender seems way better!!!
                 self.local_spawner.spawn(service, sender, Some(mess), receiver, MC::LOCAL_SERVICE_NB_ITER)?
               } else {
@@ -489,7 +494,7 @@ impl<MC : MyDHTConf> Service for ReadService<MC> {
             // from service with a message for channel : or simply send end (even if close there is
             // an obvious race condition where we got some message and it is mainloop that will
             // need to manage those when closing.
-            return Err(Error("End as borrow is not expected to be back".to_string(), ErrorKind::EndService,None));
+            return Err(LoopErrorKind::EndService.into());
           }
         },
       }
@@ -616,7 +621,7 @@ impl<MC : MyDHTConf> SToRef<ReadDest<MC>> for ReadDest<MC> where
 
 impl<MC : MyDHTConf> SpawnSend<ReadReply<MC>> for ReadDest<MC> {
   const CAN_SEND : bool = true;
-  fn send(&mut self, r : ReadReply<MC>) -> Result<()> {
+  fn send(&mut self, r : ReadReply<MC>) -> LoopResult<()> {
     match r {
       ReadReply::MainLoop(mlc) => {
         self.mainloop.send(mlc)?

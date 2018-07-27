@@ -1,10 +1,9 @@
 extern crate uuid;
 extern crate rust_proto;
-extern crate immut_send;
 
 pub use self::rust_proto::Proto;
 
-pub use self::immut_send::{
+pub use immut_send::{
   SRef,
   SToRef,
   Ref,

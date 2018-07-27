@@ -1,5 +1,4 @@
 
-
 #[macro_use] extern crate log;
 #[macro_use] extern crate serde_derive;
 extern crate serde;
@@ -8,6 +7,7 @@ extern crate time;
 extern crate rand;
 extern crate mio;
 extern crate readwrite_comp;
+extern crate service_pre;
 pub mod node;
 mod utils {
   pub use mydht_base::utils::*;

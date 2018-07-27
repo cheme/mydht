@@ -13,7 +13,10 @@ use procs::{
 use std::sync::{
   Arc,
 };
-use transport::Transport;
+use transport::{
+  Transport,
+  LoopResult,
+};
 use super::mainloop::{
   MainLoopCommand,
 };
@@ -49,7 +52,7 @@ impl<PO, T : Transport<PO>> Service for SynchConnListener<PO,T> {
   type CommandIn = SynchConnListenerCommandIn;
   type CommandOut = SynchConnListenerCommandOut<PO,T>;
 
-  fn call<S : SpawnerYield>(&mut self, _req: Self::CommandIn, _async_yield : &mut S) -> Result<Self::CommandOut> {
+  fn call<S : SpawnerYield>(&mut self, _req: Self::CommandIn, _async_yield : &mut S) -> LoopResult<Self::CommandOut> {
     match self.0.accept() {
       Ok((rs,ows)) => {
         return Ok(SynchConnListenerCommandOut::Connected(rs,ows));
@@ -63,7 +66,7 @@ impl<PO, T : Transport<PO>> Service for SynchConnListener<PO,T> {
 
 impl<MC : MyDHTConf> SpawnSend<SynchConnListenerCommandOut<MC::Poll,MC::Transport>> for SynchConnListenerCommandDest<MC> {
   const CAN_SEND : bool = true;
-  fn send(&mut self, r : SynchConnListenerCommandOut<MC::Poll,MC::Transport>) -> Result<()> {
+  fn send(&mut self, r : SynchConnListenerCommandOut<MC::Poll,MC::Transport>) -> LoopResult<()> {
     match r {
       SynchConnListenerCommandOut::Connected(rs,ows) => {
         self.0.send(MainLoopCommand::ConnectedR(rs,ows))?;
@@ -93,7 +96,7 @@ impl<PO,T : Transport<PO>> Service for SynchConnect<PO,T> {
   type CommandIn = SynchConnectCommandIn<PO,T>;
   type CommandOut = SynchConnectCommandOut<PO,T>;
 
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut S) -> Result<Self::CommandOut> {
+  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut S) -> LoopResult<Self::CommandOut> {
     let SynchConnectCommandIn(slab_ix,add) = req;
     Ok(match self.0.connectwith(&add) {
       Ok((ws,ors)) => SynchConnectCommandOut::Connected(slab_ix,ws,ors),
@@ -107,7 +110,7 @@ impl<PO,T : Transport<PO>> Service for SynchConnect<PO,T> {
 
 impl<MC : MyDHTConf> SpawnSend<SynchConnectCommandOut<MC::Poll,MC::Transport>> for SynchConnectDest<MC> {
   const CAN_SEND : bool = true;
-  fn send(&mut self, r : SynchConnectCommandOut<MC::Poll,MC::Transport>) -> Result<()> {
+  fn send(&mut self, r : SynchConnectCommandOut<MC::Poll,MC::Transport>) -> LoopResult<()> {
     match r {
       SynchConnectCommandOut::Connected(slx, ws,ors) => {
         self.0.send(MainLoopCommand::ConnectedW(slx,ws,ors))?;

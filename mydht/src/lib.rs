@@ -12,6 +12,7 @@ extern crate bincode;
 extern crate byteorder;
 extern crate bit_vec;
 extern crate rand;
+extern crate service_pre;
 extern crate futures;
 extern crate futures_cpupool;
 #[cfg(test)]
@@ -119,7 +120,8 @@ pub mod mydhtresult{
 pub use mydht_base::mydhtresult::*;
 }
 pub mod service{
-pub use mydht_base::service::*;
+pub use service_pre::*;
+pub use service_pre::transport::*;
 }
 
 
@@ -252,7 +254,7 @@ pub mod transportif{
     Event,
   };
   #[cfg(feature="mio-transport")]
-  pub use transport::{
+  pub use service_pre::eventloop::mio::{
     MioEvents,
   };
 }

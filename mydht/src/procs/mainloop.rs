@@ -76,19 +76,21 @@ use mydhtresult::{
   ErrorLevel as MdhtErrorLevel,
 };
 use service::{
-  HandleSend,
+  channels::{
+    HandleSend,
+    SpawnSendWithHandle,
+    DefaultRecv,
+    DefaultRecvChannel,
+    void::NoRecv,
+  },
   Spawner,
   SpawnSend,
-  SpawnSendWithHandle,
   SpawnRecv,
   SpawnHandle,
   SpawnUnyield,
   SpawnWeakUnyield,
   SpawnChannel,
   SpawnerYield,
-  DefaultRecv,
-  DefaultRecvChannel,
-  NoRecv,
 };
 
 use peer::{
@@ -113,6 +115,7 @@ use transport::{
   Poll,
   Events,
   Event,
+  LoopResult,
 };
 use utils::{
   Proto,
@@ -1487,7 +1490,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
       }
     }
 
-    Err(Error("Call of read listener on wrong state".to_string(), ErrorKind::Bug, None))
+    Err(ErrorKind::Bug("Call of read listener on wrong state".to_string()).into())
   }
 
 
@@ -1547,7 +1550,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
             //
             send_with_handle(sender,handle,command)?
           },
-          _ => return Err(Error("Call of write listener on wrong state".to_string(), ErrorKind::Bug, None)),
+          _ => return Err(ErrorKind::Bug("Call of write listener on wrong state".to_string()).into()),
         };
         if finished.is_some() {
           let state = replace(&mut entry.state, SlabEntryState::Empty);
@@ -1574,7 +1577,7 @@ impl<MC : MyDHTConf> MDHTState<MC> {
           false
         }
       } else {
-        return Err(Error("Call of write listener on no state".to_string(), ErrorKind::Bug, None))
+        return Err(ErrorKind::Bug("Call of write listener on no state".to_string()).into())
       }
     };
     if rem {

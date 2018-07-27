@@ -8,10 +8,57 @@ use mio::{
   SetReadiness,
   Registration,
 };
+use service::{
+  eventloop::mio::{
+    MioEvents,
+    MioEvented,
+  },
+  noservice::NoService,
+  spawn::void::{
+    NoSpawn,
+  },
+  Service,
+  //MioChannel,
+  //SpawnChannel,
+  channels::{
+    mpsc::MpscChannel,
+    mpscref::MpscChannelRef,
+    void::NoChannel,
+    void::NoSend,
+    rc::LocalRcChannel,
+  },
+//  MpscChannelRef,
+  //NoRecv,
+  SpawnerYield,
+  SpawnSend,
+  SpawnWeakUnyield,
+ // LocalRc,
+ // MpscSender,
+
+  //Spawner,
+  spawn::blocking::Blocker,
+  spawn::restart::{
+    RestartOrError,
+    RestartSameThread,
+  },
+  spawn::coroutine::Coroutine,
+  //RestartSameThread,
+ // ThreadBlock,
+  spawn::threadpark::{
+    ThreadPark,
+    ThreadParkRef,
+  },
+ // ThreadParkRef,
+
+  //CpuPool,
+  //CpuPoolFuture,
+};
+
+
 use kvstore::StoragePriority;
 use transport::{
   Transport,
-  MioEvents,
+  LoopResult,
 };
 use query::{
   //Query,
@@ -28,11 +75,6 @@ use utils::{
 };
 
 use kvcache::KVCache;
-use service::{
-  SpawnSend,
-  MioEvented,
-  SpawnWeakUnyield,
-};
 
 use query::simplecache::{
   SimpleCacheQuery,
@@ -115,32 +157,6 @@ use transport::{
   SerSocketAddr,
 };
 use node::Node;
-use service::{
-  Service,
- // MioChannel,
- // SpawnChannel,
-  MpscChannel,
-  MpscChannelRef,
-  //NoRecv,
-  LocalRcChannel,
-  SpawnerYield,
- // LocalRc,
- // MpscSender,
-  NoSend,
-
-  Blocker,
-  RestartOrError,
-  Coroutine,
-  RestartSameThread,
- // ThreadBlock,
-  ThreadPark,
-  ThreadParkRef,
-
-  NoSpawn,
-  NoChannel,
- // CpuPool,
- // CpuPoolFuture,
-};
 /*use mydht_basetest::transport::{
   LocalAdd,
 };
@@ -348,7 +364,7 @@ macro_rules! service_conf_test{($testconf:ident,$testtest:ident,$startport:expr,
   {
     type CommandIn = GlobalCommand<<$testconf as MyDHTConf>::PeerRef,<$testconf as MyDHTConf>::GlobalServiceCommand>;
     type CommandOut = GlobalReply<<$testconf as MyDHTConf>::Peer,<$testconf as MyDHTConf>::PeerRef,<$testconf as MyDHTConf>::GlobalServiceCommand,<$testconf as MyDHTConf>::GlobalServiceReply>;
-    fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut S) -> Result<Self::CommandOut> {
+    fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut S) -> LoopResult<Self::CommandOut> {
 
       match req {
         GlobalCommand::Local(TestCommand::_Ph(..))

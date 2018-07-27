@@ -1,10 +1,15 @@
 #![feature(box_patterns)]
 #![feature(refcell_replace_swap)]
-
+#![recursion_limit="1024"]
+#[macro_use]
+extern crate immut_send;
 #[macro_use]
 extern crate log;
 #[macro_use]
+extern crate error_chain;
+#[macro_use]
 extern crate serde_derive;
+extern crate service_pre;
 extern crate serde;
 extern crate serde_json;
 extern crate rand;
@@ -24,25 +29,6 @@ macro_rules! static_buff {
 */
 
 #[macro_export]
-macro_rules! sref_self(($ty:ident) => (
-
-  impl SRef for $ty {
-    type Send = $ty;
-    #[inline]
-    fn get_sendable(self) -> Self::Send {
-      self
-    }
-  }
-  impl SToRef<$ty> for $ty {
-    #[inline]
-    fn to_ref(self) -> $ty {
-      self
-    }
-  }
-
-));
-
-#[macro_export]
 /// a try which use a wrapping type
 macro_rules! tryfor(($ty:ident, $expr:expr) => (
 
@@ -58,7 +44,7 @@ macro_rules! try_breakloop {
     loop {
       let a = match $x {
         Ok(r) => r,
-        Err(e) => if e.level() == MdhtErrorLevel::Ignore {
+        Err(e) => if e.level() == MdhtErrorLevel::Yield {
           break;
         } else if e.level() == MdhtErrorLevel::Panic {
           panic!($arg, e);
@@ -78,7 +64,7 @@ macro_rules! try_infiniteloop {
     loop {
       let a = match $x {
         Ok(r) => r,
-        Err(e) => if e.level() == MdhtErrorLevel::Ignore {
+        Err(e) => if e.level() == MdhtErrorLevel::Yield {
           continue;
         } else if e.level() == MdhtErrorLevel::Panic {
           panic!($arg, e);
@@ -98,7 +84,7 @@ macro_rules! try_ignore {
   ($x:expr, $arg:tt) => {{
     match $x {
       Ok(r) => Some(r),
-      Err(e) => if e.level() == MdhtErrorLevel::Ignore {
+      Err(e) => if e.level() == MdhtErrorLevel::Yield {
         None
       } else if e.level() == MdhtErrorLevel::Panic {
         panic!($arg, e);
@@ -344,4 +330,4 @@ pub mod transport;
 pub mod utils;
 //pub mod route;
 pub mod route2;
-pub mod service;
+//pub mod service;

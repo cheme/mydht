@@ -158,7 +158,7 @@ pub struct JSonErr(JSonError);
 impl From<JSonErr> for Error {
   #[inline]
   fn from(e : JSonErr) -> Error {
-    Error(e.0.description().to_string(), ErrorKind::SerializingError, Some(Box::new(e.0)))
+    Error::with_chain(e.0, ErrorKind::Serializing("mydht json error".to_string()))
   }
 }
 

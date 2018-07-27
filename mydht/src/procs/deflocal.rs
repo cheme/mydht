@@ -2,6 +2,9 @@
 use super::{
   FWConf,
 };
+use transport::{
+  LoopResult,
+};
 use utils::{
   SRef,
   SToRef,
@@ -22,7 +25,7 @@ use super::api::{
 use service::{
   Service,
   SpawnSend,
-  SpawnSendWithHandle,
+  channels::SpawnSendWithHandle,
   SpawnerYield,
 };
 use super::server2::{
@@ -232,7 +235,7 @@ impl<MC : MyDHTConf> Service for DefLocalService<MC>
   type CommandIn = MC::GlobalServiceCommand;
   type CommandOut = LocalReply<MC>;
   #[inline]
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _ : &mut S) -> Result<Self::CommandOut> {
+  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _ : &mut S) -> LoopResult<Self::CommandOut> {
     Ok(LocalReply::Read(ReadReply::Global(GlobalCommand::Distant(self.with.clone(),req))))
   }
 }
@@ -302,7 +305,7 @@ impl<MC : MyDHTConf> SToRef<GlobalDest<MC>> for GlobalDest<MC> where
 
 impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServiceCommand,MC::GlobalServiceReply>> for GlobalDest<MC> {
   const CAN_SEND : bool = true;
-  fn send(&mut self, r : GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServiceCommand,MC::GlobalServiceReply>) -> Result<()> {
+  fn send(&mut self, r : GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServiceCommand,MC::GlobalServiceReply>) -> LoopResult<()> {
     match r {
       GlobalReply::Mult(cmds) => {
         for cmd in cmds.into_iter() {
@@ -383,7 +386,7 @@ impl<MC : MyDHTConf> SpawnSend<GlobalReply<MC::Peer,MC::PeerRef,MC::GlobalServic
 
 impl<MC : MyDHTConf> SpawnSend<LocalReply<MC>> for LocalDest<MC> {
   const CAN_SEND : bool = true;
-  fn send(&mut self, r : LocalReply<MC>) -> Result<()> {
+  fn send(&mut self, r : LocalReply<MC>) -> LoopResult<()> {
     match r {
       LocalReply::Read(mlc) => {
         self.read.send(mlc)?;

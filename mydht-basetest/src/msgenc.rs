@@ -10,8 +10,8 @@ use shadow::{
   ShadowModeTest,
 };
 
-use mydht_base::service::{
-  NoYield,
+use service_pre::{
+  spawn::void::NoYield,
   YieldReturn,
 };
 use peer::{

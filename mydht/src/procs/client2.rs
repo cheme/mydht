@@ -16,6 +16,9 @@ use keyval::{
 };
 use transport::{
   Transport,
+  LoopResult,
+  LoopError,
+  LoopErrorKind,
 };
 use readwrite_comp::{
   ExtWrite,
@@ -386,17 +389,17 @@ impl<MC : MyDHTConf> WriteServiceInner<MC> {
       Ok(())
   }
 
-  fn service<S : SpawnerYield>(&mut self, command : MCCommand<MC>, async_yield : &mut S) -> Result<WriteReply<MC>> {
+  fn service<S : SpawnerYield>(&mut self, command : MCCommand<MC>, async_yield : &mut S) -> LoopResult<WriteReply<MC>> {
         if MC::AUTH_MODE != ShadowAuthType::NoAuth && self.with.is_none() {
           self.buff_msgs.push_front(command);
           return Ok(WriteReply::NoRep);
         }
-        self.debuff_msgs(async_yield)?;
+        self.debuff_msgs(async_yield).map_err::<LoopError,_>(|err|err.into())?;
         debug!("Client service proxying command, write token {}",self.token);
-        self.forward_proto(command,async_yield)?;
+        self.forward_proto(command,async_yield).map_err::<LoopError,_>(|err|err.into())?;
 
         if self.shut_after_first {
-          return Err(Error("Write once service end".to_string(), ErrorKind::EndService,None));
+          return Err(LoopErrorKind::EndService.into());
         }
         Ok(WriteReply::NoRep)
   }
@@ -431,15 +434,15 @@ impl<MC : MyDHTConf> Service for WriteService<MC> {
   type CommandIn = WriteCommand<MC>;
   type CommandOut = WriteReply<MC>;
 
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> LoopResult<Self::CommandOut> {
     match req {
       WriteCommand::Pong(rp,chal,read_token,option_chal2) => {
         self.inner.clear_restartable_state(); // useless ?? here for error case but on error restarting makes no sens (comm is desynch)
-        self.pong(rp,chal,read_token,option_chal2,async_yield)?;
+        self.pong(rp,chal,read_token,option_chal2,async_yield).map_err::<LoopError,_>(|err|err.into())?;
       },
       WriteCommand::Ping(chal) => {
   //        return Ok(WriteReply::MainLoop(MainLoopCommand::NewChallenge(self.token,chal)));
-        self.inner.ping(chal,async_yield)?;
+        self.inner.ping(chal,async_yield).map_err::<LoopError,_>(|err|err.into())?;
 
       },
       WriteCommand::Service(command) => {
@@ -495,7 +498,7 @@ impl<MC : MyDHTConf> WriteServiceInner<MC> {
             match self.with {
               Some(ref w) => w.borrow().get_shadower_w_msg(),
               None => {
-                return Err(Error("route return slab may contain write ref of non initialized (connected), a route impl issue".to_string(), ErrorKind::Bug,None));
+                return Err(ErrorKind::Bug("route return slab may contain write ref of non initialized (connected), a route impl issue".to_string()).into());
               },
             }
           },

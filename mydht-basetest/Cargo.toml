@@ -7,6 +7,7 @@ authors = ["Emeric Chevalier <emericchevalier.pro@gmail.com>"]
 
 [features]
 default = ["with-extra-test"]
+
 with-extra-test = []
 
 [dependencies]
@@ -41,4 +42,8 @@ features = ["blocking-transport","mio-transport"]
 [dependencies.bit-vec]
 git = "https://github.com/cheme/bit-vec.git"
 
+[dependencies.service-pre]
+#version = "~0.0.1"
+git = "https://github.com/cheme/service-pre.git"
+#path = "../../service-pre/"
 

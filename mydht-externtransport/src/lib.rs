@@ -865,7 +865,7 @@ impl TestService {
         if is_listener {
           let (rs,owrs) = match self.transport.accept() {
             Ok(i) => i,
-            Err(e) => if e.level() == ErrorLevel::Ignore {
+            Err(e) => if e.level() == ErrorLevel::Yield {
               // do not suspend need to check other events
               continue;
             } else {
@@ -893,7 +893,7 @@ impl Service for TestService {
     match self.call_inner(req, async_yield) {
       Ok(r) => Ok(r),
       Err(e) => {
-        if e.level() != ErrorLevel::Ignore {
+        if e.level() != ErrorLevel::Yield {
           log_js(format!("Call error : {:?}", e), LogType::Error);
         }
         Err(e)

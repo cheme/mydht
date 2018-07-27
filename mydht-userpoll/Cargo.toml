@@ -4,7 +4,12 @@ version = "0.1.0"
 authors = ["cheme <emericchevalier.pro@gmail.com>"]
 
 
-[dependencies.mydht-base]
-path = "../mydht-base/"
-default-features = false
+[features]
+
+#[dev-dependencies.service-pre]
+[dependencies.service-pre]
+#version = "~0.0.1"
+git = "https://github.com/cheme/service-pre.git"
+#path = "../../service-pre/"
+features = ["with-coroutine","mio-transport"]
 

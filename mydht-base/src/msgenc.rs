@@ -8,13 +8,15 @@ use mydhtresult::ErrorKind;
 use mydhtresult::Result as MDHTResult;
 use peer::Peer;
 use readwrite_comp::{ExtRead, ExtWrite};
-use service::SpawnerYield;
 use std::fs::File;
 use std::io::Read;
 use std::io::Write;
 use std::io::{Seek, SeekFrom};
+use std::io::ErrorKind as IoErrorKind;
+use std::io::Error as IoError;
 use utils;
 use utils::Proto;
+pub use service_pre::SpawnerYield; 
 
 /// Trait for message encoding between peers.
 /// It use bytes which will be used by transport.
@@ -29,7 +31,7 @@ pub trait MsgEnc<P: Peer, M>: Send + 'static + Proto {
   //fn encode<P : Peer, V : KeyVal>(&self, &ProtoMessage<P,V>) -> Option<Vec<u8>>;
 
   /// encode
-  fn encode_into<'a, W: Write, EW: ExtWrite, S: SpawnerYield>(
+  fn encode_into<'a, W: Write, EW: ExtWrite, S : SpawnerYield>(
     &mut self,
     w: &mut W,
     &mut EW,
@@ -39,14 +41,14 @@ pub trait MsgEnc<P: Peer, M>: Send + 'static + Proto {
   where
     <P as Peer>::Address: 'a;
 
-  fn decode_from<R: Read, ER: ExtRead, S: SpawnerYield>(
+  fn decode_from<R: Read, ER: ExtRead, S : SpawnerYield>(
     &mut self,
     &mut R,
     &mut ER,
     &mut S,
   ) -> MDHTResult<ProtoMessage<P>>;
 
-  fn encode_msg_into<W: Write, EW: ExtWrite, S: SpawnerYield>(
+  fn encode_msg_into<W: Write, EW: ExtWrite, S : SpawnerYield>(
     &mut self,
     w: &mut W,
     &mut EW,
@@ -54,7 +56,7 @@ pub trait MsgEnc<P: Peer, M>: Send + 'static + Proto {
     mesg: &mut M,
   ) -> MDHTResult<()>;
 
-  fn attach_into<W: Write, EW: ExtWrite, S: SpawnerYield>(
+  fn attach_into<W: Write, EW: ExtWrite, S : SpawnerYield>(
     &mut self,
     &mut W,
     &mut EW,
@@ -63,7 +65,7 @@ pub trait MsgEnc<P: Peer, M>: Send + 'static + Proto {
   ) -> MDHTResult<()>;
 
   /// decode
-  fn decode_msg_from<R: Read, ER: ExtRead, S: SpawnerYield>(
+  fn decode_msg_from<R: Read, ER: ExtRead, S : SpawnerYield>(
     &mut self,
     &mut R,
     &mut ER,
@@ -71,7 +73,7 @@ pub trait MsgEnc<P: Peer, M>: Send + 'static + Proto {
   ) -> MDHTResult<M>;
 
   /// error if attachment more than a treshold (0 if no limit).
-  fn attach_from<R: Read, ER: ExtRead, S: SpawnerYield>(
+  fn attach_from<R: Read, ER: ExtRead, S : SpawnerYield>(
     &mut self,
     &mut R,
     &mut ER,
@@ -135,11 +137,7 @@ pub fn write_attachment<W: Write>(w: &mut W, path: &Attachment) -> MDHTResult<()
       try!(w.write_all(buf));
     } else {
       if nb != lfrsize {
-        return Err(Error(
-          "mismatch file size calc for tcp transport".to_string(),
-          ErrorKind::IOError,
-          None,
-        ));
+        return Err(ErrorKind::Serializing("mismatch file size calc for tcp transport".to_string()).into());
       };
       // truncate buff
       try!(w.write(&buf[..nb]));
@@ -155,11 +153,7 @@ pub fn read_attachment(s: &mut Read, mlen: usize) -> MDHTResult<Attachment> {
   //let fsize = tryfor!(BOErr,s.read_u64::<LittleEndian>());
   let fsize = try!(s.read_u64::<LittleEndian>());
   if mlen > 0 && fsize > (mlen as u64) {
-    return Err(Error(
-      "Attachment bigger than expected".to_string(),
-      ErrorKind::SerializingError,
-      None,
-    ));
+    return Err(ErrorKind::Serializing("Attachment bigger than expected".to_string()).into());
   }
 
   let nbframe = (fsize / (BUFF_SIZE as u64)) as usize;
@@ -178,11 +172,7 @@ pub fn read_attachment(s: &mut Read, mlen: usize) -> MDHTResult<Attachment> {
     } else {
       if nb != lfrsize {
         // todo delete file
-        return Err(Error(
-          "mismatch received file size calc for tcp transport".to_string(),
-          ErrorKind::IOError,
-          None,
-        ));
+        return Err(IoError::new(IoErrorKind::BrokenPipe,"mismatch received file size calc for tcp transport").into());
       };
       // truncate buff
       try!(f.write(&buf[..nb]));
