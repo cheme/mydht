@@ -53,6 +53,10 @@ error_chain! {
       description("Error occuring while serializing or deserializing")
       display("SerializingError: '{}'", t)
     }
+    ExternalLib(t: String) {
+      description("ExternalLib error")
+      display("ExternalLib: '{}'", t)
+    }
     Io(err: IoError) {
       description(::std::error::Error::description(err))
       display("Io: '{:?}'", err)
