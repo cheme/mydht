@@ -85,6 +85,7 @@ use mydht::msgencif::{
 };
 use mydht::dhtif::{
   Result,
+  LoopResult,
   PeerMgmtMeths,
   DHTRules,
 };
@@ -168,29 +169,36 @@ use mydht::service::{
   Service,
   ReadYield,
   WriteYield,
-  NoYield,
+  spawn::void::NoYield,
   YieldReturn,
  // MioChannel,
  // SpawnChannel,
-  MpscChannel,
-  MpscChannelRef,
+  channels::{
+    mpsc::MpscChannel,
+    mpscref::MpscChannelRef,
   //NoRecv,
-  LocalRcChannel,
+    rc::LocalRcChannel,
+    void::{
+      NoChannel,
+      NoSend,
+    }
+  },
   SpawnerYield,
  // LocalRc,
  // MpscSender,
-  NoSend,
 
-  Blocker,
-  RestartOrError,
+  spawn::{
+    blocking::Blocker,
+    restart::RestartOrError,
   //Coroutine,
  // RestartSameThread,
  // ThreadBlock,
-  ThreadPark,
-  ThreadParkRef,
-
-  NoSpawn,
-  NoChannel,
+    threadpark::{
+      ThreadPark,
+      ThreadParkRef,
+    },
+    void::NoSpawn
+  },
  
 };
  
@@ -978,7 +986,7 @@ pub struct LocalTunnelService<MC : MyDHTTunnelConf> {
 impl<MC : MyDHTTunnelConf> Service for LocalTunnelService<MC> {
   type CommandIn = LocalTunnelCommand<MC>;
   type CommandOut = LocalReply<MyDHTTunnelConfType<MC>>;
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> LoopResult<Self::CommandOut> {
     match req {
       LocalTunnelCommand::Inner(cmd) => {
         let rep = self.inner.call(GlobalCommand::Local(cmd),async_yield)?;
@@ -1093,7 +1101,7 @@ pub struct GlobalTunnelService<MC : MyDHTTunnelConf> {
 impl<MC : MyDHTTunnelConf> Service for GlobalTunnelService<MC> {
   type CommandIn = GlobalCommand<MC::PeerRef,GlobalTunnelCommand<MC>>;
   type CommandOut = GlobalReply<MC::Peer,MC::PeerRef,GlobalTunnelCommand<MC>,GlobalTunnelReply<MC>>;
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> Result<Self::CommandOut> {
+  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, async_yield : &mut S) -> LoopResult<Self::CommandOut> {
     let (is_local,owith,req) = match req {
       GlobalCommand::Local(r) => (true,None,r), 
       GlobalCommand::Distant(ow,r) => (false,ow,r), 

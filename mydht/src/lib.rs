@@ -232,6 +232,7 @@ pub mod queryif{
 }
 pub mod dhtif{
   pub use mydhtresult::{Result,Error,ErrorKind};
+  pub use transport::{LoopResult,LoopError,LoopErrorKind};
   pub use mydht_base::keyval::{KeyVal,FileKeyVal,Key};
   pub use rules::DHTRules;
   pub use peer::{Peer,PeerMgmtMeths};

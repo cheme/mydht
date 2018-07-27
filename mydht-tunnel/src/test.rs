@@ -106,12 +106,13 @@ use mydht::dhtimpl::{
 };
 use mydht::dhtif::{
   Result,
+  LoopResult,
   PeerMgmtMeths,
   KeyVal,
 };
 use mydht::service::{
   Service,
-  MioEvented,
+  eventloop::mio::MioEvented,
   SpawnerYield,
   SpawnSend,
 };
@@ -327,7 +328,7 @@ pub struct TunnelConf(pub String, pub SerSocketAddr, pub bool, pub Vec<Node>, pu
 impl Service for TestService<TunnelConf> {
   type CommandIn = GlobalCommand<<TunnelConf as MyDHTTunnelConf>::PeerRef,<TunnelConf as MyDHTTunnelConf>::InnerCommand>;
   type CommandOut = GlobalTunnelReply<TunnelConf>;
-  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut S) -> Result<Self::CommandOut> {
+  fn call<S : SpawnerYield>(&mut self, req: Self::CommandIn, _async_yield : &mut S) -> LoopResult<Self::CommandOut> {
  
     match req {
       GlobalCommand::Distant(_, TestMessage::TouchQ(qid)) => {
